@@ -173,6 +173,59 @@ struct SnapshotStoreTests {
         #expect(isDir.boolValue)
     }
 
+    @Test("migrateSnapshotIfNeeded copies legacy snapshot when destination is empty")
+    func migratesLegacySnapshot() throws {
+        let legacyDir = FileManager.default.temporaryDirectory
+            .appending(path: "claudemeter-legacy-\(UUID().uuidString)")
+        let sharedDir = FileManager.default.temporaryDirectory
+            .appending(path: "claudemeter-shared-\(UUID().uuidString)")
+        defer {
+            try? FileManager.default.removeItem(at: legacyDir)
+            try? FileManager.default.removeItem(at: sharedDir)
+        }
+        try FileManager.default.createDirectory(at: legacyDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sharedDir, withIntermediateDirectories: true)
+
+        let legacy = SnapshotStore(directory: legacyDir)
+        let shared = SnapshotStore(directory: sharedDir)
+        let snap = makeSnapshot()
+
+        try legacy.writeLatest(snap)
+        try SnapshotStore.migrateSnapshotIfNeeded(from: legacy, to: shared)
+
+        let recovered = try #require(try shared.readLatest())
+        #expect(recovered.limits.currentSession.percentUsed == snap.limits.currentSession.percentUsed)
+    }
+
+    @Test("migrateSnapshotIfNeeded does not overwrite existing shared snapshot")
+    func skipsMigrationWhenDestinationExists() throws {
+        let legacyDir = FileManager.default.temporaryDirectory
+            .appending(path: "claudemeter-legacy-\(UUID().uuidString)")
+        let sharedDir = FileManager.default.temporaryDirectory
+            .appending(path: "claudemeter-shared-\(UUID().uuidString)")
+        defer {
+            try? FileManager.default.removeItem(at: legacyDir)
+            try? FileManager.default.removeItem(at: sharedDir)
+        }
+        try FileManager.default.createDirectory(at: legacyDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sharedDir, withIntermediateDirectories: true)
+
+        let legacy = SnapshotStore(directory: legacyDir)
+        let shared = SnapshotStore(directory: sharedDir)
+
+        var legacySnap = makeSnapshot()
+        legacySnap.limits.currentSession = LimitWindow(percentUsed: 10, resetsAt: nil, rawResetText: nil)
+        var sharedSnap = makeSnapshot()
+        sharedSnap.limits.currentSession = LimitWindow(percentUsed: 99, resetsAt: nil, rawResetText: nil)
+
+        try legacy.writeLatest(legacySnap)
+        try shared.writeLatest(sharedSnap)
+        try SnapshotStore.migrateSnapshotIfNeeded(from: legacy, to: shared)
+
+        let recovered = try #require(try shared.readLatest())
+        #expect(recovered.limits.currentSession.percentUsed == 99)
+    }
+
     // MARK: - Dates survive encode/decode
 
     @Test("Reset dates survive JSON roundtrip")

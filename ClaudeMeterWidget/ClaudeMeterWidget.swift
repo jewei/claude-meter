@@ -23,8 +23,8 @@ private extension Color {
     static let cmBackground = Color(widgetHex: "10131b")
 }
 
-private func severityColor(for percent: Double?) -> Color {
-    switch UsageThresholds.default.severity(for: percent) {
+private func severityColor(for percent: Double?, thresholds: UsageThresholds) -> Color {
+    switch thresholds.severity(for: percent) {
     case .normal:              return .cmNormal
     case .warning:             return .cmWarning
     case .critical, .overLimit: return .cmCritical
@@ -37,30 +37,43 @@ private func severityColor(for percent: Double?) -> Color {
 struct ClaudeMeterEntry: TimelineEntry {
     let date: Date
     let snapshot: ClaudeUsageSnapshot?
+    let thresholds: UsageThresholds
+    let privacyMode: PrivacyMode
+    let isStale: Bool
+
+    init(
+        date: Date,
+        snapshot: ClaudeUsageSnapshot?,
+        thresholds: UsageThresholds = .default,
+        privacyMode: PrivacyMode = .workSafe,
+        isStale: Bool = false
+    ) {
+        self.date = date
+        self.snapshot = snapshot
+        self.thresholds = thresholds
+        self.privacyMode = privacyMode
+        self.isStale = isStale
+    }
 }
 
 // MARK: - Provider
 
 struct ClaudeMeterProvider: TimelineProvider {
-    private static let appGroupID = "group.com.claudemeter.app"
-
     func placeholder(in context: Context) -> ClaudeMeterEntry {
         ClaudeMeterEntry(date: Date(), snapshot: nil)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (ClaudeMeterEntry) -> Void) {
-        completion(ClaudeMeterEntry(date: Date(), snapshot: loadSnapshot()))
+        completion(makeEntry(at: Date()))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<ClaudeMeterEntry>) -> Void) {
         let now = Date()
-        let snap = loadSnapshot()
-        let entry = ClaudeMeterEntry(date: now, snapshot: snap)
+        let entry = makeEntry(at: now)
 
-        // Reload at the nearest upcoming reset time, or in 15 minutes — whichever comes first.
         let nextReset = [
-            snap?.limits.currentSession.resetsAt,
-            snap?.limits.currentWeekAllModels.resetsAt,
+            entry.snapshot?.limits.currentSession.resetsAt,
+            entry.snapshot?.limits.currentWeekAllModels.resetsAt,
         ]
         .compactMap { $0 }
         .filter { $0 > now }
@@ -73,16 +86,22 @@ struct ClaudeMeterProvider: TimelineProvider {
         completion(Timeline(entries: [entry], policy: .after(refreshAt)))
     }
 
+    private func makeEntry(at date: Date) -> ClaudeMeterEntry {
+        let snapshot = loadSnapshot()
+        return ClaudeMeterEntry(
+            date: date,
+            snapshot: snapshot,
+            thresholds: AppGroupConfig.currentThresholds(),
+            privacyMode: AppGroupConfig.currentPrivacyMode(),
+            isStale: AppGroupConfig.isSnapshotStale(lastPollAt: snapshot?.lastSuccessfulPollAt, now: date)
+        )
+    }
+
     private func loadSnapshot() -> ClaudeUsageSnapshot? {
-        let store: SnapshotStore
-        if let s = try? SnapshotStore.appGroup(suiteName: Self.appGroupID) {
-            store = s
-        } else if let s = try? SnapshotStore.applicationSupport() {
-            store = s
-        } else {
+        guard let store = try? SnapshotStore.appGroup(suiteName: AppGroupConfig.suiteName) else {
             return nil
         }
-        return (try? store.readLatest()).flatMap { $0 }
+        return try? store.readLatest()
     }
 }
 
@@ -124,13 +143,27 @@ private struct SmallWidgetView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Claude Meter")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
+            HStack {
+                Text("Claude Meter")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if entry.isStale {
+                    staleBadge
+                }
+            }
 
             if let snap = entry.snapshot {
-                WindowRow(label: "SESSION",  window: snap.limits.currentSession)
-                WindowRow(label: "WEEK",     window: snap.limits.currentWeekAllModels)
+                WindowRow(
+                    label: "SESSION",
+                    window: snap.limits.currentSession,
+                    thresholds: entry.thresholds
+                )
+                WindowRow(
+                    label: "WEEK",
+                    window: snap.limits.currentWeekAllModels,
+                    thresholds: entry.thresholds
+                )
             } else {
                 noDataView
             }
@@ -160,9 +193,20 @@ private struct MediumWidgetView: View {
     var body: some View {
         if let snap = entry.snapshot {
             VStack(spacing: 10) {
-                WindowRow(label: "SESSION",          window: snap.limits.currentSession)
+                if entry.isStale {
+                    staleBanner
+                }
+                WindowRow(
+                    label: "SESSION",
+                    window: snap.limits.currentSession,
+                    thresholds: entry.thresholds
+                )
                 Divider().opacity(0.2)
-                WindowRow(label: "WEEK (ALL MODELS)", window: snap.limits.currentWeekAllModels)
+                WindowRow(
+                    label: "WEEK (ALL MODELS)",
+                    window: snap.limits.currentWeekAllModels,
+                    thresholds: entry.thresholds
+                )
             }
             .padding()
         } else {
@@ -196,15 +240,26 @@ private struct LargeWidgetView: View {
                 Text("Claude Meter")
                     .font(.system(size: 13, weight: .semibold))
                 Spacer()
+                if entry.isStale {
+                    staleBadge
+                }
                 updatedLabel
             }
 
             if let snap = entry.snapshot {
-                WindowRow(label: "SESSION",          window: snap.limits.currentSession)
+                WindowRow(
+                    label: "SESSION",
+                    window: snap.limits.currentSession,
+                    thresholds: entry.thresholds
+                )
                 Divider().opacity(0.2)
-                WindowRow(label: "WEEK (ALL MODELS)", window: snap.limits.currentWeekAllModels)
+                WindowRow(
+                    label: "WEEK (ALL MODELS)",
+                    window: snap.limits.currentWeekAllModels,
+                    thresholds: entry.thresholds
+                )
 
-                if let model = snap.session?.activeModel {
+                if entry.privacyMode.showsModel, let model = snap.session?.activeModel {
                     Divider().opacity(0.2)
                     HStack {
                         Text("Model")
@@ -252,18 +307,39 @@ private struct LargeWidgetView: View {
     }
 }
 
+// MARK: - Stale indicators
+
+private var staleBadge: some View {
+    Image(systemName: "clock.badge.exclamationmark")
+        .font(.system(size: 10))
+        .foregroundStyle(Color.cmWarning)
+        .accessibilityLabel("Data may be outdated")
+}
+
+private var staleBanner: some View {
+    HStack(spacing: 4) {
+        Image(systemName: "clock")
+            .font(.system(size: 9))
+        Text("Data may be outdated")
+            .font(.system(size: 10))
+    }
+    .foregroundStyle(Color.cmWarning)
+    .frame(maxWidth: .infinity, alignment: .leading)
+}
+
 // MARK: - Shared window row
 
 private struct WindowRow: View {
     let label: String
     let window: LimitWindow
+    let thresholds: UsageThresholds
 
     private var fraction: Double {
         (window.clampedPercent ?? 0) / 100
     }
 
     private var color: Color {
-        severityColor(for: window.percentUsed)
+        severityColor(for: window.percentUsed, thresholds: thresholds)
     }
 
     var body: some View {
@@ -283,6 +359,8 @@ private struct WindowRow: View {
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
     }
 
     private var resetText: String {
@@ -296,6 +374,10 @@ private struct WindowRow: View {
         if h == 0  { return "Resets ~\(m)m" }
         if m == 0  { return "Resets ~\(h)h" }
         return "Resets ~\(h)h \(m)m"
+    }
+
+    private var accessibilityText: String {
+        "\(label) usage \(window.displayPercent ?? "unknown"), \(resetText)"
     }
 }
 
@@ -314,6 +396,7 @@ private struct WidgetProgressBar: View {
                     .frame(width: geo.size.width * min(max(value, 0), 1))
             }
         }
+        .accessibilityHidden(true)
     }
 }
 

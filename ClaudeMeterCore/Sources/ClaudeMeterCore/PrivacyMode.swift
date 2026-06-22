@@ -1,14 +1,14 @@
 import Foundation
 
-enum PrivacyMode: String, CaseIterable, Identifiable {
+public enum PrivacyMode: String, CaseIterable, Identifiable, Sendable {
     case full       = "full"
     case workSafe   = "workSafe"
     case minimal    = "minimal"
     case anonymous  = "anonymous"
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
-    var title: String {
+    public var title: String {
         switch self {
         case .full:      return "Full"
         case .workSafe:  return "Work-safe"
@@ -17,7 +17,7 @@ enum PrivacyMode: String, CaseIterable, Identifiable {
         }
     }
 
-    var detail: String {
+    public var detail: String {
         switch self {
         case .full:      return "Shows session name, model, and account info"
         case .workSafe:  return "Shows model; hides account and session details"
@@ -26,21 +26,19 @@ enum PrivacyMode: String, CaseIterable, Identifiable {
         }
     }
 
-    // Whether the active model row should be visible
-    var showsModel: Bool {
+    public var showsModel: Bool {
         self == .full || self == .workSafe
     }
 
-    // Whether session name should be visible (full and work-safe per SPECS §13.1)
-    var showsSessionName: Bool {
+    public var showsSessionName: Bool {
         self == .full || self == .workSafe
     }
 
-    var showsAccountInfo: Bool {
+    public var showsAccountInfo: Bool {
         self == .full
     }
 
-    var showsCwd: Bool {
+    public var showsCwd: Bool {
         self == .full
     }
 }

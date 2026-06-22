@@ -16,15 +16,21 @@ final class AppState: ObservableObject {
     private var pollTask: Task<Void, Never>?
     private var backoffSeconds: Double = 0
 
-    private static let appGroupID = "group.com.claudemeter.app"
-
     private static func makeStore() -> SnapshotStore {
-        (try? SnapshotStore.appGroup(suiteName: appGroupID))
-            ?? (try? SnapshotStore.applicationSupport())
-            ?? SnapshotStore(directory: FileManager.default.temporaryDirectory)
+        if let shared = try? SnapshotStore.appGroup(suiteName: AppGroupConfig.suiteName) {
+            if let legacy = try? SnapshotStore.applicationSupport() {
+                try? SnapshotStore.migrateSnapshotIfNeeded(from: legacy, to: shared)
+            }
+            return shared
+        }
+        if let legacy = try? SnapshotStore.applicationSupport() {
+            return legacy
+        }
+        return SnapshotStore(directory: FileManager.default.temporaryDirectory)
     }
 
     init() {
+        AppGroupConfig.syncDisplaySettings()
         let store = AppState.makeStore()
         self.pipeline = AppState.makePipeline(store: store)
         self.snapshot = try? store.readLatest()
@@ -104,13 +110,7 @@ final class AppState: ObservableObject {
     }
 
     static func currentThresholds() -> UsageThresholds {
-        let ud = UserDefaults.standard
-        let warning = ud.double(forKey: "warningThresholdPercent").positive ?? 80
-        let critical = ud.double(forKey: "criticalThresholdPercent").positive ?? 95
-        return UsageThresholds(
-            warning: warning,
-            critical: max(critical, warning + 1)
-        )
+        AppGroupConfig.currentThresholds()
     }
 
     private func poll() async {

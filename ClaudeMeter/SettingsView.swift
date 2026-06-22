@@ -118,6 +118,7 @@ private struct CLISettingsTab: View {
         .onChange(of: statusArguments)     { _, _ in rebuild() }
         .onChange(of: statsArguments)      { _, _ in rebuild() }
         .onChange(of: cliTimeoutSeconds)   { _, _ in rebuild() }
+        .onChange(of: staleAfterSeconds)  { _, _ in AppGroupConfig.syncDisplaySettings() }
     }
 
     private var effectiveCLIPath: String {
@@ -201,15 +202,21 @@ private struct DisplaySettingsTab: View {
         }
         .formStyle(.grouped)
         .padding()
+        .onAppear { AppGroupConfig.syncDisplaySettings() }
         .onChange(of: warningThresholdPercent) { _, newWarning in
             if criticalThresholdPercent <= newWarning {
                 criticalThresholdPercent = min(100, newWarning + 5)
             }
+            AppGroupConfig.syncDisplaySettings()
         }
         .onChange(of: criticalThresholdPercent) { _, newCritical in
             if newCritical <= warningThresholdPercent {
                 criticalThresholdPercent = min(100, warningThresholdPercent + 5)
             }
+            AppGroupConfig.syncDisplaySettings()
+        }
+        .onChange(of: privacyMode) { _, _ in
+            AppGroupConfig.syncDisplaySettings()
         }
     }
 }

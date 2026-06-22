@@ -47,10 +47,9 @@ public struct SnapshotStore: Sendable {
     /// Creates a store backed by the shared App Group container.
     ///
     /// Both the main app and the WidgetKit extension call this factory so they
-    /// read and write the same `current.json` file.  Returns `nil` (throws) when
-    /// the group container is unavailable — e.g. the app is unsigned or the
-    /// entitlement is missing — in which case callers fall back to
-    /// `applicationSupport()`.
+    /// read and write the same `current.json` file. Throws when the group
+    /// container is unavailable — e.g. the app is unsigned or the entitlement
+    /// is missing — in which case callers fall back to `applicationSupport()`.
     public static func appGroup(suiteName: String) throws -> SnapshotStore {
         guard let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: suiteName
@@ -63,6 +62,14 @@ public struct SnapshotStore: Sendable {
         )
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return SnapshotStore(directory: dir)
+    }
+
+    /// Copies `current.json` from a legacy store when the destination is empty.
+    public static func migrateSnapshotIfNeeded(from legacy: SnapshotStore, to shared: SnapshotStore) throws {
+        guard try shared.readLatest() == nil else { return }
+        if let snapshot = try legacy.readLatest() {
+            try shared.writeLatest(snapshot)
+        }
     }
 
     /// Creates a store backed by an arbitrary directory (useful for tests).

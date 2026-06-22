@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import ClaudeMeterCore
 
 /// Stores the claude.ai session key and org ID in the macOS Keychain.
 enum ClaudeAIKeychain {
@@ -14,9 +15,15 @@ enum ClaudeAIKeychain {
     }
 
     static func save(sessionKey: String, orgId: String) -> Bool {
-        let saveOK = writeItem(account: accountSessionKey, value: sessionKey)
-        let saveOrg = writeItem(account: accountOrgId, value: orgId)
-        return saveOK && saveOrg
+        let normalizedOrg = CredentialValidator.normalizedOrgId(orgId) ?? orgId
+        let sessionOK = writeItem(account: accountSessionKey, value: sessionKey)
+        guard sessionOK else { return false }
+        let orgOK = writeItem(account: accountOrgId, value: normalizedOrg)
+        if !orgOK {
+            deleteItem(account: accountSessionKey)
+            return false
+        }
+        return true
     }
 
     static func load() -> Credentials? {
@@ -41,15 +48,19 @@ enum ClaudeAIKeychain {
             kSecAttrService: service,
             kSecAttrAccount: account
         ]
-        SecItemDelete(query as CFDictionary)
         let attrs: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: account,
             kSecValueData: data,
-            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
-        return SecItemAdd(attrs as CFDictionary, nil) == errSecSuccess
+        let status = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
+        if status == errSecSuccess { return true }
+        if status == errSecItemNotFound {
+            var addQuery = query
+            addQuery[kSecValueData] = data
+            addQuery[kSecAttrAccessible] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+        }
+        return false
     }
 
     private static func readItem(account: String) -> String? {

@@ -207,11 +207,23 @@ public final class HistoryStore: @unchecked Sendable {
                 r.weekPercent.map { String(format: "%.2f", $0) } ?? "",
                 r.sessionResetsAt.map { Self.iso.string(from: $0) } ?? "",
                 r.weekResetsAt.map { Self.iso.string(from: $0) } ?? "",
-                r.severity,
-                (r.model ?? "").replacingOccurrences(of: ",", with: ";"),
+                csvEscape(r.severity),
+                csvEscape(r.model ?? ""),
             ].joined(separator: ","))
         }
         return lines.joined(separator: "\n")
+    }
+
+    private func csvEscape(_ value: String) -> String {
+        var escaped = value
+        if escaped.hasPrefix("=") || escaped.hasPrefix("+")
+            || escaped.hasPrefix("-") || escaped.hasPrefix("@") {
+            escaped = "'" + escaped
+        }
+        if escaped.contains(",") || escaped.contains("\"") || escaped.contains("\n") {
+            return "\"" + escaped.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+        }
+        return escaped
     }
 
     private func makeJSON(from records: [HistoryRecord]) throws -> String {

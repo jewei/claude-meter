@@ -31,7 +31,14 @@ public struct ClaudeAIUsageClient: Sendable {
     }()
 
     public func fetchUsage() async throws -> UsageData {
-        guard let url = URL(string: "https://claude.ai/api/organizations/\(orgId)/usage") else {
+        guard CredentialValidator.isValidOrgId(orgId),
+              let normalizedOrg = CredentialValidator.normalizedOrgId(orgId) else {
+            throw ClaudeAIError.invalidOrgId
+        }
+        guard CredentialValidator.isValidSessionKey(sessionKey) else {
+            throw ClaudeAIError.invalidSessionKey
+        }
+        guard let url = URL(string: "https://claude.ai/api/organizations/\(normalizedOrg)/usage") else {
             throw ClaudeAIError.invalidURL
         }
         var request = URLRequest(url: url)
@@ -45,6 +52,9 @@ public struct ClaudeAIUsageClient: Sendable {
             throw ClaudeAIError.invalidResponse
         }
         guard http.statusCode == 200 else {
+            if http.statusCode == 401 || http.statusCode == 403 {
+                throw ClaudeAIError.unauthorized
+            }
             throw ClaudeAIError.httpError(http.statusCode)
         }
 
@@ -64,69 +74,51 @@ public struct ClaudeAIUsageClient: Sendable {
         )
     }
 
-    // MARK: - Org discovery
-
-    /// Returns all org IDs found for this session key.
-    public func discoverOrgIds() async throws -> [String] {
-        guard let url = URL(string: "https://claude.ai/api/organizations") else { return [] }
-        var request = URLRequest(url: url)
-        request.setValue("sessionKey=\(sessionKey)", forHTTPHeaderField: "Cookie")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        let (data, response) = try await Self.session.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return [] }
-
-        if let orgs = try? JSONDecoder().decode([OrgEntry].self, from: data) {
-            return orgs.compactMap { $0.id ?? $0.uuid }
-        }
-        if let raw = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-            return raw.compactMap { ($0["id"] ?? $0["uuid"]) as? String }
-        }
-        return []
-    }
-
-    /// Convenience: returns the first org ID found (for backward compat).
-    public func discoverOrgId() async throws -> String? {
-        try await discoverOrgIds().first
-    }
-
     // MARK: - Date parsing
 
-    nonisolated(unsafe) private static let dateFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
-
-    nonisolated(unsafe) private static let dateFormatterNoFraction: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
-    }()
-
     static func parseDate(_ string: String) -> Date? {
-        dateFormatter.date(from: string) ?? dateFormatterNoFraction.date(from: string)
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = withFraction.date(from: string) { return date }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: string)
     }
+
+    /// Redacted command string safe for snapshots and diagnostics.
+    public static let redactedUsageCommand = "GET /api/organizations/[redacted]/usage"
 }
 
 // MARK: - Errors
 
-public enum ClaudeAIError: Error, LocalizedError {
+public enum ClaudeAIError: Error, LocalizedError, Equatable {
     case invalidURL
+    case invalidOrgId
+    case invalidSessionKey
     case invalidResponse
     case httpError(Int)
     case missingFields
     case unauthorized
 
+    public var isAuthFailure: Bool {
+        switch self {
+        case .unauthorized: return true
+        case .httpError(401), .httpError(403): return true
+        default: return false
+        }
+    }
+
     public var errorDescription: String? {
         switch self {
-        case .invalidURL:       return "Invalid API URL"
-        case .invalidResponse:  return "Invalid server response"
-        case .httpError(401):   return "Session expired — update your session key in Settings"
-        case .httpError(403):   return "Access denied — check your session key and org ID"
-        case .httpError(let c): return "HTTP error \(c)"
-        case .missingFields:    return "Unexpected API response format"
-        case .unauthorized:     return "Not authenticated"
+        case .invalidURL:           return "Invalid API URL"
+        case .invalidOrgId:         return "Invalid organization ID — paste a valid UUID"
+        case .invalidSessionKey:    return "Invalid session key format"
+        case .invalidResponse:      return "Invalid server response"
+        case .httpError(401):       return "Session expired — update your session key in Settings"
+        case .httpError(403):       return "Access denied — check your session key and org ID"
+        case .httpError(let c):     return "HTTP error \(c)"
+        case .missingFields:        return "Unexpected API response format"
+        case .unauthorized:         return "Session expired — update your session key in Settings"
         }
     }
 }
@@ -151,9 +143,4 @@ private struct Window: Codable {
         case utilization
         case resetsAt = "resets_at"
     }
-}
-
-private struct OrgEntry: Codable {
-    let id: String?
-    let uuid: String?
 }

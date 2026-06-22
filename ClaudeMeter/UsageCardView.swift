@@ -83,7 +83,7 @@ struct UsageCardView: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
         } else if let raw = window.rawResetText {
-            Text("Resets \(raw)")
+            Text(raw == "rolling 7 days" ? "Last 7 days" : "Resets \(raw)")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
         }

@@ -20,8 +20,8 @@ public struct LastErrorRecord: Codable, Equatable, Sendable {
 /// Writes use `Data.write(.atomic)`, which creates a temp file in the same
 /// directory and renames it over the destination — atomic on APFS/HFS+.
 ///
-/// When a WidgetKit extension is added (Phase 6), swap `directory` to the
-/// App Group container and both targets share this same type unchanged.
+/// The main app and WidgetKit extension both use the App Group container via
+/// `appGroup(suiteName:)` so they read and write the same `current.json`.
 public struct SnapshotStore: Sendable {
     public let directory: URL
 

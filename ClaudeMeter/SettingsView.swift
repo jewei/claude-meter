@@ -65,7 +65,7 @@ private struct DataSettingsTab: View {
                         }
                     }
                     LabeledContent("Org ID") {
-                        Text(orgId)
+                        Text(DiagnosticsSanitizer.sanitize(orgId))
                             .font(.system(.body, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }
@@ -182,7 +182,15 @@ private struct DataSettingsTab: View {
         let sk = sessionKey.trimmingCharacters(in: .whitespaces)
         let org = orgId.trimmingCharacters(in: .whitespaces)
         guard !sk.isEmpty, !org.isEmpty else { return }
-        if ClaudeAIKeychain.save(sessionKey: sk, orgId: org) {
+        guard CredentialValidator.isValidSessionKey(sk) else {
+            connectionStatus = "Error: invalid session key format"
+            return
+        }
+        guard let normalizedOrg = CredentialValidator.normalizedOrgId(org) else {
+            connectionStatus = "Error: org ID must be a valid UUID"
+            return
+        }
+        if ClaudeAIKeychain.save(sessionKey: sk, orgId: normalizedOrg) {
             sessionKey = ""
             isConnected = true
             connectionStatus = ""

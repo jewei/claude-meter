@@ -17,6 +17,12 @@ final class AppState: ObservableObject {
     private(set) var storeDirectory: URL = FileManager.default.temporaryDirectory
     private var pollTask: Task<Void, Never>?
     private var backoffSeconds: Double = 0
+    private var pipelineGeneration = 0
+    private var refreshPending = false
+
+    var primarySourceWarning: String? {
+        lastPollResult?.warnings.first { $0.field == "claude.ai API" }?.message
+    }
 
     private static func makeStore() -> SnapshotStore {
         if let shared = try? SnapshotStore.appGroup(suiteName: AppGroupConfig.suiteName) {
@@ -83,6 +89,10 @@ final class AppState: ObservableObject {
     }
 
     func refreshNow() {
+        if isLoading {
+            refreshPending = true
+            return
+        }
         Task { await poll() }
     }
 
@@ -102,6 +112,7 @@ final class AppState: ObservableObject {
     }
 
     func rebuildPipeline() {
+        pipelineGeneration += 1
         let store = AppState.makeStore()
         storeDirectory = store.directory
         historyStore = try? HistoryStore(
@@ -135,12 +146,24 @@ final class AppState: ObservableObject {
     }
 
     private func poll() async {
-        guard !isLoading else { return }
+        let generation = pipelineGeneration
+        guard !isLoading else {
+            refreshPending = true
+            return
+        }
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            isLoading = false
+            if refreshPending {
+                refreshPending = false
+                Task { await poll() }
+            }
+        }
 
         do {
             let result = try await pipeline.poll(now: Date())
+            guard generation == pipelineGeneration else { return }
+
             lastPollResult = result
 
             if result.isFatal {
@@ -163,16 +186,34 @@ final class AppState: ObservableObject {
                 await notificationEngine.process(
                     snapshot: snap,
                     previous: previous,
-                    isStale: false
+                    isStale: isStale || snap.state.isStale
                 )
-                WidgetCenter.shared.reloadAllTimelines()
+                if shouldReloadWidget(previous: previous, current: snap) {
+                    WidgetCenter.shared.reloadAllTimelines()
+                }
             }
-            lastError = nil
+
+            if let apiWarning = result.warnings.first(where: { $0.field == "claude.ai API" }) {
+                lastError = apiWarning.message
+            } else {
+                lastError = nil
+            }
             backoffSeconds = 0
         } catch {
-            lastError = String(describing: error)
+            guard generation == pipelineGeneration else { return }
+            lastError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             applyBackoff()
         }
+    }
+
+    private func shouldReloadWidget(
+        previous: ClaudeUsageSnapshot?,
+        current: ClaudeUsageSnapshot
+    ) -> Bool {
+        guard let previous else { return true }
+        return previous.limits != current.limits
+            || previous.state.severity != current.state.severity
+            || previous.lastSuccessfulPollAt != current.lastSuccessfulPollAt
     }
 
     private func applyBackoff() {
@@ -182,10 +223,16 @@ final class AppState: ObservableObject {
     // MARK: - Pipeline factory
 
     private static func makePipeline(store: SnapshotStore) -> any ClaudeMeterPipeline {
-        let statsPipeline = StatsCachePipeline(store: store)
+        let thresholds = AppGroupConfig.currentThresholds()
+        let statsPipeline = StatsCachePipeline(store: store, thresholds: thresholds)
         if let creds = ClaudeAIKeychain.load() {
             let client = ClaudeAIUsageClient(sessionKey: creds.sessionKey, orgId: creds.orgId)
-            return ClaudeAIPipeline(client: client, store: store, fallback: statsPipeline)
+            return ClaudeAIPipeline(
+                client: client,
+                store: store,
+                fallback: statsPipeline,
+                thresholds: thresholds
+            )
         }
         return statsPipeline
     }

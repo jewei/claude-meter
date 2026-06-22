@@ -8,31 +8,38 @@ public struct StatsCachePipeline: Sendable {
     public let store: SnapshotStore
     public let dailyMessageLimit: Int?
     public let weeklyMessageLimit: Int?
+    public let thresholds: UsageThresholds
 
     public init(
         reader: StatsCacheReader = StatsCacheReader(),
         journal: JournalReader = JournalReader(),
         store: SnapshotStore,
         dailyMessageLimit: Int? = nil,
-        weeklyMessageLimit: Int? = nil
+        weeklyMessageLimit: Int? = nil,
+        thresholds: UsageThresholds = .default
     ) {
         self.reader = reader
         self.journal = journal
         self.store = store
         self.dailyMessageLimit = dailyMessageLimit
         self.weeklyMessageLimit = weeklyMessageLimit
+        self.thresholds = thresholds
     }
 
     public func poll(now: Date = Date()) async throws -> ParseResult {
+        try await poll(now: now, journalCounts: nil)
+    }
+
+    public func poll(now: Date = Date(), journalCounts: [String: Int]?) async throws -> ParseResult {
         do {
-            // Journal (JSONL) gives real-time counts for recent days
-            let journalCounts = journal.messageCounts(daysBack: 7, now: now)
+            let counts = journalCounts ?? journal.messageCounts(daysBack: 7, now: now)
 
             var snapshot = try reader.read(
                 dailyMessageLimit: dailyMessageLimit,
                 weeklyMessageLimit: weeklyMessageLimit,
-                supplementalCounts: journalCounts,
-                now: now
+                supplementalCounts: counts,
+                now: now,
+                thresholds: thresholds
             )
             snapshot.lastSuccessfulPollAt = now
             try store.writeLatest(snapshot)
@@ -45,7 +52,8 @@ public struct StatsCachePipeline: Sendable {
                 parserVersion: "stats-cache-1.0"
             )
         } catch {
-            try? store.writeLastError(LastErrorRecord(occurredAt: now, message: String(describing: error)))
+            let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            try? store.writeLastError(LastErrorRecord(occurredAt: now, message: message))
             throw error
         }
     }

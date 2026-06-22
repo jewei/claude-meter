@@ -4,12 +4,14 @@ import ClaudeMeterCore
 /// Posts local notifications when session or weekly usage crosses severity thresholds.
 ///
 /// Deduplication: one notification per (scope, level, reset-window). The fired state is
-/// stored in UserDefaults, keyed by the window's `resetsAt` epoch seconds, so notifications
-/// are not repeated across app relaunches within the same reset window. Expired keys are
-/// pruned when the reset time passes.
+/// stored in UserDefaults under a dedicated key array, keyed by the window's `resetsAt`
+/// epoch seconds, so notifications are not repeated across app relaunches within the
+/// same reset window. Expired keys are pruned when the reset time passes.
 actor NotificationEngine {
     private let center = UNUserNotificationCenter.current()
     private let defaults: UserDefaults
+
+    private static let firedKeysStorageKey = "com.claudemeter.notif.firedKeys"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -41,13 +43,13 @@ actor NotificationEngine {
         )
 
         for trigger in pending {
-            deliver(trigger: trigger, snapshot: snapshot)
+            await deliver(trigger: trigger, snapshot: snapshot)
         }
     }
 
     // MARK: - Delivery
 
-    private func deliver(trigger: NotificationTrigger, snapshot: ClaudeUsageSnapshot) {
+    private func deliver(trigger: NotificationTrigger, snapshot: ClaudeUsageSnapshot) async {
         let window = trigger.scope == "session"
             ? snapshot.limits.currentSession
             : snapshot.limits.currentWeekAllModels
@@ -61,12 +63,12 @@ actor NotificationEngine {
 
         if trigger.level == "critical" {
             guard !hasFired(key: key) else { return }
-            post(
+            let delivered = await post(
                 id: key,
                 title: "\(label) limit nearly reached — \(pct)",
                 body: "Resets \(resetDescription(trigger.resetAt))."
             )
-            markFired(key: key)
+            if delivered { markFired(key: key) }
         } else if trigger.level == "warning" {
             let criticalKey = NotificationPolicy.dedupKey(
                 scope: trigger.scope,
@@ -74,39 +76,51 @@ actor NotificationEngine {
                 resetAt: trigger.resetAt
             )
             guard !hasFired(key: key), !hasFired(key: criticalKey) else { return }
-            post(
+            let delivered = await post(
                 id: key,
                 title: "\(label) usage high — \(pct)",
                 body: "Resets \(resetDescription(trigger.resetAt))."
             )
-            markFired(key: key)
+            if delivered { markFired(key: key) }
         }
     }
 
-    private func post(id: String, title: String, body: String) {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        content.sound = nil
-        let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
-        center.add(request) { _ in }
+    private func post(id: String, title: String, body: String) async -> Bool {
+        await withCheckedContinuation { continuation in
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            content.sound = nil
+            let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
+            center.add(request) { error in
+                continuation.resume(returning: error == nil)
+            }
+        }
     }
 
     // MARK: - Deduplication
 
+    private func firedKeys() -> [String] {
+        defaults.stringArray(forKey: Self.firedKeysStorageKey) ?? []
+    }
+
     private func hasFired(key: String) -> Bool {
-        defaults.bool(forKey: key)
+        firedKeys().contains(key)
     }
 
     private func markFired(key: String) {
-        defaults.set(true, forKey: key)
+        var keys = firedKeys()
+        guard !keys.contains(key) else { return }
+        keys.append(key)
+        defaults.set(keys, forKey: Self.firedKeysStorageKey)
     }
 
     private func pruneExpiredKeys() {
-        let allKeys = defaults.dictionaryRepresentation().keys.map { String($0) }
-        for key in NotificationPolicy.expiredDedupKeys(in: allKeys) {
-            defaults.removeObject(forKey: key)
-        }
+        let expired = NotificationPolicy.expiredDedupKeys(in: firedKeys())
+        guard !expired.isEmpty else { return }
+        let expiredSet = Set(expired)
+        let remaining = firedKeys().filter { !expiredSet.contains($0) }
+        defaults.set(remaining, forKey: Self.firedKeysStorageKey)
     }
 
     // MARK: - Settings

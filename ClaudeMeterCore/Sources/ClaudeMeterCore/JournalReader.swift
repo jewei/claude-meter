@@ -11,10 +11,16 @@ public struct JournalReader: Sendable {
             .appendingPathComponent(".claude/projects")
     }
 
-    public let projectsPath: URL
+    /// Maximum JSONL file size to scan in full; larger files are tail-read from the end.
+    private static let maxFullReadBytes: UInt64 = 8 * 1024 * 1024
+    private static let tailReadBytes: UInt64 = 512 * 1024
 
-    public init(projectsPath: URL? = nil) {
+    public let projectsPath: URL
+    private let cache: JournalCache
+
+    public init(projectsPath: URL? = nil, cache: JournalCache = .shared) {
         self.projectsPath = projectsPath ?? JournalReader.defaultProjectsPath
+        self.cache = cache
     }
 
     /// Returns a dict of local-date-string → assistant message count for all days
@@ -40,7 +46,7 @@ public struct JournalReader: Sendable {
                   isDir.boolValue else { continue }
             guard let jsonlFiles = try? fm.contentsOfDirectory(
                 at: projectDir,
-                includingPropertiesForKeys: [.contentModificationDateKey],
+                includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
                 options: [.skipsHiddenFiles]
             ) else { continue }
             for jsonlFile in jsonlFiles {
@@ -48,7 +54,25 @@ public struct JournalReader: Sendable {
                 guard let attrs = try? fm.attributesOfItem(atPath: jsonlFile.path),
                       let modDate = attrs[.modificationDate] as? Date,
                       modDate >= cutoff else { continue }
-                countEntries(in: jsonlFile, since: cutoff, into: &byDay)
+                let fileSize = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
+                if let cached = cache.cachedCounts(
+                    for: jsonlFile.path,
+                    modDate: modDate,
+                    fileSize: fileSize,
+                    cutoff: cutoff
+                ) {
+                    merge(cached, into: &byDay)
+                    continue
+                }
+                var fileCounts: [String: Int] = [:]
+                countEntries(in: jsonlFile, fileSize: fileSize, since: cutoff, into: &fileCounts)
+                cache.store(
+                    path: jsonlFile.path,
+                    modDate: modDate,
+                    fileSize: fileSize,
+                    counts: fileCounts
+                )
+                merge(fileCounts, into: &byDay)
             }
         }
         return byDay
@@ -56,18 +80,38 @@ public struct JournalReader: Sendable {
 
     // MARK: - Private helpers
 
+    private func merge(_ source: [String: Int], into destination: inout [String: Int]) {
+        for (day, count) in source {
+            destination[day, default: 0] += count
+        }
+    }
+
     private func countEntries(
         in url: URL,
+        fileSize: UInt64,
         since cutoff: Date,
         into counts: inout [String: Int]
     ) {
-        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return }
-        for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
-            // Cheap pre-filter: skip lines that can't be "assistant" entries with timestamps
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return }
+        defer { try? handle.close() }
+
+        let readFrom: UInt64
+        if fileSize > Self.maxFullReadBytes {
+            readFrom = fileSize > Self.tailReadBytes ? fileSize - Self.tailReadBytes : 0
+        } else {
+            readFrom = 0
+        }
+        if readFrom > 0 {
+            try? handle.seek(toOffset: readFrom)
+        }
+        guard let data = try? handle.readToEnd(), !data.isEmpty else { return }
+        let text = String(decoding: data, as: UTF8.self)
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
+        let startIndex = readFrom > 0 ? 1 : 0
+        for line in lines.dropFirst(startIndex) {
             guard line.contains("\"assistant\""), line.contains("\"timestamp\"") else { continue }
-            guard let data = line.data(using: .utf8),
-                  let entry = try? JSONDecoder().decode(JournalEntry.self, from: data),
-                  entry.type == "assistant",
+            guard let entry = parseJournalLine(line) else { continue }
+            guard entry.type == "assistant",
                   let tsStr = entry.timestamp,
                   let date = Self.parseTimestamp(tsStr),
                   date >= cutoff else { continue }
@@ -76,28 +120,80 @@ public struct JournalReader: Sendable {
         }
     }
 
-    nonisolated(unsafe) private static let tsFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone(secondsFromGMT: 0)
-        return f
-    }()
-
-    nonisolated(unsafe) private static let dayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        // Uses current timezone — matches how we display dates to the user
-        return f
-    }()
+    private func parseJournalLine(_ line: Substring) -> JournalEntry? {
+        guard let data = line.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(JournalEntry.self, from: data)
+    }
 
     static func parseTimestamp(_ str: String) -> Date? {
-        tsFormatter.date(from: str)
+        let formats = [
+            "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
+            "yyyy-MM-dd'T'HH:mm:ssZ",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX",
+            "yyyy-MM-dd'T'HH:mm:ssXXXXX",
+        ]
+        for format in formats {
+            let f = DateFormatter()
+            f.dateFormat = format
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.timeZone = TimeZone(secondsFromGMT: 0)
+            if let date = f.date(from: str) { return date }
+        }
+        return nil
     }
 
     static func dayString(from date: Date) -> String {
-        dayFormatter.string(from: date)
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f.string(from: date)
+    }
+}
+
+// MARK: - Incremental cache
+
+public final class JournalCache: @unchecked Sendable {
+    public static let shared = JournalCache()
+
+    private struct Entry {
+        let modDate: Date
+        let fileSize: UInt64
+        let counts: [String: Int]
+    }
+
+    private let lock = NSLock()
+    private var entries: [String: Entry] = [:]
+
+    public init() {}
+
+    func cachedCounts(
+        for path: String,
+        modDate: Date,
+        fileSize: UInt64,
+        cutoff: Date
+    ) -> [String: Int]? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let entry = entries[path],
+              entry.modDate == modDate,
+              entry.fileSize == fileSize else { return nil }
+        return entry.counts.filter { day, _ in
+            guard let dayDate = JournalCache.parseDay(day) else { return false }
+            return dayDate >= cutoff
+        }
+    }
+
+    func store(path: String, modDate: Date, fileSize: UInt64, counts: [String: Int]) {
+        lock.lock()
+        entries[path] = Entry(modDate: modDate, fileSize: fileSize, counts: counts)
+        lock.unlock()
+    }
+
+    static func parseDay(_ string: String) -> Date? {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f.date(from: string)
     }
 }
 

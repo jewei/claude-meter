@@ -153,12 +153,14 @@ private struct SmallWidgetView: View {
                 WindowRow(
                     label: "SESSION",
                     window: snap.limits.currentSession,
-                    thresholds: entry.thresholds
+                    thresholds: entry.thresholds,
+                    referenceDate: entry.date
                 )
                 WindowRow(
                     label: "WEEK",
                     window: snap.limits.currentWeekAllModels,
-                    thresholds: entry.thresholds
+                    thresholds: entry.thresholds,
+                    referenceDate: entry.date
                 )
             } else {
                 noDataView
@@ -195,13 +197,15 @@ private struct MediumWidgetView: View {
                 WindowRow(
                     label: "SESSION",
                     window: snap.limits.currentSession,
-                    thresholds: entry.thresholds
+                    thresholds: entry.thresholds,
+                    referenceDate: entry.date
                 )
                 Divider().opacity(0.2)
                 WindowRow(
                     label: "WEEK (ALL MODELS)",
                     window: snap.limits.currentWeekAllModels,
-                    thresholds: entry.thresholds
+                    thresholds: entry.thresholds,
+                    referenceDate: entry.date
                 )
             }
             .padding()
@@ -246,13 +250,15 @@ private struct LargeWidgetView: View {
                 WindowRow(
                     label: "SESSION",
                     window: snap.limits.currentSession,
-                    thresholds: entry.thresholds
+                    thresholds: entry.thresholds,
+                    referenceDate: entry.date
                 )
                 Divider().opacity(0.2)
                 WindowRow(
                     label: "WEEK (ALL MODELS)",
                     window: snap.limits.currentWeekAllModels,
-                    thresholds: entry.thresholds
+                    thresholds: entry.thresholds,
+                    referenceDate: entry.date
                 )
 
             } else {
@@ -316,6 +322,7 @@ private struct WindowRow: View {
     let label: String
     let window: LimitWindow
     let thresholds: UsageThresholds
+    let referenceDate: Date
 
     private var fraction: Double {
         (window.clampedPercent ?? 0) / 100
@@ -348,9 +355,10 @@ private struct WindowRow: View {
 
     private var resetText: String {
         guard let date = window.resetsAt else {
+            if window.rawResetText == "rolling 7 days" { return "Last 7 days" }
             return window.rawResetText.map { "Resets \($0)" } ?? "—"
         }
-        let diff = date.timeIntervalSince(Date())
+        let diff = date.timeIntervalSince(referenceDate)
         if diff <= 0 { return "Resetting…" }
         let h = Int(diff / 3600)
         let m = Int(diff.truncatingRemainder(dividingBy: 3600) / 60)

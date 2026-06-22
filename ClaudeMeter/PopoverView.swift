@@ -148,7 +148,10 @@ struct PopoverView: View {
     @ViewBuilder
     private func usageState(_ snap: ClaudeUsageSnapshot) -> some View {
         VStack(spacing: 0) {
-            if appState.lastError != nil {
+            if let apiWarning = appState.primarySourceWarning {
+                apiDegradedNotice(apiWarning)
+                Divider().opacity(0.1)
+            } else if appState.lastError != nil {
                 pollErrorNotice
                 Divider().opacity(0.1)
             }
@@ -180,7 +183,22 @@ struct PopoverView: View {
                 .font(.system(size: 11))
             Text(pollErrorText)
                 .font(.system(size: 12))
-                .lineLimit(2)
+                .lineLimit(3)
+        }
+        .foregroundStyle(Color.cmWarning)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 7)
+        .background(Color.cmWarning.opacity(0.08))
+    }
+
+    private func apiDegradedNotice(_ message: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 11))
+            Text(message)
+                .font(.system(size: 12))
+                .lineLimit(3)
         }
         .foregroundStyle(Color.cmWarning)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -191,6 +209,10 @@ struct PopoverView: View {
 
     private var pollErrorText: String {
         let err = appState.lastError ?? ""
+        if err.localizedCaseInsensitiveContains("session expired")
+            || err.localizedCaseInsensitiveContains("session key") {
+            return err
+        }
         if err.contains("Stats cache not found") {
             return "Stats cache missing — use Claude Code to generate it"
         }
@@ -290,6 +312,10 @@ struct PopoverView: View {
 
     private var errorTitle: String {
         let err = appState.lastError ?? ""
+        if err.localizedCaseInsensitiveContains("session expired")
+            || err.localizedCaseInsensitiveContains("session key") {
+            return "Session expired"
+        }
         if err.contains("Stats cache not found") { return "Stats cache not found" }
         if err.contains("decode") || err.contains("data couldn't be read") {
             return "Could not read stats cache"
@@ -299,8 +325,12 @@ struct PopoverView: View {
 
     private var errorHint: String? {
         let err = appState.lastError ?? ""
+        if err.localizedCaseInsensitiveContains("session expired")
+            || err.localizedCaseInsensitiveContains("session key") {
+            return "Update your session key and org ID in Settings → Data."
+        }
         if err.contains("Stats cache not found") {
-            return "Use Claude Code in a terminal to generate ~/.claude/stats-cache.json"
+            return "Connect claude.ai in Settings, or use Claude Code to generate ~/.claude/stats-cache.json"
         }
         if err.contains("decode") {
             return "Check Diagnostics for details."
@@ -308,7 +338,11 @@ struct PopoverView: View {
         return nil
     }
 
-    private var shouldOfferSettings: Bool { false }
+    private var shouldOfferSettings: Bool {
+        let err = appState.lastError ?? ""
+        return err.localizedCaseInsensitiveContains("session")
+            || err.localizedCaseInsensitiveContains("session key")
+    }
 }
 
 // MARK: - First-run onboarding
@@ -317,6 +351,10 @@ struct OnboardingView: View {
     @Binding var hasCompletedOnboarding: Bool
     @Environment(\.openSettings) private var openSettings
     @Environment(\.dismiss) private var dismiss
+
+    private var isAPIConnected: Bool {
+        ClaudeAIKeychain.load() != nil
+    }
 
     private var cacheExists: Bool {
         FileManager.default.fileExists(atPath: StatsCacheReader.defaultPath.path)
@@ -331,23 +369,30 @@ struct OnboardingView: View {
             Text("Welcome to Claude Meter")
                 .font(.title2.bold())
 
-            if cacheExists {
-                Text("Found your Claude usage stats at:")
+            if isAPIConnected {
+                Text("Connected to claude.ai for exact usage percentages.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                Text("~/.claude/stats-cache.json")
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-                Text("To show usage percentages, set your plan's daily and weekly message limits in Settings → Data.")
+                    .multilineTextAlignment(.center)
+                Text("Message counts from your Claude Code journal supplement the display.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            } else if cacheExists {
+                Text("Using Claude Code stats at ~/.claude/stats-cache.json")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Text("For exact usage percentages, connect your claude.ai session in Settings → Data.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             } else {
-                Text("Stats cache not found at ~/.claude/stats-cache.json")
+                Text("No usage data found yet.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                Text("Use Claude Code in a terminal first to generate it, then reopen Claude Meter.")
+                Text("Connect claude.ai in Settings → Data, or use Claude Code in a terminal first.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

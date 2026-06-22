@@ -26,7 +26,8 @@ public struct StatsCacheReader: Sendable {
         dailyMessageLimit: Int? = nil,
         weeklyMessageLimit: Int? = nil,
         supplementalCounts: [String: Int] = [:],
-        now: Date = Date()
+        now: Date = Date(),
+        thresholds: UsageThresholds = .default
     ) throws -> ClaudeUsageSnapshot {
         // Load stats-cache if available; gracefully degrade if missing
         var cacheActivity: [String: Int] = [:]
@@ -53,7 +54,8 @@ public struct StatsCacheReader: Sendable {
             supplementalCounts: supplementalCounts,
             dailyMessageLimit: dailyMessageLimit,
             weeklyMessageLimit: weeklyMessageLimit,
-            now: now
+            now: now,
+            thresholds: thresholds
         )
     }
 
@@ -63,7 +65,8 @@ public struct StatsCacheReader: Sendable {
         supplementalCounts: [String: Int],
         dailyMessageLimit: Int?,
         weeklyMessageLimit: Int?,
-        now: Date
+        now: Date,
+        thresholds: UsageThresholds
     ) -> ClaudeUsageSnapshot {
         let cal = Calendar.current
         let todayStr = Self.dayString(from: now)
@@ -111,11 +114,11 @@ public struct StatsCacheReader: Sendable {
         )
         let weekWindow = LimitWindow(
             percentUsed: weekPct,
-            resetsAt: tomorrowMidnight,
+            resetsAt: nil,
+            rawResetText: "rolling 7 days",
             rawValueText: "\(weekMessages) msgs"
         )
 
-        let thresholds = UsageThresholds.default
         let severity = UsageSeverity.highest(
             thresholds.severity(for: todayPct),
             thresholds.severity(for: weekPct)
@@ -125,7 +128,7 @@ public struct StatsCacheReader: Sendable {
             parserVersion: "stats-cache-1.0",
             createdAt: now,
             lastSuccessfulPollAt: now,
-            source: SourceInfo(cliPath: path.path, command: "stats-cache+journal"),
+            source: SourceInfo(cliPath: DiagnosticsSanitizer.sanitize(path.path), command: "stats-cache+journal"),
             session: SessionInfo(activeModel: primaryModel),
             limits: LimitInfo(currentSession: todayWindow, currentWeekAllModels: weekWindow),
             models: modelUsages,
@@ -135,19 +138,18 @@ public struct StatsCacheReader: Sendable {
 
     // MARK: - Date helpers
 
-    nonisolated(unsafe) private static let dayFormatter: DateFormatter = {
+    static func dayString(from date: Date) -> String {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
         f.locale = Locale(identifier: "en_US_POSIX")
-        return f
-    }()
-
-    static func dayString(from date: Date) -> String {
-        dayFormatter.string(from: date)
+        return f.string(from: date)
     }
 
     static func parseDay(_ string: String) -> Date? {
-        dayFormatter.date(from: string)
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f.date(from: string)
     }
 }
 
@@ -158,7 +160,7 @@ public enum StatsCacheError: Error, LocalizedError, CustomStringConvertible {
 
     public var errorDescription: String? {
         switch self {
-        case .fileNotFound(let p): return "Stats cache not found at \(p)"
+        case .fileNotFound(let p): return "Stats cache not found at \(DiagnosticsSanitizer.sanitize(p))"
         }
     }
 

@@ -1,33 +1,6 @@
 import SwiftUI
 import ClaudeMeterCore
 
-/// Redacts sensitive identifiers from diagnostics text per SPECS §16.4.
-enum DiagnosticsSanitizer {
-    private static let emailPattern = #"[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#
-    private static let homePathPattern = #"/Users/[^/\s]+"#
-    private static let labeledFieldPattern = #"(?mi)^(Session name|Organization|Cwd|Email|Session id):\s*.+$"#
-
-    static func sanitize(_ text: String) -> String {
-        var result = text
-        result = result.replacingOccurrences(
-            of: emailPattern,
-            with: "[redacted]",
-            options: .regularExpression
-        )
-        result = result.replacingOccurrences(
-            of: homePathPattern,
-            with: "/Users/[redacted]",
-            options: .regularExpression
-        )
-        result = result.replacingOccurrences(
-            of: labeledFieldPattern,
-            with: "$1: [redacted]",
-            options: .regularExpression
-        )
-        return result
-    }
-}
-
 struct DiagnosticsView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
@@ -79,7 +52,7 @@ struct DiagnosticsView: View {
         Section("Data Source") {
             LabeledContent("Mode", value: ClaudeAIKeychain.load() != nil ? "claude.ai API" : "Stats cache + journal")
             if let snap = appState.snapshot {
-                LabeledContent("Source", value: snap.source.command)
+                LabeledContent("Source", value: DiagnosticsSanitizer.sanitize(snap.source.command))
                 LabeledContent("Parser", value: snap.parserVersion)
             }
         }
@@ -113,7 +86,7 @@ struct DiagnosticsView: View {
         Section("History") {
             if appState.historyStore != nil {
                 LabeledContent("Records", value: historyRecordCount.map { "\($0)" } ?? "…")
-                LabeledContent("Store", value: appState.storeDirectory.path)
+                LabeledContent("Store", value: DiagnosticsSanitizer.sanitize(appState.storeDirectory.path))
             } else {
                 LabeledContent("Status", value: "Unavailable")
             }
@@ -180,7 +153,7 @@ struct DiagnosticsView: View {
                 "  Parser version: \(snap.parserVersion)",
                 "  Created: \(isoFormatter.string(from: snap.createdAt))",
             ]
-            lines.append("  Source: \(snap.source.command)")
+            lines.append("  Source: \(DiagnosticsSanitizer.sanitize(snap.source.command))")
             lines.append("")
         }
 

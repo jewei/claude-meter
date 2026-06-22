@@ -1,5 +1,6 @@
 import SwiftUI
 import ServiceManagement
+import AppKit
 import ClaudeMeterCore
 
 struct SettingsView: View {
@@ -193,13 +194,23 @@ private struct DisplaySettingsTab: View {
                             .frame(width: 36, alignment: .trailing)
                     }
                 }
-                Text("Threshold changes take effect on the next poll.")
+                Text("Threshold changes apply immediately to display and notifications.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .padding()
+        .onChange(of: warningThresholdPercent) { _, newWarning in
+            if criticalThresholdPercent <= newWarning {
+                criticalThresholdPercent = min(100, newWarning + 5)
+            }
+        }
+        .onChange(of: criticalThresholdPercent) { _, newCritical in
+            if newCritical <= warningThresholdPercent {
+                criticalThresholdPercent = min(100, warningThresholdPercent + 5)
+            }
+        }
     }
 }
 
@@ -252,6 +263,7 @@ private struct AdvancedSettingsTab: View {
             Section("App") {
                 Toggle("Launch at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, newValue in applyLaunchAtLogin(newValue) }
+                    .onAppear { syncLaunchAtLoginFromSystem() }
             }
 
             Section("Diagnostics") {
@@ -278,6 +290,13 @@ private struct AdvancedSettingsTab: View {
             try? SMAppService.mainApp.register()
         } else {
             try? SMAppService.mainApp.unregister()
+        }
+    }
+
+    private func syncLaunchAtLoginFromSystem() {
+        let enabled = SMAppService.mainApp.status == .enabled
+        if launchAtLogin != enabled {
+            launchAtLogin = enabled
         }
     }
 }

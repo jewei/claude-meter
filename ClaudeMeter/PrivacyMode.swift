@@ -31,8 +31,16 @@ enum PrivacyMode: String, CaseIterable, Identifiable {
         self == .full || self == .workSafe
     }
 
-    // Whether session name would be shown (once popover exposes it)
+    // Whether session name should be visible (full and work-safe per SPECS §13.1)
     var showsSessionName: Bool {
+        self == .full || self == .workSafe
+    }
+
+    var showsAccountInfo: Bool {
+        self == .full
+    }
+
+    var showsCwd: Bool {
         self == .full
     }
 }

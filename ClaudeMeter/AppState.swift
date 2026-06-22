@@ -88,7 +88,22 @@ final class AppState: ObservableObject {
     }
 
     var severity: UsageSeverity {
-        snapshot?.state.severity ?? .unknown
+        guard let snap = snapshot else { return .unknown }
+        let thresholds = Self.currentThresholds()
+        return UsageSeverity.highest(
+            thresholds.severity(for: snap.limits.currentSession.percentUsed),
+            thresholds.severity(for: snap.limits.currentWeekAllModels.percentUsed)
+        )
+    }
+
+    static func currentThresholds() -> UsageThresholds {
+        let ud = UserDefaults.standard
+        let warning = ud.double(forKey: "warningThresholdPercent").positive ?? 80
+        let critical = ud.double(forKey: "criticalThresholdPercent").positive ?? 95
+        return UsageThresholds(
+            warning: warning,
+            critical: max(critical, warning + 1)
+        )
     }
 
     private func poll() async {

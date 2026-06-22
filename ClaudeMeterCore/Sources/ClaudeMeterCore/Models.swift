@@ -233,22 +233,42 @@ public enum SnapshotStatus: String, Codable, Equatable, Sendable {
     case unknownError
 }
 
-public enum UsageSeverity: String, Codable, Equatable, Sendable {
-    case normal     // < 80%
-    case warning    // 80 ..< 95%
-    case critical   // 95 ... 100%
-    case overLimit  // > 100%
-    case unknown
+/// Configurable warning/critical bands for usage severity and notifications.
+public struct UsageThresholds: Sendable, Equatable {
+    public var warning: Double
+    public var critical: Double
 
-    public static func from(percent: Double?) -> UsageSeverity {
+    public init(warning: Double = 80, critical: Double = 95) {
+        self.warning = warning
+        self.critical = critical
+    }
+
+    public static let `default` = UsageThresholds()
+
+    public func severity(for percent: Double?) -> UsageSeverity {
         guard let p = percent else { return .unknown }
         switch p {
         case ..<0: return .unknown
-        case ..<80: return .normal
-        case ..<95: return .warning
+        case ..<warning: return .normal
+        case ..<critical: return .warning
         case ...100: return .critical
         default: return .overLimit
         }
+    }
+}
+
+public enum UsageSeverity: String, Codable, Equatable, Sendable {
+    case normal
+    case warning
+    case critical
+    case overLimit
+    case unknown
+
+    public static func from(
+        percent: Double?,
+        thresholds: UsageThresholds = .default
+    ) -> UsageSeverity {
+        thresholds.severity(for: percent)
     }
 
     public static func highest(_ a: UsageSeverity, _ b: UsageSeverity) -> UsageSeverity {

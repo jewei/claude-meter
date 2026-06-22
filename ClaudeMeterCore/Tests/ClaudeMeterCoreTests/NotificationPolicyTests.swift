@@ -25,6 +25,20 @@ struct NotificationPolicyTests {
         )
     }
 
+    @Test("Custom thresholds shift warning crossing")
+    func customThresholds() {
+        let thresholds = UsageThresholds(warning: 70, critical: 90)
+        let previous = snapshot(session: 65)
+        let current = snapshot(session: 75)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current,
+            previous: previous,
+            thresholds: thresholds,
+            now: fixedNow
+        )
+        #expect(triggers.contains { $0.scope == "session" && $0.level == "warning" })
+    }
+
     @Test("Fires warning when crossing from normal to warning")
     func warningCrossing() {
         let previous = snapshot(session: 75)

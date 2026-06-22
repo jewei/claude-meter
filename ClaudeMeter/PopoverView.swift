@@ -5,7 +5,13 @@ struct PopoverView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.openSettings) private var openSettings
     @AppStorage("privacyMode") private var privacyMode: PrivacyMode = .workSafe
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @State private var now = Date()
+    @State private var showOnboarding = false
+
+    private var usageThresholds: UsageThresholds {
+        AppState.currentThresholds()
+    }
 
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -22,6 +28,14 @@ struct PopoverView: View {
         }
         .background(.ultraThinMaterial)
         .onReceive(ticker) { now = $0 }
+        .onAppear {
+            if !hasCompletedOnboarding {
+                showOnboarding = true
+            }
+        }
+        .sheet(isPresented: $showOnboarding) {
+            OnboardingView(hasCompletedOnboarding: $hasCompletedOnboarding)
+        }
     }
 
     // MARK: - Header
@@ -95,6 +109,9 @@ struct PopoverView: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+            Button("Open Settings") { openSettings() }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 28)
@@ -113,6 +130,11 @@ struct PopoverView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+            }
+            if shouldOfferSettings {
+                Button("Open Settings") { openSettings() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
             }
         }
         .frame(maxWidth: .infinity)
@@ -134,14 +156,17 @@ struct PopoverView: View {
             UsageCardView(
                 label: "SESSION",
                 window: snap.limits.currentSession,
-                now: now
+                now: now,
+                thresholds: usageThresholds
             )
             Divider().opacity(0.1).padding(.horizontal, 16)
             UsageCardView(
                 label: "WEEK (ALL MODELS)",
                 window: snap.limits.currentWeekAllModels,
-                now: now
+                now: now,
+                thresholds: usageThresholds
             )
+            identifierRows(snap)
             if privacyMode.showsModel, let model = snap.session?.activeModel {
                 Divider().opacity(0.1).padding(.horizontal, 16)
                 modelRow(model)
@@ -190,6 +215,46 @@ struct PopoverView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 7)
         .background(Color.cmWarning.opacity(0.08))
+    }
+
+    // MARK: - Identifier rows (privacy-gated)
+
+    @ViewBuilder
+    private func identifierRows(_ snap: ClaudeUsageSnapshot) -> some View {
+        if privacyMode.showsSessionName, let name = snap.session?.name {
+            Divider().opacity(0.1).padding(.horizontal, 16)
+            identifierRow(label: "Session", value: name)
+        }
+        if privacyMode.showsAccountInfo, let account = snap.account {
+            if let email = account.email {
+                Divider().opacity(0.1).padding(.horizontal, 16)
+                identifierRow(label: "Email", value: email)
+            }
+            if let org = account.organization {
+                Divider().opacity(0.1).padding(.horizontal, 16)
+                identifierRow(label: "Organization", value: org)
+            }
+        }
+        if privacyMode.showsCwd, let cwd = snap.session?.cwd {
+            Divider().opacity(0.1).padding(.horizontal, 16)
+            identifierRow(label: "Working directory", value: cwd)
+        }
+    }
+
+    private func identifierRow(label: String, value: String) -> some View {
+        HStack(alignment: .top) {
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     // MARK: - Model row
@@ -263,6 +328,57 @@ struct PopoverView: View {
             return "Check Diagnostics for parser details."
         }
         return nil
+    }
+
+    private var shouldOfferSettings: Bool {
+        let err = appState.lastError ?? ""
+        return err.contains("cliNotFound")
+    }
+}
+
+// MARK: - First-run onboarding
+
+struct OnboardingView: View {
+    @Binding var hasCompletedOnboarding: Bool
+    @Environment(\.openSettings) private var openSettings
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "gauge.with.dots.needle.33percent")
+                .font(.system(size: 40))
+                .foregroundStyle(Color.cmNormal)
+
+            Text("Welcome to Claude Meter")
+                .font(.title2.bold())
+
+            if let path = CLIPathDetector.detect() {
+                Text("Found the Claude CLI at:")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text(path)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+            } else {
+                Text("The Claude CLI was not found on your PATH. Open Settings to set the binary path manually.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            HStack(spacing: 12) {
+                Button("Open Settings") { openSettings() }
+                Button("Continue") { finish() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(32)
+        .frame(width: 420)
+    }
+
+    private func finish() {
+        hasCompletedOnboarding = true
+        dismiss()
     }
 }
 

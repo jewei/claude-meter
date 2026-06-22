@@ -33,7 +33,12 @@ actor NotificationEngine {
         guard !isStale, isEnabled(), await isAuthorized() else { return }
 
         pruneExpiredKeys()
-        let pending = NotificationPolicy.triggers(snapshot: snapshot, previous: previous)
+        let thresholds = Self.thresholds(from: defaults)
+        let pending = NotificationPolicy.triggers(
+            snapshot: snapshot,
+            previous: previous,
+            thresholds: thresholds
+        )
 
         for trigger in pending {
             deliver(trigger: trigger, snapshot: snapshot)
@@ -111,6 +116,15 @@ actor NotificationEngine {
         return defaults.bool(forKey: "enableNotifications")
     }
 
+    private static func thresholds(from defaults: UserDefaults) -> UsageThresholds {
+        let warning = defaults.double(forKey: "warningThresholdPercent").positive ?? 80
+        let critical = defaults.double(forKey: "criticalThresholdPercent").positive ?? 95
+        return UsageThresholds(
+            warning: warning,
+            critical: max(critical, warning + 1)
+        )
+    }
+
     // MARK: - Helpers
 
     private func isAuthorized() async -> Bool {
@@ -143,4 +157,8 @@ actor NotificationEngine {
         }
         return Self.shortDateTimeFormatter.string(from: date)
     }
+}
+
+private extension Double {
+    var positive: Double? { self > 0 ? self : nil }
 }

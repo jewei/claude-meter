@@ -20,6 +20,7 @@ public enum NotificationPolicy {
     public static func triggers(
         snapshot: ClaudeUsageSnapshot,
         previous: ClaudeUsageSnapshot?,
+        thresholds: UsageThresholds = .default,
         now: Date = Date()
     ) -> [NotificationTrigger] {
         [
@@ -27,12 +28,14 @@ public enum NotificationPolicy {
                 scope: "session",
                 current: snapshot.limits.currentSession,
                 previous: previous?.limits.currentSession,
+                thresholds: thresholds,
                 now: now
             ),
             evaluate(
                 scope: "weekly",
                 current: snapshot.limits.currentWeekAllModels,
                 previous: previous?.limits.currentWeekAllModels,
+                thresholds: thresholds,
                 now: now
             ),
         ].flatMap { $0 }
@@ -61,12 +64,13 @@ public enum NotificationPolicy {
         scope: String,
         current: LimitWindow,
         previous: LimitWindow?,
+        thresholds: UsageThresholds,
         now: Date
     ) -> [NotificationTrigger] {
         guard let resetAt = current.resetsAt, resetAt > now else { return [] }
 
-        let previousSeverity = UsageSeverity.from(percent: previous?.percentUsed)
-        let currentSeverity = UsageSeverity.from(percent: current.percentUsed)
+        let previousSeverity = thresholds.severity(for: previous?.percentUsed)
+        let currentSeverity = thresholds.severity(for: current.percentUsed)
 
         var result: [NotificationTrigger] = []
 

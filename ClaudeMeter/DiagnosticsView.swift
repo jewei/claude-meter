@@ -1,6 +1,19 @@
 import SwiftUI
 import ClaudeMeterCore
 
+/// Redacts sensitive identifiers from diagnostics text per SPECS §16.4.
+enum DiagnosticsSanitizer {
+    private static let emailPattern = #"[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#
+
+    static func sanitize(_ text: String) -> String {
+        text.replacingOccurrences(
+            of: emailPattern,
+            with: "[redacted]",
+            options: .regularExpression
+        )
+    }
+}
+
 struct DiagnosticsView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
@@ -19,7 +32,7 @@ struct DiagnosticsView: View {
             Divider()
 
             HStack {
-                Button("Copy Diagnostics") {
+                Button("Copy Sanitized Diagnostics") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(diagnosticsText, forType: .string)
                     copied = true
@@ -47,6 +60,12 @@ struct DiagnosticsView: View {
         Section("CLI") {
             LabeledContent("Path", value: effectiveCLIPath)
             LabeledContent("Status", value: cliStatus)
+            if let snap = appState.snapshot {
+                if let version = snap.source.cliVersion {
+                    LabeledContent("Version", value: version)
+                }
+                LabeledContent("Last command", value: snap.source.command)
+            }
         }
     }
 
@@ -55,7 +74,7 @@ struct DiagnosticsView: View {
             LabeledContent("Time", value: lastPollTimeText)
             if let err = appState.lastError {
                 LabeledContent("Error") {
-                    Text(err)
+                    Text(DiagnosticsSanitizer.sanitize(err))
                         .foregroundStyle(Color.cmCritical)
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
@@ -78,10 +97,11 @@ struct DiagnosticsView: View {
     private var warningsSection: some View {
         if let warnings = appState.lastPollResult?.warnings, !warnings.isEmpty {
             Section("Parser Warnings (\(warnings.count))") {
-                ForEach(warnings, id: \.field) { w in
+                ForEach(Array(warnings.enumerated()), id: \.offset) { _, w in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(w.field).font(.caption.bold()).foregroundStyle(.secondary)
-                        Text(w.message).font(.system(.caption, design: .monospaced))
+                        Text(DiagnosticsSanitizer.sanitize(w.message))
+                            .font(.system(.caption, design: .monospaced))
                     }
                     .padding(.vertical, 2)
                 }
@@ -123,7 +143,7 @@ struct DiagnosticsView: View {
 
     private var diagnosticsText: String {
         var lines: [String] = [
-            "=== Claude Meter Diagnostics ===",
+            "=== Claude Meter Diagnostics (sanitized) ===",
             "Generated: \(isoFormatter.string(from: Date()))",
             "",
             "CLI",
@@ -132,7 +152,7 @@ struct DiagnosticsView: View {
             "",
             "Last Poll",
             "  Time: \(lastPollTimeText)",
-            "  Error: \(appState.lastError ?? "None")",
+            "  Error: \(DiagnosticsSanitizer.sanitize(appState.lastError ?? "None"))",
             "",
         ]
 
@@ -142,14 +162,19 @@ struct DiagnosticsView: View {
                 "  Schema version: \(snap.schemaVersion)",
                 "  Parser version: \(snap.parserVersion)",
                 "  Created: \(isoFormatter.string(from: snap.createdAt))",
-                "",
             ]
+            if let version = snap.source.cliVersion {
+                lines.append("  CLI version: \(version)")
+            }
+            lines.append("  Last command: \(snap.source.command)")
+            lines.append("")
         }
 
         if let warnings = appState.lastPollResult?.warnings, !warnings.isEmpty {
             lines.append("Parser Warnings")
             for w in warnings {
-                lines.append("  [\(w.field)] \(w.message)")
+                let msg = DiagnosticsSanitizer.sanitize(w.message)
+                lines.append("  [\(w.field)] \(msg)")
             }
             lines.append("")
         }

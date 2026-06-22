@@ -5,6 +5,7 @@ struct UsageCardView: View {
     let label: String
     let window: LimitWindow
     let now: Date
+    var thresholds: UsageThresholds = .default
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -91,7 +92,7 @@ struct UsageCardView: View {
     // MARK: - Helpers
 
     private var severity: UsageSeverity {
-        UsageSeverity.from(percent: window.percentUsed)
+        thresholds.severity(for: window.percentUsed)
     }
 
     private var severityColor: Color {

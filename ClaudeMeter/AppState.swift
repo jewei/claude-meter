@@ -11,6 +11,7 @@ final class AppState: ObservableObject {
     @Published var isPopoverOpen = false
 
     let pipeline: SnapshotPipeline
+    let notificationEngine = NotificationEngine()
     private var pollTask: Task<Void, Never>?
     private var backoffSeconds: Double = 0
 
@@ -30,6 +31,7 @@ final class AppState: ObservableObject {
             self.lastError = record.message
         }
         startPolling()
+        Task { await notificationEngine.requestAuthorizationIfNeeded() }
     }
 
     init(pipeline: SnapshotPipeline, initialSnapshot: ClaudeUsageSnapshot? = nil) {
@@ -102,6 +104,7 @@ final class AppState: ObservableObject {
 
             if let snap = result.snapshot {
                 snapshot = snap
+                await notificationEngine.process(snapshot: snap)
             }
             lastPolledAt = Date()
             lastError = nil

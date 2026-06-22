@@ -18,6 +18,7 @@ xcuserdata/
 *.dSYM.zip
 *.dSYM
 DerivedData/
+build/
 
 # Swift Package Manager
 .build/

@@ -1,4 +1,5 @@
 import SwiftUI
+import WidgetKit
 import ClaudeMeterCore
 
 @MainActor
@@ -15,9 +16,16 @@ final class AppState: ObservableObject {
     private var pollTask: Task<Void, Never>?
     private var backoffSeconds: Double = 0
 
-    init() {
-        let store = (try? SnapshotStore.applicationSupport())
+    private static let appGroupID = "group.com.claudemeter.app"
+
+    private static func makeStore() -> SnapshotStore {
+        (try? SnapshotStore.appGroup(suiteName: appGroupID))
+            ?? (try? SnapshotStore.applicationSupport())
             ?? SnapshotStore(directory: FileManager.default.temporaryDirectory)
+    }
+
+    init() {
+        let store = AppState.makeStore()
         self.pipeline = AppState.makePipeline(store: store)
         self.snapshot = try? store.readLatest()
         self.lastPolledAt = snapshot?.lastSuccessfulPollAt
@@ -81,8 +89,7 @@ final class AppState: ObservableObject {
     }
 
     func rebuildPipeline() {
-        let store = (try? SnapshotStore.applicationSupport())
-            ?? SnapshotStore(directory: FileManager.default.temporaryDirectory)
+        let store = AppState.makeStore()
         pipeline = AppState.makePipeline(store: store)
         startPolling()
     }
@@ -130,6 +137,7 @@ final class AppState: ObservableObject {
                     previous: previous,
                     isStale: false
                 )
+                WidgetCenter.shared.reloadAllTimelines()
             }
             lastPolledAt = Date()
             lastError = nil

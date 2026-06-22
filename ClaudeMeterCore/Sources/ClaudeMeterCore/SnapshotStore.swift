@@ -44,6 +44,27 @@ public struct SnapshotStore: Sendable {
         return SnapshotStore(directory: dir)
     }
 
+    /// Creates a store backed by the shared App Group container.
+    ///
+    /// Both the main app and the WidgetKit extension call this factory so they
+    /// read and write the same `current.json` file.  Returns `nil` (throws) when
+    /// the group container is unavailable — e.g. the app is unsigned or the
+    /// entitlement is missing — in which case callers fall back to
+    /// `applicationSupport()`.
+    public static func appGroup(suiteName: String) throws -> SnapshotStore {
+        guard let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: suiteName
+        ) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let dir = container.appendingPathComponent(
+            "Library/Application Support/ClaudeMeter",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return SnapshotStore(directory: dir)
+    }
+
     /// Creates a store backed by an arbitrary directory (useful for tests).
     public init(directory: URL) {
         self.directory = directory

@@ -32,19 +32,23 @@ public struct HistoryRecord: Identifiable, Codable, Sendable {
 }
 
 extension HistoryRecord {
-    public init(from snapshot: ClaudeUsageSnapshot, thresholds: UsageThresholds = .default) {
+    public init(
+        from snapshot: ClaudeUsageSnapshot,
+        thresholds: UsageThresholds = .default,
+        privacyMode: PrivacyMode = .workSafe
+    ) {
         let sev = UsageSeverity.highest(
             thresholds.severity(for: snapshot.limits.currentSession.percentUsed),
             thresholds.severity(for: snapshot.limits.currentWeekAllModels.percentUsed)
         )
         self.init(
-            createdAt: snapshot.createdAt,
+            createdAt: snapshot.lastSuccessfulPollAt ?? snapshot.createdAt,
             sessionPercent: snapshot.limits.currentSession.percentUsed,
             weekPercent: snapshot.limits.currentWeekAllModels.percentUsed,
             sessionResetsAt: snapshot.limits.currentSession.resetsAt,
             weekResetsAt: snapshot.limits.currentWeekAllModels.resetsAt,
             severity: sev.rawValue,
-            model: snapshot.session?.activeModel
+            model: privacyMode.showsModel ? snapshot.session?.activeModel : nil
         )
     }
 }

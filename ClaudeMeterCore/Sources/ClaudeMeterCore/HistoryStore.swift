@@ -5,6 +5,7 @@ public final class HistoryStore: @unchecked Sendable {
 
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "com.claudemeter.history", qos: .utility)
+    private var retentionDays: Int
 
     nonisolated(unsafe) private static let iso: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -14,7 +15,8 @@ public final class HistoryStore: @unchecked Sendable {
 
     // MARK: - Init / deinit
 
-    public init(directory: URL) throws {
+    public init(directory: URL, retentionDays: Int = 180) throws {
+        self.retentionDays = max(1, retentionDays)
         let path = directory.appendingPathComponent("history.sqlite").path
         var ptr: OpaquePointer?
         guard sqlite3_open(path, &ptr) == SQLITE_OK, let opened = ptr else {
@@ -32,7 +34,10 @@ public final class HistoryStore: @unchecked Sendable {
     // MARK: - Public write
 
     public func append(_ record: HistoryRecord) throws {
-        try synchronized { try insertRecord(record) }
+        try synchronized {
+            try insertRecord(record)
+            try pruneToRetentionCutoff()
+        }
     }
 
     // MARK: - Public read
@@ -82,6 +87,22 @@ public final class HistoryStore: @unchecked Sendable {
         return String(data: data, encoding: .utf8) ?? "[]"
     }
 
+    public func exportCSVAsync(since date: Date? = nil) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                continuation.resume(with: Result { try self.exportCSV(since: date) })
+            }
+        }
+    }
+
+    public func exportJSONAsync(since date: Date? = nil) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                continuation.resume(with: Result { try self.exportJSON(since: date) })
+            }
+        }
+    }
+
     // MARK: - Schema setup (called from init, not on queue)
 
     private func setupSchema() throws {
@@ -107,7 +128,33 @@ public final class HistoryStore: @unchecked Sendable {
                 throw HistoryStoreError.execFailed(sql)
             }
         }
-        try pruneRecords(before: Date().addingTimeInterval(-30 * 86400))
+        try pruneToRetentionCutoff()
+    }
+
+    public func setRetentionDays(_ days: Int) throws {
+        try synchronized {
+            retentionDays = max(1, days)
+            try pruneToRetentionCutoff()
+        }
+    }
+
+    public func recordCount() throws -> Int {
+        try synchronized {
+            var count = 0
+            try withStatement("SELECT COUNT(*) FROM history") { s in
+                guard sqlite3_step(s) == SQLITE_ROW else { throw HistoryStoreError.stepFailed }
+                count = Int(sqlite3_column_int(s, 0))
+            }
+            return count
+        }
+    }
+
+    public func recordCountAsync() async throws -> Int {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                continuation.resume(with: Result { try self.recordCount() })
+            }
+        }
     }
 
     // MARK: - Private operations (must run on queue or from init)
@@ -157,6 +204,14 @@ public final class HistoryStore: @unchecked Sendable {
             }
         }
         return records
+    }
+
+    private func pruneToRetentionCutoff() throws {
+        try pruneRecords(before: retentionCutoff())
+    }
+
+    private func retentionCutoff() -> Date {
+        Date().addingTimeInterval(-Double(retentionDays) * 86400)
     }
 
     private func pruneRecords(before date: Date) throws {

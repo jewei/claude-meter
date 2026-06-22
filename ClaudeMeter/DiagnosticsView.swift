@@ -20,6 +20,7 @@ struct DiagnosticsView: View {
     @AppStorage("enableDiagnosticsRawOutput") private var enableDiagnosticsRawOutput = false
     @State private var copied = false
     @State private var rawOutput: String?
+    @State private var historyRecordCount: Int?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,6 +35,7 @@ struct DiagnosticsView: View {
             .formStyle(.grouped)
             .onAppear {
                 rawOutput = try? SnapshotStore(directory: appState.storeDirectory).readRawOutput()
+                loadHistoryMetadata()
             }
 
             Divider()
@@ -102,10 +104,8 @@ struct DiagnosticsView: View {
 
     private var historySection: some View {
         Section("History") {
-            let store = appState.historyStore
-            if let store {
-                let count = (try? store.fetch())?.count ?? 0
-                LabeledContent("Records", value: "\(count)")
+            if appState.historyStore != nil {
+                LabeledContent("Records", value: historyRecordCount.map { "\($0)" } ?? "…")
                 LabeledContent("Store", value: appState.storeDirectory.path)
             } else {
                 LabeledContent("Status", value: "Unavailable")
@@ -119,7 +119,7 @@ struct DiagnosticsView: View {
             Section("Raw CLI Output") {
                 if let raw = rawOutput {
                     ScrollView {
-                        Text(raw)
+                        Text(DiagnosticsSanitizer.sanitize(raw))
                             .font(.system(.caption, design: .monospaced))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
@@ -179,6 +179,12 @@ struct DiagnosticsView: View {
     }()
 
     private var isoFormatter: ISO8601DateFormatter { Self.isoFormatter }
+
+    private func loadHistoryMetadata() {
+        Task {
+            historyRecordCount = try? await appState.historyStore?.recordCountAsync()
+        }
+    }
 
     // MARK: - Copy text
 

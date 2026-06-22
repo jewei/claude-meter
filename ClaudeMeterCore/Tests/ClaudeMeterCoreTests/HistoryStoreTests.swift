@@ -40,14 +40,32 @@ final class HistoryStoreTests: XCTestCase {
     }
 
     func testPrune() throws {
+        let shortRetention = try HistoryStore(directory: dir, retentionDays: 30)
         let old   = Date().addingTimeInterval(-86400 * 31)
         let fresh = Date()
-        try store.append(makeRecord(createdAt: old,   sessionPct: 1))
-        try store.append(makeRecord(createdAt: fresh, sessionPct: 2))
-        try store.pruneOlderThan(Date().addingTimeInterval(-86400 * 30))
-        let remaining = try store.fetch()
+        try shortRetention.append(makeRecord(createdAt: old,   sessionPct: 1))
+        try shortRetention.append(makeRecord(createdAt: fresh, sessionPct: 2))
+        let remaining = try shortRetention.fetch()
         XCTAssertEqual(remaining.count, 1)
         XCTAssertEqual(remaining[0].sessionPercent, 2)
+    }
+
+    func testAppendPrunesByRetentionDays() throws {
+        let shortRetention = try HistoryStore(directory: dir, retentionDays: 7)
+        try shortRetention.append(makeRecord(
+            createdAt: Date().addingTimeInterval(-86400 * 10),
+            sessionPct: 5
+        ))
+        try shortRetention.append(makeRecord(sessionPct: 10))
+        let remaining = try shortRetention.fetch()
+        XCTAssertEqual(remaining.count, 1)
+        XCTAssertEqual(remaining[0].sessionPercent, 10)
+    }
+
+    func testRecordCount() throws {
+        try store.append(makeRecord(sessionPct: 1))
+        try store.append(makeRecord(sessionPct: 2))
+        XCTAssertEqual(try store.recordCount(), 2)
     }
 
     func testCSVExport() throws {

@@ -118,10 +118,20 @@ struct HistoryView: View {
         records.flatMap { record -> [ChartPoint] in
             var pts: [ChartPoint] = []
             if let s = record.sessionPercent {
-                pts.append(ChartPoint(date: record.createdAt, percent: s, series: "Session"))
+                pts.append(ChartPoint(
+                    id: "\(record.id)-session",
+                    date: record.createdAt,
+                    percent: s,
+                    series: "Session"
+                ))
             }
             if let w = record.weekPercent {
-                pts.append(ChartPoint(date: record.createdAt, percent: w, series: "Week"))
+                pts.append(ChartPoint(
+                    id: "\(record.id)-week",
+                    date: record.createdAt,
+                    percent: w,
+                    series: "Week"
+                ))
             }
             return pts
         }
@@ -185,9 +195,9 @@ struct HistoryView: View {
         Task {
             let text: String?
             if csv {
-                text = try? store?.exportCSV(since: since)
+                text = try? await store?.exportCSVAsync(since: since)
             } else {
-                text = try? store?.exportJSON(since: since)
+                text = try? await store?.exportJSONAsync(since: since)
             }
             guard let text else { return }
             NSPasteboard.general.clearContents()
@@ -202,7 +212,7 @@ struct HistoryView: View {
 // MARK: - Chart data point
 
 private struct ChartPoint: Identifiable {
-    let id = UUID()
+    let id: String
     let date: Date
     let percent: Double
     let series: String

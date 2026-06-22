@@ -35,7 +35,10 @@ final class AppState: ObservableObject {
         AppGroupConfig.syncDisplaySettings()
         let store = AppState.makeStore()
         self.storeDirectory = store.directory
-        self.historyStore = try? HistoryStore(directory: store.directory)
+        self.historyStore = try? HistoryStore(
+            directory: store.directory,
+            retentionDays: Self.historyRetentionDays()
+        )
         self.pipeline = AppState.makePipeline(store: store)
         self.snapshot = try? store.readLatest()
         self.lastPolledAt = snapshot?.lastSuccessfulPollAt
@@ -100,8 +103,22 @@ final class AppState: ObservableObject {
 
     func rebuildPipeline() {
         let store = AppState.makeStore()
+        storeDirectory = store.directory
+        historyStore = try? HistoryStore(
+            directory: store.directory,
+            retentionDays: Self.historyRetentionDays()
+        )
         pipeline = AppState.makePipeline(store: store)
         startPolling()
+    }
+
+    func setHistoryRetentionDays(_ days: Int) {
+        try? historyStore?.setRetentionDays(days)
+    }
+
+    static func historyRetentionDays(defaults: UserDefaults = .standard) -> Int {
+        let days = defaults.integer(forKey: "historyRetentionDays")
+        return days > 0 ? days : 180
     }
 
     var severity: UsageSeverity {
@@ -136,7 +153,11 @@ final class AppState: ObservableObject {
             let previous = snapshot
             if let snap = result.snapshot {
                 snapshot = snap
-                let record = HistoryRecord(from: snap, thresholds: AppGroupConfig.currentThresholds())
+                let record = HistoryRecord(
+                    from: snap,
+                    thresholds: AppGroupConfig.currentThresholds(),
+                    privacyMode: AppGroupConfig.currentPrivacyMode()
+                )
                 if let hs = historyStore {
                     Task.detached(priority: .utility) { try? hs.append(record) }
                 }

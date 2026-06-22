@@ -26,6 +26,15 @@ struct MiniMonitorView: View {
         .frame(width: 240, height: 64)
         .background(Color.cmBackground)
         .background(WindowFloatingHook())
+        .overlay(alignment: .topTrailing) {
+            if appState.isStale {
+                Image(systemName: "clock.badge.exclamationmark")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.cmWarning)
+                    .padding(6)
+                    .help("Data may be outdated")
+            }
+        }
     }
 
     private func metricColumn(label: String, value: String?, percent: Double?) -> some View {

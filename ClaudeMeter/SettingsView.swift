@@ -262,6 +262,7 @@ private struct AdvancedSettingsTab: View {
 
     @AppStorage("launchAtLogin") private var launchAtLogin = false
     @AppStorage("enableDiagnosticsRawOutput") private var enableDiagnosticsRawOutput = false
+    @AppStorage("historyRetentionDays") private var historyRetentionDays = 180.0
     @Environment(\.openWindow) private var openWindow
 
     @State private var showingDiagnostics = false
@@ -280,6 +281,24 @@ private struct AdvancedSettingsTab: View {
                 Text("A compact always-on-top window showing live session and weekly usage.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("History") {
+                LabeledContent("Retention") {
+                    HStack {
+                        Slider(value: $historyRetentionDays, in: 7...365, step: 1)
+                            .frame(width: 140)
+                        Text("\(Int(historyRetentionDays))d")
+                            .monospacedDigit()
+                            .frame(width: 36, alignment: .trailing)
+                    }
+                }
+                Text("Poll snapshots older than this are removed from the local history database.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .onChange(of: historyRetentionDays) { _, newValue in
+                appState.setHistoryRetentionDays(Int(newValue))
             }
 
             Section("Diagnostics") {

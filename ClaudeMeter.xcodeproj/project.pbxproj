@@ -3,30 +3,30 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 70;
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
-		B39A8BBB94F64426BDF7E3C0 /* ClaudeMeterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 262C9E3CBCA04E07BB465F9B /* ClaudeMeterApp.swift */; };
-		69BE2128EB0F41ACBF84F636 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0B0219D0744A52A145A257 /* AppState.swift */; };
-		328C7D858BAA4A39B59ED745 /* DesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = A33698B9F9BB4AE4BDF69097 /* DesignTokens.swift */; };
-		53F33AD45698499A81E9BD5D /* MenuBarLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D39F041AC0894892922A9F90 /* MenuBarLabel.swift */; };
-		86A371C31B9048C1BF2F59F8 /* PopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3715D40A5AE0421A91C5BED0 /* PopoverView.swift */; };
-		6D0A86762E7646A0B0D33439 /* UsageCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 270C84D9D514496BA99A010A /* UsageCardView.swift */; };
 		2B9EF3C1324E496AB3B6E96A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */; };
+		328C7D858BAA4A39B59ED745 /* DesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = A33698B9F9BB4AE4BDF69097 /* DesignTokens.swift */; };
 		4D61D7AB7BDE4E48BA084D4F /* NotificationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 698B8E0E53F145B783C464F9 /* NotificationEngine.swift */; };
+		53F33AD45698499A81E9BD5D /* MenuBarLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D39F041AC0894892922A9F90 /* MenuBarLabel.swift */; };
 		60B15B0A00A24EE9A3EED2B1 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07DBE9DE99AE4570ABDAA767 /* SettingsView.swift */; };
-		B6F53F78A9174898AEA761F3 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5D38012F5D5476997394541 /* DiagnosticsView.swift */; };
+		69BE2128EB0F41ACBF84F636 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0B0219D0744A52A145A257 /* AppState.swift */; };
+		6D0A86762E7646A0B0D33439 /* UsageCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 270C84D9D514496BA99A010A /* UsageCardView.swift */; };
+		86A371C31B9048C1BF2F59F8 /* PopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3715D40A5AE0421A91C5BED0 /* PopoverView.swift */; };
 		95F163B0444944EE8CCFFF1F /* ClaudeMeterCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7C7F0222F61B410EB83CB0D4 /* ClaudeMeterCore */; };
-		BF2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AE2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework */; };
-		BE2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 9A2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		H47A3B4C5D6E7F8A9B0C1D2E /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = H17A3B4C5D6E7F8A9B0C1D2E /* HistoryView.swift */; };
-		H57A3B4C5D6E7F8A9B0C1D2E /* MiniMonitorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = H27A3B4C5D6E7F8A9B0C1D2E /* MiniMonitorView.swift */; };
-		H67A3B4C5D6E7F8A9B0C1D2E /* Charts.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = H37A3B4C5D6E7F8A9B0C1D2E /* Charts.framework */; };
+		B39A8BBB94F64426BDF7E3C0 /* ClaudeMeterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 262C9E3CBCA04E07BB465F9B /* ClaudeMeterApp.swift */; };
+		B6F53F78A9174898AEA761F3 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5D38012F5D5476997394541 /* DiagnosticsView.swift */; };
 		BA2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetBundle.swift */; };
 		BB2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget.swift */; };
 		BC2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AE2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework */; };
 		BD2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterCore in Frameworks */ = {isa = PBXBuildFile; productRef = DA2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterCore */; };
+		BE2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 9A2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		BF2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AE2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework */; };
+		H47A3B4C5D6E7F8A9B0C1D2E /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = H17A3B4C5D6E7F8A9B0C1D2E /* HistoryView.swift */; };
+		H57A3B4C5D6E7F8A9B0C1D2E /* MiniMonitorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = H27A3B4C5D6E7F8A9B0C1D2E /* MiniMonitorView.swift */; };
+		H67A3B4C5D6E7F8A9B0C1D2E /* Charts.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = H37A3B4C5D6E7F8A9B0C1D2E /* Charts.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -54,25 +54,25 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		40DFAAFE44CF4A3099E08168 /* ClaudeMeter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClaudeMeter.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		262C9E3CBCA04E07BB465F9B /* ClaudeMeterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeMeterApp.swift; sourceTree = "<group>"; };
-		AD0B0219D0744A52A145A257 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
-		A33698B9F9BB4AE4BDF69097 /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
-		D39F041AC0894892922A9F90 /* MenuBarLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarLabel.swift; sourceTree = "<group>"; };
-		3715D40A5AE0421A91C5BED0 /* PopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PopoverView.swift; sourceTree = "<group>"; };
-		270C84D9D514496BA99A010A /* UsageCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageCardView.swift; sourceTree = "<group>"; };
-		803E43377A64429FBFAFB75C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		0749BAC0888B4145ADF40C11 /* ClaudeMeter.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClaudeMeter.entitlements; sourceTree = "<group>"; };
-		698B8E0E53F145B783C464F9 /* NotificationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationEngine.swift; sourceTree = "<group>"; };
 		07DBE9DE99AE4570ABDAA767 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
-		B5D38012F5D5476997394541 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
+		262C9E3CBCA04E07BB465F9B /* ClaudeMeterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeMeterApp.swift; sourceTree = "<group>"; };
+		270C84D9D514496BA99A010A /* UsageCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageCardView.swift; sourceTree = "<group>"; };
+		3715D40A5AE0421A91C5BED0 /* PopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PopoverView.swift; sourceTree = "<group>"; };
+		40DFAAFE44CF4A3099E08168 /* ClaudeMeter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClaudeMeter.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		698B8E0E53F145B783C464F9 /* NotificationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationEngine.swift; sourceTree = "<group>"; };
+		803E43377A64429FBFAFB75C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		9A2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ClaudeMeterWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A33698B9F9BB4AE4BDF69097 /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
 		AA2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeMeterWidgetBundle.swift; sourceTree = "<group>"; };
 		AB2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeMeterWidget.swift; sourceTree = "<group>"; };
 		AC2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClaudeMeterWidget.entitlements; sourceTree = "<group>"; };
+		AD0B0219D0744A52A145A257 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		AD2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "ClaudeMeterWidget-Info.plist"; sourceTree = "<group>"; };
 		AE2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		B5D38012F5D5476997394541 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
+		CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		D39F041AC0894892922A9F90 /* MenuBarLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarLabel.swift; sourceTree = "<group>"; };
 		H17A3B4C5D6E7F8A9B0C1D2E /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
 		H27A3B4C5D6E7F8A9B0C1D2E /* MiniMonitorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMonitorView.swift; sourceTree = "<group>"; };
 		H37A3B4C5D6E7F8A9B0C1D2E /* Charts.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Charts.framework; path = System/Library/Frameworks/Charts.framework; sourceTree = SDKROOT; };
@@ -101,24 +101,6 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		C73FB8EC9F04403297214A59 = {
-			isa = PBXGroup;
-			children = (
-				0A02B602D5924ABE89324079 /* ClaudeMeter */,
-				8A2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget */,
-				6065E92A9B9B40F79BC316EB /* Products */,
-			);
-			sourceTree = "<group>";
-		};
-		6065E92A9B9B40F79BC316EB /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				40DFAAFE44CF4A3099E08168 /* ClaudeMeter.app */,
-				9A2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetExtension.appex */,
-			);
-			name = Products;
-			sourceTree = "<group>";
-		};
 		0A02B602D5924ABE89324079 /* ClaudeMeter */ = {
 			isa = PBXGroup;
 			children = (
@@ -140,6 +122,24 @@
 			path = ClaudeMeter;
 			sourceTree = "<group>";
 		};
+		538093EE2FE9371200231EE5 /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				AE2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework */,
+				H37A3B4C5D6E7F8A9B0C1D2E /* Charts.framework */,
+			);
+			name = "Recovered References";
+			sourceTree = "<group>";
+		};
+		6065E92A9B9B40F79BC316EB /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				40DFAAFE44CF4A3099E08168 /* ClaudeMeter.app */,
+				9A2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetExtension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
 		8A2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget */ = {
 			isa = PBXGroup;
 			children = (
@@ -151,9 +151,39 @@
 			path = ClaudeMeterWidget;
 			sourceTree = "<group>";
 		};
+		C73FB8EC9F04403297214A59 = {
+			isa = PBXGroup;
+			children = (
+				0A02B602D5924ABE89324079 /* ClaudeMeter */,
+				8A2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget */,
+				6065E92A9B9B40F79BC316EB /* Products */,
+				538093EE2FE9371200231EE5 /* Recovered References */,
+			);
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		4A2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7A2F8E1B9C3D5E7F0A1B2C3D /* Build configuration list for PBXNativeTarget "ClaudeMeterWidgetExtension" */;
+			buildPhases = (
+				CA2F8E1B9C3D5E7F0A1B2C3D /* Sources */,
+				CB2F8E1B9C3D5E7F0A1B2C3D /* Frameworks */,
+				CC2F8E1B9C3D5E7F0A1B2C3D /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ClaudeMeterWidgetExtension;
+			packageProductDependencies = (
+				DA2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterCore */,
+			);
+			productName = ClaudeMeterWidgetExtension;
+			productReference = 9A2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		7586762935074FA98C4E69A3 /* ClaudeMeter */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 14572AB2DFFF4C44B3DAE212 /* Build configuration list for PBXNativeTarget "ClaudeMeter" */;
@@ -176,26 +206,6 @@
 			productReference = 40DFAAFE44CF4A3099E08168 /* ClaudeMeter.app */;
 			productType = "com.apple.product-type.application";
 		};
-		4A2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetExtension */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 7A2F8E1B9C3D5E7F0A1B2C3D /* Build configuration list for PBXNativeTarget "ClaudeMeterWidgetExtension" */;
-			buildPhases = (
-				CA2F8E1B9C3D5E7F0A1B2C3D /* Sources */,
-				CB2F8E1B9C3D5E7F0A1B2C3D /* Frameworks */,
-				CC2F8E1B9C3D5E7F0A1B2C3D /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			name = ClaudeMeterWidgetExtension;
-			packageProductDependencies = (
-				DA2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterCore */,
-			);
-			productName = ClaudeMeterWidgetExtension;
-			productReference = 9A2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetExtension.appex */;
-			productType = "com.apple.product-type.app-extension";
-		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -206,10 +216,10 @@
 				LastSwiftUpdateCheck = 1500;
 				LastUpgradeCheck = 1500;
 				TargetAttributes = {
-					7586762935074FA98C4E69A3 = {
+					4A2F8E1B9C3D5E7F0A1B2C3D = {
 						CreatedOnToolsVersion = 15.0;
 					};
-					4A2F8E1B9C3D5E7F0A1B2C3D = {
+					7586762935074FA98C4E69A3 = {
 						CreatedOnToolsVersion = 15.0;
 					};
 				};
@@ -255,6 +265,15 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		CA2F8E1B9C3D5E7F0A1B2C3D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BA2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetBundle.swift in Sources */,
+				BB2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		F3161CC73273480D836C5541 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -270,15 +289,6 @@
 				B6F53F78A9174898AEA761F3 /* DiagnosticsView.swift in Sources */,
 				H47A3B4C5D6E7F8A9B0C1D2E /* HistoryView.swift in Sources */,
 				H57A3B4C5D6E7F8A9B0C1D2E /* MiniMonitorView.swift in Sources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		CA2F8E1B9C3D5E7F0A1B2C3D /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				BA2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetBundle.swift in Sources */,
-				BB2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -353,6 +363,108 @@
 			};
 			name = Debug;
 		};
+		29F7C6F1032C4A15A374EA6B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ClaudeMeter/ClaudeMeter.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4L4SS26L9J;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ClaudeMeter/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jewei.claudemeter;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		5A2F8E1B9C3D5E7F0A1B2C3D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ClaudeMeterWidget/ClaudeMeterWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4L4SS26L9J;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "ClaudeMeterWidget/ClaudeMeterWidget-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../../../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jewei.claudemeter.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		6A2F8E1B9C3D5E7F0A1B2C3D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ClaudeMeterWidget/ClaudeMeterWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4L4SS26L9J;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "ClaudeMeterWidget/ClaudeMeterWidget-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../../../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jewei.claudemeter.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		C42EB00409B74092B0DB1A05 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ClaudeMeter/ClaudeMeter.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4L4SS26L9J;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ClaudeMeter/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jewei.claudemeter;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
 		EA493E0159E543DE956B93C2 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -406,121 +518,23 @@
 			};
 			name = Release;
 		};
-		C42EB00409B74092B0DB1A05 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = ClaudeMeter/ClaudeMeter.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = ClaudeMeter/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/../Frameworks",
-				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.claudemeter.app;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = macosx;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 6.0;
-			};
-			name = Debug;
-		};
-		29F7C6F1032C4A15A374EA6B /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = ClaudeMeter/ClaudeMeter.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = ClaudeMeter/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/../Frameworks",
-				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.claudemeter.app;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = macosx;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 6.0;
-			};
-			name = Release;
-		};
-		5A2F8E1B9C3D5E7F0A1B2C3D /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = ClaudeMeterWidget/ClaudeMeterWidget.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = ClaudeMeterWidget/ClaudeMeterWidget-Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/../../../Frameworks",
-					"@executable_path/../../../../Frameworks",
-				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.claudemeter.app.widget;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = macosx;
-				SKIP_INSTALL = YES;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 6.0;
-			};
-			name = Debug;
-		};
-		6A2F8E1B9C3D5E7F0A1B2C3D /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = ClaudeMeterWidget/ClaudeMeterWidget.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = ClaudeMeterWidget/ClaudeMeterWidget-Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/../../../Frameworks",
-					"@executable_path/../../../../Frameworks",
-				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.claudemeter.app.widget;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = macosx;
-				SKIP_INSTALL = YES;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 6.0;
-			};
-			name = Release;
-		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		6CB70557F21340CAB5D9CA1E /* Build configuration list for PBXProject "ClaudeMeter" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				031AA42D28664161BCB87102 /* Debug */,
-				EA493E0159E543DE956B93C2 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 		14572AB2DFFF4C44B3DAE212 /* Build configuration list for PBXNativeTarget "ClaudeMeter" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				C42EB00409B74092B0DB1A05 /* Debug */,
 				29F7C6F1032C4A15A374EA6B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6CB70557F21340CAB5D9CA1E /* Build configuration list for PBXProject "ClaudeMeter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				031AA42D28664161BCB87102 /* Debug */,
+				EA493E0159E543DE956B93C2 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -555,7 +569,6 @@
 			productName = ClaudeMeterCore;
 		};
 /* End XCSwiftPackageProductDependency section */
-
 	};
 	rootObject = 1CDA7936E3BE4F1EBBBFEAED /* Project object */;
 }

@@ -38,8 +38,7 @@ struct UsageCardView: View {
     }
 
     private var percentText: String {
-        guard window.percentUsed != nil else { return "—" }
-        return window.isOverLimit ? "100%+" : "\(Int(window.clampedPercent ?? 0))%"
+        window.displayPercent ?? "—"
     }
 
     @ViewBuilder
@@ -117,24 +116,24 @@ struct UsageCardView: View {
             return "Resets in \(mins)m"
         }
         if Calendar.current.isDate(date, inSameDayAs: now) {
-            return "Resets at \(timeFormatter.string(from: date))"
+            return "Resets at \(Self.timeFormatter.string(from: date))"
         }
-        return "Resets \(dateTimeFormatter.string(from: date))"
+        return "Resets \(Self.dateTimeFormatter.string(from: date))"
     }
 
-    private var timeFormatter: DateFormatter {
+    private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.timeStyle = .short
         f.dateStyle = .none
         return f
-    }
+    }()
 
-    private var dateTimeFormatter: DateFormatter {
+    private static let dateTimeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.timeStyle = .short
         f.dateStyle = .medium
         return f
-    }
+    }()
 
     private var accessibilityText: String {
         var parts = ["\(label) usage \(percentText)"]

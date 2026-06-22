@@ -114,6 +114,10 @@ struct PopoverView: View {
     @ViewBuilder
     private func usageState(_ snap: ClaudeUsageSnapshot) -> some View {
         VStack(spacing: 0) {
+            if appState.lastError != nil {
+                pollErrorNotice
+                Divider().opacity(0.1)
+            }
             if appState.isStale {
                 staleNotice
                 Divider().opacity(0.1)
@@ -137,6 +141,33 @@ struct PopoverView: View {
     }
 
     // MARK: - Stale notice
+
+    private var pollErrorNotice: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 11))
+            Text(pollErrorText)
+                .font(.system(size: 12))
+                .lineLimit(2)
+        }
+        .foregroundStyle(Color.cmWarning)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 7)
+        .background(Color.cmWarning.opacity(0.08))
+    }
+
+    private var pollErrorText: String {
+        let err = appState.lastError ?? ""
+        if err.contains("authenticated") || err.contains("not logged") {
+            return "Refresh failed — run: claude login"
+        }
+        if err.contains("timeout") { return "Refresh failed — CLI timed out" }
+        if err.contains("usage-limit") || err.contains("No CLI output") {
+            return "Refresh failed — could not parse output"
+        }
+        return "Refresh failed — showing last known data"
+    }
 
     private var staleNotice: some View {
         HStack(spacing: 6) {
@@ -204,14 +235,24 @@ struct PopoverView: View {
         let err = appState.lastError ?? ""
         if err.contains("cliNotFound") { return "Claude CLI not found" }
         if err.contains("timeout")     { return "Claude CLI timed out" }
-        if err.contains("unauthenticated") || err.contains("not logged") { return "Claude not logged in" }
+        if err.contains("unauthenticated") || err.contains("not logged") || err.contains("authenticated") {
+            return "Claude not logged in"
+        }
+        if err.contains("usage-limit") || err.contains("No CLI output") || err.contains("parse") {
+            return "Could not parse output"
+        }
         return "Could not reach Claude"
     }
 
     private var errorHint: String? {
         let err = appState.lastError ?? ""
         if err.contains("cliNotFound")  { return "Open Settings to configure the CLI path." }
-        if err.contains("unauthenticated") || err.contains("not logged") { return "Run: claude login" }
+        if err.contains("unauthenticated") || err.contains("not logged") || err.contains("authenticated") {
+            return "Run: claude login"
+        }
+        if err.contains("usage-limit") || err.contains("No CLI output") {
+            return "Check Diagnostics for parser details."
+        }
         return nil
     }
 }

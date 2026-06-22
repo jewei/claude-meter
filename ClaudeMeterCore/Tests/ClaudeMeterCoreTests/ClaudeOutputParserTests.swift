@@ -419,6 +419,30 @@ struct ANSIStripperTests {
     }
 }
 
+// MARK: - LimitWindow display
+
+@Suite("LimitWindow displayPercent")
+struct LimitWindowDisplayTests {
+    @Test("Formats integer percent") func integer() {
+        let w = LimitWindow(percentUsed: 25)
+        #expect(w.displayPercent == "25%")
+    }
+
+    @Test("Formats decimal percent") func decimal() {
+        let w = LimitWindow(percentUsed: 84.5)
+        #expect(w.displayPercent == "84.5%")
+    }
+
+    @Test("Formats over-limit percent") func overLimit() {
+        let w = LimitWindow(percentUsed: 102)
+        #expect(w.displayPercent == "100%+")
+    }
+
+    @Test("Returns nil when percent missing") func missing() {
+        #expect(LimitWindow().displayPercent == nil)
+    }
+}
+
 // MARK: - Codable round-trip
 
 @Suite("ClaudeUsageSnapshot Codable")

@@ -10,8 +10,8 @@ struct ClaudeMeterApp: App {
             PopoverView()
                 .environmentObject(appState)
                 .frame(width: 320)
-                .onAppear { appState.isPopoverOpen = true }
-                .onDisappear { appState.isPopoverOpen = false }
+                .onAppear { appState.popoverDidOpen() }
+                .onDisappear { appState.popoverDidClose() }
         } label: {
             MenuBarLabel(appState: appState)
         }

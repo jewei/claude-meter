@@ -25,12 +25,21 @@ final class AppState: ObservableObject {
             ?? SnapshotStore(directory: FileManager.default.temporaryDirectory)
         self.pipeline = SnapshotPipeline(runner: runner, parser: ClaudeOutputParser(cliPath: cliPath), store: store)
         self.snapshot = try? store.readLatest()
+        self.lastPolledAt = snapshot?.lastSuccessfulPollAt
+        if snapshot == nil, let record = try? store.readLastError() {
+            self.lastError = record.message
+        }
         startPolling()
     }
 
     init(pipeline: SnapshotPipeline, initialSnapshot: ClaudeUsageSnapshot? = nil) {
         self.pipeline = pipeline
         self.snapshot = initialSnapshot
+        self.lastPolledAt = initialSnapshot?.lastSuccessfulPollAt
+    }
+
+    deinit {
+        pollTask?.cancel()
     }
 
     func startPolling() {
@@ -40,7 +49,7 @@ final class AppState: ObservableObject {
             while !Task.isCancelled {
                 guard let self else { break }
                 let interval = self.isPopoverOpen ? Self.activeInterval : Self.backgroundInterval
-                let effective = backoffSeconds > 0 ? max(interval, backoffSeconds) : interval
+                let effective = self.backoffSeconds > 0 ? max(interval, self.backoffSeconds) : interval
                 try? await Task.sleep(for: .seconds(effective))
                 guard !Task.isCancelled else { break }
                 await self.poll()
@@ -57,16 +66,22 @@ final class AppState: ObservableObject {
         Task { await poll() }
     }
 
+    func popoverDidOpen() {
+        isPopoverOpen = true
+        refreshNow()
+    }
+
+    func popoverDidClose() {
+        isPopoverOpen = false
+    }
+
     var isStale: Bool {
-        guard let polledAt = lastPolledAt else { return snapshot != nil }
+        guard let polledAt = lastPolledAt ?? snapshot?.lastSuccessfulPollAt else { return false }
         return Date().timeIntervalSince(polledAt) > Self.staleThreshold
     }
 
     var severity: UsageSeverity {
-        guard let snap = snapshot, !isStale else {
-            return lastError != nil ? .unknown : .unknown
-        }
-        return snap.state.severity
+        snapshot?.state.severity ?? .unknown
     }
 
     private func poll() async {
@@ -77,6 +92,14 @@ final class AppState: ObservableObject {
         do {
             let result = try await pipeline.poll()
             lastPollResult = result
+
+            if result.isFatal {
+                lastError = result.errors.map(\.message).joined(separator: "; ")
+                lastPolledAt = Date()
+                applyBackoff()
+                return
+            }
+
             if let snap = result.snapshot {
                 snapshot = snap
             }
@@ -86,8 +109,11 @@ final class AppState: ObservableObject {
         } catch {
             lastError = String(describing: error)
             lastPolledAt = Date()
-            // Exponential backoff capped at 5 minutes
-            backoffSeconds = backoffSeconds == 0 ? 15 : min(backoffSeconds * 2, 300)
+            applyBackoff()
         }
+    }
+
+    private func applyBackoff() {
+        backoffSeconds = backoffSeconds == 0 ? 15 : min(backoffSeconds * 2, 300)
     }
 }

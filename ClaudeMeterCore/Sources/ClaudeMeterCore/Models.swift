@@ -145,6 +145,18 @@ public struct LimitWindow: Codable, Equatable, Sendable {
     }
 
     public var isOverLimit: Bool { (percentUsed ?? 0) > 100 }
+
+    /// UI-friendly percent string, e.g. `25%`, `84.5%`, `100%+`.
+    public var displayPercent: String? {
+        guard percentUsed != nil else { return nil }
+        if isOverLimit { return "100%+" }
+        let clamped = clampedPercent ?? 0
+        let rounded = (clamped * 10).rounded() / 10
+        if rounded.truncatingRemainder(dividingBy: 1) == 0 {
+            return "\(Int(rounded))%"
+        }
+        return String(format: "%.1f%%", rounded)
+    }
 }
 
 // MARK: - Model usage

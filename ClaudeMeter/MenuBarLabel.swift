@@ -50,12 +50,7 @@ struct MenuBarLabel: View {
         let s = snap.limits.currentSession
         let w = snap.limits.currentWeekAllModels
 
-        func pct(_ v: Double?) -> String? {
-            guard let v else { return nil }
-            return v > 100 ? "100%+" : "\(Int(min(100, max(0, v))))%"
-        }
-
-        switch (pct(s.percentUsed), pct(w.percentUsed)) {
+        switch (s.displayPercent, w.displayPercent) {
         case let (sp?, wp?): return "\(sp)/\(wp)"
         case let (sp?, nil): return sp
         case let (nil, wp?): return wp

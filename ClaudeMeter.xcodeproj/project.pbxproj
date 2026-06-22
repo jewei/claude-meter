@@ -1,0 +1,367 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 70;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B39A8BBB94F64426BDF7E3C0 /* ClaudeMeterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 262C9E3CBCA04E07BB465F9B /* ClaudeMeterApp.swift */; };
+		69BE2128EB0F41ACBF84F636 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0B0219D0744A52A145A257 /* AppState.swift */; };
+		328C7D858BAA4A39B59ED745 /* DesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = A33698B9F9BB4AE4BDF69097 /* DesignTokens.swift */; };
+		53F33AD45698499A81E9BD5D /* MenuBarLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D39F041AC0894892922A9F90 /* MenuBarLabel.swift */; };
+		86A371C31B9048C1BF2F59F8 /* PopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3715D40A5AE0421A91C5BED0 /* PopoverView.swift */; };
+		6D0A86762E7646A0B0D33439 /* UsageCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 270C84D9D514496BA99A010A /* UsageCardView.swift */; };
+		2B9EF3C1324E496AB3B6E96A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */; };
+		95F163B0444944EE8CCFFF1F /* ClaudeMeterCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7C7F0222F61B410EB83CB0D4 /* ClaudeMeterCore */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		40DFAAFE44CF4A3099E08168 /* ClaudeMeter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClaudeMeter.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		262C9E3CBCA04E07BB465F9B /* ClaudeMeterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeMeterApp.swift; sourceTree = "<group>"; };
+		AD0B0219D0744A52A145A257 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		A33698B9F9BB4AE4BDF69097 /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
+		D39F041AC0894892922A9F90 /* MenuBarLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarLabel.swift; sourceTree = "<group>"; };
+		3715D40A5AE0421A91C5BED0 /* PopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PopoverView.swift; sourceTree = "<group>"; };
+		270C84D9D514496BA99A010A /* UsageCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageCardView.swift; sourceTree = "<group>"; };
+		803E43377A64429FBFAFB75C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		0749BAC0888B4145ADF40C11 /* ClaudeMeter.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClaudeMeter.entitlements; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		297C3465C26646C69E74D316 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				95F163B0444944EE8CCFFF1F /* ClaudeMeterCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		C73FB8EC9F04403297214A59 = {
+			isa = PBXGroup;
+			children = (
+				0A02B602D5924ABE89324079 /* ClaudeMeter */,
+				6065E92A9B9B40F79BC316EB /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		6065E92A9B9B40F79BC316EB /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				40DFAAFE44CF4A3099E08168 /* ClaudeMeter.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		0A02B602D5924ABE89324079 /* ClaudeMeter */ = {
+			isa = PBXGroup;
+			children = (
+				262C9E3CBCA04E07BB465F9B /* ClaudeMeterApp.swift */,
+				AD0B0219D0744A52A145A257 /* AppState.swift */,
+				A33698B9F9BB4AE4BDF69097 /* DesignTokens.swift */,
+				D39F041AC0894892922A9F90 /* MenuBarLabel.swift */,
+				3715D40A5AE0421A91C5BED0 /* PopoverView.swift */,
+				270C84D9D514496BA99A010A /* UsageCardView.swift */,
+				CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */,
+				803E43377A64429FBFAFB75C /* Info.plist */,
+				0749BAC0888B4145ADF40C11 /* ClaudeMeter.entitlements */,
+			);
+			path = ClaudeMeter;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		7586762935074FA98C4E69A3 /* ClaudeMeter */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 14572AB2DFFF4C44B3DAE212 /* Build configuration list for PBXNativeTarget "ClaudeMeter" */;
+			buildPhases = (
+				F3161CC73273480D836C5541 /* Sources */,
+				297C3465C26646C69E74D316 /* Frameworks */,
+				20A49485A74B42A49713D1EB /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ClaudeMeter;
+			packageProductDependencies = (
+				7C7F0222F61B410EB83CB0D4 /* ClaudeMeterCore */,
+			);
+			productName = ClaudeMeter;
+			productReference = 40DFAAFE44CF4A3099E08168 /* ClaudeMeter.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1CDA7936E3BE4F1EBBBFEAED /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					7586762935074FA98C4E69A3 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = 6CB70557F21340CAB5D9CA1E /* Build configuration list for PBXProject "ClaudeMeter" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = C73FB8EC9F04403297214A59;
+			packageReferences = (
+				A6DC290B185342ACB5499025 /* XCLocalSwiftPackageReference "ClaudeMeterCore" */,
+			);
+			productRefGroup = 6065E92A9B9B40F79BC316EB /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				7586762935074FA98C4E69A3 /* ClaudeMeter */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		20A49485A74B42A49713D1EB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2B9EF3C1324E496AB3B6E96A /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		F3161CC73273480D836C5541 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B39A8BBB94F64426BDF7E3C0 /* ClaudeMeterApp.swift in Sources */,
+				69BE2128EB0F41ACBF84F636 /* AppState.swift in Sources */,
+				328C7D858BAA4A39B59ED745 /* DesignTokens.swift in Sources */,
+				53F33AD45698499A81E9BD5D /* MenuBarLabel.swift in Sources */,
+				86A371C31B9048C1BF2F59F8 /* PopoverView.swift in Sources */,
+				6D0A86762E7646A0B0D33439 /* UsageCardView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		031AA42D28664161BCB87102 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		EA493E0159E543DE956B93C2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		C42EB00409B74092B0DB1A05 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ClaudeMeter/ClaudeMeter.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ClaudeMeter/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.claudemeter.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		29F7C6F1032C4A15A374EA6B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ClaudeMeter/ClaudeMeter.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ClaudeMeter/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.claudemeter.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		6CB70557F21340CAB5D9CA1E /* Build configuration list for PBXProject "ClaudeMeter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				031AA42D28664161BCB87102 /* Debug */,
+				EA493E0159E543DE956B93C2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		14572AB2DFFF4C44B3DAE212 /* Build configuration list for PBXNativeTarget "ClaudeMeter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C42EB00409B74092B0DB1A05 /* Debug */,
+				29F7C6F1032C4A15A374EA6B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A6DC290B185342ACB5499025 /* XCLocalSwiftPackageReference "ClaudeMeterCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ClaudeMeterCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		7C7F0222F61B410EB83CB0D4 /* ClaudeMeterCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A6DC290B185342ACB5499025 /* XCLocalSwiftPackageReference "ClaudeMeterCore" */;
+			productName = ClaudeMeterCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+
+	};
+	rootObject = 1CDA7936E3BE4F1EBBBFEAED /* Project object */;
+}

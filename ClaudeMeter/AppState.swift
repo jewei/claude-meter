@@ -102,9 +102,14 @@ final class AppState: ObservableObject {
                 return
             }
 
+            let previous = snapshot
             if let snap = result.snapshot {
                 snapshot = snap
-                await notificationEngine.process(snapshot: snap)
+                await notificationEngine.process(
+                    snapshot: snap,
+                    previous: previous,
+                    isStale: false
+                )
             }
             lastPolledAt = Date()
             lastError = nil

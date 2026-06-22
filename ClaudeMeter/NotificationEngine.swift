@@ -5,10 +5,15 @@ import ClaudeMeterCore
 ///
 /// Deduplication: one notification per (scope, level, reset-window). The fired state is
 /// stored in UserDefaults, keyed by the window's `resetsAt` epoch seconds, so notifications
-/// are not repeated across app relaunches within the same reset window.
+/// are not repeated across app relaunches within the same reset window. Expired keys are
+/// pruned when the reset time passes.
 actor NotificationEngine {
     private let center = UNUserNotificationCenter.current()
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
 
     // MARK: - Authorization
 
@@ -20,49 +25,58 @@ actor NotificationEngine {
 
     // MARK: - Processing
 
-    func process(snapshot: ClaudeUsageSnapshot) async {
-        guard await isAuthorized() else { return }
-        evaluate(scope: "session",  label: "Session",            window: snapshot.limits.currentSession)
-        evaluate(scope: "weekly",   label: "Weekly (all models)", window: snapshot.limits.currentWeekAllModels)
-    }
+    func process(
+        snapshot: ClaudeUsageSnapshot,
+        previous: ClaudeUsageSnapshot?,
+        isStale: Bool
+    ) async {
+        guard !isStale, isEnabled(), await isAuthorized() else { return }
 
-    // MARK: - Threshold evaluation
+        pruneExpiredKeys()
+        let pending = NotificationPolicy.triggers(snapshot: snapshot, previous: previous)
 
-    private func evaluate(scope: String, label: String, window: LimitWindow) {
-        guard let percent = window.percentUsed,
-              let resetAt = window.resetsAt,
-              resetAt > Date() else { return }
-
-        let severity = UsageSeverity.from(percent: percent)
-        let pct = window.displayPercent ?? "\(Int(min(100, max(0, percent))))%"
-
-        switch severity {
-        case .critical, .overLimit:
-            guard !hasFired(scope: scope, level: "critical", resetAt: resetAt) else { return }
-            post(
-                id: dedupKey(scope: scope, level: "critical", resetAt: resetAt),
-                title: "\(label) limit nearly reached — \(pct)",
-                body: "Resets \(resetDescription(resetAt))."
-            )
-            markFired(scope: scope, level: "critical", resetAt: resetAt)
-
-        case .warning:
-            // Suppress warning if critical already fired for this window
-            guard !hasFired(scope: scope, level: "warning",  resetAt: resetAt),
-                  !hasFired(scope: scope, level: "critical", resetAt: resetAt) else { return }
-            post(
-                id: dedupKey(scope: scope, level: "warning", resetAt: resetAt),
-                title: "\(label) usage high — \(pct)",
-                body: "Resets \(resetDescription(resetAt))."
-            )
-            markFired(scope: scope, level: "warning", resetAt: resetAt)
-
-        default:
-            break
+        for trigger in pending {
+            deliver(trigger: trigger, snapshot: snapshot)
         }
     }
 
-    // MARK: - Posting
+    // MARK: - Delivery
+
+    private func deliver(trigger: NotificationTrigger, snapshot: ClaudeUsageSnapshot) {
+        let window = trigger.scope == "session"
+            ? snapshot.limits.currentSession
+            : snapshot.limits.currentWeekAllModels
+        let label = trigger.scope == "session" ? "Session" : "Weekly (all models)"
+        let pct = window.displayPercent ?? "—"
+        let key = NotificationPolicy.dedupKey(
+            scope: trigger.scope,
+            level: trigger.level,
+            resetAt: trigger.resetAt
+        )
+
+        if trigger.level == "critical" {
+            guard !hasFired(key: key) else { return }
+            post(
+                id: key,
+                title: "\(label) limit nearly reached — \(pct)",
+                body: "Resets \(resetDescription(trigger.resetAt))."
+            )
+            markFired(key: key)
+        } else if trigger.level == "warning" {
+            let criticalKey = NotificationPolicy.dedupKey(
+                scope: trigger.scope,
+                level: "critical",
+                resetAt: trigger.resetAt
+            )
+            guard !hasFired(key: key), !hasFired(key: criticalKey) else { return }
+            post(
+                id: key,
+                title: "\(label) usage high — \(pct)",
+                body: "Resets \(resetDescription(trigger.resetAt))."
+            )
+            markFired(key: key)
+        }
+    }
 
     private func post(id: String, title: String, body: String) {
         let content = UNMutableNotificationContent()
@@ -75,22 +89,33 @@ actor NotificationEngine {
 
     // MARK: - Deduplication
 
-    private func dedupKey(scope: String, level: String, resetAt: Date) -> String {
-        "com.claudemeter.notif.\(scope).\(level).\(Int(resetAt.timeIntervalSince1970))"
+    private func hasFired(key: String) -> Bool {
+        defaults.bool(forKey: key)
     }
 
-    private func hasFired(scope: String, level: String, resetAt: Date) -> Bool {
-        defaults.bool(forKey: dedupKey(scope: scope, level: level, resetAt: resetAt))
+    private func markFired(key: String) {
+        defaults.set(true, forKey: key)
     }
 
-    private func markFired(scope: String, level: String, resetAt: Date) {
-        defaults.set(true, forKey: dedupKey(scope: scope, level: level, resetAt: resetAt))
+    private func pruneExpiredKeys() {
+        let allKeys = defaults.dictionaryRepresentation().keys.map { String($0) }
+        for key in NotificationPolicy.expiredDedupKeys(in: allKeys) {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    // MARK: - Settings
+
+    private func isEnabled() -> Bool {
+        guard defaults.object(forKey: "enableNotifications") != nil else { return true }
+        return defaults.bool(forKey: "enableNotifications")
     }
 
     // MARK: - Helpers
 
     private func isAuthorized() async -> Bool {
-        await center.notificationSettings().authorizationStatus == .authorized
+        let status = await center.notificationSettings().authorizationStatus
+        return status == .authorized || status == .provisional
     }
 
     private static let shortTimeFormatter: DateFormatter = {

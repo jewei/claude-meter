@@ -1,0 +1,1 @@
+Error: Not logged in. Please run claude login to authenticate.

@@ -1,0 +1,6 @@
+Version:          2.1.185
+Model:            claude-opus-4-8
+
+Current session
+████████████▌                                      25% used
+Resets 2:50pm (Asia/Kuala_Lumpur)

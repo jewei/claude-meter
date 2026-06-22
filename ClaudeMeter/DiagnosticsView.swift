@@ -31,24 +31,20 @@ enum DiagnosticsSanitizer {
 struct DiagnosticsView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("enableDiagnosticsRawOutput") private var enableDiagnosticsRawOutput = false
     @State private var copied = false
-    @State private var rawOutput: String?
     @State private var historyRecordCount: Int?
 
     var body: some View {
         VStack(spacing: 0) {
             Form {
-                cliSection
+                dataSourceSection
                 pollSection
                 snapshotSection
                 historySection
                 warningsSection
-                rawOutputSection
             }
             .formStyle(.grouped)
             .onAppear {
-                rawOutput = try? SnapshotStore(directory: appState.storeDirectory).readRawOutput()
                 loadHistoryMetadata()
             }
 
@@ -79,15 +75,12 @@ struct DiagnosticsView: View {
 
     // MARK: - Sections
 
-    private var cliSection: some View {
-        Section("CLI") {
-            LabeledContent("Path", value: effectiveCLIPath)
-            LabeledContent("Status", value: cliStatus)
+    private var dataSourceSection: some View {
+        Section("Data Source") {
+            LabeledContent("Mode", value: ClaudeAIKeychain.load() != nil ? "claude.ai API" : "Stats cache + journal")
             if let snap = appState.snapshot {
-                if let version = snap.source.cliVersion {
-                    LabeledContent("Version", value: version)
-                }
-                LabeledContent("Last command", value: snap.source.command)
+                LabeledContent("Source", value: snap.source.command)
+                LabeledContent("Parser", value: snap.parserVersion)
             }
         }
     }
@@ -128,27 +121,6 @@ struct DiagnosticsView: View {
     }
 
     @ViewBuilder
-    private var rawOutputSection: some View {
-        if enableDiagnosticsRawOutput {
-            Section("Raw CLI Output") {
-                if let raw = rawOutput {
-                    ScrollView {
-                        Text(DiagnosticsSanitizer.sanitize(raw))
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                    }
-                    .frame(maxHeight: 120)
-                } else {
-                    Text("No raw output on disk — run a poll first.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
     private var warningsSection: some View {
         if let warnings = appState.lastPollResult?.warnings, !warnings.isEmpty {
             Section("Parser Warnings (\(warnings.count))") {
@@ -165,21 +137,6 @@ struct DiagnosticsView: View {
     }
 
     // MARK: - Helpers
-
-    private var effectiveCLIPath: String {
-        let stored = (UserDefaults.standard.string(forKey: "claudeCliPath") ?? "")
-            .trimmingCharacters(in: .whitespaces)
-        if stored.isEmpty {
-            return CLIPathDetector.detect() ?? "Not found"
-        }
-        return stored
-    }
-
-    private var cliStatus: String {
-        let path = effectiveCLIPath
-        guard path != "Not found" else { return "Not found" }
-        return CLIPathDetector.verify(path: path) ? "Executable ✓" : "Not executable ✗"
-    }
 
     private var lastPollTimeText: String {
         guard let date = appState.lastPolledAt else { return "Never" }
@@ -207,9 +164,8 @@ struct DiagnosticsView: View {
             "=== Claude Meter Diagnostics (sanitized) ===",
             "Generated: \(isoFormatter.string(from: Date()))",
             "",
-            "CLI",
-            "  Path: \(effectiveCLIPath)",
-            "  Status: \(cliStatus)",
+            "Data Source",
+            "  Mode: \(ClaudeAIKeychain.load() != nil ? "claude.ai API" : "Stats cache + journal")",
             "",
             "Last Poll",
             "  Time: \(lastPollTimeText)",
@@ -224,10 +180,7 @@ struct DiagnosticsView: View {
                 "  Parser version: \(snap.parserVersion)",
                 "  Created: \(isoFormatter.string(from: snap.createdAt))",
             ]
-            if let version = snap.source.cliVersion {
-                lines.append("  CLI version: \(version)")
-            }
-            lines.append("  Last command: \(snap.source.command)")
+            lines.append("  Source: \(snap.source.command)")
             lines.append("")
         }
 

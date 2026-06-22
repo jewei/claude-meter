@@ -8,8 +8,8 @@ struct SettingsView: View {
 
     var body: some View {
         TabView {
-            CLISettingsTab(appState: appState)
-                .tabItem { Label("CLI", systemImage: "terminal") }
+            DataSettingsTab(appState: appState)
+                .tabItem { Label("Data", systemImage: "doc.text") }
             DisplaySettingsTab()
                 .tabItem { Label("Display", systemImage: "eye") }
             NotificationsSettingsTab()
@@ -17,72 +17,123 @@ struct SettingsView: View {
             AdvancedSettingsTab(appState: appState)
                 .tabItem { Label("Advanced", systemImage: "gearshape.2") }
         }
-        .frame(width: 460, height: 320)
+        .frame(width: 480, height: 380)
+        .background(FloatingWindowAccessor())
     }
 }
 
-// MARK: - CLI tab
+// MARK: - Window level shim
 
-private struct CLISettingsTab: View {
+/// Makes the host window float above normal app windows, so the settings panel
+/// stays visible over other apps (needed because this is a LSUIElement menu bar app).
+private struct FloatingWindowAccessor: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            view.window?.level = .floating
+        }
+        return view
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+// MARK: - Data tab
+
+private struct DataSettingsTab: View {
     let appState: AppState
 
-    @AppStorage("claudeCliPath") private var claudeCliPath = ""
-    @AppStorage("statusArguments") private var statusArguments = "status"
-    @AppStorage("statsArguments") private var statsArguments = "stats"
-    @AppStorage("cliTimeoutSeconds") private var cliTimeoutSeconds = 5.0
     @AppStorage("pollIntervalActiveSeconds") private var pollIntervalActiveSeconds = 15.0
     @AppStorage("pollIntervalBackgroundSeconds") private var pollIntervalBackgroundSeconds = 60.0
     @AppStorage("staleAfterSeconds") private var staleAfterSeconds = 180.0
 
-    @State private var cliValidationMessage: String? = nil
+    @State private var sessionKey = ""
+    @State private var orgId = ""
+    @State private var isConnected = false
+    @State private var connectionStatus = ""
+    @State private var showSessionKey = false
+    @State private var isTesting = false
+    @State private var testResult = ""
 
     var body: some View {
         Form {
-            Section("Binary") {
-                HStack {
-                    TextField("Auto-detect", text: $claudeCliPath)
-                        .font(.system(.body, design: .monospaced))
-                    Button("Browse…") { browse() }
-                        .buttonStyle(.borderless)
-                    Button("Test") { test() }
-                        .buttonStyle(.borderless)
-                        .disabled(effectiveCLIPath.isEmpty)
-                }
-                if let msg = cliValidationMessage {
-                    Text(msg)
-                        .font(.caption)
-                        .foregroundStyle(msg.hasPrefix("✓") ? Color.cmNormal : Color.cmCritical)
-                }
-                Text("Leave blank to use the auto-detected path: \(autodetectedPath ?? "not found")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Commands") {
-                LabeledContent("Status subcommand") {
-                    TextField("status", text: $statusArguments)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(width: 140)
-                        .multilineTextAlignment(.trailing)
-                }
-                LabeledContent("Stats subcommand") {
-                    TextField("stats (leave blank to skip)", text: $statsArguments)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(width: 200)
-                        .multilineTextAlignment(.trailing)
-                }
-            }
-
-            Section("Timing") {
-                LabeledContent("CLI timeout") {
-                    HStack {
-                        Slider(value: $cliTimeoutSeconds, in: 2...30, step: 1)
-                            .frame(width: 120)
-                        Text("\(Int(cliTimeoutSeconds))s")
-                            .monospacedDigit()
-                            .frame(width: 32, alignment: .trailing)
+            Section("Claude.ai Connection") {
+                if isConnected {
+                    LabeledContent("Status") {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                            Text("Connected")
+                        }
                     }
+                    LabeledContent("Org ID") {
+                        Text(orgId)
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 12) {
+                        Button(isTesting ? "Testing…" : "Test connection") { testConnection() }
+                            .buttonStyle(.borderless)
+                            .disabled(isTesting)
+                        Button("Disconnect") { disconnect() }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.red)
+                    }
+                    if !testResult.isEmpty {
+                        Text(testResult)
+                            .font(.caption)
+                            .foregroundStyle(testResult.hasPrefix("Error") ? .red : .green)
+                    }
+                } else {
+                    HStack(alignment: .center, spacing: 10) {
+                        Text("Session key")
+                            .frame(width: 90, alignment: .leading)
+                        Group {
+                            if showSessionKey {
+                                TextField("", text: $sessionKey,
+                                          prompt: Text("sk-ant-sid02-…").foregroundColor(.secondary))
+                            } else {
+                                SecureField("", text: $sessionKey,
+                                            prompt: Text("sk-ant-sid02-…").foregroundColor(.secondary))
+                            }
+                        }
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                        .textContentType(.password)
+                        .frame(width: 260)
+                        Button {
+                            showSessionKey.toggle()
+                        } label: {
+                            Image(systemName: showSessionKey ? "eye.slash" : "eye")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .help(showSessionKey ? "Hide" : "Show (enables paste)")
+                    }
+
+                    HStack(alignment: .center, spacing: 10) {
+                        Text("Org ID")
+                            .frame(width: 90, alignment: .leading)
+                        TextField("", text: $orgId,
+                                  prompt: Text("UUID").foregroundColor(.secondary))
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(width: 260)
+                    }
+                    if !connectionStatus.isEmpty {
+                        Text(connectionStatus)
+                            .font(.caption)
+                            .foregroundStyle(connectionStatus.hasPrefix("Error") ? .red : .secondary)
+                    }
+                    Button("Connect") { connect() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(sessionKey.trimmingCharacters(in: .whitespaces).isEmpty ||
+                                  orgId.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Text("Find in browser: DevTools → Application → Cookies → claude.ai → sessionKey. Org ID is in the lastActiveOrg cookie.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
+            }
+
+            Section("Polling") {
                 LabeledContent("Poll (popover open)") {
                     HStack {
                         Slider(value: $pollIntervalActiveSeconds, in: 5...60, step: 5)
@@ -114,39 +165,57 @@ private struct CLISettingsTab: View {
         }
         .formStyle(.grouped)
         .padding()
-        .onChange(of: claudeCliPath)       { _, _ in rebuild() }
-        .onChange(of: statusArguments)     { _, _ in rebuild() }
-        .onChange(of: statsArguments)      { _, _ in rebuild() }
-        .onChange(of: cliTimeoutSeconds)   { _, _ in rebuild() }
-        .onChange(of: staleAfterSeconds)  { _, _ in AppGroupConfig.syncDisplaySettings() }
+        .onAppear { loadKeychainState() }
+        .onChange(of: staleAfterSeconds)   { _, _ in AppGroupConfig.syncDisplaySettings() }
     }
 
-    private var effectiveCLIPath: String {
-        let stored = claudeCliPath.trimmingCharacters(in: .whitespaces)
-        return stored.isEmpty ? (CLIPathDetector.detect() ?? "") : stored
-    }
-
-    private var autodetectedPath: String? {
-        CLIPathDetector.detect()
-    }
-
-    private func browse() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.title = "Select the claude binary"
-        if panel.runModal() == .OK, let url = panel.url {
-            claudeCliPath = url.path
+    private func loadKeychainState() {
+        if let creds = ClaudeAIKeychain.load() {
+            orgId = creds.orgId
+            isConnected = true
+        } else {
+            isConnected = false
         }
     }
 
-    private func test() {
-        let path = effectiveCLIPath
-        if CLIPathDetector.verify(path: path) {
-            cliValidationMessage = "✓ Executable found at \(path)"
+    private func connect() {
+        let sk = sessionKey.trimmingCharacters(in: .whitespaces)
+        let org = orgId.trimmingCharacters(in: .whitespaces)
+        guard !sk.isEmpty, !org.isEmpty else { return }
+        if ClaudeAIKeychain.save(sessionKey: sk, orgId: org) {
+            sessionKey = ""
+            isConnected = true
+            connectionStatus = ""
+            rebuild()
         } else {
-            cliValidationMessage = "✗ Not found or not executable: \(path)"
+            connectionStatus = "Error: could not save to Keychain"
+        }
+    }
+
+    private func disconnect() {
+        ClaudeAIKeychain.delete()
+        sessionKey = ""
+        orgId = ""
+        isConnected = false
+        connectionStatus = ""
+        rebuild()
+    }
+
+
+
+    private func testConnection() {
+        guard let creds = ClaudeAIKeychain.load() else { return }
+        isTesting = true
+        testResult = ""
+        Task {
+            defer { isTesting = false }
+            let client = ClaudeAIUsageClient(sessionKey: creds.sessionKey, orgId: creds.orgId)
+            do {
+                let usage = try await client.fetchUsage()
+                testResult = "Session \(Int(usage.sessionPercent))%  ·  Week \(Int(usage.weekPercent))%"
+            } catch {
+                testResult = "Error: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -158,24 +227,11 @@ private struct CLISettingsTab: View {
 // MARK: - Display tab
 
 private struct DisplaySettingsTab: View {
-    @AppStorage("privacyMode") private var privacyMode: PrivacyMode = .workSafe
     @AppStorage("warningThresholdPercent") private var warningThresholdPercent = 80.0
     @AppStorage("criticalThresholdPercent") private var criticalThresholdPercent = 95.0
 
     var body: some View {
         Form {
-            Section("Privacy Mode") {
-                Picker("Privacy", selection: $privacyMode) {
-                    ForEach(PrivacyMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .pickerStyle(.radioGroup)
-                Text(privacyMode.detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
             Section("Severity Thresholds") {
                 LabeledContent("Warning at") {
                     HStack {
@@ -213,9 +269,6 @@ private struct DisplaySettingsTab: View {
             if newCritical <= warningThresholdPercent {
                 criticalThresholdPercent = min(100, warningThresholdPercent + 5)
             }
-            AppGroupConfig.syncDisplaySettings()
-        }
-        .onChange(of: privacyMode) { _, _ in
             AppGroupConfig.syncDisplaySettings()
         }
     }
@@ -261,7 +314,6 @@ private struct AdvancedSettingsTab: View {
     let appState: AppState
 
     @AppStorage("launchAtLogin") private var launchAtLogin = false
-    @AppStorage("enableDiagnosticsRawOutput") private var enableDiagnosticsRawOutput = false
     @AppStorage("historyRetentionDays") private var historyRetentionDays = 180.0
     @Environment(\.openWindow) private var openWindow
 
@@ -302,11 +354,6 @@ private struct AdvancedSettingsTab: View {
             }
 
             Section("Diagnostics") {
-                Toggle("Record raw CLI output", isOn: $enableDiagnosticsRawOutput)
-                    .onChange(of: enableDiagnosticsRawOutput) { _, _ in appState.rebuildPipeline() }
-                Text("Stores the raw CLI output to disk for debugging. Disabled by default.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Button("Open Diagnostics…") { showingDiagnostics = true }
                     .buttonStyle(.borderless)
             }

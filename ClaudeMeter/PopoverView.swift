@@ -5,7 +5,6 @@ import AppKit
 struct PopoverView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.openSettings) private var openSettings
-    @AppStorage("privacyMode") private var privacyMode: PrivacyMode = .workSafe
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @Environment(\.openWindow) private var openWindow
     @State private var now = Date()
@@ -107,18 +106,15 @@ struct PopoverView: View {
 
     private var setupState: some View {
         VStack(spacing: 10) {
-            Image(systemName: "terminal")
+            Image(systemName: "doc.text.magnifyingglass")
                 .font(.system(size: 28))
                 .foregroundStyle(.secondary)
-            Text("Claude CLI not found")
+            Text("Stats cache not found")
                 .font(.system(size: 13, weight: .medium))
-            Text("Open Settings to configure the CLI path.")
+            Text("Make sure Claude Code has been used at least once. Expected at ~/.claude/stats-cache.json")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("Open Settings") { openSettings() }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 28)
@@ -161,23 +157,18 @@ struct PopoverView: View {
                 Divider().opacity(0.1)
             }
             UsageCardView(
-                label: "SESSION",
+                label: "CURRENT SESSION",
                 window: snap.limits.currentSession,
                 now: now,
                 thresholds: usageThresholds
             )
             Divider().opacity(0.1).padding(.horizontal, 16)
             UsageCardView(
-                label: "WEEK (ALL MODELS)",
+                label: "THIS WEEK",
                 window: snap.limits.currentWeekAllModels,
                 now: now,
                 thresholds: usageThresholds
             )
-            identifierRows(snap)
-            if privacyMode.showsModel, let model = snap.session?.activeModel {
-                Divider().opacity(0.1).padding(.horizontal, 16)
-                modelRow(model)
-            }
         }
     }
 
@@ -200,12 +191,11 @@ struct PopoverView: View {
 
     private var pollErrorText: String {
         let err = appState.lastError ?? ""
-        if err.contains("authenticated") || err.contains("not logged") {
-            return "Refresh failed — run: claude login"
+        if err.contains("Stats cache not found") {
+            return "Stats cache missing — use Claude Code to generate it"
         }
-        if err.contains("timeout") { return "Refresh failed — CLI timed out" }
-        if err.contains("usage-limit") || err.contains("No CLI output") {
-            return "Refresh failed — could not parse output"
+        if err.contains("decode") || err.contains("data couldn't be read") {
+            return "Refresh failed — could not parse stats cache"
         }
         return "Refresh failed — showing last known data"
     }
@@ -224,47 +214,7 @@ struct PopoverView: View {
         .background(Color.cmWarning.opacity(0.08))
     }
 
-    // MARK: - Identifier rows (privacy-gated)
-
-    @ViewBuilder
-    private func identifierRows(_ snap: ClaudeUsageSnapshot) -> some View {
-        if privacyMode.showsSessionName, let name = snap.session?.name {
-            Divider().opacity(0.1).padding(.horizontal, 16)
-            identifierRow(label: "Session", value: name)
-        }
-        if privacyMode.showsAccountInfo, let account = snap.account {
-            if let email = account.email {
-                Divider().opacity(0.1).padding(.horizontal, 16)
-                identifierRow(label: "Email", value: email)
-            }
-            if let org = account.organization {
-                Divider().opacity(0.1).padding(.horizontal, 16)
-                identifierRow(label: "Organization", value: org)
-            }
-        }
-        if privacyMode.showsCwd, let cwd = snap.session?.cwd {
-            Divider().opacity(0.1).padding(.horizontal, 16)
-            identifierRow(label: "Working directory", value: cwd)
-        }
-    }
-
-    private func identifierRow(label: String, value: String) -> some View {
-        HStack(alignment: .top) {
-            Text(label)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(value)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(.primary)
-                .lineLimit(2)
-                .multilineTextAlignment(.trailing)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-    }
-
-    // MARK: - Model row
+    // MARK: - Model row (kept for stats-cache fallback path)
 
     private func modelRow(_ model: String) -> some View {
         HStack {
@@ -312,6 +262,14 @@ struct PopoverView: View {
             .buttonStyle(.borderless)
             .font(.system(size: 11))
             .disabled(appState.isLoading)
+            Button {
+                NSApplication.shared.terminate(nil)
+            } label: {
+                Image(systemName: "power")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.borderless)
+            .help("Quit Claude Meter")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
@@ -332,33 +290,25 @@ struct PopoverView: View {
 
     private var errorTitle: String {
         let err = appState.lastError ?? ""
-        if err.contains("cliNotFound") { return "Claude CLI not found" }
-        if err.contains("timeout")     { return "Claude CLI timed out" }
-        if err.contains("unauthenticated") || err.contains("not logged") || err.contains("authenticated") {
-            return "Claude not logged in"
+        if err.contains("Stats cache not found") { return "Stats cache not found" }
+        if err.contains("decode") || err.contains("data couldn't be read") {
+            return "Could not read stats cache"
         }
-        if err.contains("usage-limit") || err.contains("No CLI output") || err.contains("parse") {
-            return "Could not parse output"
-        }
-        return "Could not reach Claude"
+        return "Could not read usage stats"
     }
 
     private var errorHint: String? {
         let err = appState.lastError ?? ""
-        if err.contains("cliNotFound")  { return "Open Settings to configure the CLI path." }
-        if err.contains("unauthenticated") || err.contains("not logged") || err.contains("authenticated") {
-            return "Run: claude login"
+        if err.contains("Stats cache not found") {
+            return "Use Claude Code in a terminal to generate ~/.claude/stats-cache.json"
         }
-        if err.contains("usage-limit") || err.contains("No CLI output") {
-            return "Check Diagnostics for parser details."
+        if err.contains("decode") {
+            return "Check Diagnostics for details."
         }
         return nil
     }
 
-    private var shouldOfferSettings: Bool {
-        let err = appState.lastError ?? ""
-        return err.contains("cliNotFound")
-    }
+    private var shouldOfferSettings: Bool { false }
 }
 
 // MARK: - First-run onboarding
@@ -367,6 +317,10 @@ struct OnboardingView: View {
     @Binding var hasCompletedOnboarding: Bool
     @Environment(\.openSettings) private var openSettings
     @Environment(\.dismiss) private var dismiss
+
+    private var cacheExists: Bool {
+        FileManager.default.fileExists(atPath: StatsCacheReader.defaultPath.path)
+    }
 
     var body: some View {
         VStack(spacing: 20) {
@@ -377,16 +331,24 @@ struct OnboardingView: View {
             Text("Welcome to Claude Meter")
                 .font(.title2.bold())
 
-            if let path = CLIPathDetector.detect() {
-                Text("Found the Claude CLI at:")
+            if cacheExists {
+                Text("Found your Claude usage stats at:")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                Text(path)
+                Text("~/.claude/stats-cache.json")
                     .font(.system(.body, design: .monospaced))
                     .textSelection(.enabled)
+                Text("To show usage percentages, set your plan's daily and weekly message limits in Settings → Data.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             } else {
-                Text("The Claude CLI was not found on your PATH. Open Settings to set the binary path manually.")
+                Text("Stats cache not found at ~/.claude/stats-cache.json")
                     .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Text("Use Claude Code in a terminal first to generate it, then reopen Claude Meter.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
@@ -412,31 +374,27 @@ struct OnboardingView: View {
 extension AppState {
     static var preview: AppState {
         let snap = ClaudeUsageSnapshot(
-            parserVersion: "0.1.0",
+            parserVersion: "stats-cache-1.0",
             createdAt: Date(),
             lastSuccessfulPollAt: Date(),
-            source: SourceInfo(cliPath: "/opt/homebrew/bin/claude", command: "claude status"),
-            session: SessionInfo(activeModel: "claude-opus-4-8"),
+            source: SourceInfo(cliPath: "/Users/jewei/.claude/stats-cache.json", command: "stats-cache"),
+            session: SessionInfo(activeModel: "claude-sonnet-4-6"),
             limits: LimitInfo(
                 currentSession: LimitWindow(
                     percentUsed: 25,
-                    resetsAt: Date().addingTimeInterval(2700),
-                    rawResetText: "2:50pm (Asia/Kuala_Lumpur)"
+                    resetsAt: Calendar.current.startOfDay(for: Date().addingTimeInterval(86400)),
+                    rawValueText: "245 msgs"
                 ),
                 currentWeekAllModels: LimitWindow(
                     percentUsed: 82,
-                    resetsAt: Date().addingTimeInterval(5 * 86400),
-                    rawResetText: "Jun 27 at 3pm (Asia/Kuala_Lumpur)"
+                    resetsAt: Calendar.current.startOfDay(for: Date().addingTimeInterval(86400)),
+                    rawValueText: "1482 msgs"
                 )
             ),
             state: SnapshotState(status: .ok, severity: .warning)
         )
         let store = SnapshotStore(directory: FileManager.default.temporaryDirectory)
-        let pipeline = SnapshotPipeline(
-            runner: MockCommandRunner(statusOutput: ""),
-            parser: ClaudeOutputParser(cliPath: "/opt/homebrew/bin/claude"),
-            store: store
-        )
+        let pipeline = StatsCachePipeline(store: store)
         return AppState(pipeline: pipeline, initialSnapshot: snap)
     }
 }

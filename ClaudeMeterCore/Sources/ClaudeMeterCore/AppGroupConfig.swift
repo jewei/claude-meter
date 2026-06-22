@@ -6,7 +6,6 @@ public enum AppGroupConfig {
 
     public static let warningThresholdKey = "warningThresholdPercent"
     public static let criticalThresholdKey = "criticalThresholdPercent"
-    public static let privacyModeKey = "privacyMode"
     public static let staleAfterSecondsKey = "staleAfterSeconds"
 
     public static var sharedDefaults: UserDefaults? {
@@ -19,7 +18,6 @@ public enum AppGroupConfig {
         for key in [
             warningThresholdKey,
             criticalThresholdKey,
-            privacyModeKey,
             staleAfterSecondsKey,
         ] {
             if let value = source.object(forKey: key) {
@@ -46,13 +44,6 @@ public enum AppGroupConfig {
             warning: warning,
             critical: max(critical, warning + 1)
         )
-    }
-
-    public static func currentPrivacyMode(defaults: UserDefaults = .standard) -> PrivacyMode {
-        let raw = (sharedDefaults?.string(forKey: privacyModeKey)
-            ?? defaults.string(forKey: privacyModeKey))
-            ?? PrivacyMode.workSafe.rawValue
-        return PrivacyMode(rawValue: raw) ?? .workSafe
     }
 
     public static func isSnapshotStale(

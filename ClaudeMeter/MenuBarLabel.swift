@@ -47,14 +47,6 @@ struct MenuBarLabel: View {
 
     private var labelText: String? {
         guard let snap = appState.snapshot else { return nil }
-        let s = snap.limits.currentSession
-        let w = snap.limits.currentWeekAllModels
-
-        switch (s.displayPercent, w.displayPercent) {
-        case let (sp?, wp?): return "\(sp)/\(wp)"
-        case let (sp?, nil): return sp
-        case let (nil, wp?): return wp
-        default: return nil
-        }
+        return snap.limits.currentSession.displayPercent
     }
 }

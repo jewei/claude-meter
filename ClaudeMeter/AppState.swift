@@ -11,7 +11,7 @@ final class AppState: ObservableObject {
     @Published var lastPolledAt: Date? = nil
     @Published var isPopoverOpen = false
 
-    var pipeline: SnapshotPipeline
+    var pipeline: any ClaudeMeterPipeline
     let notificationEngine = NotificationEngine()
     private(set) var historyStore: HistoryStore?
     private(set) var storeDirectory: URL = FileManager.default.temporaryDirectory
@@ -49,7 +49,7 @@ final class AppState: ObservableObject {
         Task { await notificationEngine.requestAuthorizationIfNeeded() }
     }
 
-    init(pipeline: SnapshotPipeline, initialSnapshot: ClaudeUsageSnapshot? = nil) {
+    init(pipeline: any ClaudeMeterPipeline, initialSnapshot: ClaudeUsageSnapshot? = nil) {
         self.pipeline = pipeline
         self.snapshot = initialSnapshot
         self.lastPolledAt = initialSnapshot?.lastSuccessfulPollAt
@@ -140,7 +140,7 @@ final class AppState: ObservableObject {
         defer { isLoading = false }
 
         do {
-            let result = try await pipeline.poll()
+            let result = try await pipeline.poll(now: Date())
             lastPollResult = result
 
             if result.isFatal {
@@ -155,8 +155,7 @@ final class AppState: ObservableObject {
                 lastPolledAt = snap.lastSuccessfulPollAt ?? Date()
                 let record = HistoryRecord(
                     from: snap,
-                    thresholds: AppGroupConfig.currentThresholds(),
-                    privacyMode: AppGroupConfig.currentPrivacyMode()
+                    thresholds: AppGroupConfig.currentThresholds()
                 )
                 if let hs = historyStore {
                     Task.detached(priority: .utility) { try? hs.append(record) }
@@ -182,36 +181,13 @@ final class AppState: ObservableObject {
 
     // MARK: - Pipeline factory
 
-    private static func makePipeline(store: SnapshotStore) -> SnapshotPipeline {
-        let ud = UserDefaults.standard
-        let cliPath: String = {
-            let stored = (ud.string(forKey: "claudeCliPath") ?? "").trimmingCharacters(in: .whitespaces)
-            return stored.isEmpty ? (CLIPathDetector.detect() ?? "/usr/local/bin/claude") : stored
-        }()
-        let statusArgs: [String] = {
-            let s = ud.string(forKey: "statusArguments") ?? "status"
-            let parts = s.split(separator: " ").map(String.init)
-            return parts.isEmpty ? ["status"] : parts
-        }()
-        let statsArgs: [String]? = {
-            let s = (ud.string(forKey: "statsArguments") ?? "stats").trimmingCharacters(in: .whitespaces)
-            if s.isEmpty { return nil }
-            return s.split(separator: " ").map(String.init)
-        }()
-        let timeout = ud.double(forKey: "cliTimeoutSeconds").positive ?? 5
-        let recordRaw = ud.bool(forKey: "enableDiagnosticsRawOutput")
-
-        return SnapshotPipeline(
-            runner: ProcessCommandRunner(config: RunnerConfig(
-                cliPath: cliPath,
-                statusArguments: statusArgs,
-                statsArguments: statsArgs,
-                timeoutSeconds: timeout
-            )),
-            parser: ClaudeOutputParser(cliPath: cliPath),
-            store: store,
-            recordRawOutput: recordRaw
-        )
+    private static func makePipeline(store: SnapshotStore) -> any ClaudeMeterPipeline {
+        let statsPipeline = StatsCachePipeline(store: store)
+        if let creds = ClaudeAIKeychain.load() {
+            let client = ClaudeAIUsageClient(sessionKey: creds.sessionKey, orgId: creds.orgId)
+            return ClaudeAIPipeline(client: client, store: store, fallback: statsPipeline)
+        }
+        return statsPipeline
     }
 }
 

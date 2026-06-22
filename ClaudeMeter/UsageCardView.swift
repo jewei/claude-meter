@@ -39,7 +39,7 @@ struct UsageCardView: View {
     }
 
     private var percentText: String {
-        window.displayPercent ?? "—"
+        window.displayPercent ?? window.rawValueText ?? "—"
     }
 
     @ViewBuilder

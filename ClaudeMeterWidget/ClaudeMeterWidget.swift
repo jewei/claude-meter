@@ -38,20 +38,17 @@ struct ClaudeMeterEntry: TimelineEntry {
     let date: Date
     let snapshot: ClaudeUsageSnapshot?
     let thresholds: UsageThresholds
-    let privacyMode: PrivacyMode
     let isStale: Bool
 
     init(
         date: Date,
         snapshot: ClaudeUsageSnapshot?,
         thresholds: UsageThresholds = .default,
-        privacyMode: PrivacyMode = .workSafe,
         isStale: Bool = false
     ) {
         self.date = date
         self.snapshot = snapshot
         self.thresholds = thresholds
-        self.privacyMode = privacyMode
         self.isStale = isStale
     }
 }
@@ -92,7 +89,6 @@ struct ClaudeMeterProvider: TimelineProvider {
             date: date,
             snapshot: snapshot,
             thresholds: AppGroupConfig.currentThresholds(),
-            privacyMode: AppGroupConfig.currentPrivacyMode(),
             isStale: AppGroupConfig.isSnapshotStale(lastPollAt: snapshot?.lastSuccessfulPollAt, now: date)
         )
     }
@@ -259,19 +255,6 @@ private struct LargeWidgetView: View {
                     thresholds: entry.thresholds
                 )
 
-                if entry.privacyMode.showsModel, let model = snap.session?.activeModel {
-                    Divider().opacity(0.2)
-                    HStack {
-                        Text("Model")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text(model)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                    }
-                }
             } else {
                 Spacer()
                 VStack(spacing: 8) {

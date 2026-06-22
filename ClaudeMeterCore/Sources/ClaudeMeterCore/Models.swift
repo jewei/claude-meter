@@ -133,11 +133,19 @@ public struct LimitWindow: Codable, Equatable, Sendable {
     public var percentUsed: Double?
     public var resetsAt: Date?
     public var rawResetText: String?
+    /// Raw message count string shown when no limit is configured, e.g. "245 msgs".
+    public var rawValueText: String?
 
-    public init(percentUsed: Double? = nil, resetsAt: Date? = nil, rawResetText: String? = nil) {
+    public init(
+        percentUsed: Double? = nil,
+        resetsAt: Date? = nil,
+        rawResetText: String? = nil,
+        rawValueText: String? = nil
+    ) {
         self.percentUsed = percentUsed
         self.resetsAt = resetsAt
         self.rawResetText = rawResetText
+        self.rawValueText = rawValueText
     }
 
     public var clampedPercent: Double? {

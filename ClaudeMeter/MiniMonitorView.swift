@@ -8,16 +8,14 @@ struct MiniMonitorView: View {
     var body: some View {
         HStack(spacing: 16) {
             metricColumn(
-                label: "SESSION",
-                value: appState.snapshot?.limits.currentSession.displayPercent,
-                percent: appState.snapshot?.limits.currentSession.percentUsed
+                label: "TODAY",
+                window: appState.snapshot?.limits.currentSession
             )
             Divider()
                 .frame(height: 28)
             metricColumn(
                 label: "WEEK",
-                value: appState.snapshot?.limits.currentWeekAllModels.displayPercent,
-                percent: appState.snapshot?.limits.currentWeekAllModels.percentUsed
+                window: appState.snapshot?.limits.currentWeekAllModels
             )
             Spacer(minLength: 0)
         }
@@ -37,14 +35,16 @@ struct MiniMonitorView: View {
         }
     }
 
-    private func metricColumn(label: String, value: String?, percent: Double?) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+    private func metricColumn(label: String, window: LimitWindow?) -> some View {
+        let displayText = window?.displayPercent ?? window?.rawValueText ?? "—"
+        let color = severityColor(for: window?.percentUsed)
+        return VStack(alignment: .leading, spacing: 2) {
             Text(label)
                 .font(.system(size: 8, weight: .semibold))
                 .foregroundStyle(.secondary)
-            Text(value ?? "—")
+            Text(displayText)
                 .font(.system(size: 20, weight: .bold, design: .monospaced))
-                .foregroundStyle(severityColor(for: percent))
+                .foregroundStyle(color)
                 .monospacedDigit()
         }
     }

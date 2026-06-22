@@ -6,13 +6,10 @@ import Foundation
 // /bin/sleep, /usr/bin/false) are part of macOS base and always present.
 
 private func echoRunner(timeout: Double = 5) -> ProcessCommandRunner {
-    // Point statusSubcommand at /bin/echo with the arg "hello" by using a wrapper trick:
-    // We configure the runner to run "/bin/echo" as if it were the CLI, and pass
-    // "hello" as the subcommand (the only argument).
     ProcessCommandRunner(config: RunnerConfig(
         cliPath: "/bin/echo",
-        statusSubcommand: "hello",
-        statsSubcommand: nil,
+        statusArguments: ["hello"],
+        statsArguments: nil,
         timeoutSeconds: timeout
     ))
 }
@@ -30,12 +27,26 @@ struct CommandRunnerTests {
         #expect(output.durationSeconds > 0)
     }
 
+    @Test("Captures stderr separately from stdout")
+    func capturesStderr() async throws {
+        let runner = ProcessCommandRunner(config: RunnerConfig(
+            cliPath: "/bin/sh",
+            statusArguments: ["-c", "echo err >&2; echo out"],
+            statsArguments: nil,
+            timeoutSeconds: 5
+        ))
+        let output = try await runner.fetchStatus()
+        #expect(output.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "out")
+        #expect(output.stderr.trimmingCharacters(in: .whitespacesAndNewlines) == "err")
+        #expect(output.exitCode == 0)
+    }
+
     @Test("Captures non-zero exit code")
     func nonZeroExit() async throws {
         let runner = ProcessCommandRunner(config: RunnerConfig(
             cliPath: "/usr/bin/false",
-            statusSubcommand: "",
-            statsSubcommand: nil,
+            statusArguments: [],
+            statsArguments: nil,
             timeoutSeconds: 5
         ))
         let output = try await runner.fetchStatus()
@@ -47,12 +58,11 @@ struct CommandRunnerTests {
     func emptyOutput() async throws {
         let runner = ProcessCommandRunner(config: RunnerConfig(
             cliPath: "/bin/echo",
-            statusSubcommand: "",
-            statsSubcommand: nil,
+            statusArguments: [],
+            statsArguments: nil,
             timeoutSeconds: 5
         ))
         let output = try await runner.fetchStatus()
-        // echo with empty arg prints a newline only
         #expect(output.stdout.trimmingCharacters(in: .newlines).isEmpty)
         #expect(output.exitCode == 0)
     }
@@ -61,7 +71,7 @@ struct CommandRunnerTests {
     func cliNotFound() async throws {
         let runner = ProcessCommandRunner(config: RunnerConfig(
             cliPath: "/does/not/exist/claude",
-            statusSubcommand: "status",
+            statusArguments: ["status"],
             timeoutSeconds: 5
         ))
         await #expect(throws: CommandError.cliNotFound(path: "/does/not/exist/claude")) {
@@ -73,8 +83,8 @@ struct CommandRunnerTests {
     func timeoutFires() async throws {
         let runner = ProcessCommandRunner(config: RunnerConfig(
             cliPath: "/bin/sleep",
-            statusSubcommand: "10",
-            statsSubcommand: nil,
+            statusArguments: ["10"],
+            statsArguments: nil,
             timeoutSeconds: 0.3
         ))
         do {
@@ -85,24 +95,24 @@ struct CommandRunnerTests {
         }
     }
 
-    @Test("fetchStats returns nil when statsSubcommand is nil")
+    @Test("fetchStats returns nil when statsArguments is nil")
     func statsNilWhenNotConfigured() async throws {
         let runner = ProcessCommandRunner(config: RunnerConfig(
             cliPath: "/bin/echo",
-            statusSubcommand: "hello",
-            statsSubcommand: nil,
+            statusArguments: ["hello"],
+            statsArguments: nil,
             timeoutSeconds: 5
         ))
         let result = try await runner.fetchStats()
         #expect(result == nil)
     }
 
-    @Test("fetchStats executes when statsSubcommand is set")
+    @Test("fetchStats executes when statsArguments is set")
     func statsFetches() async throws {
         let runner = ProcessCommandRunner(config: RunnerConfig(
             cliPath: "/bin/echo",
-            statusSubcommand: "hello",
-            statsSubcommand: "world",
+            statusArguments: ["hello"],
+            statsArguments: ["world"],
             timeoutSeconds: 5
         ))
         let result = try await runner.fetchStats()
@@ -143,6 +153,18 @@ struct MockCommandRunnerTests {
         let result = try await mock.fetchStats()
         #expect(result?.stdout == "model table")
     }
+
+    @Test("fetchStats throws configured stats error")
+    func statsThrowsError() async throws {
+        let mock = MockCommandRunner(
+            statusOutput: "ok",
+            statsOutput: "ignored",
+            statsError: CommandError.cliNotFound(path: "/missing")
+        )
+        await #expect(throws: CommandError.cliNotFound(path: "/missing")) {
+            try await mock.fetchStats()
+        }
+    }
 }
 
 // MARK: - CLIPathDetector
@@ -152,8 +174,14 @@ struct CLIPathDetectorTests {
 
     @Test("Detects /bin/echo as a valid executable")
     func detectsKnownBinary() {
-        // Verify verify() works for a guaranteed binary
         #expect(CLIPathDetector.verify(path: "/bin/echo"))
+    }
+
+    @Test("detect() finds echo in standard search directories")
+    func detectEcho() {
+        let found = CLIPathDetector.detect(binaryName: "echo")
+        #expect(found != nil)
+        #expect(CLIPathDetector.verify(path: found!))
     }
 
     @Test("Returns nil for non-existent path")

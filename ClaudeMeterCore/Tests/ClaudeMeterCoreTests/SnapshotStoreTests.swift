@@ -3,6 +3,7 @@ import Foundation
 @testable import ClaudeMeterCore
 
 private let fixedDate = Date(timeIntervalSince1970: 1_782_108_000) // 2026-06-22T06:00:00Z
+private let klTZ = TimeZone(identifier: "Asia/Kuala_Lumpur")!
 
 private func makeStore() throws -> SnapshotStore {
     let dir = FileManager.default.temporaryDirectory
@@ -66,6 +67,33 @@ struct SnapshotStoreTests {
         #expect(recovered?.limits.currentSession.percentUsed == 84)
     }
 
+    // MARK: - Last error
+
+    @Test("Writes and reads last error record")
+    func lastErrorRoundtrip() throws {
+        let store = try makeStore()
+        let record = LastErrorRecord(occurredAt: fixedDate, message: "CLI timed out")
+
+        try store.writeLastError(record)
+        let recovered = try store.readLastError()
+
+        #expect(recovered == record)
+    }
+
+    @Test("clearLastError removes the error file")
+    func clearLastError() throws {
+        let store = try makeStore()
+        try store.writeLastError(LastErrorRecord(message: "fail"))
+        try store.clearLastError()
+        #expect(try store.readLastError() == nil)
+    }
+
+    @Test("readLastError returns nil when no error file exists")
+    func readLastErrorMissing() throws {
+        let store = try makeStore()
+        #expect(try store.readLastError() == nil)
+    }
+
     // MARK: - JSON validity
 
     @Test("Written file is valid UTF-8 JSON")
@@ -97,7 +125,6 @@ struct SnapshotStoreTests {
         let store = try makeStore()
         let currentURL = store.directory.appending(path: "current.json")
 
-        // Write garbage
         try "not valid json {{{".data(using: .utf8)!.write(to: currentURL)
 
         #expect(throws: (any Error).self) {
@@ -113,7 +140,6 @@ struct SnapshotStoreTests {
         let currentURL = store.directory.appending(path: "current.json")
         let data = try Data(contentsOf: currentURL)
 
-        // Truncate to first 50 bytes
         try data.prefix(50).write(to: currentURL)
 
         #expect(throws: (any Error).self) {
@@ -158,7 +184,6 @@ struct SnapshotStoreTests {
         try store.writeLatest(snap)
         let recovered = try #require(try store.readLatest())
 
-        // ISO8601 encoding/decoding should preserve sub-second precision within 1s
         let delta = abs(recovered.limits.currentSession.resetsAt!.timeIntervalSince(originalResetsAt))
         #expect(delta < 1.0)
     }

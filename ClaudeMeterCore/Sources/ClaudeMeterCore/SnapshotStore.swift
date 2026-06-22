@@ -1,10 +1,24 @@
 import Foundation
 
+public struct LastErrorRecord: Codable, Equatable, Sendable {
+    public var occurredAt: Date
+    public var message: String
+
+    public init(occurredAt: Date = Date(), message: String) {
+        self.occurredAt = occurredAt
+        self.message = message
+    }
+}
+
 /// Atomic reader/writer for the latest `ClaudeUsageSnapshot`.
 ///
-/// The snapshot is stored as pretty-printed JSON at `<directory>/current.json`.
-/// Writes are atomic: data goes to a `.tmp` file first, then renamed over the
-/// destination so readers never see a partial file.
+/// Files in `<directory>/`:
+///   - `current.json`      — latest parsed snapshot (pretty-printed JSON)
+///   - `last-error.json`   — most recent poll/parse failure
+///   - `current.raw.txt`   — raw CLI output (diagnostics only)
+///
+/// Writes use `Data.write(.atomic)`, which creates a temp file in the same
+/// directory and renames it over the destination — atomic on APFS/HFS+.
 ///
 /// When a WidgetKit extension is added (Phase 6), swap `directory` to the
 /// App Group container and both targets share this same type unchanged.
@@ -35,20 +49,12 @@ public struct SnapshotStore: Sendable {
         self.directory = directory
     }
 
-    // MARK: - Write
+    // MARK: - Snapshot write/read
 
     public func writeLatest(_ snapshot: ClaudeUsageSnapshot) throws {
         let data = try makeEncoder().encode(snapshot)
         try writeAtomically(data, to: currentURL)
     }
-
-    /// Writes raw CLI output for diagnostics. No-op if `text` cannot be UTF-8 encoded.
-    public func writeRawOutput(_ text: String) throws {
-        guard let data = text.data(using: .utf8) else { return }
-        try writeAtomically(data, to: rawOutputURL)
-    }
-
-    // MARK: - Read
 
     /// Returns nil when no snapshot file exists yet (first-run state).
     public func readLatest() throws -> ClaudeUsageSnapshot? {
@@ -57,11 +63,35 @@ public struct SnapshotStore: Sendable {
         return try makeDecoder().decode(ClaudeUsageSnapshot.self, from: data)
     }
 
+    // MARK: - Last error write/read
+
+    public func writeLastError(_ record: LastErrorRecord) throws {
+        let data = try makeEncoder().encode(record)
+        try writeAtomically(data, to: lastErrorURL)
+    }
+
+    public func readLastError() throws -> LastErrorRecord? {
+        guard FileManager.default.fileExists(atPath: lastErrorURL.path) else { return nil }
+        let data = try Data(contentsOf: lastErrorURL)
+        return try makeDecoder().decode(LastErrorRecord.self, from: data)
+    }
+
+    public func clearLastError() throws {
+        guard FileManager.default.fileExists(atPath: lastErrorURL.path) else { return }
+        try FileManager.default.removeItem(at: lastErrorURL)
+    }
+
+    // MARK: - Raw output
+
+    /// Writes raw CLI output for diagnostics. No-op if `text` cannot be UTF-8 encoded.
+    public func writeRawOutput(_ text: String) throws {
+        guard let data = text.data(using: .utf8) else { return }
+        try writeAtomically(data, to: rawOutputURL)
+    }
+
     // MARK: - Atomic write
 
     private func writeAtomically(_ data: Data, to destination: URL) throws {
-        // Data.write with .atomic writes to a temp sibling, then renames — one syscall.
-        // On the same APFS/HFS+ volume this rename is atomic: no partial reads possible.
         try data.write(to: destination, options: [.atomic])
     }
 

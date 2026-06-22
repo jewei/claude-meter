@@ -37,21 +37,21 @@ public protocol ClaudeCommandRunner: Sendable {
 
 public struct RunnerConfig: Sendable, Equatable {
     public var cliPath: String
-    public var statusSubcommand: String
-    public var statsSubcommand: String?
+    public var statusArguments: [String]
+    public var statsArguments: [String]?
     public var timeoutSeconds: Double
     public var extraEnvironment: [String: String]
 
     public init(
         cliPath: String,
-        statusSubcommand: String = "status",
-        statsSubcommand: String? = "stats",
+        statusArguments: [String] = ["status"],
+        statsArguments: [String]? = ["stats"],
         timeoutSeconds: Double = 5,
         extraEnvironment: [String: String] = [:]
     ) {
         self.cliPath = cliPath
-        self.statusSubcommand = statusSubcommand
-        self.statsSubcommand = statsSubcommand
+        self.statusArguments = statusArguments
+        self.statsArguments = statsArguments
         self.timeoutSeconds = timeoutSeconds
         self.extraEnvironment = extraEnvironment
     }
@@ -74,28 +74,24 @@ public struct ProcessCommandRunner: ClaudeCommandRunner {
         guard FileManager.default.isExecutableFile(atPath: config.cliPath) else {
             throw CommandError.cliNotFound(path: config.cliPath)
         }
-        return try await run(subcommand: config.statusSubcommand)
+        return try await run(arguments: config.statusArguments)
     }
 
     public func fetchStats() async throws -> CommandOutput? {
-        guard let sub = config.statsSubcommand else { return nil }
+        guard let args = config.statsArguments else { return nil }
         guard FileManager.default.isExecutableFile(atPath: config.cliPath) else {
             throw CommandError.cliNotFound(path: config.cliPath)
         }
-        return try await run(subcommand: sub)
+        return try await run(arguments: args)
     }
 
     // MARK: - Process execution
 
-    private func run(subcommand: String) async throws -> CommandOutput {
+    private func run(arguments: [String]) async throws -> CommandOutput {
         let cliPath = config.cliPath
         let timeoutSeconds = config.timeoutSeconds
         let environment = buildEnvironment()
 
-        // Use a continuation + DispatchQueue so the blocking waitUntilExit() never
-        // occupies a Swift cooperative thread. The DispatchSource timer and the
-        // terminationHandler both dispatch back to the same serial queue, making
-        // the `didResume` flag safe without additional locking.
         return try await withCheckedThrowingContinuation { continuation in
             let queue = DispatchQueue(label: "com.claudemeter.process.\(UUID().uuidString)", qos: .userInitiated)
 
@@ -104,12 +100,10 @@ public struct ProcessCommandRunner: ClaudeCommandRunner {
             let stderrPipe = Pipe()
             let start = Date()
 
-            // OSAllocatedUnfairLock makes the read-then-set atomic across the timer
-            // handler and the terminationHandler, which may run on different threads.
             let didResume = OSAllocatedUnfairLock(initialState: false)
 
             process.executableURL = URL(fileURLWithPath: cliPath)
-            process.arguments = [subcommand]
+            process.arguments = arguments
             process.environment = environment
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe
@@ -130,14 +124,14 @@ public struct ProcessCommandRunner: ClaudeCommandRunner {
             process.terminationHandler = { p in
                 queue.async {
                     timer.cancel()
+                    // Always drain pipes so a timed-out child cannot block on a full buffer.
+                    let stdout = readPipe(stdoutPipe)
+                    let stderr = readPipe(stderrPipe)
                     let first = didResume.withLock { state -> Bool in
                         defer { state = true }
                         return !state
                     }
                     guard first else { return }
-
-                    let stdout = readPipe(stdoutPipe)
-                    let stderr = readPipe(stderrPipe)
                     continuation.resume(returning: CommandOutput(
                         stdout: stdout,
                         stderr: stderr,
@@ -166,7 +160,13 @@ public struct ProcessCommandRunner: ClaudeCommandRunner {
     // MARK: - Helpers
 
     private func buildEnvironment() -> [String: String] {
-        var env = ["PATH": Self.basePATH, "HOME": ProcessInfo.processInfo.environment["HOME"] ?? ""]
+        let home = ProcessInfo.processInfo.environment["HOME"]
+            ?? FileManager.default.homeDirectoryForCurrentUser.path
+        var env: [String: String] = [
+            "PATH": Self.basePATH,
+            "HOME": home,
+            "LANG": "C.UTF-8",
+        ]
         for (k, v) in config.extraEnvironment { env[k] = v }
         return env
     }
@@ -182,15 +182,18 @@ public struct MockCommandRunner: ClaudeCommandRunner {
     public let statusOutput: String
     public let statsOutput: String?
     public let statusError: (any Error & Sendable)?
+    public let statsError: (any Error & Sendable)?
 
     public init(
         statusOutput: String = "",
         statsOutput: String? = nil,
-        statusError: (any Error & Sendable)? = nil
+        statusError: (any Error & Sendable)? = nil,
+        statsError: (any Error & Sendable)? = nil
     ) {
         self.statusOutput = statusOutput
         self.statsOutput = statsOutput
         self.statusError = statusError
+        self.statsError = statsError
     }
 
     public func fetchStatus() async throws -> CommandOutput {
@@ -199,6 +202,7 @@ public struct MockCommandRunner: ClaudeCommandRunner {
     }
 
     public func fetchStats() async throws -> CommandOutput? {
-        statsOutput.map { CommandOutput(stdout: $0, stderr: "", exitCode: 0, durationSeconds: 0.01) }
+        if let error = statsError { throw error }
+        return statsOutput.map { CommandOutput(stdout: $0, stderr: "", exitCode: 0, durationSeconds: 0.01) }
     }
 }

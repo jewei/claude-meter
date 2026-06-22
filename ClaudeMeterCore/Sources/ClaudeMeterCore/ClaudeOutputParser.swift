@@ -83,13 +83,14 @@ public struct ClaudeOutputParser: Sendable {
         let snapshot = ClaudeUsageSnapshot(
             parserVersion: Self.parserVersion,
             createdAt: now,
-            lastSuccessfulPollAt: now,
+            lastSuccessfulPollAt: nil,
             source: SourceInfo(cliPath: cliPath, cliVersion: kv["version"], command: command),
             account: account.isEmpty ? nil : account,
             session: session.isEmpty ? nil : session,
             limits: LimitInfo(currentSession: sessionWindow, currentWeekAllModels: weekWindow),
             models: models,
             mcp: mcp,
+            settingSources: kv["setting sources"],
             state: SnapshotState(status: .ok, severity: severity)
         )
 
@@ -116,20 +117,46 @@ public struct ClaudeOutputParser: Sendable {
     // MARK: - Auth detection
 
     private func isUnauthenticated(_ text: String) -> Bool {
-        let lower = text.lowercased()
-        return lower.contains("not logged in")
-            || lower.contains("authentication required")
-            || lower.contains("please run claude login")
-            || lower.contains("not authenticated")
+        let authPhrases = [
+            "not logged in",
+            "authentication required",
+            "please run claude login",
+            "not authenticated",
+        ]
+
+        for line in text.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            let lower = trimmed.lowercased()
+
+            if lower.hasPrefix("error:") {
+                if authPhrases.contains(where: { lower.contains($0) }) { return true }
+                continue
+            }
+
+            // Skip key-value lines — auth-like phrases in field values are not errors
+            if isKeyValueLine(trimmed) { continue }
+
+            if authPhrases.contains(where: { lower.hasPrefix($0) }) { return true }
+        }
+        return false
+    }
+
+    private func isUsageSectionHeader(_ line: String) -> Bool {
+        let lower = line.lowercased()
+        return lower.hasPrefix("current session") || lower.hasPrefix("current week")
+    }
+
+    private func isKeyValueLine(_ line: String) -> Bool {
+        line.firstMatch(of: /^[A-Za-z][A-Za-z ]+:\s+/) != nil
     }
 
     // MARK: - Key-value field parsing
 
-    /// Parses lines of the form "Key:   value" into a lowercased-key dictionary.
+    /// Parses lines of the form "Key: value" into a lowercased-key dictionary.
     private func parseKeyValueFields(_ text: String) -> [String: String] {
         var result: [String: String] = [:]
-        // Match "Key name:   value" where key is word chars + spaces, followed by colon
-        let pattern = /^([A-Za-z][A-Za-z ]+?):\s{2,}(.+)$/
+        let pattern = /^([A-Za-z][A-Za-z ]+?):\s+(.+)$/
         for line in text.components(separatedBy: "\n") {
             if let m = line.firstMatch(of: pattern) {
                 let key = String(m.output.1).lowercased().trimmingCharacters(in: .whitespaces)
@@ -152,14 +179,12 @@ public struct ClaudeOutputParser: Sendable {
             return (LimitWindow(), warnings)
         }
 
-        // Scan up to 6 lines after the header for percent + reset
-        let blockEnd = min(idx + 7, lines.count)
-        let block = lines[(idx + 1)..<blockEnd]
+        let block = collectUsageBlock(lines: lines, from: idx)
 
         var percentUsed: Double?
         var rawResetText: String?
 
-        let percentPattern = /(\d+\.?\d*)\s*%\s*used/
+        let percentPattern = /(-?\d+\.?\d*)\s*%\s*used/
         let resetPattern = /^Resets?\s+(.+)$/
 
         for line in block {
@@ -180,6 +205,9 @@ public struct ClaudeOutputParser: Sendable {
 
         var resetsAt: Date?
         if let raw = rawResetText {
+            if !ResetTimeParser.hasTimezoneIdentifier(raw) {
+                warnings.append(ParseWarning(field: header, message: "Reset timezone missing; using fallback timezone"))
+            }
             resetsAt = ResetTimeParser.parse(raw, now: now, fallbackTimeZone: timeZone)
             if resetsAt == nil {
                 warnings.append(ParseWarning(field: header, message: "Could not parse reset time: \(raw)"))
@@ -192,6 +220,22 @@ public struct ClaudeOutputParser: Sendable {
             LimitWindow(percentUsed: percentUsed, resetsAt: resetsAt, rawResetText: rawResetText),
             warnings
         )
+    }
+
+    private func collectUsageBlock(lines: [String], from idx: Int) -> ArraySlice<String> {
+        var end = lines.count
+        for i in (idx + 1)..<lines.count {
+            let line = lines[i]
+            if isUsageSectionHeader(line) {
+                end = i
+                break
+            }
+            if isKeyValueLine(line) {
+                end = i
+                break
+            }
+        }
+        return lines[(idx + 1)..<end]
     }
 
     // MARK: - MCP status parsing
@@ -216,7 +260,6 @@ public struct ClaudeOutputParser: Sendable {
     private func parseModelTable(_ text: String, warnings: inout [ParseWarning]) -> [ModelUsage] {
         let lines = text.components(separatedBy: "\n")
 
-        // Detect header line containing "Model" and "Input" / "Output"
         guard let headerIdx = lines.firstIndex(where: {
             $0.contains("Model") && ($0.contains("Input") || $0.contains("Tokens"))
         }) else {
@@ -228,10 +271,8 @@ public struct ClaudeOutputParser: Sendable {
             let cols = line.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
             guard cols.count >= 2 else { continue }
 
-            // First column is model name, rest are numeric values
             let name = cols[0]
-            // Model names typically contain "claude" or a version pattern
-            guard name.lowercased().contains("claude") || name.contains("-") else { continue }
+            guard looksLikeModelName(name) else { continue }
 
             var usage = ModelUsage(name: name)
             if cols.count > 1 { usage.inputTokens = TokenParser.parseCount(cols[1]) }
@@ -242,18 +283,27 @@ public struct ClaudeOutputParser: Sendable {
             models.append(usage)
         }
 
-        if models.isEmpty && text.contains("claude") {
+        if models.isEmpty {
             warnings.append(ParseWarning(field: "models", message: "Could not parse model usage table"))
         }
         return models
     }
 
+    private func looksLikeModelName(_ name: String) -> Bool {
+        name.lowercased().hasPrefix("claude")
+    }
+
     // MARK: - Helpers
 
     private func parseSeconds(_ s: String) -> Int? {
-        // Accepts "4047", "4047s", "4047 seconds"
-        let digits = s.filter(\.isNumber)
-        return Int(digits)
+        let trimmed = s.trimmingCharacters(in: .whitespaces).lowercased()
+        if let m = trimmed.firstMatch(of: /^(\d+)\s*(?:s|sec|seconds)?$/) {
+            return Int(m.output.1)
+        }
+        if trimmed.allSatisfy(\.isNumber) {
+            return Int(trimmed)
+        }
+        return nil
     }
 
     private func fatal(_ message: String, hash: String) -> ParseResult {

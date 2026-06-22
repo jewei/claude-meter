@@ -47,8 +47,10 @@ struct ClaudeOutputParserTests {
         #expect(snap.session?.activeModel == "claude-opus-4-8")
         #expect(snap.session?.id == "d49ac283-b694-4873-853d-eeaf873aaad4")
         #expect(snap.session?.name == "Implement fraud detection score weighting")
-        #expect(snap.account?.email == "jewei.mak@gmail.com")
+        #expect(snap.account?.email == "test.user@example.com")
         #expect(snap.account?.loginMethod == "Claude Pro account")
+        #expect(snap.settingSources == "User settings, Project local settings")
+        #expect(snap.lastSuccessfulPollAt == nil)
 
         #expect(snap.mcp?.connected == 8)
         #expect(snap.mcp?.needsAuth == 3)
@@ -125,6 +127,19 @@ struct ClaudeOutputParserTests {
         #expect(snap.state.severity == .overLimit)
     }
 
+    @Test("Negative percent maps to unknown severity")
+    func negativePercent() throws {
+        let text = """
+        Current session
+        -5% used
+        Resets 2:50pm (Asia/Kuala_Lumpur)
+        """
+        let snap = try #require(makeParser().parse(text).snapshot)
+        #expect(snap.limits.currentSession.percentUsed == -5)
+        #expect(UsageSeverity.from(percent: snap.limits.currentSession.percentUsed) == .unknown)
+        #expect(snap.state.severity == .unknown)
+    }
+
     // MARK: - Reset time formats
 
     @Test("Parses long month reset format")
@@ -147,13 +162,12 @@ struct ClaudeOutputParserTests {
         let text = try fixture("missing_timezone")
         let result = makeParser().parse(text)
 
-        // Should still produce a snapshot — missing timezone is non-fatal
         #expect(result.errors.isEmpty)
         let snap = try #require(result.snapshot)
-        // Parser uses fallback timezone (klTZ); reset time still parsed
         #expect(snap.limits.currentSession.percentUsed == 25)
-        // Raw text preserved
         #expect(snap.limits.currentSession.rawResetText == "2:50pm")
+        #expect(snap.limits.currentSession.resetsAt != nil)
+        #expect(result.warnings.contains { $0.message.contains("Reset timezone missing") })
     }
 
     // MARK: - ANSI stripping
@@ -198,6 +212,16 @@ struct ClaudeOutputParserTests {
         #expect(result.errors.contains { $0.message.contains("authenticated") })
     }
 
+    @Test("Does not false-positive auth when phrase appears in session name")
+    func authPhraseInSessionName() throws {
+        let text = try fixture("wrapped_session_name")
+        let result = makeParser().parse(text)
+
+        #expect(result.errors.isEmpty)
+        let snap = try #require(result.snapshot)
+        #expect(snap.session?.name == "Fix the not authenticated edge case in parser")
+    }
+
     @Test("Returns fatal error when no usage blocks found")
     func noUsageBlocks() {
         let text = "Version:          2.1.185\nModel:            claude-opus-4-8\n"
@@ -205,6 +229,33 @@ struct ClaudeOutputParserTests {
 
         #expect(result.snapshot == nil)
         #expect(result.errors.contains { $0.message.contains("No usage-limit blocks") })
+    }
+
+    // MARK: - Key-value parsing
+
+    @Test("Parses single-space key-value alignment")
+    func singleSpaceKV() throws {
+        let text = try fixture("single_space_kv")
+        let result = makeParser().parse(text)
+
+        #expect(result.errors.isEmpty)
+        let snap = try #require(result.snapshot)
+        #expect(snap.source.cliVersion == "2.1.185")
+        #expect(snap.session?.name == "Short session")
+        #expect(snap.account?.email == "test.user@example.com")
+    }
+
+    // MARK: - Usage block scanning
+
+    @Test("Parses usage blocks with blank lines between content")
+    func spacedUsageBlock() throws {
+        let text = try fixture("spaced_usage_block")
+        let result = makeParser().parse(text)
+
+        #expect(result.errors.isEmpty)
+        let snap = try #require(result.snapshot)
+        #expect(snap.limits.currentSession.percentUsed == 25)
+        #expect(snap.limits.currentWeekAllModels.percentUsed == 30)
     }
 
     // MARK: - MCP parsing
@@ -227,6 +278,52 @@ struct ClaudeOutputParserTests {
         let result = makeParser().parse(text)
         let snap = try #require(result.snapshot)
         #expect(snap.mcp == nil)
+    }
+
+    // MARK: - Model table parsing
+
+    @Test("Parses model usage table from stats output")
+    func statsTable() throws {
+        let text = try fixture("stats_table")
+        let result = makeParser().parse(text)
+
+        #expect(result.errors.isEmpty)
+        let snap = try #require(result.snapshot)
+        #expect(snap.session?.totalCostUsd == 21.20)
+        #expect(snap.session?.totalApiDurationSeconds == 4047)
+        #expect(snap.session?.codeLinesAdded == 994)
+        #expect(snap.session?.codeLinesRemoved == 471)
+        #expect(snap.models.count == 2)
+
+        let opus = try #require(snap.models.first { $0.name == "claude-opus-4-8" })
+        #expect(opus.inputTokens == 8400)
+        #expect(opus.outputTokens == 22_600_000)
+        #expect(opus.cacheReadTokens == 5_800_000)
+        #expect(opus.cacheWriteTokens == 288_200)
+        #expect(opus.costUsd == 6.89)
+    }
+
+    @Test("Parses model table rows without cost column")
+    func statsTableNoCost() throws {
+        let text = try fixture("stats_table_no_cost")
+        let result = makeParser().parse(text)
+
+        #expect(result.errors.isEmpty)
+        let snap = try #require(result.snapshot)
+        #expect(snap.models.count == 1)
+        #expect(snap.models[0].costUsd == nil)
+        #expect(snap.models[0].inputTokens == 8400)
+    }
+
+    @Test("Warns when model table has no recognizable model rows")
+    func statsTableUnknownModel() throws {
+        let text = try fixture("stats_table_unknown_model")
+        let result = makeParser().parse(text)
+
+        #expect(result.errors.isEmpty)
+        let snap = try #require(result.snapshot)
+        #expect(snap.models.isEmpty)
+        #expect(result.warnings.contains { $0.field == "models" })
     }
 
     // MARK: - Severity
@@ -273,6 +370,30 @@ struct TokenParserTests {
     @Test("Parses cost without dollar sign") func costNoDollar() { #expect(TokenParser.parseCost("21.20") == 21.20) }
 }
 
+@Suite("parseSeconds")
+struct ParseSecondsTests {
+    @Test("Parses plain integer") func plain() throws {
+        let parser = makeParser()
+        let text = "API duration:     4047\n\nCurrent session\n25% used\nResets 2:50pm (Asia/Kuala_Lumpur)\n\nCurrent week (all models)\n30% used\nResets Jun 27 at 3pm (Asia/Kuala_Lumpur)\n"
+        let snap = try #require(parser.parse(text).snapshot)
+        #expect(snap.session?.totalApiDurationSeconds == 4047)
+    }
+
+    @Test("Parses seconds suffix") func suffix() throws {
+        let parser = makeParser()
+        let text = "API duration:     4047s\n\nCurrent session\n25% used\nResets 2:50pm (Asia/Kuala_Lumpur)\n\nCurrent week (all models)\n30% used\nResets Jun 27 at 3pm (Asia/Kuala_Lumpur)\n"
+        let snap = try #require(parser.parse(text).snapshot)
+        #expect(snap.session?.totalApiDurationSeconds == 4047)
+    }
+
+    @Test("Rejects compound duration strings") func rejectsCompound() throws {
+        let parser = makeParser()
+        let text = "API duration:     1h 30m\n\nCurrent session\n25% used\nResets 2:50pm (Asia/Kuala_Lumpur)\n\nCurrent week (all models)\n30% used\nResets Jun 27 at 3pm (Asia/Kuala_Lumpur)\n"
+        let snap = try #require(parser.parse(text).snapshot)
+        #expect(snap.session?.totalApiDurationSeconds == nil)
+    }
+}
+
 // MARK: - ANSI stripper tests
 
 @Suite("ANSIStripper")
@@ -286,11 +407,35 @@ struct ANSIStripperTests {
     @Test("Strips 256-color codes") func color256() {
         #expect(ANSIStripper.strip("\u{1B}[38;5;220mtext\u{1B}[0m") == "text")
     }
+    @Test("Strips OSC sequences") func osc() {
+        #expect(ANSIStripper.strip("\u{1B}]0;title\u{07}hello") == "hello")
+    }
     @Test("Leaves plain text untouched") func plain() {
         #expect(ANSIStripper.strip("hello world") == "hello world")
     }
     @Test("Preserves Unicode progress characters") func progressBar() {
         let bar = "████████▌░░░░░░░░"
         #expect(ANSIStripper.strip(bar) == bar)
+    }
+}
+
+// MARK: - Codable round-trip
+
+@Suite("ClaudeUsageSnapshot Codable")
+struct CodableTests {
+    @Test("Encodes and decodes snapshot")
+    func roundTrip() throws {
+        let text = try fixture("full_status")
+        let original = try #require(makeParser().parse(text).snapshot)
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(original)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(ClaudeUsageSnapshot.self, from: data)
+
+        #expect(decoded == original)
     }
 }

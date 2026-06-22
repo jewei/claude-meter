@@ -96,20 +96,32 @@ enum ResetTimeParser {
     // MARK: - Year resolution
 
     /// DateFormatter yields year 2000 when no year is in the format string.
-    /// Inject the current year, then push to next year if the result is in the past.
+    /// Inject the current year, then roll forward until the result is in the future.
     private static func resolveYear(for date: Date, cal: Calendar, now: Date) -> Date {
         var comps = cal.dateComponents([.month, .day, .hour, .minute], from: date)
         comps.year = cal.component(.year, from: now)
         comps.second = 0
         comps.timeZone = cal.timeZone
 
-        guard let candidate = cal.date(from: comps) else { return date }
+        guard var candidate = cal.date(from: comps) else { return date }
 
-        if candidate < now.addingTimeInterval(-86400) {
-            comps.year = (comps.year ?? 0) + 1
-            return cal.date(from: comps) ?? candidate
+        while candidate <= now {
+            guard let next = cal.date(byAdding: .year, value: 1, to: candidate) else { break }
+            candidate = next
         }
         return candidate
+    }
+
+    /// Returns true when `raw` contains a parenthesized IANA timezone identifier.
+    static func hasTimezoneIdentifier(_ raw: String) -> Bool {
+        guard let openParen = raw.lastIndex(of: "("),
+              let closeParen = raw.lastIndex(of: ")"),
+              openParen < closeParen
+        else {
+            return false
+        }
+        let tzId = String(raw[raw.index(after: openParen)..<closeParen])
+        return TimeZone(identifier: tzId) != nil
     }
 
     // MARK: - Helpers

@@ -1,10 +1,10 @@
 Version:          2.1.185
 Session name:     Implement fraud detection score weighting
 Session ID:       d49ac283-b694-4873-853d-eeaf873aaad4
-cwd:              /Users/jewei/OneVerse/Code/games
+cwd:              /Users/test/Code/games
 Login method:     Claude Pro account
-Organization:     jewei.mak@gmail.com's Organization
-Email:            jewei.mak@gmail.com
+Organization:     test.user@example.com's Organization
+Email:            test.user@example.com
 
 Model:            claude-opus-4-8
 MCP servers:      8 connected, 3 need auth, 1 failed · /mcp

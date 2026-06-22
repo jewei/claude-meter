@@ -13,6 +13,7 @@ public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
     public var limits: LimitInfo
     public var models: [ModelUsage]
     public var mcp: MCPStatus?
+    public var settingSources: String?
     public var state: SnapshotState
 
     public init(
@@ -26,6 +27,7 @@ public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
         limits: LimitInfo,
         models: [ModelUsage] = [],
         mcp: MCPStatus? = nil,
+        settingSources: String? = nil,
         state: SnapshotState
     ) {
         self.schemaVersion = schemaVersion
@@ -38,6 +40,7 @@ public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
         self.limits = limits
         self.models = models
         self.mcp = mcp
+        self.settingSources = settingSources
         self.state = state
     }
 }
@@ -228,7 +231,7 @@ public enum UsageSeverity: String, Codable, Equatable, Sendable {
     public static func from(percent: Double?) -> UsageSeverity {
         guard let p = percent else { return .unknown }
         switch p {
-        case ..<0: return .normal
+        case ..<0: return .unknown
         case ..<80: return .normal
         case ..<95: return .warning
         case ...100: return .critical

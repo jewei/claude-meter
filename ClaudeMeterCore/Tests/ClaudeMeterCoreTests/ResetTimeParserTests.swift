@@ -113,6 +113,25 @@ struct ResetTimeParserTests {
         #expect(comps.day == 5)
     }
 
+    @Test("Rolls forward when date is in the past within 24 hours")
+    func recentPastDateRollsForward() throws {
+        // "Jun 21 at 3pm" when now = Jun 22 14:00 MYT → should be Jun 21 2027
+        let result = ResetTimeParser.parse("Jun 21 at 3pm (Asia/Kuala_Lumpur)", now: fixedNow, fallbackTimeZone: utcTZ)
+        #expect(result != nil)
+        #expect(result! > fixedNow)
+        let comps = Calendar.current.dateComponents(in: klTZ, from: result!)
+        #expect(comps.year == 2027)
+        #expect(comps.month == 6)
+        #expect(comps.day == 21)
+    }
+
+    @Test("hasTimezoneIdentifier detects IANA timezone")
+    func hasTimezone() {
+        #expect(ResetTimeParser.hasTimezoneIdentifier("2:50pm (Asia/Kuala_Lumpur)"))
+        #expect(!ResetTimeParser.hasTimezoneIdentifier("2:50pm"))
+        #expect(!ResetTimeParser.hasTimezoneIdentifier("2:50pm (Not/A/Zone)"))
+    }
+
     // MARK: - Invalid input
 
     @Test("Returns nil for unparseable text")

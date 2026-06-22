@@ -19,7 +19,7 @@ App Group entitlement (`com.apple.security.application-groups`) requires a real 
 - **Main app** — `@MainActor final class AppState`, `MenuBarExtra` with `.window` style, `LSUIElement = YES` (no Dock icon)
 - **Core library** — `ClaudeMeterCore` Swift package, no AppKit/SwiftUI deps, Swift 6 strict concurrency
 - **Widget** — sandboxed `ClaudeMeterWidgetExtension`; reads from App Group container only (no `applicationSupport()` fallback)
-- **Shared container** — `group.com.claudemeter.app`; `AppGroupConfig` centralises the suite name and syncs display settings
+- **Shared container** — `group.com.jewei.claudemeter`; `AppGroupConfig` centralises the suite name and syncs display settings
 - **Project file** — `project.pbxproj` is hand-maintained; no xcodegen. Every new file needs a `PBXFileReference`, a `PBXBuildFile`, a group child entry, and a Sources/Frameworks build phase entry. Use consistent 24-char hex UUIDs throughout.
 
 ---

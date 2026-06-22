@@ -2,7 +2,7 @@ import Foundation
 
 /// Shared App Group identifier and display settings readable by the main app and widget.
 public enum AppGroupConfig {
-    public static let suiteName = "group.com.claudemeter.app"
+    public static let suiteName = "group.com.jewei.claudemeter"
 
     public static let warningThresholdKey = "warningThresholdPercent"
     public static let criticalThresholdKey = "criticalThresholdPercent"

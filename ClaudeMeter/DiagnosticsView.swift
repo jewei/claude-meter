@@ -4,13 +4,27 @@ import ClaudeMeterCore
 /// Redacts sensitive identifiers from diagnostics text per SPECS §16.4.
 enum DiagnosticsSanitizer {
     private static let emailPattern = #"[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#
+    private static let homePathPattern = #"/Users/[^/\s]+"#
+    private static let labeledFieldPattern = #"(?mi)^(Session name|Organization|Cwd|Email|Session id):\s*.+$"#
 
     static func sanitize(_ text: String) -> String {
-        text.replacingOccurrences(
+        var result = text
+        result = result.replacingOccurrences(
             of: emailPattern,
             with: "[redacted]",
             options: .regularExpression
         )
+        result = result.replacingOccurrences(
+            of: homePathPattern,
+            with: "/Users/[redacted]",
+            options: .regularExpression
+        )
+        result = result.replacingOccurrences(
+            of: labeledFieldPattern,
+            with: "$1: [redacted]",
+            options: .regularExpression
+        )
+        return result
     }
 }
 

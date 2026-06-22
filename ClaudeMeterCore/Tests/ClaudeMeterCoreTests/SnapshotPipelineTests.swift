@@ -16,7 +16,6 @@ private func makeParser() -> ClaudeOutputParser {
     ClaudeOutputParser(
         cliPath: "/opt/homebrew/bin/claude",
         command: "claude status",
-        now: fixedNow,
         timeZone: klTZ
     )
 }
@@ -92,6 +91,22 @@ struct SnapshotPipelineTests {
 
         let error = try #require(try store.readLastError())
         #expect(error.message.contains("timeout"))
+    }
+
+    @Test("Poll continues when stats command fails")
+    func pollIgnoresStatsFailure() async throws {
+        let store = try makeStore()
+        let statusText = try fixture("minimal")
+        let runner = MockCommandRunner(
+            statusOutput: statusText,
+            statsError: CommandError.timeout(seconds: 5)
+        )
+        let pipeline = SnapshotPipeline(runner: runner, parser: makeParser(), store: store)
+
+        let result = try await pipeline.poll(now: fixedNow)
+
+        #expect(result.errors.isEmpty)
+        #expect(result.snapshot?.limits.currentSession.percentUsed == 25)
     }
 
     @Test("Poll writes raw output when enabled")

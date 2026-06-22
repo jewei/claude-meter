@@ -73,6 +73,19 @@ struct NotificationPolicyTests {
         #expect(!triggers.contains { $0.level == "warning" })
     }
 
+    @Test("Fires warning when reset time is unknown")
+    func warningWithoutResetTime() {
+        let previous = snapshot(session: 75)
+        var current = snapshot(session: 85)
+        current.limits.currentSession = LimitWindow(
+            percentUsed: 85,
+            resetsAt: nil,
+            rawResetText: "unknown"
+        )
+        let triggers = NotificationPolicy.triggers(snapshot: current, previous: previous, now: fixedNow)
+        #expect(triggers.contains { $0.scope == "session" && $0.level == "warning" })
+    }
+
     @Test("Skips when reset time is in the past")
     func pastReset() {
         let pastWindow = LimitWindow(

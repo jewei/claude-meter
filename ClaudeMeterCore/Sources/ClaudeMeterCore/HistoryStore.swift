@@ -62,35 +62,23 @@ public final class HistoryStore: @unchecked Sendable {
     // MARK: - Export
 
     public func exportCSV(since date: Date? = nil) throws -> String {
-        let records = try fetch(since: date)
-        var lines = ["created_at,session_percent,week_percent,session_resets_at,week_resets_at,severity,model"]
-        for r in records {
-            lines.append([
-                Self.iso.string(from: r.createdAt),
-                r.sessionPercent.map { String(format: "%.2f", $0) } ?? "",
-                r.weekPercent.map { String(format: "%.2f", $0) } ?? "",
-                r.sessionResetsAt.map { Self.iso.string(from: $0) } ?? "",
-                r.weekResetsAt.map { Self.iso.string(from: $0) } ?? "",
-                r.severity,
-                (r.model ?? "").replacingOccurrences(of: ",", with: ";"),
-            ].joined(separator: ","))
+        try synchronized {
+            try makeCSV(from: try fetchRecords(since: date, limit: 5_000))
         }
-        return lines.joined(separator: "\n")
     }
 
     public func exportJSON(since date: Date? = nil) throws -> String {
-        let records = try fetch(since: date)
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(records)
-        return String(data: data, encoding: .utf8) ?? "[]"
+        try synchronized {
+            try makeJSON(from: try fetchRecords(since: date, limit: 5_000))
+        }
     }
 
     public func exportCSVAsync(since date: Date? = nil) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             queue.async {
-                continuation.resume(with: Result { try self.exportCSV(since: date) })
+                continuation.resume(with: Result {
+                    try self.makeCSV(from: try self.fetchRecords(since: date, limit: 5_000))
+                })
             }
         }
     }
@@ -98,7 +86,9 @@ public final class HistoryStore: @unchecked Sendable {
     public func exportJSONAsync(since date: Date? = nil) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             queue.async {
-                continuation.resume(with: Result { try self.exportJSON(since: date) })
+                continuation.resume(with: Result {
+                    try self.makeJSON(from: try self.fetchRecords(since: date, limit: 5_000))
+                })
             }
         }
     }
@@ -139,20 +129,13 @@ public final class HistoryStore: @unchecked Sendable {
     }
 
     public func recordCount() throws -> Int {
-        try synchronized {
-            var count = 0
-            try withStatement("SELECT COUNT(*) FROM history") { s in
-                guard sqlite3_step(s) == SQLITE_ROW else { throw HistoryStoreError.stepFailed }
-                count = Int(sqlite3_column_int(s, 0))
-            }
-            return count
-        }
+        try synchronized { try countRecords() }
     }
 
     public func recordCountAsync() async throws -> Int {
         try await withCheckedThrowingContinuation { continuation in
             queue.async {
-                continuation.resume(with: Result { try self.recordCount() })
+                continuation.resume(with: Result { try self.countRecords() })
             }
         }
     }
@@ -183,7 +166,7 @@ public final class HistoryStore: @unchecked Sendable {
         SELECT id, created_at, session_pct, week_pct, session_resets_at, week_resets_at, severity, model
         FROM history
         WHERE created_at >= ?
-        ORDER BY created_at ASC
+        ORDER BY created_at DESC
         LIMIT ?
         """
         var records: [HistoryRecord] = []
@@ -203,7 +186,40 @@ public final class HistoryStore: @unchecked Sendable {
                 ))
             }
         }
-        return records
+        return records.reversed()
+    }
+
+    private func countRecords() throws -> Int {
+        var count = 0
+        try withStatement("SELECT COUNT(*) FROM history") { s in
+            guard sqlite3_step(s) == SQLITE_ROW else { throw HistoryStoreError.stepFailed }
+            count = Int(sqlite3_column_int(s, 0))
+        }
+        return count
+    }
+
+    private func makeCSV(from records: [HistoryRecord]) throws -> String {
+        var lines = ["created_at,session_percent,week_percent,session_resets_at,week_resets_at,severity,model"]
+        for r in records {
+            lines.append([
+                Self.iso.string(from: r.createdAt),
+                r.sessionPercent.map { String(format: "%.2f", $0) } ?? "",
+                r.weekPercent.map { String(format: "%.2f", $0) } ?? "",
+                r.sessionResetsAt.map { Self.iso.string(from: $0) } ?? "",
+                r.weekResetsAt.map { Self.iso.string(from: $0) } ?? "",
+                r.severity,
+                (r.model ?? "").replacingOccurrences(of: ",", with: ";"),
+            ].joined(separator: ","))
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func makeJSON(from records: [HistoryRecord]) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(records)
+        return String(data: data, encoding: .utf8) ?? "[]"
     }
 
     private func pruneToRetentionCutoff() throws {

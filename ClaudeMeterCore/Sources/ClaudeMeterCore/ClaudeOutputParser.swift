@@ -5,41 +5,39 @@ public struct ClaudeOutputParser: Sendable {
 
     private let cliPath: String
     private let command: String
-    private let now: Date
     private let timeZone: TimeZone
 
     public init(
         cliPath: String,
         command: String = "claude status",
-        now: Date = Date(),
         timeZone: TimeZone = .current
     ) {
         self.cliPath = cliPath
         self.command = command
-        self.now = now
         self.timeZone = timeZone
     }
 
     // MARK: - Public entry point
 
-    public func parse(_ rawText: String) -> ParseResult {
+    public func parse(_ rawText: String, now: Date = Date()) -> ParseResult {
         let hash = simpleHash(rawText)
 
         guard !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return fatal("No CLI output", hash: hash)
         }
 
-        if isUnauthenticated(rawText) {
+        let text = normalize(rawText)
+
+        if isUnauthenticated(text) {
             return fatal("Claude CLI is not authenticated — run: claude login", hash: hash)
         }
 
-        let text = normalize(rawText)
         var warnings: [ParseWarning] = []
 
         let kv = parseKeyValueFields(text)
 
-        let (sessionWindow, sessionWarn) = parseUsageBlock(header: "Current session", in: text)
-        let (weekWindow, weekWarn) = parseUsageBlock(header: "Current week", in: text)
+        let (sessionWindow, sessionWarn) = parseUsageBlock(header: "Current session", in: text, now: now)
+        let (weekWindow, weekWarn) = parseUsageBlock(header: "Current week", in: text, now: now)
         warnings += sessionWarn + weekWarn
 
         guard sessionWindow.percentUsed != nil || weekWindow.percentUsed != nil else {
@@ -169,7 +167,7 @@ public struct ClaudeOutputParser: Sendable {
 
     // MARK: - Usage block parsing
 
-    private func parseUsageBlock(header: String, in text: String) -> (LimitWindow, [ParseWarning]) {
+    private func parseUsageBlock(header: String, in text: String, now: Date) -> (LimitWindow, [ParseWarning]) {
         var warnings: [ParseWarning] = []
         let lines = text.components(separatedBy: "\n")
         let headerLower = header.lowercased()

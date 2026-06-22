@@ -10,7 +10,6 @@ private func makeParser() -> ClaudeOutputParser {
     ClaudeOutputParser(
         cliPath: "/opt/homebrew/bin/claude",
         command: "claude status",
-        now: fixedNow,
         timeZone: klTZ
     )
 }
@@ -31,7 +30,7 @@ struct ClaudeOutputParserTests {
     @Test("Parses full status output")
     func fullStatus() throws {
         let text = try fixture("full_status")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
 
         #expect(result.errors.isEmpty)
         let snap = try #require(result.snapshot)
@@ -65,7 +64,7 @@ struct ClaudeOutputParserTests {
     @Test("Parses minimal output (usage blocks only)")
     func minimal() throws {
         let text = try fixture("minimal")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
 
         #expect(result.errors.isEmpty)
         let snap = try #require(result.snapshot)
@@ -80,7 +79,7 @@ struct ClaudeOutputParserTests {
     @Test("Succeeds when weekly block is absent")
     func noWeekly() throws {
         let text = try fixture("no_weekly")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
 
         #expect(result.errors.isEmpty)
         let snap = try #require(result.snapshot)
@@ -92,7 +91,7 @@ struct ClaudeOutputParserTests {
     @Test("Succeeds when session block is absent")
     func noSession() throws {
         let text = try fixture("no_session")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
 
         #expect(result.errors.isEmpty)
         let snap = try #require(result.snapshot)
@@ -105,7 +104,7 @@ struct ClaudeOutputParserTests {
     @Test("Parses decimal percentages")
     func decimalPercent() throws {
         let text = try fixture("decimal_percent")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
 
         #expect(result.errors.isEmpty)
         let snap = try #require(result.snapshot)
@@ -117,7 +116,7 @@ struct ClaudeOutputParserTests {
     @Test("Parses over-100 percent and reports overLimit severity")
     func over100() throws {
         let text = try fixture("over100")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
 
         #expect(result.errors.isEmpty)
         let snap = try #require(result.snapshot)
@@ -134,7 +133,7 @@ struct ClaudeOutputParserTests {
         -5% used
         Resets 2:50pm (Asia/Kuala_Lumpur)
         """
-        let snap = try #require(makeParser().parse(text).snapshot)
+        let snap = try #require(makeParser().parse(text, now: fixedNow).snapshot)
         #expect(snap.limits.currentSession.percentUsed == -5)
         #expect(UsageSeverity.from(percent: snap.limits.currentSession.percentUsed) == .unknown)
         #expect(snap.state.severity == .unknown)
@@ -145,7 +144,7 @@ struct ClaudeOutputParserTests {
     @Test("Parses long month reset format")
     func longMonthReset() throws {
         let text = try fixture("long_month_reset")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
 
         #expect(result.errors.isEmpty)
         let snap = try #require(result.snapshot)
@@ -160,7 +159,7 @@ struct ClaudeOutputParserTests {
     @Test("Emits warning (not error) for missing timezone")
     func missingTimezone() throws {
         let text = try fixture("missing_timezone")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
 
         #expect(result.errors.isEmpty)
         let snap = try #require(result.snapshot)
@@ -184,11 +183,27 @@ struct ClaudeOutputParserTests {
         Resets Jun 27 at 3pm (Asia/Kuala_Lumpur)
         """
 
-        let result = makeParser().parse(ansiText)
+        let result = makeParser().parse(ansiText, now: fixedNow)
         #expect(result.errors.isEmpty)
         let snap = try #require(result.snapshot)
         #expect(snap.limits.currentSession.percentUsed == 25)
         #expect(snap.limits.currentWeekAllModels.percentUsed == 30)
+    }
+
+    @Test("Detects auth error through ANSI color codes")
+    func ansiAuthError() {
+        let text = "\u{1B}[31merror: not logged in\u{1B}[0m\n"
+        let result = makeParser().parse(text, now: fixedNow)
+        #expect(result.snapshot == nil)
+        #expect(result.errors.contains { $0.message.contains("authenticated") })
+    }
+
+    @Test("Uses per-poll now for createdAt")
+    func perPollNow() throws {
+        let text = try fixture("full_status")
+        let pollTime = fixedNow.addingTimeInterval(3600)
+        let snap = try #require(makeParser().parse(text, now: pollTime).snapshot)
+        #expect(snap.createdAt == pollTime)
     }
 
     // MARK: - Error cases
@@ -196,7 +211,7 @@ struct ClaudeOutputParserTests {
     @Test("Returns fatal error for empty output")
     func emptyOutput() throws {
         let text = try fixture("empty")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
 
         #expect(result.snapshot == nil)
         #expect(!result.errors.isEmpty)
@@ -206,7 +221,7 @@ struct ClaudeOutputParserTests {
     @Test("Returns unauthenticated error")
     func unauthenticated() throws {
         let text = try fixture("unauthenticated")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
 
         #expect(result.snapshot == nil)
         #expect(result.errors.contains { $0.message.contains("authenticated") })
@@ -215,7 +230,7 @@ struct ClaudeOutputParserTests {
     @Test("Does not false-positive auth when phrase appears in session name")
     func authPhraseInSessionName() throws {
         let text = try fixture("wrapped_session_name")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
 
         #expect(result.errors.isEmpty)
         let snap = try #require(result.snapshot)
@@ -225,7 +240,7 @@ struct ClaudeOutputParserTests {
     @Test("Returns fatal error when no usage blocks found")
     func noUsageBlocks() {
         let text = "Version:          2.1.185\nModel:            claude-opus-4-8\n"
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
 
         #expect(result.snapshot == nil)
         #expect(result.errors.contains { $0.message.contains("No usage-limit blocks") })
@@ -236,7 +251,7 @@ struct ClaudeOutputParserTests {
     @Test("Parses single-space key-value alignment")
     func singleSpaceKV() throws {
         let text = try fixture("single_space_kv")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
 
         #expect(result.errors.isEmpty)
         let snap = try #require(result.snapshot)
@@ -250,7 +265,7 @@ struct ClaudeOutputParserTests {
     @Test("Parses usage blocks with blank lines between content")
     func spacedUsageBlock() throws {
         let text = try fixture("spaced_usage_block")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
 
         #expect(result.errors.isEmpty)
         let snap = try #require(result.snapshot)
@@ -263,7 +278,7 @@ struct ClaudeOutputParserTests {
     @Test("Parses MCP server counts")
     func mcpParsing() throws {
         let text = try fixture("full_status")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
         let snap = try #require(result.snapshot)
 
         #expect(snap.mcp?.connected == 8)
@@ -275,7 +290,7 @@ struct ClaudeOutputParserTests {
     @Test("Handles absent MCP field without error")
     func mcpAbsent() throws {
         let text = try fixture("minimal")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
         let snap = try #require(result.snapshot)
         #expect(snap.mcp == nil)
     }
@@ -285,7 +300,7 @@ struct ClaudeOutputParserTests {
     @Test("Parses model usage table from stats output")
     func statsTable() throws {
         let text = try fixture("stats_table")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
 
         #expect(result.errors.isEmpty)
         let snap = try #require(result.snapshot)
@@ -306,7 +321,7 @@ struct ClaudeOutputParserTests {
     @Test("Parses model table rows without cost column")
     func statsTableNoCost() throws {
         let text = try fixture("stats_table_no_cost")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
 
         #expect(result.errors.isEmpty)
         let snap = try #require(result.snapshot)
@@ -318,7 +333,7 @@ struct ClaudeOutputParserTests {
     @Test("Warns when model table has no recognizable model rows")
     func statsTableUnknownModel() throws {
         let text = try fixture("stats_table_unknown_model")
-        let result = makeParser().parse(text)
+        let result = makeParser().parse(text, now: fixedNow)
 
         #expect(result.errors.isEmpty)
         let snap = try #require(result.snapshot)
@@ -331,14 +346,14 @@ struct ClaudeOutputParserTests {
     @Test("Severity is normal below 80%")
     func severityNormal() throws {
         let text = try fixture("minimal")  // 25% / 30%
-        let snap = try #require(makeParser().parse(text).snapshot)
+        let snap = try #require(makeParser().parse(text, now: fixedNow).snapshot)
         #expect(snap.state.severity == .normal)
     }
 
     @Test("Severity is warning between 80-94%")
     func severityWarning() throws {
         let text = try fixture("decimal_percent")  // 84.5%
-        let snap = try #require(makeParser().parse(text).snapshot)
+        let snap = try #require(makeParser().parse(text, now: fixedNow).snapshot)
         #expect(snap.state.severity == .warning)
     }
 
@@ -353,7 +368,7 @@ struct ClaudeOutputParserTests {
         ███████████████                                    30% used
         Resets Jun 27 at 3pm (Asia/Kuala_Lumpur)
         """
-        let snap = try #require(makeParser().parse(text).snapshot)
+        let snap = try #require(makeParser().parse(text, now: fixedNow).snapshot)
         #expect(snap.state.severity == .critical)
     }
 }
@@ -375,21 +390,21 @@ struct ParseSecondsTests {
     @Test("Parses plain integer") func plain() throws {
         let parser = makeParser()
         let text = "API duration:     4047\n\nCurrent session\n25% used\nResets 2:50pm (Asia/Kuala_Lumpur)\n\nCurrent week (all models)\n30% used\nResets Jun 27 at 3pm (Asia/Kuala_Lumpur)\n"
-        let snap = try #require(parser.parse(text).snapshot)
+        let snap = try #require(parser.parse(text, now: fixedNow).snapshot)
         #expect(snap.session?.totalApiDurationSeconds == 4047)
     }
 
     @Test("Parses seconds suffix") func suffix() throws {
         let parser = makeParser()
         let text = "API duration:     4047s\n\nCurrent session\n25% used\nResets 2:50pm (Asia/Kuala_Lumpur)\n\nCurrent week (all models)\n30% used\nResets Jun 27 at 3pm (Asia/Kuala_Lumpur)\n"
-        let snap = try #require(parser.parse(text).snapshot)
+        let snap = try #require(parser.parse(text, now: fixedNow).snapshot)
         #expect(snap.session?.totalApiDurationSeconds == 4047)
     }
 
     @Test("Rejects compound duration strings") func rejectsCompound() throws {
         let parser = makeParser()
         let text = "API duration:     1h 30m\n\nCurrent session\n25% used\nResets 2:50pm (Asia/Kuala_Lumpur)\n\nCurrent week (all models)\n30% used\nResets Jun 27 at 3pm (Asia/Kuala_Lumpur)\n"
-        let snap = try #require(parser.parse(text).snapshot)
+        let snap = try #require(parser.parse(text, now: fixedNow).snapshot)
         #expect(snap.session?.totalApiDurationSeconds == nil)
     }
 }
@@ -450,7 +465,7 @@ struct CodableTests {
     @Test("Encodes and decodes snapshot")
     func roundTrip() throws {
         let text = try fixture("full_status")
-        let original = try #require(makeParser().parse(text).snapshot)
+        let original = try #require(makeParser().parse(text, now: fixedNow).snapshot)
 
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601

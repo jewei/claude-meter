@@ -28,13 +28,13 @@ public struct SnapshotPipeline: Sendable {
             if recordRawOutput {
                 try store.writeRawOutput(status.stdout)
             }
-            combined = try await mergeStats(into: status.stdout)
+            combined = await mergeStats(into: status.stdout)
         } catch {
             try? store.writeLastError(LastErrorRecord(occurredAt: now, message: String(describing: error)))
             throw error
         }
 
-        let result = parser.parse(combined)
+        let result = parser.parse(combined, now: now)
         if result.isFatal {
             let message = result.errors.map(\.message).joined(separator: "; ")
             try? store.writeLastError(LastErrorRecord(occurredAt: now, message: message))
@@ -56,8 +56,8 @@ public struct SnapshotPipeline: Sendable {
         )
     }
 
-    private func mergeStats(into statusText: String) async throws -> String {
-        guard let stats = try await runner.fetchStats() else { return statusText }
+    private func mergeStats(into statusText: String) async -> String {
+        guard let stats = try? await runner.fetchStats() else { return statusText }
         guard !stats.stdout.isEmpty else { return statusText }
         return statusText + "\n\n" + stats.stdout
     }

@@ -68,6 +68,21 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertEqual(try store.recordCount(), 2)
     }
 
+    func testFetchReturnsNewestWhenOverLimit() throws {
+        let store = try HistoryStore(directory: dir, retentionDays: 180)
+        let base = Date()
+        for i in 0..<10 {
+            try store.append(makeRecord(
+                createdAt: base.addingTimeInterval(Double(i)),
+                sessionPct: Double(i)
+            ))
+        }
+        let fetched = try store.fetch(since: base.addingTimeInterval(-1), limit: 5)
+        XCTAssertEqual(fetched.count, 5)
+        XCTAssertEqual(fetched.last?.sessionPercent, 9)
+        XCTAssertEqual(fetched.first?.sessionPercent, 5)
+    }
+
     func testCSVExport() throws {
         try store.append(makeRecord(sessionPct: 42, weekPct: 88))
         let csv = try store.exportCSV()

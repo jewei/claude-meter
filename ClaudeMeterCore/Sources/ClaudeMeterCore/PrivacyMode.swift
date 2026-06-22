@@ -20,7 +20,7 @@ public enum PrivacyMode: String, CaseIterable, Identifiable, Sendable {
     public var detail: String {
         switch self {
         case .full:      return "Shows session name, model, and account info"
-        case .workSafe:  return "Shows model; hides account and session details"
+        case .workSafe:  return "Shows model and session name; hides account details"
         case .minimal:   return "Shows only percentages and reset times"
         case .anonymous: return "Hides all identifiers"
         }

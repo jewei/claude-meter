@@ -67,21 +67,38 @@ public enum NotificationPolicy {
         thresholds: UsageThresholds,
         now: Date
     ) -> [NotificationTrigger] {
-        guard let resetAt = current.resetsAt, resetAt > now else { return [] }
-
         let previousSeverity = thresholds.severity(for: previous?.percentUsed)
         let currentSeverity = thresholds.severity(for: current.percentUsed)
 
+        let escalatedToCritical = isCritical(currentSeverity) && !isCritical(previousSeverity)
+        let escalatedToWarning = currentSeverity == .warning
+            && (previousSeverity == .normal || previousSeverity == .unknown)
+
+        guard escalatedToCritical || escalatedToWarning else { return [] }
+
+        let resetAt: Date
+        if let parsed = current.resetsAt {
+            guard parsed > now else { return [] }
+            resetAt = parsed
+        } else {
+            resetAt = fallbackResetAnchor(now: now)
+        }
+
         var result: [NotificationTrigger] = []
 
-        if isCritical(currentSeverity), !isCritical(previousSeverity) {
+        if escalatedToCritical {
             result.append(NotificationTrigger(scope: scope, level: "critical", resetAt: resetAt))
-        } else if currentSeverity == .warning,
-                  (previousSeverity == .normal || previousSeverity == .unknown) {
+        } else if escalatedToWarning {
             result.append(NotificationTrigger(scope: scope, level: "warning", resetAt: resetAt))
         }
 
         return result
+    }
+
+    private static func fallbackResetAnchor(now: Date) -> Date {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: now)
+        return calendar.date(byAdding: .day, value: 1, to: start) ?? now.addingTimeInterval(86400)
     }
 
     private static func isCritical(_ severity: UsageSeverity) -> Bool {

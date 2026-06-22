@@ -96,7 +96,7 @@ final class AppState: ObservableObject {
     }
 
     var isStale: Bool {
-        guard let polledAt = lastPolledAt ?? snapshot?.lastSuccessfulPollAt else { return false }
+        guard let polledAt = snapshot?.lastSuccessfulPollAt else { return false }
         let threshold = UserDefaults.standard.double(forKey: "staleAfterSeconds").positive ?? 180
         return Date().timeIntervalSince(polledAt) > threshold
     }
@@ -145,7 +145,6 @@ final class AppState: ObservableObject {
 
             if result.isFatal {
                 lastError = result.errors.map(\.message).joined(separator: "; ")
-                lastPolledAt = Date()
                 applyBackoff()
                 return
             }
@@ -153,6 +152,7 @@ final class AppState: ObservableObject {
             let previous = snapshot
             if let snap = result.snapshot {
                 snapshot = snap
+                lastPolledAt = snap.lastSuccessfulPollAt ?? Date()
                 let record = HistoryRecord(
                     from: snap,
                     thresholds: AppGroupConfig.currentThresholds(),
@@ -168,12 +168,10 @@ final class AppState: ObservableObject {
                 )
                 WidgetCenter.shared.reloadAllTimelines()
             }
-            lastPolledAt = Date()
             lastError = nil
             backoffSeconds = 0
         } catch {
             lastError = String(describing: error)
-            lastPolledAt = Date()
             applyBackoff()
         }
     }

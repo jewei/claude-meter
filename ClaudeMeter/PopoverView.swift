@@ -318,7 +318,9 @@ struct PopoverView: View {
     }
 
     private var updatedText: String {
-        guard let polledAt = appState.lastPolledAt else { return "Not yet polled" }
+        guard let polledAt = appState.snapshot?.lastSuccessfulPollAt ?? appState.lastPolledAt else {
+            return "Not yet polled"
+        }
         let elapsed = Int(now.timeIntervalSince(polledAt))
         if elapsed < 5   { return "Just updated" }
         if elapsed < 60  { return "Updated \(elapsed)s ago" }

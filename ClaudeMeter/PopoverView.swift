@@ -1,13 +1,16 @@
 import SwiftUI
 import ClaudeMeterCore
+import AppKit
 
 struct PopoverView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.openSettings) private var openSettings
     @AppStorage("privacyMode") private var privacyMode: PrivacyMode = .workSafe
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @Environment(\.openWindow) private var openWindow
     @State private var now = Date()
     @State private var showOnboarding = false
+    @State private var showHistory = false
 
     private var usageThresholds: UsageThresholds {
         AppState.currentThresholds()
@@ -35,6 +38,10 @@ struct PopoverView: View {
         }
         .sheet(isPresented: $showOnboarding) {
             OnboardingView(hasCompletedOnboarding: $hasCompletedOnboarding)
+        }
+        .sheet(isPresented: $showHistory) {
+            HistoryView()
+                .environmentObject(appState)
         }
     }
 
@@ -277,12 +284,28 @@ struct PopoverView: View {
     // MARK: - Footer
 
     private var footerBar: some View {
-        HStack {
+        HStack(spacing: 8) {
             Text(updatedText)
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
                 .monospacedDigit()
             Spacer()
+            Button {
+                showHistory = true
+            } label: {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.borderless)
+            .help("Show usage history")
+            Button {
+                openWindow(id: "mini-monitor")
+            } label: {
+                Image(systemName: "pip")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.borderless)
+            .help("Open mini monitor")
             Button("Refresh") {
                 appState.refreshNow()
             }

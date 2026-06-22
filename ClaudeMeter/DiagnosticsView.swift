@@ -17,7 +17,9 @@ enum DiagnosticsSanitizer {
 struct DiagnosticsView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("enableDiagnosticsRawOutput") private var enableDiagnosticsRawOutput = false
     @State private var copied = false
+    @State private var rawOutput: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,9 +27,14 @@ struct DiagnosticsView: View {
                 cliSection
                 pollSection
                 snapshotSection
+                historySection
                 warningsSection
+                rawOutputSection
             }
             .formStyle(.grouped)
+            .onAppear {
+                rawOutput = try? SnapshotStore(directory: appState.storeDirectory).readRawOutput()
+            }
 
             Divider()
 
@@ -90,6 +97,40 @@ struct DiagnosticsView: View {
             LabeledContent("Schema version", value: appState.snapshot.map { "\($0.schemaVersion)" } ?? "—")
             LabeledContent("Parser version", value: appState.snapshot?.parserVersion ?? "—")
             LabeledContent("Created", value: appState.snapshot.map { isoFormatter.string(from: $0.createdAt) } ?? "—")
+        }
+    }
+
+    private var historySection: some View {
+        Section("History") {
+            let store = appState.historyStore
+            if let store {
+                let count = (try? store.fetch())?.count ?? 0
+                LabeledContent("Records", value: "\(count)")
+                LabeledContent("Store", value: appState.storeDirectory.path)
+            } else {
+                LabeledContent("Status", value: "Unavailable")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var rawOutputSection: some View {
+        if enableDiagnosticsRawOutput {
+            Section("Raw CLI Output") {
+                if let raw = rawOutput {
+                    ScrollView {
+                        Text(raw)
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxHeight: 120)
+                } else {
+                    Text("No raw output on disk — run a poll first.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 

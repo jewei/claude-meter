@@ -13,6 +13,8 @@ final class AppState: ObservableObject {
 
     var pipeline: SnapshotPipeline
     let notificationEngine = NotificationEngine()
+    private(set) var historyStore: HistoryStore?
+    private(set) var storeDirectory: URL = FileManager.default.temporaryDirectory
     private var pollTask: Task<Void, Never>?
     private var backoffSeconds: Double = 0
 
@@ -32,6 +34,8 @@ final class AppState: ObservableObject {
     init() {
         AppGroupConfig.syncDisplaySettings()
         let store = AppState.makeStore()
+        self.storeDirectory = store.directory
+        self.historyStore = try? HistoryStore(directory: store.directory)
         self.pipeline = AppState.makePipeline(store: store)
         self.snapshot = try? store.readLatest()
         self.lastPolledAt = snapshot?.lastSuccessfulPollAt
@@ -132,6 +136,10 @@ final class AppState: ObservableObject {
             let previous = snapshot
             if let snap = result.snapshot {
                 snapshot = snap
+                let record = HistoryRecord(from: snap, thresholds: AppGroupConfig.currentThresholds())
+                if let hs = historyStore {
+                    Task.detached(priority: .utility) { try? hs.append(record) }
+                }
                 await notificationEngine.process(
                     snapshot: snap,
                     previous: previous,

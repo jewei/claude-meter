@@ -117,6 +117,12 @@ public struct SnapshotStore: Sendable {
         try writeAtomically(data, to: rawOutputURL)
     }
 
+    /// Returns raw CLI output when diagnostics recording is enabled; nil when the file does not exist.
+    public func readRawOutput() throws -> String? {
+        guard FileManager.default.fileExists(atPath: rawOutputURL.path) else { return nil }
+        return try String(contentsOf: rawOutputURL, encoding: .utf8)
+    }
+
     // MARK: - Atomic write
 
     private func writeAtomically(_ data: Data, to destination: URL) throws {

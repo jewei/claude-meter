@@ -262,6 +262,7 @@ private struct AdvancedSettingsTab: View {
 
     @AppStorage("launchAtLogin") private var launchAtLogin = false
     @AppStorage("enableDiagnosticsRawOutput") private var enableDiagnosticsRawOutput = false
+    @Environment(\.openWindow) private var openWindow
 
     @State private var showingDiagnostics = false
 
@@ -271,6 +272,14 @@ private struct AdvancedSettingsTab: View {
                 Toggle("Launch at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, newValue in applyLaunchAtLogin(newValue) }
                     .onAppear { syncLaunchAtLoginFromSystem() }
+            }
+
+            Section("Mini Monitor") {
+                Button("Open Mini Monitor…") { openWindow(id: "mini-monitor") }
+                    .buttonStyle(.borderless)
+                Text("A compact always-on-top window showing live session and weekly usage.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Diagnostics") {

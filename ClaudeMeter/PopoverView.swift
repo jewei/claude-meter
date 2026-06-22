@@ -3,6 +3,8 @@ import ClaudeMeterCore
 
 struct PopoverView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage("privacyMode") private var privacyMode: PrivacyMode = .workSafe
     @State private var now = Date()
 
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -29,6 +31,13 @@ struct PopoverView: View {
             Text("Claude Meter")
                 .font(.system(size: 13, weight: .semibold))
             Spacer()
+            Button {
+                openSettings()
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 12))
+            }
+            .buttonStyle(.borderless)
             Button {
                 appState.refreshNow()
             } label: {
@@ -133,7 +142,7 @@ struct PopoverView: View {
                 window: snap.limits.currentWeekAllModels,
                 now: now
             )
-            if let model = snap.session?.activeModel {
+            if privacyMode.showsModel, let model = snap.session?.activeModel {
                 Divider().opacity(0.1).padding(.horizontal, 16)
                 modelRow(model)
             }

@@ -10,21 +10,15 @@ final class AppState: ObservableObject {
     @Published var lastPolledAt: Date? = nil
     @Published var isPopoverOpen = false
 
-    let pipeline: SnapshotPipeline
+    var pipeline: SnapshotPipeline
     let notificationEngine = NotificationEngine()
     private var pollTask: Task<Void, Never>?
     private var backoffSeconds: Double = 0
 
-    static let activeInterval: TimeInterval = 15
-    static let backgroundInterval: TimeInterval = 60
-    static let staleThreshold: TimeInterval = 180
-
     init() {
-        let cliPath = CLIPathDetector.detect() ?? "/usr/local/bin/claude"
-        let runner = ProcessCommandRunner(config: RunnerConfig(cliPath: cliPath))
         let store = (try? SnapshotStore.applicationSupport())
             ?? SnapshotStore(directory: FileManager.default.temporaryDirectory)
-        self.pipeline = SnapshotPipeline(runner: runner, parser: ClaudeOutputParser(cliPath: cliPath), store: store)
+        self.pipeline = AppState.makePipeline(store: store)
         self.snapshot = try? store.readLatest()
         self.lastPolledAt = snapshot?.lastSuccessfulPollAt
         if snapshot == nil, let record = try? store.readLastError() {
@@ -50,7 +44,10 @@ final class AppState: ObservableObject {
             await self?.poll()
             while !Task.isCancelled {
                 guard let self else { break }
-                let interval = self.isPopoverOpen ? Self.activeInterval : Self.backgroundInterval
+                let ud = UserDefaults.standard
+                let activeInterval = ud.double(forKey: "pollIntervalActiveSeconds").positive ?? 15
+                let backgroundInterval = ud.double(forKey: "pollIntervalBackgroundSeconds").positive ?? 60
+                let interval = self.isPopoverOpen ? activeInterval : backgroundInterval
                 let effective = self.backoffSeconds > 0 ? max(interval, self.backoffSeconds) : interval
                 try? await Task.sleep(for: .seconds(effective))
                 guard !Task.isCancelled else { break }
@@ -79,7 +76,15 @@ final class AppState: ObservableObject {
 
     var isStale: Bool {
         guard let polledAt = lastPolledAt ?? snapshot?.lastSuccessfulPollAt else { return false }
-        return Date().timeIntervalSince(polledAt) > Self.staleThreshold
+        let threshold = UserDefaults.standard.double(forKey: "staleAfterSeconds").positive ?? 180
+        return Date().timeIntervalSince(polledAt) > threshold
+    }
+
+    func rebuildPipeline() {
+        let store = (try? SnapshotStore.applicationSupport())
+            ?? SnapshotStore(directory: FileManager.default.temporaryDirectory)
+        pipeline = AppState.makePipeline(store: store)
+        startPolling()
     }
 
     var severity: UsageSeverity {
@@ -124,4 +129,44 @@ final class AppState: ObservableObject {
     private func applyBackoff() {
         backoffSeconds = backoffSeconds == 0 ? 15 : min(backoffSeconds * 2, 300)
     }
+
+    // MARK: - Pipeline factory
+
+    private static func makePipeline(store: SnapshotStore) -> SnapshotPipeline {
+        let ud = UserDefaults.standard
+        let cliPath: String = {
+            let stored = (ud.string(forKey: "claudeCliPath") ?? "").trimmingCharacters(in: .whitespaces)
+            return stored.isEmpty ? (CLIPathDetector.detect() ?? "/usr/local/bin/claude") : stored
+        }()
+        let statusArgs: [String] = {
+            let s = ud.string(forKey: "statusArguments") ?? "status"
+            let parts = s.split(separator: " ").map(String.init)
+            return parts.isEmpty ? ["status"] : parts
+        }()
+        let statsArgs: [String]? = {
+            let s = (ud.string(forKey: "statsArguments") ?? "stats").trimmingCharacters(in: .whitespaces)
+            if s.isEmpty { return nil }
+            return s.split(separator: " ").map(String.init)
+        }()
+        let timeout = ud.double(forKey: "cliTimeoutSeconds").positive ?? 5
+        let recordRaw = ud.bool(forKey: "enableDiagnosticsRawOutput")
+
+        return SnapshotPipeline(
+            runner: ProcessCommandRunner(config: RunnerConfig(
+                cliPath: cliPath,
+                statusArguments: statusArgs,
+                statsArguments: statsArgs,
+                timeoutSeconds: timeout
+            )),
+            parser: ClaudeOutputParser(cliPath: cliPath),
+            store: store,
+            recordRawOutput: recordRaw
+        )
+    }
+}
+
+// MARK: - UserDefaults helper
+
+private extension Double {
+    var positive: Double? { self > 0 ? self : nil }
 }

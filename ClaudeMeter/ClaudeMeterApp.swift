@@ -16,5 +16,10 @@ struct ClaudeMeterApp: App {
             MenuBarLabel(appState: appState)
         }
         .menuBarExtraStyle(.window)
+
+        Settings {
+            SettingsView()
+                .environmentObject(appState)
+        }
     }
 }

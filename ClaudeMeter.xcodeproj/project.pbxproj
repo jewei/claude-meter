@@ -15,6 +15,9 @@
 		6D0A86762E7646A0B0D33439 /* UsageCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 270C84D9D514496BA99A010A /* UsageCardView.swift */; };
 		2B9EF3C1324E496AB3B6E96A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */; };
 		4D61D7AB7BDE4E48BA084D4F /* NotificationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 698B8E0E53F145B783C464F9 /* NotificationEngine.swift */; };
+		F422E35B173C4CA3A01B2B06 /* PrivacyMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 851BA9C4C9CB4F989517B9A6 /* PrivacyMode.swift */; };
+		60B15B0A00A24EE9A3EED2B1 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07DBE9DE99AE4570ABDAA767 /* SettingsView.swift */; };
+		B6F53F78A9174898AEA761F3 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5D38012F5D5476997394541 /* DiagnosticsView.swift */; };
 		95F163B0444944EE8CCFFF1F /* ClaudeMeterCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7C7F0222F61B410EB83CB0D4 /* ClaudeMeterCore */; };
 /* End PBXBuildFile section */
 
@@ -30,6 +33,9 @@
 		CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		0749BAC0888B4145ADF40C11 /* ClaudeMeter.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClaudeMeter.entitlements; sourceTree = "<group>"; };
 		698B8E0E53F145B783C464F9 /* NotificationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationEngine.swift; sourceTree = "<group>"; };
+		851BA9C4C9CB4F989517B9A6 /* PrivacyMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyMode.swift; sourceTree = "<group>"; };
+		07DBE9DE99AE4570ABDAA767 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		B5D38012F5D5476997394541 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -70,6 +76,9 @@
 				3715D40A5AE0421A91C5BED0 /* PopoverView.swift */,
 				270C84D9D514496BA99A010A /* UsageCardView.swift */,
 				698B8E0E53F145B783C464F9 /* NotificationEngine.swift */,
+				851BA9C4C9CB4F989517B9A6 /* PrivacyMode.swift */,
+				07DBE9DE99AE4570ABDAA767 /* SettingsView.swift */,
+				B5D38012F5D5476997394541 /* DiagnosticsView.swift */,
 				CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */,
 				803E43377A64429FBFAFB75C /* Info.plist */,
 				0749BAC0888B4145ADF40C11 /* ClaudeMeter.entitlements */,
@@ -159,6 +168,9 @@
 				86A371C31B9048C1BF2F59F8 /* PopoverView.swift in Sources */,
 				6D0A86762E7646A0B0D33439 /* UsageCardView.swift in Sources */,
 				4D61D7AB7BDE4E48BA084D4F /* NotificationEngine.swift in Sources */,
+				F422E35B173C4CA3A01B2B06 /* PrivacyMode.swift in Sources */,
+				60B15B0A00A24EE9A3EED2B1 /* SettingsView.swift in Sources */,
+				B6F53F78A9174898AEA761F3 /* DiagnosticsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

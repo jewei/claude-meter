@@ -36,6 +36,7 @@ struct PopoverView: View {
         }
         .sheet(isPresented: $showOnboarding) {
             OnboardingView(hasCompletedOnboarding: $hasCompletedOnboarding)
+                .environmentObject(appState)
         }
     }
 
@@ -63,7 +64,7 @@ struct PopoverView: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .disabled(appState.isLoading)
+            .disabled(appState.isLoading || !appState.isActive || !appState.hasEnabledDataSource)
             .rotationEffect(appState.isLoading ? .degrees(360) : .zero)
             .animation(
                 appState.isLoading
@@ -80,7 +81,15 @@ struct PopoverView: View {
 
     @ViewBuilder
     private var mainContent: some View {
-        if appState.snapshot == nil && appState.isLoading {
+        if !appState.isActive {
+            if let snap = appState.snapshot {
+                usageState(snap)
+            } else {
+                inactiveState
+            }
+        } else if !appState.hasEnabledDataSource {
+            noSourcesState
+        } else if appState.snapshot == nil && appState.isLoading {
             loadingState
         } else if let snap = appState.snapshot {
             usageState(snap)
@@ -89,6 +98,46 @@ struct PopoverView: View {
         } else {
             setupState
         }
+    }
+
+    private var inactiveState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "pause.circle")
+                .font(.system(size: 28))
+                .foregroundStyle(.secondary)
+            Text("Paused")
+                .font(.system(size: 13, weight: .medium))
+            Text("Claude Meter is inactive and is not fetching usage data.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Resume") { appState.setActive(true) }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
+        .padding(.horizontal, 16)
+    }
+
+    private var noSourcesState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "switch.2")
+                .font(.system(size: 28))
+                .foregroundStyle(.secondary)
+            Text("No data methods enabled")
+                .font(.system(size: 13, weight: .medium))
+            Text("Turn on at least one method in Settings → Data.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Open Settings") { openSettings() }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
+        .padding(.horizontal, 16)
     }
 
     private var loadingState: some View {
@@ -153,6 +202,10 @@ struct PopoverView: View {
                 pollErrorNotice
                 Divider()
             }
+            if !appState.isActive {
+                inactiveNotice
+                Divider()
+            }
             if appState.isStale {
                 staleNotice
                 Divider()
@@ -201,6 +254,18 @@ struct PopoverView: View {
         }
         .font(.body)
         .foregroundStyle(.orange)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private var inactiveNotice: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "pause.circle")
+            Text("Paused — showing last known data")
+        }
+        .font(.body)
+        .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -258,7 +323,13 @@ struct PopoverView: View {
             .buttonStyle(.plain)
             .font(.body)
             .foregroundStyle(.primary)
-            .disabled(appState.isLoading)
+            .disabled(appState.isLoading || !appState.isActive || !appState.hasEnabledDataSource)
+            Button(appState.isActive ? "Pause" : "Resume") {
+                appState.setActive(!appState.isActive)
+            }
+            .buttonStyle(.plain)
+            .font(.body)
+            .foregroundStyle(.primary)
             footerButton("power", help: "Quit Claude Meter") {
                 NSApplication.shared.terminate(nil)
             }
@@ -325,41 +396,27 @@ struct PopoverView: View {
 
 struct OnboardingView: View {
     @Binding var hasCompletedOnboarding: Bool
+    @EnvironmentObject private var appState: AppState
     @Environment(\.openSettings) private var openSettings
     @Environment(\.dismiss) private var dismiss
 
-    private var isAPIConnected: Bool {
-        ClaudeAIKeychain.load() != nil
-    }
-
     var body: some View {
         VStack(spacing: 20) {
-            Image(systemName: "gauge.with.dots.needle.33percent")
+            Image(systemName: "pause.circle")
                 .font(.system(size: 40))
                 .foregroundStyle(.secondary)
 
             Text("Welcome to Claude Meter")
                 .font(.title2.bold())
 
-            if isAPIConnected {
-                Text("Connected to claude.ai for exact usage percentages.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                Text("Message counts from your Claude Code journal supplement the display.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            } else {
-                Text("No usage data found yet.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                Text("Open Claude Code to publish statusline data, or connect OAuth/claude.ai in Settings → Data.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
+            Text("Claude Meter starts paused.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Text("Choose the data methods you want in Settings, then turn Active on whenever you are ready.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
 
             HStack(spacing: 12) {
                 Button("Open Settings") { openSettings() }
@@ -369,6 +426,9 @@ struct OnboardingView: View {
         }
         .padding(32)
         .frame(width: 420)
+        .onAppear {
+            appState.setActive(false)
+        }
     }
 
     private func finish() {

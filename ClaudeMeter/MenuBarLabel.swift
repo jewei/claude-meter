@@ -22,6 +22,8 @@ struct MenuBarLabel: View {
                     .monospacedDigit()
             }
         }
+        .foregroundStyle(appState.isActive ? .primary : .secondary)
+        .opacity(appState.isActive ? 1 : 0.5)
     }
 
     private var iconName: String {

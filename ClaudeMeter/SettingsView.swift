@@ -53,6 +53,7 @@ private enum OAuthSetupState: Equatable {
 private struct OAuthConnectionSection: View {
     let appState: AppState
 
+    @AppStorage(AppSettings.oauthSourceEnabledKey) private var oauthSourceEnabled = true
     @AppStorage("oauthMode") private var oauthMode = ""
     @State private var state: OAuthSetupState = .idle
     @State private var showAccessToken = false
@@ -63,13 +64,21 @@ private struct OAuthConnectionSection: View {
     @State private var isTesting = false
 
     var body: some View {
-        Section("Claude Code Token") {
-            stateContent
-            Text("Fallback #2 — OAuth usage API when the statusline bridge is stale. Uses the Claude Code access token from Keychain.")
+        Section("2. Claude Code OAuth") {
+            Toggle("Enable OAuth usage API", isOn: $oauthSourceEnabled)
+            if oauthSourceEnabled {
+                stateContent
+            } else {
+                Text("Skipped while this method is off.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text("Second priority. Uses Claude Code OAuth credentials from Keychain when active.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .onAppear { loadState() }
+        .onChange(of: oauthSourceEnabled) { _, _ in appState.rebuildPipeline() }
     }
 
     @ViewBuilder
@@ -219,6 +228,7 @@ private struct OAuthConnectionSection: View {
         Task {
             do {
                 let (s, w) = try await OAuthPipeline.verify(credentials: creds)
+                oauthSourceEnabled = true
                 oauthMode = "auto"
                 testResult = "Session \(Int(s))%  ·  Week \(Int(w))%"
                 state = .connectedAuto
@@ -240,6 +250,7 @@ private struct OAuthConnectionSection: View {
             do {
                 guard let creds = OAuthKeychain.loadManual() else { throw URLError(.badServerResponse) }
                 let (s, w) = try await OAuthPipeline.verify(credentials: creds)
+                oauthSourceEnabled = true
                 oauthMode = "manual"
                 testResult = "Session \(Int(s))%  ·  Week \(Int(w))%"
                 manualAccess = ""
@@ -263,6 +274,7 @@ private struct OAuthConnectionSection: View {
         Task {
             do {
                 let (s, w) = try await OAuthPipeline.verify(credentials: creds)
+                oauthSourceEnabled = true
                 oauthMode = "auto"
                 testResult = "Session \(Int(s))%  ·  Week \(Int(w))%"
                 state = .connectedAuto
@@ -304,11 +316,8 @@ private struct OAuthConnectionSection: View {
 private struct DataSettingsTab: View {
     let appState: AppState
 
-    @AppStorage("pollIntervalActiveSeconds") private var pollIntervalActiveSeconds = 15.0
-    @AppStorage("pollIntervalBackgroundSeconds") private var pollIntervalBackgroundSeconds = 60.0
-    @AppStorage("staleAfterSeconds") private var staleAfterSeconds = 180.0
-    @AppStorage("statuslineStalenessSeconds") private var statuslineStalenessSeconds = 120.0
-    @AppStorage("statuslineFallbackCooldownSeconds") private var statuslineFallbackCooldownSeconds = 60.0
+    @AppStorage(AppSettings.statuslineSourceEnabledKey) private var statuslineSourceEnabled = true
+    @AppStorage(AppSettings.claudeAISourceEnabledKey) private var claudeAISourceEnabled = true
 
     @State private var sessionKey = ""
     @State private var orgId = ""
@@ -320,64 +329,31 @@ private struct DataSettingsTab: View {
 
     var body: some View {
         Form {
-            OAuthConnectionSection(appState: appState)
-
-            Section("Statusline Bridge") {
-                LabeledContent("Stale after") {
-                    HStack {
-                        Slider(value: $statuslineStalenessSeconds, in: 30...300, step: 30)
-                            .frame(width: 120)
-                        Text("\(Int(statuslineStalenessSeconds))s")
-                            .monospacedDigit()
-                            .frame(width: 32, alignment: .trailing)
-                    }
-                }
-                LabeledContent("API fallback cooldown") {
-                    HStack {
-                        Slider(value: $statuslineFallbackCooldownSeconds, in: 60...300, step: 30)
-                            .frame(width: 120)
-                        Text("\(Int(statuslineFallbackCooldownSeconds))s")
-                            .monospacedDigit()
-                            .frame(width: 32, alignment: .trailing)
-                    }
-                }
-                Text("Primary source. Claude Code pushes rate-limit data here every second while running (refreshInterval: 1). When stale, falls back to OAuth usage API, then claude.ai usage API.")
+            Section("Global") {
+                Toggle("Active", isOn: activeBinding)
+                Text(appState.isActive
+                    ? "Claude Meter refreshes usage once per minute while at least one data method is enabled."
+                    : "Paused. No usage data is fetched until you turn Active back on.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Section("Polling") {
-                LabeledContent("Poll (popover open)") {
-                    HStack {
-                        Slider(value: $pollIntervalActiveSeconds, in: 5...60, step: 5)
-                            .frame(width: 120)
-                        Text("\(Int(pollIntervalActiveSeconds))s")
-                            .monospacedDigit()
-                            .frame(width: 32, alignment: .trailing)
-                    }
-                }
-                LabeledContent("Poll (background)") {
-                    HStack {
-                        Slider(value: $pollIntervalBackgroundSeconds, in: 15...300, step: 15)
-                            .frame(width: 120)
-                        Text("\(Int(pollIntervalBackgroundSeconds))s")
-                            .monospacedDigit()
-                            .frame(width: 32, alignment: .trailing)
-                    }
-                }
-                LabeledContent("Mark stale after") {
-                    HStack {
-                        Slider(value: $staleAfterSeconds, in: 60...600, step: 30)
-                            .frame(width: 120)
-                        Text("\(Int(staleAfterSeconds))s")
-                            .monospacedDigit()
-                            .frame(width: 32, alignment: .trailing)
-                    }
-                }
+            Section("1. Statusline Bridge") {
+                Toggle("Enable Statusline Bridge", isOn: $statuslineSourceEnabled)
+                Text("Top priority. When active, Claude Meter checks the statusline bridge once per minute and falls through to lower enabled methods only when it is stale.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
-            Section("Claude.ai Connection") {
-                if isConnected {
+            OAuthConnectionSection(appState: appState)
+
+            Section("3. Claude.ai Session") {
+                Toggle("Enable claude.ai usage API", isOn: $claudeAISourceEnabled)
+                if !claudeAISourceEnabled {
+                    Text("Skipped while this method is off.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if isConnected {
                     LabeledContent("Status") {
                         HStack(spacing: 6) {
                             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
@@ -446,16 +422,27 @@ private struct DataSettingsTab: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(sessionKey.trimmingCharacters(in: .whitespaces).isEmpty ||
                                   orgId.trimmingCharacters(in: .whitespaces).isEmpty)
-                    Text("Fallback #3 — claude.ai usage API when OAuth is unavailable. Find sessionKey in browser DevTools → Application → Cookies → claude.ai. Org ID is in the lastActiveOrg cookie.")
+                    Text("Find sessionKey in browser DevTools → Application → Cookies → claude.ai. Org ID is in the lastActiveOrg cookie.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                Text("Third priority. Used only when higher enabled methods are unavailable or stale.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .padding()
         .onAppear { loadKeychainState() }
-        .onChange(of: staleAfterSeconds) { _, _ in AppGroupConfig.syncDisplaySettings() }
+        .onChange(of: statuslineSourceEnabled) { _, _ in appState.rebuildPipeline() }
+        .onChange(of: claudeAISourceEnabled) { _, _ in appState.rebuildPipeline() }
+    }
+
+    private var activeBinding: Binding<Bool> {
+        Binding(
+            get: { appState.isActive },
+            set: { appState.setActive($0) }
+        )
     }
 
     private func loadKeychainState() {
@@ -480,6 +467,7 @@ private struct DataSettingsTab: View {
             return
         }
         if ClaudeAIKeychain.save(sessionKey: sk, orgId: normalizedOrg) {
+            claudeAISourceEnabled = true
             sessionKey = ""
             isConnected = true
             connectionStatus = ""
@@ -529,18 +517,18 @@ private struct DisplaySettingsTab: View {
         Form {
             Section("Severity Thresholds") {
                 LabeledContent("Warning at") {
-                    HStack {
-                        Slider(value: $warningThresholdPercent, in: 50...90, step: 5)
-                            .frame(width: 140)
+                    HStack(spacing: 8) {
+                        Stepper("", value: $warningThresholdPercent, in: 50...90, step: 5)
+                            .labelsHidden()
                         Text("\(Int(warningThresholdPercent))%")
                             .monospacedDigit()
                             .frame(width: 36, alignment: .trailing)
                     }
                 }
                 LabeledContent("Critical at") {
-                    HStack {
-                        Slider(value: $criticalThresholdPercent, in: 60...100, step: 5)
-                            .frame(width: 140)
+                    HStack(spacing: 8) {
+                        Stepper("", value: $criticalThresholdPercent, in: 60...100, step: 5)
+                            .labelsHidden()
                         Text("\(Int(criticalThresholdPercent))%")
                             .monospacedDigit()
                             .frame(width: 36, alignment: .trailing)

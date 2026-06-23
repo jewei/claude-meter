@@ -2,7 +2,7 @@ import Foundation
 
 /// Primary pipeline that reads Claude Code's own rate-limit data via the statusline bridge.
 ///
-/// Fallback order when stale (rate-limited by `statuslineFallbackCooldownSeconds`):
+/// Fallback order when stale (rate-limited to once per minute):
 /// 1. Statusline bridge (`~/.claude-meter/statusline.json`)
 /// 2. OAuth usage API (`GET /api/oauth/usage` with Bearer token)
 /// 3. claude.ai usage API (`GET /api/organizations/{orgId}/usage` with sessionKey cookie)
@@ -14,19 +14,8 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     private let stateQueue = DispatchQueue(label: "com.jewei.claudemeter.statusline-pipeline.state")
     private var lastFallbackPollAt: Date? = nil
 
-    /// Seconds before the statusline file is considered stale. Read from UserDefaults
-    /// key `statuslineStalenessSeconds`; defaults to 120 (2 min).
-    private var stalenessThreshold: TimeInterval {
-        let v = UserDefaults.standard.double(forKey: "statuslineStalenessSeconds")
-        return v >= 30 ? v : 120
-    }
-
-    /// Minimum seconds between API fallback calls when statusline is stale. Read from
-    /// UserDefaults key `statuslineFallbackCooldownSeconds`; minimum enforced at 60 (1 min).
-    private var fallbackCooldown: TimeInterval {
-        let v = UserDefaults.standard.double(forKey: "statuslineFallbackCooldownSeconds")
-        return max(60, v >= 60 ? v : 60)
-    }
+    private let stalenessThreshold: TimeInterval = 60
+    private let fallbackCooldown: TimeInterval = 60
 
     public init(
         fallback: any ClaudeMeterPipeline,

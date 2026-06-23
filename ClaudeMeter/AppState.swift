@@ -13,15 +13,19 @@ final class AppState: ObservableObject {
     @Published var lastPolledAt: Date? = nil
     @Published var isPopoverOpen = false
     @Published var updateAvailable = false
+    @Published private(set) var isActive: Bool
+    @Published private(set) var hasEnabledDataSource: Bool
 
     var pipeline: any ClaudeMeterPipeline
     let notificationEngine = NotificationEngine()
+    private let store: SnapshotStore
     private let updaterDelegate: UpdaterDelegate
     private let updaterController: SPUStandardUpdaterController
     private var pollTask: Task<Void, Never>?
-    private var backoffSeconds: Double = 0
     private var pipelineGeneration = 0
     private var refreshPending = false
+
+    private static let pollIntervalSeconds: TimeInterval = 60
 
     var primarySourceWarning: String? {
         lastPollResult?.warnings.first { $0.field == "claude.ai API" }?.message
@@ -43,6 +47,9 @@ final class AppState: ObservableObject {
     init() {
         AppGroupConfig.syncDisplaySettings()
         let store = AppState.makeStore()
+        self.store = store
+        self.isActive = AppSettings.isActive
+        self.hasEnabledDataSource = AppSettings.hasEnabledDataSource
         // Create delegate and controller before self is fully available so we can pass the
         // delegate reference at construction time (SPUStandardUpdaterController doesn't
         // allow changing its user driver delegate after init).
@@ -56,16 +63,6 @@ final class AppState: ObservableObject {
         self.updaterController = controller
         self.pipeline = AppState.makePipeline(store: store)
         // Self is fully initialized from here on.
-        Task.detached(priority: .utility) {
-            do {
-                try StatuslineBridge.install()
-            } catch {
-                let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                try? store.writeLastError(LastErrorRecord(
-                    message: DiagnosticsSanitizer.sanitize(message)
-                ))
-            }
-        }
         self.snapshot = try? store.readLatest()
         self.lastPolledAt = snapshot?.lastSuccessfulPollAt
         if snapshot == nil, let record = try? store.readLastError() {
@@ -78,6 +75,9 @@ final class AppState: ObservableObject {
 
     init(pipeline: any ClaudeMeterPipeline, initialSnapshot: ClaudeUsageSnapshot? = nil) {
         let delegate = UpdaterDelegate()
+        self.store = SnapshotStore(directory: FileManager.default.temporaryDirectory)
+        self.isActive = true
+        self.hasEnabledDataSource = true
         self.updaterDelegate = delegate
         self.updaterController = SPUStandardUpdaterController(
             startingUpdater: false,
@@ -96,16 +96,16 @@ final class AppState: ObservableObject {
 
     func startPolling() {
         pollTask?.cancel()
+        guard canPoll else {
+            pollTask = nil
+            return
+        }
+        installStatuslineBridgeIfNeeded()
         pollTask = Task { [weak self] in
             await self?.poll()
             while !Task.isCancelled {
                 guard let self else { break }
-                let ud = UserDefaults.standard
-                let activeInterval = ud.double(forKey: "pollIntervalActiveSeconds").positive ?? 15
-                let backgroundInterval = ud.double(forKey: "pollIntervalBackgroundSeconds").positive ?? 60
-                let interval = self.isPopoverOpen ? activeInterval : backgroundInterval
-                let effective = self.backoffSeconds > 0 ? max(interval, self.backoffSeconds) : interval
-                try? await Task.sleep(for: .seconds(effective))
+                try? await Task.sleep(for: .seconds(Self.pollIntervalSeconds))
                 guard !Task.isCancelled else { break }
                 await self.poll()
             }
@@ -123,6 +123,7 @@ final class AppState: ObservableObject {
     }
 
     func refreshNow() {
+        guard canPoll else { return }
         if isLoading {
             refreshPending = true
             return
@@ -140,15 +141,27 @@ final class AppState: ObservableObject {
     }
 
     var isStale: Bool {
-        guard let polledAt = snapshot?.lastSuccessfulPollAt else { return false }
-        let threshold = UserDefaults.standard.double(forKey: "staleAfterSeconds").positive ?? 180
-        return Date().timeIntervalSince(polledAt) > threshold
+        AppGroupConfig.isSnapshotStale(lastPollAt: snapshot?.lastSuccessfulPollAt)
     }
 
     func rebuildPipeline() {
         pipelineGeneration += 1
-        pipeline = AppState.makePipeline(store: AppState.makeStore())
+        hasEnabledDataSource = AppSettings.hasEnabledDataSource
+        pipeline = AppState.makePipeline(store: store)
         startPolling()
+    }
+
+    func setActive(_ active: Bool) {
+        guard isActive != active else { return }
+        AppSettings.isActive = active
+        isActive = active
+        refreshPending = false
+        if active {
+            rebuildPipeline()
+        } else {
+            stopPolling()
+            isLoading = false
+        }
     }
 
     var severity: UsageSeverity {
@@ -165,6 +178,7 @@ final class AppState: ObservableObject {
     }
 
     private func poll() async {
+        guard canPoll else { return }
         let generation = pipelineGeneration
         guard !isLoading else {
             refreshPending = true
@@ -181,13 +195,12 @@ final class AppState: ObservableObject {
 
         do {
             let result = try await pipeline.poll(now: Date())
-            guard generation == pipelineGeneration else { return }
+            guard generation == pipelineGeneration, canPoll else { return }
 
             lastPollResult = result
 
             if result.isFatal {
                 lastError = result.errors.map(\.message).joined(separator: "; ")
-                applyBackoff()
                 return
             }
 
@@ -210,11 +223,9 @@ final class AppState: ObservableObject {
             } else {
                 lastError = nil
             }
-            backoffSeconds = 0
         } catch {
-            guard generation == pipelineGeneration else { return }
+            guard generation == pipelineGeneration, canPoll else { return }
             lastError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            applyBackoff()
         }
     }
 
@@ -228,31 +239,50 @@ final class AppState: ObservableObject {
             || previous.lastSuccessfulPollAt != current.lastSuccessfulPollAt
     }
 
-    private func applyBackoff() {
-        backoffSeconds = backoffSeconds == 0 ? 15 : min(backoffSeconds * 2, 300)
-    }
-
     // MARK: - Pipeline factory
 
     private static func makePipeline(store: SnapshotStore) -> any ClaudeMeterPipeline {
         let thresholds = AppGroupConfig.currentThresholds()
-        let terminal = CachedSnapshotPipeline(store: store)
+        var pipeline: any ClaudeMeterPipeline = CachedSnapshotPipeline(store: store)
 
-        let claudeLayer: any ClaudeMeterPipeline
-        if let creds = ClaudeAIKeychain.load() {
+        if AppSettings.claudeAISourceEnabled, let creds = ClaudeAIKeychain.load() {
             let client = ClaudeAIUsageClient(sessionKey: creds.sessionKey, orgId: creds.orgId)
-            claudeLayer = ClaudeAIPipeline(
+            pipeline = ClaudeAIPipeline(
                 client: client,
                 store: store,
-                fallback: terminal,
+                fallback: pipeline,
                 thresholds: thresholds
             )
-        } else {
-            claudeLayer = terminal
         }
 
-        let oauthLayer = OAuthPipeline(fallback: claudeLayer, store: store, thresholds: thresholds)
-        return StatuslinePipeline(fallback: oauthLayer, store: store, thresholds: thresholds)
+        if AppSettings.oauthSourceEnabled {
+            pipeline = OAuthPipeline(fallback: pipeline, store: store, thresholds: thresholds)
+        }
+
+        if AppSettings.statuslineSourceEnabled {
+            pipeline = StatuslinePipeline(fallback: pipeline, store: store, thresholds: thresholds)
+        }
+
+        return pipeline
+    }
+
+    private var canPoll: Bool {
+        isActive && AppSettings.hasEnabledDataSource
+    }
+
+    private func installStatuslineBridgeIfNeeded() {
+        guard AppSettings.statuslineSourceEnabled else { return }
+        let store = store
+        Task.detached(priority: .utility) {
+            do {
+                try StatuslineBridge.install()
+            } catch {
+                let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                try? store.writeLastError(LastErrorRecord(
+                    message: DiagnosticsSanitizer.sanitize(message)
+                ))
+            }
+        }
     }
 }
 
@@ -306,8 +336,38 @@ private final class UpdaterDelegate: NSObject, SPUStandardUserDriverDelegate, @u
     }
 }
 
-// MARK: - UserDefaults helper
+enum AppSettings {
+    static let isActiveKey = "isActive"
+    static let statuslineSourceEnabledKey = "statuslineSourceEnabled"
+    static let oauthSourceEnabledKey = "oauthSourceEnabled"
+    static let claudeAISourceEnabledKey = "claudeAISourceEnabled"
 
-private extension Double {
-    var positive: Double? { self > 0 ? self : nil }
+    static var isActive: Bool {
+        get { UserDefaults.standard.bool(forKey: isActiveKey) }
+        set { UserDefaults.standard.set(newValue, forKey: isActiveKey) }
+    }
+
+    static var statuslineSourceEnabled: Bool {
+        get { boolDefaultingTrue(forKey: statuslineSourceEnabledKey) }
+        set { UserDefaults.standard.set(newValue, forKey: statuslineSourceEnabledKey) }
+    }
+
+    static var oauthSourceEnabled: Bool {
+        get { boolDefaultingTrue(forKey: oauthSourceEnabledKey) }
+        set { UserDefaults.standard.set(newValue, forKey: oauthSourceEnabledKey) }
+    }
+
+    static var claudeAISourceEnabled: Bool {
+        get { boolDefaultingTrue(forKey: claudeAISourceEnabledKey) }
+        set { UserDefaults.standard.set(newValue, forKey: claudeAISourceEnabledKey) }
+    }
+
+    static var hasEnabledDataSource: Bool {
+        statuslineSourceEnabled || oauthSourceEnabled || claudeAISourceEnabled
+    }
+
+    private static func boolDefaultingTrue(forKey key: String) -> Bool {
+        guard UserDefaults.standard.object(forKey: key) != nil else { return true }
+        return UserDefaults.standard.bool(forKey: key)
+    }
 }

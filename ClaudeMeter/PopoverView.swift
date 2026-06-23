@@ -18,21 +18,18 @@ struct PopoverView: View {
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        ZStack {
-            Color.cmBackground.opacity(0.45)
-            VStack(spacing: 0) {
-                headerBar
-                Divider().opacity(0.15)
-                if appState.updateAvailable {
-                    updateAvailableNotice
-                    Divider().opacity(0.1)
-                }
-                mainContent
-                Divider().opacity(0.15)
-                footerBar
+        VStack(spacing: 0) {
+            headerBar
+            Divider()
+            if appState.updateAvailable {
+                updateAvailableNotice
+                Divider()
             }
+            mainContent
+            Divider()
+            footerBar
         }
-        .background(.ultraThinMaterial)
+        .background(.regularMaterial)
         .onReceive(ticker) { now = $0 }
         .onAppear {
             if !hasCompletedOnboarding {
@@ -53,22 +50,25 @@ struct PopoverView: View {
     private var headerBar: some View {
         HStack(spacing: 8) {
             Text("Claude Meter")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.primary)
             Spacer()
             Button {
                 openSettings()
             } label: {
                 Image(systemName: "gearshape")
-                    .font(.system(size: 12))
+                    .font(.body)
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             Button {
                 appState.refreshNow()
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.body)
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .disabled(appState.isLoading)
             .rotationEffect(appState.isLoading ? .degrees(360) : .zero)
             .animation(
@@ -78,7 +78,7 @@ struct PopoverView: View {
                 value: appState.isLoading
             )
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 14)
         .padding(.vertical, 10)
     }
 
@@ -129,7 +129,7 @@ struct PopoverView: View {
         VStack(spacing: 10) {
             Image(systemName: "exclamationmark.circle")
                 .font(.system(size: 28))
-                .foregroundStyle(Color.cmCritical)
+                .foregroundStyle(.red)
             Text(errorTitle)
                 .font(.system(size: 13, weight: .medium))
             if let hint = errorHint {
@@ -154,24 +154,24 @@ struct PopoverView: View {
         VStack(spacing: 0) {
             if let apiWarning = appState.primarySourceWarning {
                 apiDegradedNotice(apiWarning)
-                Divider().opacity(0.1)
+                Divider()
             } else if appState.lastError != nil {
                 pollErrorNotice
-                Divider().opacity(0.1)
+                Divider()
             }
             if appState.isStale {
                 staleNotice
-                Divider().opacity(0.1)
+                Divider()
             }
             UsageCardView(
-                label: "CURRENT SESSION",
+                label: "Current Session",
                 window: snap.limits.currentSession,
                 now: now,
                 thresholds: usageThresholds
             )
-            Divider().opacity(0.1).padding(.horizontal, 16)
+            Divider().padding(.horizontal, 14)
             UsageCardView(
-                label: "THIS WEEK",
+                label: "This Week",
                 window: snap.limits.currentWeekAllModels,
                 now: now,
                 thresholds: usageThresholds
@@ -187,16 +187,14 @@ struct PopoverView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.down.circle")
-                    .font(.system(size: 11))
                 Text("Update available — click to install")
-                    .font(.system(size: 12))
                 Spacer()
             }
-            .foregroundStyle(Color.cmNormal)
+            .font(.body)
+            .foregroundStyle(.primary)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 7)
-            .background(Color.cmNormal.opacity(0.08))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
         }
         .buttonStyle(.plain)
     }
@@ -204,31 +202,27 @@ struct PopoverView: View {
     private var pollErrorNotice: some View {
         HStack(spacing: 6) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 11))
             Text(pollErrorText)
-                .font(.system(size: 12))
                 .lineLimit(3)
         }
-        .foregroundStyle(Color.cmWarning)
+        .font(.body)
+        .foregroundStyle(.orange)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 7)
-        .background(Color.cmWarning.opacity(0.08))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
     }
 
     private func apiDegradedNotice(_ message: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 11))
             Text(message)
-                .font(.system(size: 12))
                 .lineLimit(3)
         }
-        .foregroundStyle(Color.cmWarning)
+        .font(.body)
+        .foregroundStyle(.orange)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 7)
-        .background(Color.cmWarning.opacity(0.08))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
     }
 
     private var pollErrorText: String {
@@ -249,15 +243,13 @@ struct PopoverView: View {
     private var staleNotice: some View {
         HStack(spacing: 6) {
             Image(systemName: "clock")
-                .font(.system(size: 11))
             Text("Data may be outdated")
-                .font(.system(size: 12))
         }
+        .font(.body)
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 7)
-        .background(Color.cmWarning.opacity(0.08))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
     }
 
     // MARK: - Model row (kept for stats-cache fallback path)
@@ -280,45 +272,41 @@ struct PopoverView: View {
     // MARK: - Footer
 
     private var footerBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Text(updatedText)
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
                 .monospacedDigit()
             Spacer()
-            Button {
+            footerButton("chart.line.uptrend.xyaxis", help: "Show usage history") {
                 showHistory = true
-            } label: {
-                Image(systemName: "chart.line.uptrend.xyaxis")
-                    .font(.system(size: 11))
             }
-            .buttonStyle(.borderless)
-            .help("Show usage history")
-            Button {
+            footerButton("pip", help: "Open mini monitor") {
                 openWindow(id: "mini-monitor")
-            } label: {
-                Image(systemName: "pip")
-                    .font(.system(size: 11))
             }
-            .buttonStyle(.borderless)
-            .help("Open mini monitor")
             Button("Refresh") {
                 appState.refreshNow()
             }
-            .buttonStyle(.borderless)
-            .font(.system(size: 11))
+            .buttonStyle(.plain)
+            .font(.body)
+            .foregroundStyle(.primary)
             .disabled(appState.isLoading)
-            Button {
+            footerButton("power", help: "Quit Claude Meter") {
                 NSApplication.shared.terminate(nil)
-            } label: {
-                Image(systemName: "power")
-                    .font(.system(size: 11))
             }
-            .buttonStyle(.borderless)
-            .help("Quit Claude Meter")
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 14)
         .padding(.vertical, 8)
+    }
+
+    private func footerButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.body)
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     private var updatedText: String {
@@ -388,7 +376,7 @@ struct OnboardingView: View {
         VStack(spacing: 20) {
             Image(systemName: "gauge.with.dots.needle.33percent")
                 .font(.system(size: 40))
-                .foregroundStyle(Color.cmNormal)
+                .foregroundStyle(.secondary)
 
             Text("Welcome to Claude Meter")
                 .font(.title2.bold())

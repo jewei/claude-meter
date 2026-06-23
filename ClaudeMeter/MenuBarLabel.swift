@@ -5,9 +5,10 @@ struct MenuBarLabel: View {
     @ObservedObject var appState: AppState
 
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 4) {
             Image(systemName: iconName)
-                .foregroundStyle(iconColor)
+                .font(.system(size: 12, weight: .medium))
+                .symbolRenderingMode(.hierarchical)
                 .rotationEffect(appState.isLoading ? .degrees(360) : .zero)
                 .animation(
                     appState.isLoading
@@ -17,8 +18,8 @@ struct MenuBarLabel: View {
                 )
             if let text = labelText {
                 Text(text)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(iconColor)
+                    .font(.system(size: 12, weight: .medium))
+                    .monospacedDigit()
             }
         }
     }
@@ -33,15 +34,6 @@ struct MenuBarLabel: View {
         case .warning: return "gauge.with.dots.needle.67percent"
         case .critical, .overLimit: return "gauge.with.dots.needle.100percent"
         default: return "gauge.with.dots.needle.33percent"
-        }
-    }
-
-    private var iconColor: Color {
-        switch appState.severity {
-        case .warning: return .cmWarning
-        case .critical, .overLimit: return .cmCritical
-        case .unknown where appState.lastError != nil: return .cmCritical
-        default: return .primary
         }
     }
 

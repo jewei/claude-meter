@@ -8,20 +8,19 @@ struct UsageCardView: View {
     var thresholds: UsageThresholds = .default
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text(label)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .tracking(0.5)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
                 Spacer()
                 percentBadge
             }
             progressBar
             resetTimeLabel
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
     }
@@ -30,10 +29,11 @@ struct UsageCardView: View {
 
     @ViewBuilder
     private var percentBadge: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 3) {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
             Text(percentText)
-                .font(.system(size: 15, weight: .bold, design: .monospaced))
-                .foregroundStyle(severityColor)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(percentColor)
+                .monospacedDigit()
             severityIcon
         }
     }
@@ -47,12 +47,12 @@ struct UsageCardView: View {
         switch severity {
         case .warning:
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 10))
-                .foregroundStyle(Color.cmWarning)
+                .font(.caption)
+                .foregroundStyle(.orange)
         case .critical, .overLimit:
             Image(systemName: "exclamationmark.octagon.fill")
-                .font(.system(size: 10))
-                .foregroundStyle(Color.cmCritical)
+                .font(.caption)
+                .foregroundStyle(.red)
         default:
             EmptyView()
         }
@@ -64,14 +64,13 @@ struct UsageCardView: View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(Color.white.opacity(0.08))
+                    .fill(Color.primary.opacity(0.12))
                 Capsule()
-                    .fill(severityColor)
-                    .frame(width: geo.size.width * fillFraction)
-                    .shadow(color: severityColor.opacity(0.5), radius: 4)
+                    .fill(progressFillColor)
+                    .frame(width: max(0, geo.size.width * fillFraction))
             }
         }
-        .frame(height: 4)
+        .frame(height: 5)
     }
 
     // MARK: - Reset label
@@ -80,11 +79,11 @@ struct UsageCardView: View {
     private var resetTimeLabel: some View {
         if let resetsAt = window.resetsAt {
             Text(resetDescription(resetsAt))
-                .font(.system(size: 12))
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
         } else if let raw = window.rawResetText {
             Text(raw == "rolling 7 days" ? "Last 7 days" : "Resets \(raw)")
-                .font(.system(size: 12))
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
     }
@@ -95,12 +94,21 @@ struct UsageCardView: View {
         thresholds.severity(for: window.percentUsed)
     }
 
-    private var severityColor: Color {
+    private var percentColor: Color {
         switch severity {
-        case .normal:   return .cmNormal
-        case .warning:  return .cmWarning
-        case .critical, .overLimit: return .cmCritical
+        case .normal:   return .primary
+        case .warning:  return .orange
+        case .critical, .overLimit: return .red
         case .unknown:  return .secondary
+        }
+    }
+
+    private var progressFillColor: Color {
+        switch severity {
+        case .normal:   return .accentColor
+        case .warning:  return .orange
+        case .critical, .overLimit: return .red
+        case .unknown:  return Color.primary.opacity(0.25)
         }
     }
 

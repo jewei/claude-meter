@@ -45,6 +45,9 @@ final class AppState: ObservableObject {
     }
 
     init() {
+        UserDefaults.standard.register(defaults: [
+            AppSettings.statuslineSourceEnabledKey: true,
+        ])
         AppGroupConfig.syncDisplaySettings()
         let store = AppState.makeStore()
         self.store = store

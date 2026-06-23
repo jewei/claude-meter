@@ -7,10 +7,13 @@ struct PopoverView: View {
     @Environment(\.openSettings) private var openSettings
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @State private var now = Date()
-    @State private var showOnboarding = false
 
     private var usageThresholds: UsageThresholds {
         AppState.currentThresholds()
+    }
+
+    private var needsOnboarding: Bool {
+        !hasCompletedOnboarding
     }
 
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -30,13 +33,10 @@ struct PopoverView: View {
         .background(.regularMaterial)
         .onReceive(ticker) { now = $0 }
         .onAppear {
-            if !hasCompletedOnboarding {
-                showOnboarding = true
+            skipOnboardingForExistingUsers()
+            if needsOnboarding {
+                appState.setActive(false)
             }
-        }
-        .sheet(isPresented: $showOnboarding) {
-            OnboardingView(hasCompletedOnboarding: $hasCompletedOnboarding)
-                .environmentObject(appState)
         }
     }
 
@@ -48,40 +48,29 @@ struct PopoverView: View {
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.primary)
             Spacer()
-            Button {
-                openSettings()
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            Button {
-                appState.refreshNow()
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .disabled(appState.isLoading || !appState.isActive || !appState.hasEnabledDataSource)
-            .rotationEffect(appState.isLoading ? .degrees(360) : .zero)
-            .animation(
-                appState.isLoading
-                    ? .linear(duration: 1).repeatForever(autoreverses: false)
-                    : .default,
-                value: appState.isLoading
-            )
+            Toggle(isOn: activeBinding) { }
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .help(appState.isActive ? "Active — fetching usage data" : "Paused — not fetching usage data")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    private var activeBinding: Binding<Bool> {
+        Binding(
+            get: { appState.isActive },
+            set: { appState.setActive($0) }
+        )
     }
 
     // MARK: - Main content
 
     @ViewBuilder
     private var mainContent: some View {
-        if !appState.isActive {
+        if needsOnboarding {
+            onboardingContent
+        } else if !appState.isActive {
             if let snap = appState.snapshot {
                 usageState(snap)
             } else {
@@ -100,6 +89,44 @@ struct PopoverView: View {
         }
     }
 
+    private var onboardingContent: some View {
+        VStack(spacing: 16) {
+            Spacer(minLength: 8)
+
+            Image(nsImage: NSApplication.shared.applicationIconImage)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            VStack(spacing: 4) {
+                HStack(spacing: 0) {
+                    Text("Welcome to ")
+                        .foregroundStyle(Color(hex: "a8b4c8"))
+                    Text("Claude Meter")
+                        .foregroundStyle(Color(hex: "f0a878"))
+                }
+                .font(.title3.weight(.bold))
+            }
+
+            Text("Click the settings button below to configure your data sources and get started.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 8)
+
+            Spacer(minLength: 8)
+
+            Image(systemName: "chevron.down")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color(hex: "f0a878"))
+                .padding(.bottom, 4)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 24)
+    }
+
     private var inactiveState: some View {
         VStack(spacing: 10) {
             Image(systemName: "pause.circle")
@@ -107,13 +134,10 @@ struct PopoverView: View {
                 .foregroundStyle(.secondary)
             Text("Paused")
                 .font(.system(size: 13, weight: .medium))
-            Text("Claude Meter is inactive and is not fetching usage data.")
+            Text("Turn on the toggle above to start fetching usage data.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("Resume") { appState.setActive(true) }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 28)
@@ -131,7 +155,7 @@ struct PopoverView: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("Open Settings") { openSettings() }
+            Button("Open Settings") { openSettingsAndCompleteOnboarding() }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
         }
@@ -182,7 +206,7 @@ struct PopoverView: View {
                     .multilineTextAlignment(.center)
             }
             if shouldOfferSettings {
-                Button("Open Settings") { openSettings() }
+                Button("Open Settings") { openSettingsAndCompleteOnboarding() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
             }
@@ -200,10 +224,6 @@ struct PopoverView: View {
                 Divider()
             } else if appState.lastError != nil {
                 pollErrorNotice
-                Divider()
-            }
-            if !appState.isActive {
-                inactiveNotice
                 Divider()
             }
             if appState.isStale {
@@ -259,18 +279,6 @@ struct PopoverView: View {
         .padding(.vertical, 8)
     }
 
-    private var inactiveNotice: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "pause.circle")
-            Text("Paused — showing last known data")
-        }
-        .font(.body)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
-
     private func apiDegradedNotice(_ message: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "exclamationmark.triangle")
@@ -312,24 +320,35 @@ struct PopoverView: View {
 
     private var footerBar: some View {
         HStack(spacing: 10) {
-            Text(updatedText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
+            if !needsOnboarding {
+                Text(updatedText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
             Spacer()
-            Button("Refresh") {
-                appState.refreshNow()
+            footerButton("gearshape", help: "Settings") {
+                openSettingsAndCompleteOnboarding()
             }
-            .buttonStyle(.plain)
-            .font(.body)
-            .foregroundStyle(.primary)
-            .disabled(appState.isLoading || !appState.isActive || !appState.hasEnabledDataSource)
-            Button(appState.isActive ? "Pause" : "Resume") {
-                appState.setActive(!appState.isActive)
+            if !needsOnboarding {
+                Button {
+                    appState.refreshNow()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Refresh")
+                .disabled(appState.isLoading || !appState.isActive || !appState.hasEnabledDataSource)
+                .rotationEffect(appState.isLoading ? .degrees(360) : .zero)
+                .animation(
+                    appState.isLoading
+                        ? .linear(duration: 1).repeatForever(autoreverses: false)
+                        : .default,
+                    value: appState.isLoading
+                )
             }
-            .buttonStyle(.plain)
-            .font(.body)
-            .foregroundStyle(.primary)
             footerButton("power", help: "Quit Claude Meter") {
                 NSApplication.shared.terminate(nil)
             }
@@ -357,6 +376,31 @@ struct PopoverView: View {
         if elapsed < 60  { return "Updated \(elapsed)s ago" }
         let mins = elapsed / 60
         return "Updated \(mins)m ago"
+    }
+
+    // MARK: - Onboarding helpers
+
+    private func openSettingsAndCompleteOnboarding() {
+        hasCompletedOnboarding = true
+        openSettings()
+    }
+
+    private func skipOnboardingForExistingUsers() {
+        guard !hasCompletedOnboarding else { return }
+        if appState.snapshot != nil
+            || ClaudeAIKeychain.load() != nil
+            || OAuthKeychain.load() != nil
+            || OAuthKeychain.loadManual() != nil
+            || Self.claudeMeterDirectoryExists {
+            hasCompletedOnboarding = true
+        }
+    }
+
+    private static var claudeMeterDirectoryExists: Bool {
+        FileManager.default.fileExists(
+            atPath: StatuslineBridge.statuslineFilePath.deletingLastPathComponent().path,
+            isDirectory: nil
+        )
     }
 
     // MARK: - Error helpers
@@ -389,51 +433,6 @@ struct PopoverView: View {
         let err = appState.lastError ?? ""
         return err.localizedCaseInsensitiveContains("session")
             || err.localizedCaseInsensitiveContains("session key")
-    }
-}
-
-// MARK: - First-run onboarding
-
-struct OnboardingView: View {
-    @Binding var hasCompletedOnboarding: Bool
-    @EnvironmentObject private var appState: AppState
-    @Environment(\.openSettings) private var openSettings
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "pause.circle")
-                .font(.system(size: 40))
-                .foregroundStyle(.secondary)
-
-            Text("Welcome to Claude Meter")
-                .font(.title2.bold())
-
-            Text("Claude Meter starts paused.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Text("Choose the data methods you want in Settings, then turn Active on whenever you are ready.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
-            HStack(spacing: 12) {
-                Button("Open Settings") { openSettings() }
-                Button("Continue") { finish() }
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(32)
-        .frame(width: 420)
-        .onAppear {
-            appState.setActive(false)
-        }
-    }
-
-    private func finish() {
-        hasCompletedOnboarding = true
-        dismiss()
     }
 }
 

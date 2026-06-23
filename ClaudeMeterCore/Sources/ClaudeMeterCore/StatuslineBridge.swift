@@ -114,6 +114,10 @@ public enum StatuslineBridge: Sendable {
     /// Reads and parses the statusline payload from `~/.claude-meter/statusline.json`.
     /// Returns nil if the file doesn't exist; throws on parse failure.
     public static func readData() throws -> StatuslinePayload? {
+        try readData(from: statuslineFilePath)
+    }
+
+    internal static func readData(from statuslineFilePath: URL) throws -> StatuslinePayload? {
         guard let modDate = (try? FileManager.default.attributesOfItem(
             atPath: statuslineFilePath.path))?[.modificationDate] as? Date
         else { return nil }
@@ -127,8 +131,8 @@ public enum StatuslineBridge: Sendable {
 
         func window(_ key: String) -> RateLimitWindow? {
             guard let obj = rateLimits?[key] as? [String: Any],
-                  let pct = obj["used_percentage"] as? Double else { return nil }
-            let resetsAt = (obj["resets_at"] as? TimeInterval).map { Date(timeIntervalSince1970: $0) }
+                  let pct = numericValue(obj["used_percentage"]) else { return nil }
+            let resetsAt = numericValue(obj["resets_at"]).map { Date(timeIntervalSince1970: $0) }
             return RateLimitWindow(usedPercentage: pct, resetsAt: resetsAt)
         }
 
@@ -145,10 +149,10 @@ public enum StatuslineBridge: Sendable {
             cwd: cwd,
             modelId: model?["id"] as? String,
             modelDisplayName: model?["display_name"] as? String,
-            totalCostUsd: cost?["total_cost_usd"] as? Double,
-            totalApiDurationMs: cost?["total_api_duration_ms"] as? Double,
-            codeLinesAdded: cost?["total_lines_added"].flatMap { $0 as? Int },
-            codeLinesRemoved: cost?["total_lines_removed"].flatMap { $0 as? Int },
+            totalCostUsd: numericValue(cost?["total_cost_usd"]),
+            totalApiDurationMs: numericValue(cost?["total_api_duration_ms"]),
+            codeLinesAdded: numericValue(cost?["total_lines_added"]).map { Int($0) },
+            codeLinesRemoved: numericValue(cost?["total_lines_removed"]).map { Int($0) },
             cliVersion: json["version"] as? String,
             capturedAt: modDate
         )
@@ -157,8 +161,27 @@ public enum StatuslineBridge: Sendable {
     // MARK: - Settings helpers
 
     private static func readSettings() throws -> [String: Any] {
-        guard let data = try? Data(contentsOf: claudeSettingsPath) else { return [:] }
-        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        guard FileManager.default.fileExists(atPath: claudeSettingsPath.path) else { return [:] }
+        return try parseSettingsData(Data(contentsOf: claudeSettingsPath))
+    }
+
+    internal static func parseSettingsDataForTesting(_ data: Data?) throws -> [String: Any] {
+        try parseSettingsData(data)
+    }
+
+    private static func parseSettingsData(_ data: Data?) throws -> [String: Any] {
+        guard let data else { return [:] }
+        guard !data.isEmpty else { throw StatuslineBridgeError.invalidSettingsJSON }
+        let object: Any
+        do {
+            object = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw StatuslineBridgeError.invalidSettingsJSON
+        }
+        guard let settings = object as? [String: Any] else {
+            throw StatuslineBridgeError.settingsRootNotObject
+        }
+        return settings
     }
 
     private static func statusLineCommand(in settings: [String: Any]) -> String {
@@ -202,5 +225,28 @@ public enum StatuslineBridge: Sendable {
         let dir = claudeSettingsPath.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try data.write(to: claudeSettingsPath, options: .atomic)
+    }
+
+    private static func numericValue(_ value: Any?) -> Double? {
+        switch value {
+        case let d as Double: d
+        case let i as Int: Double(i)
+        case let n as NSNumber: n.doubleValue
+        default: nil
+        }
+    }
+}
+
+private enum StatuslineBridgeError: Error, LocalizedError {
+    case invalidSettingsJSON
+    case settingsRootNotObject
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidSettingsJSON:
+            "Claude Code settings.json is not valid JSON; statusline bridge was not installed."
+        case .settingsRootNotObject:
+            "Claude Code settings.json must contain a JSON object; statusline bridge was not installed."
+        }
     }
 }

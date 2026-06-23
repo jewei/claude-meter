@@ -45,7 +45,7 @@ actor NotificationEngine {
         guard !isStale, isEnabled(), await isAuthorized() else { return }
 
         pruneExpiredKeys()
-        let thresholds = Self.thresholds(from: defaults)
+        let thresholds = AppGroupConfig.currentThresholds(defaults: defaults)
         let pending = NotificationPolicy.triggers(
             snapshot: snapshot,
             previous: previous,
@@ -138,15 +138,6 @@ actor NotificationEngine {
     private func isEnabled() -> Bool {
         guard defaults.object(forKey: "enableNotifications") != nil else { return true }
         return defaults.bool(forKey: "enableNotifications")
-    }
-
-    private static func thresholds(from defaults: UserDefaults) -> UsageThresholds {
-        let warning = defaults.double(forKey: "warningThresholdPercent").positive ?? 80
-        let critical = defaults.double(forKey: "criticalThresholdPercent").positive ?? 95
-        return UsageThresholds(
-            warning: warning,
-            critical: max(critical, warning + 1)
-        )
     }
 
     // MARK: - Helpers

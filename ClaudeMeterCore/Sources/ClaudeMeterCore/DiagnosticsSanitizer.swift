@@ -8,12 +8,37 @@ public enum DiagnosticsSanitizer {
     private static let uuidPattern =
         #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#
     private static let sessionKeyPattern = #"sk-ant-[A-Za-z0-9_-]+"#
+    private static let oidcTokenPattern = #"oidc-[A-Za-z0-9._~+/\-=]+"#
+    private static let bearerTokenPattern = #"(?i)(Bearer)\s+[A-Za-z0-9._~+/\-=]+"#
+    private static let sessionCookiePattern = #"(?i)(sessionKey=)[^;\s]+"#
+    private static let labeledTokenPattern =
+        #"(?i)\b(access[_-]?token|accessToken|refresh[_-]?token|refreshToken)(["']?\s*[:=]\s*["']?)[^"',\s;}]+(["']?)"#
 
     public static func sanitize(_ text: String) -> String {
         var result = text
         result = result.replacingOccurrences(
             of: sessionKeyPattern,
             with: "[redacted]",
+            options: .regularExpression
+        )
+        result = result.replacingOccurrences(
+            of: oidcTokenPattern,
+            with: "[redacted]",
+            options: .regularExpression
+        )
+        result = result.replacingOccurrences(
+            of: bearerTokenPattern,
+            with: "$1 [redacted]",
+            options: .regularExpression
+        )
+        result = result.replacingOccurrences(
+            of: sessionCookiePattern,
+            with: "$1[redacted]",
+            options: .regularExpression
+        )
+        result = result.replacingOccurrences(
+            of: labeledTokenPattern,
+            with: "$1$2[redacted]$3",
             options: .regularExpression
         )
         result = result.replacingOccurrences(

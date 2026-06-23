@@ -56,7 +56,16 @@ final class AppState: ObservableObject {
         self.updaterController = controller
         self.pipeline = AppState.makePipeline(store: store)
         // Self is fully initialized from here on.
-        Task.detached(priority: .utility) { try? StatuslineBridge.install() }
+        Task.detached(priority: .utility) {
+            do {
+                try StatuslineBridge.install()
+            } catch {
+                let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                try? store.writeLastError(LastErrorRecord(
+                    message: DiagnosticsSanitizer.sanitize(message)
+                ))
+            }
+        }
         self.snapshot = try? store.readLatest()
         self.lastPolledAt = snapshot?.lastSuccessfulPollAt
         if snapshot == nil, let record = try? store.readLastError() {

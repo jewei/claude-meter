@@ -11,6 +11,7 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     private let fallback: any ClaudeMeterPipeline
     private let store: SnapshotStore
     private let thresholds: UsageThresholds
+    private let stateQueue = DispatchQueue(label: "com.jewei.claudemeter.statusline-pipeline.state")
     private var lastFallbackPollAt: Date? = nil
 
     /// Seconds before the statusline file is considered stale. Read from UserDefaults
@@ -56,9 +57,7 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
         }
 
         // Statusline is stale. Check if the fallback cooldown has elapsed.
-        let cooldownElapsed = lastFallbackPollAt.map { now.timeIntervalSince($0) >= fallbackCooldown } ?? true
-        if cooldownElapsed {
-            lastFallbackPollAt = now
+        if markFallbackPollIfCooldownElapsed(now: now) {
             return try await fallback.poll(now: now)
         }
 
@@ -79,14 +78,30 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
         }
 
         // No cache either — call fallback unconditionally.
-        lastFallbackPollAt = now
+        markFallbackPoll(now: now)
         return try await fallback.poll(now: now)
     }
 
     private func secondsUntilNextFallback(now: Date) -> Int {
-        guard let last = lastFallbackPollAt else { return 0 }
+        guard let last = stateQueue.sync(execute: { lastFallbackPollAt }) else { return 0 }
         let remaining = fallbackCooldown - now.timeIntervalSince(last)
         return max(0, Int(remaining.rounded()))
+    }
+
+    private func markFallbackPollIfCooldownElapsed(now: Date) -> Bool {
+        stateQueue.sync {
+            let cooldownElapsed = lastFallbackPollAt.map { now.timeIntervalSince($0) >= fallbackCooldown } ?? true
+            if cooldownElapsed {
+                lastFallbackPollAt = now
+            }
+            return cooldownElapsed
+        }
+    }
+
+    private func markFallbackPoll(now: Date) {
+        stateQueue.sync {
+            lastFallbackPollAt = now
+        }
     }
 
     private func buildSnapshot(from payload: StatuslineBridge.StatuslinePayload, now: Date) -> ClaudeUsageSnapshot {
@@ -104,14 +119,11 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
         )
 
         let sessionInfo: SessionInfo? = {
-            guard payload.sessionId != nil || payload.sessionName != nil
-                || payload.cwd != nil || payload.modelDisplayName != nil
+            guard payload.modelDisplayName != nil || payload.modelId != nil
                 || payload.totalCostUsd != nil
             else { return nil }
+            // Statusline exposes cwd/session identifiers; keep App Group snapshots widget-safe.
             return SessionInfo(
-                id: payload.sessionId,
-                name: payload.sessionName,
-                cwd: payload.cwd,
                 activeModel: payload.modelDisplayName ?? payload.modelId,
                 totalCostUsd: payload.totalCostUsd,
                 totalApiDurationSeconds: payload.totalApiDurationMs.map { Int($0 / 1000) },

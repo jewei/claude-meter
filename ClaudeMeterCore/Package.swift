@@ -10,8 +10,7 @@ let package = Package(
     targets: [
         .target(
             name: "ClaudeMeterCore",
-            path: "Sources/ClaudeMeterCore",
-            linkerSettings: [.linkedLibrary("sqlite3")]
+            path: "Sources/ClaudeMeterCore"
         ),
         .testTarget(
             name: "ClaudeMeterCoreTests",

@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Security)
+import Security
+#endif
 
 public struct OAuthCredentials: Sendable {
     public var accessToken: String
@@ -55,18 +58,25 @@ public enum OAuthKeychain: Sendable {
     private static func findClaudeCodeCredentialsJSON() -> String? {
         let account = claudeCodeAccount
         guard !account.isEmpty else { return nil }
+#if canImport(Security)
+        return readKeychainItem(service: service, account: account)
+#else
         return runSecurity([
             "find-generic-password",
             "-s", service,
             "-a", account,
             "-w",
         ])
+#endif
     }
 
-    /// `security add-generic-password -U -s 'Claude Code-credentials' -a "$(whoami)" -w …`
+    /// Updates Claude Code's existing credentials item without exposing tokens in process argv.
     private static func updateClaudeCodeCredentialsJSON(_ json: String) {
         let account = claudeCodeAccount
         guard !account.isEmpty else { return }
+#if canImport(Security)
+        writeKeychainItem(service: service, account: account, value: json)
+#else
         runSecurity([
             "add-generic-password",
             "-U",
@@ -74,6 +84,7 @@ public enum OAuthKeychain: Sendable {
             "-a", account,
             "-w", json,
         ])
+#endif
     }
 
     // MARK: - Helpers
@@ -114,7 +125,11 @@ public enum OAuthKeychain: Sendable {
     private static let manualAccount = "oauthManual"
 
     public static func loadManual() -> OAuthCredentials? {
+#if canImport(Security)
+        let json = readKeychainItem(service: manualService, account: manualAccount)
+#else
         let json = runSecurity(["find-generic-password", "-s", manualService, "-a", manualAccount, "-w"])
+#endif
         return parse(json)
     }
 
@@ -127,14 +142,70 @@ public enum OAuthKeychain: Sendable {
                 "expiresAt": expiry
             ] as [String: Any]
         ]), let str = String(data: data, encoding: .utf8) else { return }
+#if canImport(Security)
+        writeKeychainItem(service: manualService, account: manualAccount, value: str)
+#else
         runSecurity(["add-generic-password", "-U", "-s", manualService, "-a", manualAccount, "-w", str])
+#endif
     }
 
     public static func deleteManual() {
+#if canImport(Security)
+        deleteKeychainItem(service: manualService, account: manualAccount)
+#else
         runSecurity(["delete-generic-password", "-s", manualService, "-a", manualAccount])
+#endif
     }
 
     // MARK: - Helpers
+
+#if canImport(Security)
+    @discardableResult
+    private static func writeKeychainItem(service: String, account: String, value: String) -> Bool {
+        guard let data = value.data(using: .utf8) else { return false }
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account
+        ]
+        let attrs: [CFString: Any] = [
+            kSecValueData: data
+        ]
+        let status = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
+        if status == errSecSuccess { return true }
+        if status == errSecItemNotFound {
+            var addQuery = query
+            addQuery[kSecValueData] = data
+            addQuery[kSecAttrAccessible] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+        }
+        return false
+    }
+
+    private static func readKeychainItem(service: String, account: String) -> String? {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data,
+              let string = String(data: data, encoding: .utf8) else { return nil }
+        return string
+    }
+
+    private static func deleteKeychainItem(service: String, account: String) {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+#endif
 
     @discardableResult
     private static func runSecurity(_ args: [String]) -> String? {

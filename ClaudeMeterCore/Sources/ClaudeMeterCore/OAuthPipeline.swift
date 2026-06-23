@@ -11,6 +11,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     private let store: SnapshotStore
     private let thresholds: UsageThresholds
     // In-memory cache survives token refresh within a session even if Keychain write fails.
+    private let stateQueue = DispatchQueue(label: "com.jewei.claudemeter.oauth-pipeline.state")
     private var cachedCredentials: OAuthCredentials? = nil
 
     private static let session: URLSession = {
@@ -44,18 +45,18 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         let sourceCreds: OAuthCredentials? = oauthMode == "manual"
             ? OAuthKeychain.loadManual()
             : OAuthKeychain.load()
-        guard let loaded = cachedCredentials ?? sourceCreds else {
+        guard let loaded = cachedCredentialsValue() ?? sourceCreds else {
             return try await fallback.poll(now: now)
         }
         var creds = loaded
 
         if creds.isExpired {
             guard let refreshed = try? await refreshToken(creds) else {
-                cachedCredentials = nil
+                setCachedCredentials(nil)
                 return try await fallback.poll(now: now)
             }
             creds = refreshed
-            cachedCredentials = refreshed
+            setCachedCredentials(refreshed)
             if oauthMode == "manual" {
                 OAuthKeychain.saveManual(accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
             } else {
@@ -68,10 +69,10 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         } catch OAuthError.unauthorized {
             // Token rejected despite appearing valid — attempt one refresh.
             guard let refreshed = try? await refreshToken(creds) else {
-                cachedCredentials = nil
+                setCachedCredentials(nil)
                 return try await fallback.poll(now: now)
             }
-            cachedCredentials = refreshed
+            setCachedCredentials(refreshed)
             if oauthMode == "manual" {
                 OAuthKeychain.saveManual(accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
             } else {
@@ -84,6 +85,14 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         } catch {
             return try await fallback.poll(now: now)
         }
+    }
+
+    private func cachedCredentialsValue() -> OAuthCredentials? {
+        stateQueue.sync { cachedCredentials }
+    }
+
+    private func setCachedCredentials(_ credentials: OAuthCredentials?) {
+        stateQueue.sync { cachedCredentials = credentials }
     }
 
     // MARK: - Settings verification
@@ -104,9 +113,13 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             throw OAuthError.httpError(http.statusCode)
         }
         let usage = try JSONDecoder().decode(UsageResponse.self, from: data)
-        return (
-            (usage.fiveHour?.utilization ?? 0) * 100,
-            (usage.sevenDay?.utilization ?? 0) * 100
+        return verificationPercentages(from: usage)
+    }
+
+    internal static func verificationPercentages(from usage: UsageResponse) -> (sessionPct: Double, weekPct: Double) {
+        (
+            usage.fiveHour?.utilization ?? 0,
+            usage.sevenDay?.utilization ?? 0
         )
     }
 
@@ -229,7 +242,7 @@ enum OAuthError: Error {
 
 // MARK: - Codable models
 
-private struct UsageResponse: Decodable {
+internal struct UsageResponse: Decodable {
     let fiveHour: QuotaEntry?
     let sevenDay: QuotaEntry?
 
@@ -239,7 +252,7 @@ private struct UsageResponse: Decodable {
     }
 }
 
-private struct QuotaEntry: Decodable {
+internal struct QuotaEntry: Decodable {
     let utilization: Double
     let resetsAt: String?
 

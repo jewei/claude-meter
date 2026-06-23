@@ -148,6 +148,10 @@ struct PopoverView: View {
     @ViewBuilder
     private func usageState(_ snap: ClaudeUsageSnapshot) -> some View {
         VStack(spacing: 0) {
+            if appState.updateAvailable {
+                updateAvailableNotice
+                Divider().opacity(0.1)
+            }
             if let apiWarning = appState.primarySourceWarning {
                 apiDegradedNotice(apiWarning)
                 Divider().opacity(0.1)
@@ -175,7 +179,27 @@ struct PopoverView: View {
         }
     }
 
-    // MARK: - Stale notice
+    // MARK: - Notices
+
+    private var updateAvailableNotice: some View {
+        Button {
+            appState.checkForUpdates()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.down.circle")
+                    .font(.system(size: 11))
+                Text("Update available — click to install")
+                    .font(.system(size: 12))
+                Spacer()
+            }
+            .foregroundStyle(Color.cmNormal)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 7)
+            .background(Color.cmNormal.opacity(0.08))
+        }
+        .buttonStyle(.plain)
+    }
 
     private var pollErrorNotice: some View {
         HStack(spacing: 6) {

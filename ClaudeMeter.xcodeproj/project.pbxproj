@@ -28,6 +28,7 @@
 		H57A3B4C5D6E7F8A9B0C1D2E /* MiniMonitorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = H27A3B4C5D6E7F8A9B0C1D2E /* MiniMonitorView.swift */; };
 		H67A3B4C5D6E7F8A9B0C1D2E /* Charts.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = H37A3B4C5D6E7F8A9B0C1D2E /* Charts.framework */; };
 		H97A3B4C5D6E7F8A9B0C1D2E /* ClaudeAIKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = H87A3B4C5D6E7F8A9B0C1D2E /* ClaudeAIKeychain.swift */; };
+		C5D3E4F50617289AC2D3E4F5 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = E4B2C3D5E6F7089AB1C2D3E4 /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -88,6 +89,7 @@
 				95F163B0444944EE8CCFFF1F /* ClaudeMeterCore in Frameworks */,
 				BF2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework in Frameworks */,
 				H67A3B4C5D6E7F8A9B0C1D2E /* Charts.framework in Frameworks */,
+				C5D3E4F50617289AC2D3E4F5 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -204,6 +206,7 @@
 			name = ClaudeMeter;
 			packageProductDependencies = (
 				7C7F0222F61B410EB83CB0D4 /* ClaudeMeterCore */,
+				E4B2C3D5E6F7089AB1C2D3E4 /* Sparkle */,
 			);
 			productName = ClaudeMeter;
 			productReference = 40DFAAFE44CF4A3099E08168 /* ClaudeMeter.app */;
@@ -238,6 +241,7 @@
 			mainGroup = C73FB8EC9F04403297214A59;
 			packageReferences = (
 				A6DC290B185342ACB5499025 /* XCLocalSwiftPackageReference "ClaudeMeterCore" */,
+				F3A1B2C4D5E60789A0B1C2D3 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			productRefGroup = 6065E92A9B9B40F79BC316EB /* Products */;
 			projectDirPath = "";
@@ -568,6 +572,17 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		F3A1B2C4D5E60789A0B1C2D3 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCLocalSwiftPackageReference section */
 		A6DC290B185342ACB5499025 /* XCLocalSwiftPackageReference "ClaudeMeterCore" */ = {
 			isa = XCLocalSwiftPackageReference;
@@ -585,6 +600,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A6DC290B185342ACB5499025 /* XCLocalSwiftPackageReference "ClaudeMeterCore" */;
 			productName = ClaudeMeterCore;
+		};
+		E4B2C3D5E6F7089AB1C2D3E4 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F3A1B2C4D5E60789A0B1C2D3 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

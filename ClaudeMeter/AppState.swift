@@ -1,6 +1,7 @@
 import SwiftUI
 import WidgetKit
 import ClaudeMeterCore
+import Sparkle
 
 @MainActor
 final class AppState: ObservableObject {
@@ -10,9 +11,12 @@ final class AppState: ObservableObject {
     @Published var lastError: String? = nil
     @Published var lastPolledAt: Date? = nil
     @Published var isPopoverOpen = false
+    @Published var updateAvailable = false
 
     var pipeline: any ClaudeMeterPipeline
     let notificationEngine = NotificationEngine()
+    private let updaterDelegate: UpdaterDelegate
+    let updaterController: SPUStandardUpdaterController
     private(set) var historyStore: HistoryStore?
     private(set) var storeDirectory: URL = FileManager.default.temporaryDirectory
     private var pollTask: Task<Void, Never>?
@@ -40,22 +44,42 @@ final class AppState: ObservableObject {
     init() {
         AppGroupConfig.syncDisplaySettings()
         let store = AppState.makeStore()
+        // Create delegate and controller before self is fully available so we can pass the
+        // delegate reference at construction time (SPUStandardUpdaterController doesn't
+        // allow changing its user driver delegate after init).
+        let delegate = UpdaterDelegate()
+        let controller = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: delegate
+        )
+        self.updaterDelegate = delegate
+        self.updaterController = controller
+        self.pipeline = AppState.makePipeline(store: store)
+        // Self is fully initialized from here on.
         self.storeDirectory = store.directory
         self.historyStore = try? HistoryStore(
             directory: store.directory,
             retentionDays: Self.historyRetentionDays()
         )
-        self.pipeline = AppState.makePipeline(store: store)
         self.snapshot = try? store.readLatest()
         self.lastPolledAt = snapshot?.lastSuccessfulPollAt
         if snapshot == nil, let record = try? store.readLastError() {
             self.lastError = record.message
         }
+        delegate.appState = self
         startPolling()
         Task { await notificationEngine.requestAuthorizationIfNeeded() }
     }
 
     init(pipeline: any ClaudeMeterPipeline, initialSnapshot: ClaudeUsageSnapshot? = nil) {
+        let delegate = UpdaterDelegate()
+        self.updaterDelegate = delegate
+        self.updaterController = SPUStandardUpdaterController(
+            startingUpdater: false,
+            updaterDelegate: nil,
+            userDriverDelegate: delegate
+        )
         self.pipeline = pipeline
         self.snapshot = initialSnapshot
         self.lastPolledAt = initialSnapshot?.lastSuccessfulPollAt
@@ -86,6 +110,10 @@ final class AppState: ObservableObject {
     func stopPolling() {
         pollTask?.cancel()
         pollTask = nil
+    }
+
+    func checkForUpdates() {
+        updaterController.updater.checkForUpdates()
     }
 
     func refreshNow() {
@@ -235,6 +263,45 @@ final class AppState: ObservableObject {
             )
         }
         return statsPipeline
+    }
+}
+
+// MARK: - Sparkle user driver delegate
+
+// @unchecked Sendable + nonisolated(unsafe) are safe here because:
+//   • Sparkle dispatches all SPUStandardUserDriverDelegate calls on the main thread
+//   • Every access to appState goes through MainActor.assumeIsolated, which asserts this
+private final class UpdaterDelegate: NSObject, SPUStandardUserDriverDelegate, @unchecked Sendable {
+    nonisolated(unsafe) weak var appState: AppState?
+
+    var supportsGentleScheduledUpdateReminders: Bool { true }
+
+    func standardUserDriverShouldHandleShowingScheduledUpdate(
+        _ update: SUAppcastItem,
+        andInImmediateFocus immediateFocus: Bool
+    ) -> Bool {
+        // Delegate handles background scheduled checks (immediateFocus == false);
+        // let Sparkle handle any check the user explicitly triggered.
+        immediateFocus
+    }
+
+    func standardUserDriverWillHandleShowingUpdate(
+        _ handleShowingUpdate: Bool,
+        forUpdate update: SUAppcastItem,
+        state: SPUUserUpdateState
+    ) {
+        // handleShowingUpdate == false → we're responsible for the gentle reminder.
+        if !handleShowingUpdate {
+            MainActor.assumeIsolated { appState?.updateAvailable = true }
+        }
+    }
+
+    func standardUserDriverDidReceiveUserAttention(forUpdate update: SUAppcastItem) {
+        MainActor.assumeIsolated { appState?.updateAvailable = false }
+    }
+
+    func standardUserDriverWillFinishUpdateSession() {
+        MainActor.assumeIsolated { appState?.updateAvailable = false }
     }
 }
 

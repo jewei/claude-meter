@@ -361,6 +361,11 @@ private struct AdvancedSettingsTab: View {
                 appState.setHistoryRetentionDays(Int(newValue))
             }
 
+            Section("Updates") {
+                Button("Check for Updates…") { appState.checkForUpdates() }
+                    .buttonStyle(.borderless)
+            }
+
             Section("Diagnostics") {
                 Button("Open Diagnostics…") { showingDiagnostics = true }
                     .buttonStyle(.borderless)

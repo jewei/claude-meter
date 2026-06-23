@@ -332,10 +332,6 @@ struct OnboardingView: View {
         ClaudeAIKeychain.load() != nil
     }
 
-    private var isOAuthAvailable: Bool {
-        OAuthKeychain.load() != nil || OAuthKeychain.loadManual() != nil
-    }
-
     var body: some View {
         VStack(spacing: 20) {
             Image(systemName: "gauge.with.dots.needle.33percent")
@@ -351,15 +347,6 @@ struct OnboardingView: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                 Text("Message counts from your Claude Code journal supplement the display.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            } else if isOAuthAvailable {
-                Text("Claude Code OAuth credentials are available for usage polling.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                Text("The statusline bridge remains the primary source while Claude Code is open.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

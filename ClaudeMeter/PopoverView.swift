@@ -23,6 +23,10 @@ struct PopoverView: View {
             VStack(spacing: 0) {
                 headerBar
                 Divider().opacity(0.15)
+                if appState.updateAvailable {
+                    updateAvailableNotice
+                    Divider().opacity(0.1)
+                }
                 mainContent
                 Divider().opacity(0.15)
                 footerBar
@@ -148,10 +152,6 @@ struct PopoverView: View {
     @ViewBuilder
     private func usageState(_ snap: ClaudeUsageSnapshot) -> some View {
         VStack(spacing: 0) {
-            if appState.updateAvailable {
-                updateAvailableNotice
-                Divider().opacity(0.1)
-            }
             if let apiWarning = appState.primarySourceWarning {
                 apiDegradedNotice(apiWarning)
                 Divider().opacity(0.1)

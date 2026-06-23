@@ -25,6 +25,16 @@ actor NotificationEngine {
         _ = try? await center.requestAuthorization(options: [.alert])
     }
 
+    /// Notifies the user that a new app version is available (gentle Sparkle reminder path).
+    func postUpdateAvailable(version: String) async {
+        guard isEnabled(), await isAuthorized() else { return }
+        _ = await post(
+            id: "com.claudemeter.update.\(version)",
+            title: "Claude Meter update available",
+            body: "Version \(version) is ready. Open the menu bar popover to install."
+        )
+    }
+
     // MARK: - Processing
 
     func process(

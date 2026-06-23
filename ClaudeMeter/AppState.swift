@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WidgetKit
 import ClaudeMeterCore
@@ -16,7 +17,7 @@ final class AppState: ObservableObject {
     var pipeline: any ClaudeMeterPipeline
     let notificationEngine = NotificationEngine()
     private let updaterDelegate: UpdaterDelegate
-    let updaterController: SPUStandardUpdaterController
+    private let updaterController: SPUStandardUpdaterController
     private(set) var historyStore: HistoryStore?
     private(set) var storeDirectory: URL = FileManager.default.temporaryDirectory
     private var pollTask: Task<Void, Never>?
@@ -83,6 +84,7 @@ final class AppState: ObservableObject {
         self.pipeline = pipeline
         self.snapshot = initialSnapshot
         self.lastPolledAt = initialSnapshot?.lastSuccessfulPollAt
+        delegate.appState = self
     }
 
     deinit {
@@ -113,6 +115,7 @@ final class AppState: ObservableObject {
     }
 
     func checkForUpdates() {
+        NSApp.setActivationPolicy(.regular)
         updaterController.updater.checkForUpdates()
     }
 
@@ -268,9 +271,8 @@ final class AppState: ObservableObject {
 
 // MARK: - Sparkle user driver delegate
 
-// @unchecked Sendable + nonisolated(unsafe) are safe here because:
-//   • Sparkle dispatches all SPUStandardUserDriverDelegate calls on the main thread
-//   • Every access to appState goes through MainActor.assumeIsolated, which asserts this
+// @unchecked Sendable + nonisolated(unsafe): Sparkle calls these from the main thread;
+// mutations hop to MainActor via Task for safe off-main fallback.
 private final class UpdaterDelegate: NSObject, SPUStandardUserDriverDelegate, @unchecked Sendable {
     nonisolated(unsafe) weak var appState: AppState?
 
@@ -290,18 +292,30 @@ private final class UpdaterDelegate: NSObject, SPUStandardUserDriverDelegate, @u
         forUpdate update: SUAppcastItem,
         state: SPUUserUpdateState
     ) {
-        // handleShowingUpdate == false → we're responsible for the gentle reminder.
-        if !handleShowingUpdate {
-            MainActor.assumeIsolated { appState?.updateAvailable = true }
+        Task { @MainActor [weak appState] in
+            guard let appState else { return }
+            if handleShowingUpdate {
+                NSApp.setActivationPolicy(.regular)
+            } else {
+                appState.updateAvailable = true
+                await appState.notificationEngine.postUpdateAvailable(
+                    version: update.displayVersionString
+                )
+            }
         }
     }
 
     func standardUserDriverDidReceiveUserAttention(forUpdate update: SUAppcastItem) {
-        MainActor.assumeIsolated { appState?.updateAvailable = false }
+        Task { @MainActor [weak appState] in
+            appState?.updateAvailable = false
+        }
     }
 
     func standardUserDriverWillFinishUpdateSession() {
-        MainActor.assumeIsolated { appState?.updateAvailable = false }
+        Task { @MainActor [weak appState] in
+            appState?.updateAvailable = false
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 }
 

@@ -323,6 +323,7 @@ private struct AdvancedSettingsTab: View {
 
     @AppStorage("launchAtLogin") private var launchAtLogin = false
     @AppStorage("historyRetentionDays") private var historyRetentionDays = 180.0
+    @AppStorage("SUEnableAutomaticChecks") private var automaticallyCheckForUpdates = true
     @Environment(\.openWindow) private var openWindow
 
     @State private var showingDiagnostics = false
@@ -362,6 +363,7 @@ private struct AdvancedSettingsTab: View {
             }
 
             Section("Updates") {
+                Toggle("Check for updates automatically", isOn: $automaticallyCheckForUpdates)
                 Button("Check for Updates…") { appState.checkForUpdates() }
                     .buttonStyle(.borderless)
             }

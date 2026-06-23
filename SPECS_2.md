@@ -58,8 +58,8 @@ Rules:
 
 Persisted key:
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
+| Key        | Type | Default | Meaning                             |
+| ---------- | ---- | ------- | ----------------------------------- |
 | `isActive` | Bool | `false` | Global active/inactive polling gate |
 
 ### 2.2 First-run onboarding
@@ -79,8 +79,8 @@ Onboarding must not probe credentials or keychain state just to render copy.
 
 Persisted key:
 
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
+| Key                      | Type | Default | Meaning                                         |
+| ------------------------ | ---- | ------- | ----------------------------------------------- |
 | `hasCompletedOnboarding` | Bool | `false` | Whether first-run onboarding has been dismissed |
 
 ### 2.3 Polling cadence
@@ -109,11 +109,11 @@ If no source toggle is enabled:
 Settings -> Data shows the three data sources in priority order. Each source has
 its own toggle.
 
-| Priority | Key | Default | Source |
-| --- | --- | --- | --- |
-| 1 | `statuslineSourceEnabled` | `true` | Claude Code statusline bridge |
-| 2 | `oauthSourceEnabled` | `true` | Claude Code OAuth usage API |
-| 3 | `claudeAISourceEnabled` | `true` | claude.ai session usage API |
+| Priority | Key                       | Default | Source                        |
+| -------- | ------------------------- | ------- | ----------------------------- |
+| 1        | `statuslineSourceEnabled` | `true`  | Claude Code statusline bridge |
+| 2        | `oauthSourceEnabled`      | `true`  | Claude Code OAuth usage API   |
+| 3        | `claudeAISourceEnabled`   | `true`  | claude.ai session usage API   |
 
 The pipeline must preserve this order while skipping disabled methods. For
 example:
@@ -269,11 +269,11 @@ Severity thresholds:
 
 ### 3.1 Targets/modules
 
-| Component | Target/module | Responsibilities |
-| --- | --- | --- |
-| Main app | `ClaudeMeter` app target | SwiftUI UI, menu bar, settings, keychain wrapper for claude.ai, Sparkle integration, polling orchestration |
-| Core | `ClaudeMeterCore` Swift package | Models, snapshot store, pipelines, statusline bridge, OAuth keychain, API clients, parsing, notification policy |
-| Widget | `ClaudeMeterWidgetExtension` | WidgetKit views reading latest snapshot from App Group only |
+| Component | Target/module                   | Responsibilities                                                                                                |
+| --------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Main app  | `ClaudeMeter` app target        | SwiftUI UI, menu bar, settings, keychain wrapper for claude.ai, Sparkle integration, polling orchestration      |
+| Core      | `ClaudeMeterCore` Swift package | Models, snapshot store, pipelines, statusline bridge, OAuth keychain, API clients, parsing, notification policy |
+| Widget    | `ClaudeMeterWidgetExtension`    | WidgetKit views reading latest snapshot from App Group only                                                     |
 
 ### 3.2 App state
 
@@ -732,29 +732,29 @@ Always sanitize before display/copy/logging:
 
 ### 8.1 UserDefaults
 
-| Area | Key | Type | Default | Notes |
-| --- | --- | --- | --- | --- |
-| Onboarding | `hasCompletedOnboarding` | Bool | false | First-run sheet gate |
-| Data | `isActive` | Bool | false | Global active/inactive gate |
-| Data | `statuslineSourceEnabled` | Bool | true | Source toggle, priority 1 |
-| Data | `oauthSourceEnabled` | Bool | true | Source toggle, priority 2 |
-| Data | `claudeAISourceEnabled` | Bool | true | Source toggle, priority 3 |
-| Data | `oauthMode` | String | `""` | `""`, `auto`, or `manual` |
-| Display | `warningThresholdPercent` | Double | 80 | Synced to App Group |
-| Display | `criticalThresholdPercent` | Double | 95 | Synced to App Group |
-| Display/UI stale | `staleAfterSeconds` | Double | 180 | Still supported by `AppGroupConfig`; no current slider |
-| Notifications | `enableNotifications` | Bool | true | Missing key means enabled |
-| Advanced | `launchAtLogin` | Bool | false | Synced with `SMAppService` |
-| Updates | `SUEnableAutomaticChecks` | Bool | Sparkle default | Sparkle setting |
+| Area             | Key                        | Type   | Default         | Notes                                                  |
+| ---------------- | -------------------------- | ------ | --------------- | ------------------------------------------------------ |
+| Onboarding       | `hasCompletedOnboarding`   | Bool   | false           | First-run sheet gate                                   |
+| Data             | `isActive`                 | Bool   | false           | Global active/inactive gate                            |
+| Data             | `statuslineSourceEnabled`  | Bool   | true            | Source toggle, priority 1                              |
+| Data             | `oauthSourceEnabled`       | Bool   | true            | Source toggle, priority 2                              |
+| Data             | `claudeAISourceEnabled`    | Bool   | true            | Source toggle, priority 3                              |
+| Data             | `oauthMode`                | String | `""`            | `""`, `auto`, or `manual`                              |
+| Display          | `warningThresholdPercent`  | Double | 80              | Synced to App Group                                    |
+| Display          | `criticalThresholdPercent` | Double | 95              | Synced to App Group                                    |
+| Display/UI stale | `staleAfterSeconds`        | Double | 180             | Still supported by `AppGroupConfig`; no current slider |
+| Notifications    | `enableNotifications`      | Bool   | true            | Missing key means enabled                              |
+| Advanced         | `launchAtLogin`            | Bool   | false           | Synced with `SMAppService`                             |
+| Updates          | `SUEnableAutomaticChecks`  | Bool   | Sparkle default | Sparkle setting                                        |
 
 ### 8.2 Keychain
 
-| Purpose | Service | Account | Value |
-| --- | --- | --- | --- |
-| Claude Code OAuth | `Claude Code-credentials` | `NSUserName()` | Claude Code JSON with `claudeAiOauth` |
-| Manual OAuth | `com.jewei.claudemeter-oauth` | `oauthManual` | Same JSON shape with app-entered tokens |
-| claude.ai session key | `com.jewei.claudemeter` | `claudeai.sessionKey` | Browser `sessionKey` cookie |
-| claude.ai org ID | `com.jewei.claudemeter` | `claudeai.orgId` | UUID string |
+| Purpose               | Service                       | Account               | Value                                   |
+| --------------------- | ----------------------------- | --------------------- | --------------------------------------- |
+| Claude Code OAuth     | `Claude Code-credentials`     | `NSUserName()`        | Claude Code JSON with `claudeAiOauth`   |
+| Manual OAuth          | `com.jewei.claudemeter-oauth` | `oauthManual`         | Same JSON shape with app-entered tokens |
+| claude.ai session key | `com.jewei.claudemeter`       | `claudeai.sessionKey` | Browser `sessionKey` cookie             |
+| claude.ai org ID      | `com.jewei.claudemeter`       | `claudeai.orgId`      | UUID string                             |
 
 ### 8.3 App Group
 

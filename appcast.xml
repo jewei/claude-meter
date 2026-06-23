@@ -13,9 +13,9 @@
             <sparkle:shortVersionString>1.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <enclosure
-                url="https://github.com/jewei/claude-meter/releases/download/v1.0/ClaudeMeter.dmg"
-                sparkle:edSignature="PLACEHOLDER_REPLACE_WITH_SIGNATURE"
-                length="0"
+                url="https://github.com/jewei/claude-meter/releases/download/v1.0/ClaudeMeter-1.0.dmg"
+                sparkle:edSignature="Ee3c0/si7g7MhaDe2gV+CWtmomC4QgNDBp41Xbk5TSe1DFKjvSMd8Z1V0ZjBCUewth5GK9IqvCZh4UvgTUdACA=="
+                length="2680458"
                 type="application/octet-stream"
             />
         </item>

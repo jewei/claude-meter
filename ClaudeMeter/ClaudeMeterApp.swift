@@ -21,13 +21,5 @@ struct ClaudeMeterApp: App {
             SettingsView()
                 .environmentObject(appState)
         }
-
-        Window("Mini Monitor", id: "mini-monitor") {
-            MiniMonitorView()
-                .environmentObject(appState)
-        }
-        .defaultSize(width: 240, height: 64)
-        .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
     }
 }

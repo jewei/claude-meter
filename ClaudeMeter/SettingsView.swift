@@ -45,6 +45,8 @@ private struct DataSettingsTab: View {
     @AppStorage("pollIntervalActiveSeconds") private var pollIntervalActiveSeconds = 15.0
     @AppStorage("pollIntervalBackgroundSeconds") private var pollIntervalBackgroundSeconds = 60.0
     @AppStorage("staleAfterSeconds") private var staleAfterSeconds = 180.0
+    @AppStorage("statuslineStalenessSeconds") private var statuslineStalenessSeconds = 120.0
+    @AppStorage("statuslineFallbackCooldownSeconds") private var statuslineFallbackCooldownSeconds = 60.0
 
     @State private var sessionKey = ""
     @State private var orgId = ""
@@ -131,6 +133,30 @@ private struct DataSettingsTab: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            }
+
+            Section("Statusline Bridge") {
+                LabeledContent("Stale after") {
+                    HStack {
+                        Slider(value: $statuslineStalenessSeconds, in: 30...300, step: 30)
+                            .frame(width: 120)
+                        Text("\(Int(statuslineStalenessSeconds))s")
+                            .monospacedDigit()
+                            .frame(width: 32, alignment: .trailing)
+                    }
+                }
+                LabeledContent("API fallback cooldown") {
+                    HStack {
+                        Slider(value: $statuslineFallbackCooldownSeconds, in: 60...300, step: 30)
+                            .frame(width: 120)
+                        Text("\(Int(statuslineFallbackCooldownSeconds))s")
+                            .monospacedDigit()
+                            .frame(width: 32, alignment: .trailing)
+                    }
+                }
+                Text("Statusline data comes directly from Claude Code on every API call. When stale, the API fallback is rate-limited to avoid hitting usage limits.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Polling") {
@@ -322,9 +348,7 @@ private struct AdvancedSettingsTab: View {
     let appState: AppState
 
     @AppStorage("launchAtLogin") private var launchAtLogin = false
-    @AppStorage("historyRetentionDays") private var historyRetentionDays = 180.0
     @AppStorage("SUEnableAutomaticChecks") private var automaticallyCheckForUpdates = true
-    @Environment(\.openWindow) private var openWindow
 
     @State private var showingDiagnostics = false
 
@@ -334,32 +358,6 @@ private struct AdvancedSettingsTab: View {
                 Toggle("Launch at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, newValue in applyLaunchAtLogin(newValue) }
                     .onAppear { syncLaunchAtLoginFromSystem() }
-            }
-
-            Section("Mini Monitor") {
-                Button("Open Mini Monitor…") { openWindow(id: "mini-monitor") }
-                    .buttonStyle(.borderless)
-                Text("A compact always-on-top window showing live session and weekly usage.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("History") {
-                LabeledContent("Retention") {
-                    HStack {
-                        Slider(value: $historyRetentionDays, in: 7...365, step: 1)
-                            .frame(width: 140)
-                        Text("\(Int(historyRetentionDays))d")
-                            .monospacedDigit()
-                            .frame(width: 36, alignment: .trailing)
-                    }
-                }
-                Text("Poll snapshots older than this are removed from the local history database.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .onChange(of: historyRetentionDays) { _, newValue in
-                appState.setHistoryRetentionDays(Int(newValue))
             }
 
             Section("Updates") {

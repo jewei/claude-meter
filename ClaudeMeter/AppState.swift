@@ -18,8 +18,6 @@ final class AppState: ObservableObject {
     let notificationEngine = NotificationEngine()
     private let updaterDelegate: UpdaterDelegate
     private let updaterController: SPUStandardUpdaterController
-    private(set) var historyStore: HistoryStore?
-    private(set) var storeDirectory: URL = FileManager.default.temporaryDirectory
     private var pollTask: Task<Void, Never>?
     private var backoffSeconds: Double = 0
     private var pipelineGeneration = 0
@@ -58,11 +56,7 @@ final class AppState: ObservableObject {
         self.updaterController = controller
         self.pipeline = AppState.makePipeline(store: store)
         // Self is fully initialized from here on.
-        self.storeDirectory = store.directory
-        self.historyStore = try? HistoryStore(
-            directory: store.directory,
-            retentionDays: Self.historyRetentionDays()
-        )
+        Task.detached(priority: .utility) { try? StatuslineBridge.install() }
         self.snapshot = try? store.readLatest()
         self.lastPolledAt = snapshot?.lastSuccessfulPollAt
         if snapshot == nil, let record = try? store.readLastError() {
@@ -144,23 +138,8 @@ final class AppState: ObservableObject {
 
     func rebuildPipeline() {
         pipelineGeneration += 1
-        let store = AppState.makeStore()
-        storeDirectory = store.directory
-        historyStore = try? HistoryStore(
-            directory: store.directory,
-            retentionDays: Self.historyRetentionDays()
-        )
-        pipeline = AppState.makePipeline(store: store)
+        pipeline = AppState.makePipeline(store: AppState.makeStore())
         startPolling()
-    }
-
-    func setHistoryRetentionDays(_ days: Int) {
-        try? historyStore?.setRetentionDays(days)
-    }
-
-    static func historyRetentionDays(defaults: UserDefaults = .standard) -> Int {
-        let days = defaults.integer(forKey: "historyRetentionDays")
-        return days > 0 ? days : 180
     }
 
     var severity: UsageSeverity {
@@ -207,13 +186,6 @@ final class AppState: ObservableObject {
             if let snap = result.snapshot {
                 snapshot = snap
                 lastPolledAt = snap.lastSuccessfulPollAt ?? Date()
-                let record = HistoryRecord(
-                    from: snap,
-                    thresholds: AppGroupConfig.currentThresholds()
-                )
-                if let hs = historyStore {
-                    Task.detached(priority: .utility) { try? hs.append(record) }
-                }
                 await notificationEngine.process(
                     snapshot: snap,
                     previous: previous,
@@ -256,16 +228,22 @@ final class AppState: ObservableObject {
     private static func makePipeline(store: SnapshotStore) -> any ClaudeMeterPipeline {
         let thresholds = AppGroupConfig.currentThresholds()
         let statsPipeline = StatsCachePipeline(store: store, thresholds: thresholds)
+
+        let innerPipeline: any ClaudeMeterPipeline
         if let creds = ClaudeAIKeychain.load() {
             let client = ClaudeAIUsageClient(sessionKey: creds.sessionKey, orgId: creds.orgId)
-            return ClaudeAIPipeline(
+            innerPipeline = ClaudeAIPipeline(
                 client: client,
                 store: store,
                 fallback: statsPipeline,
                 thresholds: thresholds
             )
+        } else {
+            innerPipeline = statsPipeline
         }
-        return statsPipeline
+
+        let oauthFallback = OAuthPipeline(fallback: innerPipeline, store: store, thresholds: thresholds)
+        return StatuslinePipeline(fallback: oauthFallback, store: store, thresholds: thresholds)
     }
 }
 

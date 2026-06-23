@@ -6,10 +6,8 @@ struct PopoverView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.openSettings) private var openSettings
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
-    @Environment(\.openWindow) private var openWindow
     @State private var now = Date()
     @State private var showOnboarding = false
-    @State private var showHistory = false
 
     private var usageThresholds: UsageThresholds {
         AppState.currentThresholds()
@@ -38,10 +36,6 @@ struct PopoverView: View {
         }
         .sheet(isPresented: $showOnboarding) {
             OnboardingView(hasCompletedOnboarding: $hasCompletedOnboarding)
-        }
-        .sheet(isPresented: $showHistory) {
-            HistoryView()
-                .environmentObject(appState)
         }
     }
 
@@ -278,12 +272,6 @@ struct PopoverView: View {
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
             Spacer()
-            footerButton("chart.line.uptrend.xyaxis", help: "Show usage history") {
-                showHistory = true
-            }
-            footerButton("pip", help: "Open mini monitor") {
-                openWindow(id: "mini-monitor")
-            }
             Button("Refresh") {
                 appState.refreshNow()
             }

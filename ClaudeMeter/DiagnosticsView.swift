@@ -5,7 +5,6 @@ struct DiagnosticsView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var copied = false
-    @State private var historyRecordCount: Int?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -13,13 +12,10 @@ struct DiagnosticsView: View {
                 dataSourceSection
                 pollSection
                 snapshotSection
-                historySection
                 warningsSection
             }
             .formStyle(.grouped)
-            .onAppear {
-                loadHistoryMetadata()
-            }
+            .onAppear {}
 
             Divider()
 
@@ -50,7 +46,7 @@ struct DiagnosticsView: View {
 
     private var dataSourceSection: some View {
         Section("Data Source") {
-            LabeledContent("Mode", value: ClaudeAIKeychain.load() != nil ? "claude.ai API" : "Stats cache + journal")
+            LabeledContent("Mode", value: dataSourceMode)
             if let snap = appState.snapshot {
                 LabeledContent("Source", value: DiagnosticsSanitizer.sanitize(snap.source.command))
                 LabeledContent("Parser", value: snap.parserVersion)
@@ -82,17 +78,6 @@ struct DiagnosticsView: View {
         }
     }
 
-    private var historySection: some View {
-        Section("History") {
-            if appState.historyStore != nil {
-                LabeledContent("Records", value: historyRecordCount.map { "\($0)" } ?? "…")
-                LabeledContent("Store", value: DiagnosticsSanitizer.sanitize(appState.storeDirectory.path))
-            } else {
-                LabeledContent("Status", value: "Unavailable")
-            }
-        }
-    }
-
     @ViewBuilder
     private var warningsSection: some View {
         if let warnings = appState.lastPollResult?.warnings, !warnings.isEmpty {
@@ -116,6 +101,14 @@ struct DiagnosticsView: View {
         return isoFormatter.string(from: date)
     }
 
+    private var dataSourceMode: String {
+        let parserVersion = appState.snapshot?.parserVersion ?? ""
+        if parserVersion.hasPrefix("statusline") { return "Statusline bridge" }
+        if parserVersion.hasPrefix("oauth") { return "Claude Code OAuth" }
+        if ClaudeAIKeychain.load() != nil { return "claude.ai API" }
+        return "Stats cache + journal"
+    }
+
     private static let isoFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
@@ -123,12 +116,6 @@ struct DiagnosticsView: View {
     }()
 
     private var isoFormatter: ISO8601DateFormatter { Self.isoFormatter }
-
-    private func loadHistoryMetadata() {
-        Task {
-            historyRecordCount = try? await appState.historyStore?.recordCountAsync()
-        }
-    }
 
     // MARK: - Copy text
 
@@ -138,7 +125,7 @@ struct DiagnosticsView: View {
             "Generated: \(isoFormatter.string(from: Date()))",
             "",
             "Data Source",
-            "  Mode: \(ClaudeAIKeychain.load() != nil ? "claude.ai API" : "Stats cache + journal")",
+            "  Mode: \(dataSourceMode)",
             "",
             "Last Poll",
             "  Time: \(lastPollTimeText)",

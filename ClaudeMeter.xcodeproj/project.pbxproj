@@ -24,9 +24,6 @@
 		BD2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterCore in Frameworks */ = {isa = PBXBuildFile; productRef = DA2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterCore */; };
 		BE2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 9A2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		BF2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AE2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework */; };
-		H47A3B4C5D6E7F8A9B0C1D2E /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = H17A3B4C5D6E7F8A9B0C1D2E /* HistoryView.swift */; };
-		H57A3B4C5D6E7F8A9B0C1D2E /* MiniMonitorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = H27A3B4C5D6E7F8A9B0C1D2E /* MiniMonitorView.swift */; };
-		H67A3B4C5D6E7F8A9B0C1D2E /* Charts.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = H37A3B4C5D6E7F8A9B0C1D2E /* Charts.framework */; };
 		H97A3B4C5D6E7F8A9B0C1D2E /* ClaudeAIKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = H87A3B4C5D6E7F8A9B0C1D2E /* ClaudeAIKeychain.swift */; };
 		C5D3E4F50617289AC2D3E4F5 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = E4B2C3D5E6F7089AB1C2D3E4 /* Sparkle */; };
 /* End PBXBuildFile section */
@@ -75,9 +72,6 @@
 		B5D38012F5D5476997394541 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
 		CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D39F041AC0894892922A9F90 /* MenuBarLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarLabel.swift; sourceTree = "<group>"; };
-		H17A3B4C5D6E7F8A9B0C1D2E /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
-		H27A3B4C5D6E7F8A9B0C1D2E /* MiniMonitorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMonitorView.swift; sourceTree = "<group>"; };
-		H37A3B4C5D6E7F8A9B0C1D2E /* Charts.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Charts.framework; path = System/Library/Frameworks/Charts.framework; sourceTree = SDKROOT; };
 		H87A3B4C5D6E7F8A9B0C1D2E /* ClaudeAIKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeAIKeychain.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -88,7 +82,6 @@
 			files = (
 				95F163B0444944EE8CCFFF1F /* ClaudeMeterCore in Frameworks */,
 				BF2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework in Frameworks */,
-				H67A3B4C5D6E7F8A9B0C1D2E /* Charts.framework in Frameworks */,
 				C5D3E4F50617289AC2D3E4F5 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -117,8 +110,6 @@
 				698B8E0E53F145B783C464F9 /* NotificationEngine.swift */,
 				07DBE9DE99AE4570ABDAA767 /* SettingsView.swift */,
 				B5D38012F5D5476997394541 /* DiagnosticsView.swift */,
-				H17A3B4C5D6E7F8A9B0C1D2E /* HistoryView.swift */,
-				H27A3B4C5D6E7F8A9B0C1D2E /* MiniMonitorView.swift */,
 				H87A3B4C5D6E7F8A9B0C1D2E /* ClaudeAIKeychain.swift */,
 				CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */,
 				803E43377A64429FBFAFB75C /* Info.plist */,
@@ -131,7 +122,6 @@
 			isa = PBXGroup;
 			children = (
 				AE2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework */,
-				H37A3B4C5D6E7F8A9B0C1D2E /* Charts.framework */,
 			);
 			name = "Recovered References";
 			sourceTree = "<group>";
@@ -294,8 +284,6 @@
 				4D61D7AB7BDE4E48BA084D4F /* NotificationEngine.swift in Sources */,
 				60B15B0A00A24EE9A3EED2B1 /* SettingsView.swift in Sources */,
 				B6F53F78A9174898AEA761F3 /* DiagnosticsView.swift in Sources */,
-				H47A3B4C5D6E7F8A9B0C1D2E /* HistoryView.swift in Sources */,
-				H57A3B4C5D6E7F8A9B0C1D2E /* MiniMonitorView.swift in Sources */,
 				H97A3B4C5D6E7F8A9B0C1D2E /* ClaudeAIKeychain.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -56,6 +56,7 @@ private struct OAuthConnectionSection: View {
     @AppStorage("oauthMode") private var oauthMode = ""
     @State private var state: OAuthSetupState = .idle
     @State private var showAccessToken = false
+    @State private var showRefreshToken = false
     @State private var manualAccess = ""
     @State private var manualRefresh = ""
     @State private var testResult = ""
@@ -126,11 +127,26 @@ private struct OAuthConnectionSection: View {
             HStack(alignment: .center, spacing: 10) {
                 Text("Refresh Token")
                     .frame(width: 100, alignment: .leading)
-                TextField("", text: $manualRefresh,
-                          prompt: Text("Refresh token").foregroundColor(.secondary))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(width: 240)
+                Group {
+                    if showRefreshToken {
+                        TextField("", text: $manualRefresh,
+                                  prompt: Text("Refresh token").foregroundColor(.secondary))
+                    } else {
+                        SecureField("", text: $manualRefresh,
+                                    prompt: Text("Refresh token").foregroundColor(.secondary))
+                    }
+                }
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
+                .textContentType(.password)
+                .frame(width: 240)
+                Button {
+                    showRefreshToken.toggle()
+                } label: {
+                    Image(systemName: showRefreshToken ? "eye.slash" : "eye")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
             }
             HStack(spacing: 10) {
                 Button("Save and connect") { saveManual() }

@@ -107,9 +107,9 @@ struct PopoverView: View {
             Image(systemName: "doc.text.magnifyingglass")
                 .font(.system(size: 28))
                 .foregroundStyle(.secondary)
-            Text("Stats cache not found")
+            Text("No usage data yet")
                 .font(.system(size: 13, weight: .medium))
-            Text("Make sure Claude Code has been used at least once. Expected at ~/.claude/stats-cache.json")
+            Text("Open Claude Code so the statusline bridge can publish usage, or connect OAuth/claude.ai in Settings.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -225,11 +225,8 @@ struct PopoverView: View {
             || err.localizedCaseInsensitiveContains("session key") {
             return err
         }
-        if err.contains("Stats cache not found") {
-            return "Stats cache missing — use Claude Code to generate it"
-        }
         if err.contains("decode") || err.contains("data couldn't be read") {
-            return "Refresh failed — could not parse stats cache"
+            return "Refresh failed — could not parse usage data"
         }
         return "Refresh failed — showing last known data"
     }
@@ -244,23 +241,6 @@ struct PopoverView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-    }
-
-    // MARK: - Model row (kept for stats-cache fallback path)
-
-    private func modelRow(_ model: String) -> some View {
-        HStack {
-            Text("Model")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(model)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
     }
 
     // MARK: - Footer
@@ -316,9 +296,8 @@ struct PopoverView: View {
             || err.localizedCaseInsensitiveContains("session key") {
             return "Session expired"
         }
-        if err.contains("Stats cache not found") { return "Stats cache not found" }
         if err.contains("decode") || err.contains("data couldn't be read") {
-            return "Could not read stats cache"
+            return "Could not parse usage data"
         }
         return "Could not read usage stats"
     }
@@ -328,9 +307,6 @@ struct PopoverView: View {
         if err.localizedCaseInsensitiveContains("session expired")
             || err.localizedCaseInsensitiveContains("session key") {
             return "Update your session key and org ID in Settings → Data."
-        }
-        if err.contains("Stats cache not found") {
-            return "Connect claude.ai in Settings, or use Claude Code to generate ~/.claude/stats-cache.json"
         }
         if err.contains("decode") {
             return "Check Diagnostics for details."
@@ -356,8 +332,8 @@ struct OnboardingView: View {
         ClaudeAIKeychain.load() != nil
     }
 
-    private var cacheExists: Bool {
-        FileManager.default.fileExists(atPath: StatsCacheReader.defaultPath.path)
+    private var isOAuthAvailable: Bool {
+        OAuthKeychain.load() != nil || OAuthKeychain.loadManual() != nil
     }
 
     var body: some View {
@@ -378,12 +354,12 @@ struct OnboardingView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-            } else if cacheExists {
-                Text("Using Claude Code stats at ~/.claude/stats-cache.json")
+            } else if isOAuthAvailable {
+                Text("Claude Code OAuth credentials are available for usage polling.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                Text("For exact usage percentages, connect your claude.ai session in Settings → Data.")
+                Text("The statusline bridge remains the primary source while Claude Code is open.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -392,7 +368,7 @@ struct OnboardingView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                Text("Connect claude.ai in Settings → Data, or use Claude Code in a terminal first.")
+                Text("Open Claude Code to publish statusline data, or connect OAuth/claude.ai in Settings → Data.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

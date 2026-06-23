@@ -30,6 +30,27 @@ struct DiagnosticsSanitizerTests {
         #expect(!out.contains(key))
         #expect(out.contains("[redacted]"))
     }
+
+    @Test func redactsOAuthBearerAndOidcTokens() {
+        let token = "oidc-abcdefghijklmnopqrstuvwxyz0123456789"
+        let out = DiagnosticsSanitizer.sanitize("Authorization: Bearer \(token)")
+        #expect(!out.contains(token))
+        #expect(out.contains("Bearer [redacted]"))
+    }
+
+    @Test func redactsLabeledAccessAndRefreshTokens() {
+        let out = DiagnosticsSanitizer.sanitize(#"{"accessToken":"oidc-access","refreshToken":"refresh-secret"}"#)
+        #expect(!out.contains("oidc-access"))
+        #expect(!out.contains("refresh-secret"))
+        #expect(out.contains(#""accessToken":"[redacted]""#))
+        #expect(out.contains(#""refreshToken":"[redacted]""#))
+    }
+
+    @Test func redactsSessionCookieValues() {
+        let out = DiagnosticsSanitizer.sanitize("Cookie: sessionKey=browser-cookie-value; other=1")
+        #expect(!out.contains("browser-cookie-value"))
+        #expect(out.contains("sessionKey=[redacted]"))
+    }
 }
 
 @Suite("CredentialValidator")

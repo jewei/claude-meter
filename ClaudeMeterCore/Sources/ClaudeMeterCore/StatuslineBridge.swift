@@ -24,12 +24,15 @@ public enum StatuslineBridge: Sendable {
     /// Unique substring used to detect if our bridge is already installed.
     private static let bridgeMarker = ".claude-meter/statusline.json"
 
+    /// Re-run the statusline command every second while Claude Code is open (minimum allowed).
+    private static let refreshIntervalSeconds = 1
+
     /// Inline bash snippet: reads stdin, saves atomically, pipes through to next command.
     private static let bridgeSnippet = #"bash -c 'I=$(cat);D=$HOME/.claude-meter;mkdir -p "$D" 2>/dev/null;T="$D/.sl-$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/statusline.json" 2>/dev/null||rm -f "$T" 2>/dev/null;printf "%s" "$I"'"#
 
     // MARK: - Install / uninstall
 
-    /// Installs the bridge snippet into `~/.claude/settings.json`.
+    /// Installs the bridge snippet into `~/.claude/settings.json` and sets `refreshInterval` to 1.
     /// Idempotent — safe to call on every app launch.
     public static func install() throws {
         guard FileManager.default.fileExists(
@@ -40,15 +43,22 @@ public enum StatuslineBridge: Sendable {
         try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
 
         var settings = try readSettings()
+        var needsWrite = false
+
         let currentCmd = statusLineCommand(in: settings)
-        guard !currentCmd.contains(bridgeMarker) else { return }
+        if !currentCmd.contains(bridgeMarker) {
+            let newCmd = currentCmd.isEmpty
+                ? bridgeSnippet + " > /dev/null"
+                : bridgeSnippet + " | " + currentCmd
+            upsertStatusLine(command: newCmd, in: &settings)
+            needsWrite = true
+        } else if ensureRefreshInterval(in: &settings) {
+            needsWrite = true
+        }
 
-        let newCmd = currentCmd.isEmpty
-            ? bridgeSnippet + " > /dev/null"
-            : bridgeSnippet + " | " + currentCmd
-
-        setStatusLineCommand(newCmd, in: &settings)
-        try writeSettings(settings)
+        if needsWrite {
+            try writeSettings(settings)
+        }
     }
 
     /// Removes the bridge snippet from `~/.claude/settings.json`.
@@ -155,8 +165,29 @@ public enum StatuslineBridge: Sendable {
         (settings["statusLine"] as? [String: Any])?["command"] as? String ?? ""
     }
 
+    private static func upsertStatusLine(command: String, in settings: inout [String: Any]) {
+        var statusLine = settings["statusLine"] as? [String: Any] ?? [:]
+        statusLine["type"] = "command"
+        statusLine["command"] = command
+        statusLine["refreshInterval"] = refreshIntervalSeconds
+        settings["statusLine"] = statusLine
+    }
+
+    /// Ensures `refreshInterval` is set. Returns true when settings were modified.
+    @discardableResult
+    internal static func ensureRefreshInterval(in settings: inout [String: Any]) -> Bool {
+        guard var statusLine = settings["statusLine"] as? [String: Any],
+              statusLine["command"] != nil else { return false }
+        let current = (statusLine["refreshInterval"] as? Int)
+            ?? (statusLine["refreshInterval"] as? Double).map { Int($0) }
+        guard current != refreshIntervalSeconds else { return false }
+        statusLine["refreshInterval"] = refreshIntervalSeconds
+        settings["statusLine"] = statusLine
+        return true
+    }
+
     private static func setStatusLineCommand(_ cmd: String, in settings: inout [String: Any]) {
-        settings["statusLine"] = ["type": "command", "command": cmd]
+        upsertStatusLine(command: cmd, in: &settings)
     }
 
     private static func removedBridgeSnippet(from command: String) -> String {

@@ -36,7 +36,15 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     }
 
     public func poll(now: Date) async throws -> ParseResult {
-        guard let loaded = cachedCredentials ?? OAuthKeychain.load() else {
+        let oauthMode = UserDefaults.standard.string(forKey: "oauthMode") ?? ""
+        guard !oauthMode.isEmpty else {
+            return try await fallback.poll(now: now)
+        }
+
+        let sourceCreds: OAuthCredentials? = oauthMode == "manual"
+            ? OAuthKeychain.loadManual()
+            : OAuthKeychain.load()
+        guard let loaded = cachedCredentials ?? sourceCreds else {
             return try await fallback.poll(now: now)
         }
         var creds = loaded
@@ -48,7 +56,11 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             }
             creds = refreshed
             cachedCredentials = refreshed
-            OAuthKeychain.save(refreshed)
+            if oauthMode == "manual" {
+                OAuthKeychain.saveManual(accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
+            } else {
+                OAuthKeychain.save(refreshed)
+            }
         }
 
         do {
@@ -60,7 +72,11 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 return try await fallback.poll(now: now)
             }
             cachedCredentials = refreshed
-            OAuthKeychain.save(refreshed)
+            if oauthMode == "manual" {
+                OAuthKeychain.saveManual(accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
+            } else {
+                OAuthKeychain.save(refreshed)
+            }
             if let result = try? await fetchAndBuild(token: refreshed.accessToken, now: now) {
                 return result
             }
@@ -70,11 +86,56 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         }
     }
 
+    // MARK: - Settings verification
+
+    public static func verify(credentials: OAuthCredentials) async throws -> (sessionPct: Double, weekPct: Double) {
+        var creds = credentials
+        if creds.isExpired {
+            creds = try await verifyRefresh(creds)
+        }
+        var request = URLRequest(url: usageURL)
+        request.setValue("Bearer \(creds.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw OAuthError.invalidResponse }
+        guard http.statusCode == 200 else {
+            if http.statusCode == 401 || http.statusCode == 403 { throw OAuthError.unauthorized }
+            throw OAuthError.httpError(http.statusCode)
+        }
+        let usage = try JSONDecoder().decode(UsageResponse.self, from: data)
+        return (
+            (usage.fiveHour?.utilization ?? 0) * 100,
+            (usage.sevenDay?.utilization ?? 0) * 100
+        )
+    }
+
+    private static func verifyRefresh(_ credentials: OAuthCredentials) async throws -> OAuthCredentials {
+        var request = URLRequest(url: tokenURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode([
+            "grant_type": "refresh_token",
+            "refresh_token": credentials.refreshToken,
+            "client_id": oauthClientId,
+        ])
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw OAuthError.refreshFailed
+        }
+        let resp = try JSONDecoder().decode(TokenResponse.self, from: data)
+        return OAuthCredentials(
+            accessToken: resp.accessToken,
+            refreshToken: resp.refreshToken ?? credentials.refreshToken,
+            expiresAt: Date().addingTimeInterval(Double(resp.expiresIn))
+        )
+    }
+
     // MARK: - API calls
 
     private func fetchAndBuild(token: String, now: Date) async throws -> ParseResult {
-        let quotas = try await fetchUsage(token: token)
-        let snapshot = buildSnapshot(quotas: quotas, now: now)
+        let usage = try await fetchUsage(token: token)
+        let snapshot = buildSnapshot(usage: usage, now: now)
         try? store.writeLatest(snapshot)
         try? store.clearLastError()
         return ParseResult(
@@ -86,7 +147,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         )
     }
 
-    private func fetchUsage(token: String) async throws -> [String: QuotaEntry] {
+    private func fetchUsage(token: String) async throws -> UsageResponse {
         var request = URLRequest(url: Self.usageURL)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
@@ -97,7 +158,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             if http.statusCode == 401 || http.statusCode == 403 { throw OAuthError.unauthorized }
             throw OAuthError.httpError(http.statusCode)
         }
-        return try JSONDecoder().decode([String: QuotaEntry].self, from: data)
+        return try JSONDecoder().decode(UsageResponse.self, from: data)
     }
 
     private func refreshToken(_ credentials: OAuthCredentials) async throws -> OAuthCredentials {
@@ -123,21 +184,18 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     // MARK: - Snapshot builder
 
-    private func buildSnapshot(quotas: [String: QuotaEntry], now: Date) -> ClaudeUsageSnapshot {
-        let fiveHour = quotas["five_hour"]
-        let sevenDay = quotas["seven_day"]
-
-        let sessionWindow = fiveHour.map { q in
+    private func buildSnapshot(usage: UsageResponse, now: Date) -> ClaudeUsageSnapshot {
+        let sessionWindow = usage.fiveHour.map { q in
             LimitWindow(percentUsed: q.utilization, resetsAt: q.resetsAt.flatMap(Self.parseDate))
         } ?? LimitWindow()
 
-        let weekWindow = sevenDay.map { q in
+        let weekWindow = usage.sevenDay.map { q in
             LimitWindow(percentUsed: q.utilization, resetsAt: q.resetsAt.flatMap(Self.parseDate))
         } ?? LimitWindow()
 
         let severity = UsageSeverity.highest(
-            thresholds.severity(for: fiveHour?.utilization),
-            thresholds.severity(for: sevenDay?.utilization)
+            thresholds.severity(for: usage.fiveHour?.utilization),
+            thresholds.severity(for: usage.sevenDay?.utilization)
         )
 
         return ClaudeUsageSnapshot(
@@ -171,15 +229,23 @@ enum OAuthError: Error {
 
 // MARK: - Codable models
 
+private struct UsageResponse: Decodable {
+    let fiveHour: QuotaEntry?
+    let sevenDay: QuotaEntry?
+
+    enum CodingKeys: String, CodingKey {
+        case fiveHour = "five_hour"
+        case sevenDay = "seven_day"
+    }
+}
+
 private struct QuotaEntry: Decodable {
     let utilization: Double
     let resetsAt: String?
-    let isEnabled: Bool
 
     enum CodingKeys: String, CodingKey {
         case utilization
         case resetsAt = "resets_at"
-        case isEnabled = "is_enabled"
     }
 }
 

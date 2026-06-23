@@ -104,9 +104,9 @@ struct DiagnosticsView: View {
     private var dataSourceMode: String {
         let parserVersion = appState.snapshot?.parserVersion ?? ""
         if parserVersion.hasPrefix("statusline") { return "Statusline bridge" }
-        if parserVersion.hasPrefix("oauth") { return "Claude Code OAuth" }
-        if ClaudeAIKeychain.load() != nil { return "claude.ai API" }
-        return "Stats cache + journal"
+        if parserVersion.hasPrefix("oauth") { return "OAuth usage API" }
+        if parserVersion.hasPrefix("claude-ai") { return "claude.ai API" }
+        return "Cached snapshot"
     }
 
     private static let isoFormatter: ISO8601DateFormatter = {

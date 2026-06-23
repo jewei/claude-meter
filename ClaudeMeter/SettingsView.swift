@@ -17,7 +17,7 @@ struct SettingsView: View {
             AdvancedSettingsTab(appState: appState)
                 .tabItem { Label("Advanced", systemImage: "gearshape.2") }
         }
-        .frame(width: 480, height: 380)
+        .frame(width: 480, height: 500)
         .background(FloatingWindowAccessor())
     }
 }
@@ -39,6 +39,252 @@ private struct FloatingWindowAccessor: NSViewRepresentable {
 
 // MARK: - Data tab
 
+private enum OAuthSetupState: Equatable {
+    case idle
+    case promptAuto
+    case promptNoAuto
+    case manualEntry
+    case verifying
+    case connectedAuto
+    case connectedManual
+    case error(String)
+}
+
+private struct OAuthConnectionSection: View {
+    let appState: AppState
+
+    @AppStorage("oauthMode") private var oauthMode = ""
+    @State private var state: OAuthSetupState = .idle
+    @State private var showAccessToken = false
+    @State private var manualAccess = ""
+    @State private var manualRefresh = ""
+    @State private var testResult = ""
+    @State private var isTesting = false
+
+    var body: some View {
+        Section("Claude Code Token") {
+            stateContent
+            Text("Fallback #2 — OAuth usage API when the statusline bridge is stale. Uses the Claude Code access token from Keychain.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .onAppear { loadState() }
+    }
+
+    @ViewBuilder
+    private var stateContent: some View {
+        switch state {
+        case .idle:
+            EmptyView()
+
+        case .promptAuto:
+            LabeledContent("Detected") {
+                HStack(spacing: 6) {
+                    Image(systemName: "key.fill").foregroundStyle(.secondary)
+                    Text("Claude Code token").foregroundStyle(.secondary)
+                }
+            }
+            HStack(spacing: 10) {
+                Button("Use auto-detected token") { useAutoDetected() }
+                    .buttonStyle(.borderedProminent)
+                Button("Enter manually") { state = .manualEntry }
+                    .buttonStyle(.borderless)
+            }
+
+        case .promptNoAuto:
+            LabeledContent("Detected") {
+                Text("No Claude Code credentials found").foregroundStyle(.secondary)
+            }
+            Button("Enter tokens manually") { state = .manualEntry }
+                .buttonStyle(.borderless)
+
+        case .manualEntry:
+            HStack(alignment: .center, spacing: 10) {
+                Text("Access Token")
+                    .frame(width: 100, alignment: .leading)
+                Group {
+                    if showAccessToken {
+                        TextField("", text: $manualAccess,
+                                  prompt: Text("oidc-…").foregroundColor(.secondary))
+                    } else {
+                        SecureField("", text: $manualAccess,
+                                    prompt: Text("oidc-…").foregroundColor(.secondary))
+                    }
+                }
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
+                .textContentType(.password)
+                .frame(width: 240)
+                Button {
+                    showAccessToken.toggle()
+                } label: {
+                    Image(systemName: showAccessToken ? "eye.slash" : "eye")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+            }
+            HStack(alignment: .center, spacing: 10) {
+                Text("Refresh Token")
+                    .frame(width: 100, alignment: .leading)
+                TextField("", text: $manualRefresh,
+                          prompt: Text("Refresh token").foregroundColor(.secondary))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(width: 240)
+            }
+            HStack(spacing: 10) {
+                Button("Save and connect") { saveManual() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(manualAccess.trimmingCharacters(in: .whitespaces).isEmpty ||
+                              manualRefresh.trimmingCharacters(in: .whitespaces).isEmpty)
+                if oauthMode.isEmpty {
+                    Button("Cancel") {
+                        state = OAuthKeychain.load() != nil ? .promptAuto : .promptNoAuto
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+
+        case .verifying:
+            HStack(spacing: 8) {
+                ProgressView().scaleEffect(0.7)
+                Text("Verifying…").foregroundStyle(.secondary)
+            }
+
+        case .connectedAuto, .connectedManual:
+            LabeledContent("Status") {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    Text(state == .connectedManual ? "Connected · manual" : "Connected · auto-detected")
+                }
+            }
+            if !testResult.isEmpty {
+                Text(testResult)
+                    .font(.caption)
+                    .foregroundStyle(testResult.hasPrefix("Error") ? .red : .green)
+            }
+            HStack(spacing: 12) {
+                Button(isTesting ? "Testing…" : "Test") { testOAuth() }
+                    .buttonStyle(.borderless)
+                    .disabled(isTesting)
+                Button("Disconnect") { disconnect() }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.red)
+            }
+
+        case .error(let msg):
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
+                Text(msg).font(.caption).foregroundStyle(.red)
+            }
+            HStack(spacing: 12) {
+                Button("Retry") { retryAuto() }
+                    .buttonStyle(.borderless)
+                Button("Enter manually") { state = .manualEntry }
+                    .buttonStyle(.borderless)
+            }
+        }
+    }
+
+    private func loadState() {
+        switch oauthMode {
+        case "auto":   state = .connectedAuto
+        case "manual": state = OAuthKeychain.loadManual() != nil ? .connectedManual : .manualEntry
+        default:       state = OAuthKeychain.load() != nil ? .promptAuto : .promptNoAuto
+        }
+    }
+
+    private func useAutoDetected() {
+        guard let creds = OAuthKeychain.load() else {
+            state = .error("Claude Code credentials not found in Keychain")
+            return
+        }
+        state = .verifying
+        Task {
+            do {
+                let (s, w) = try await OAuthPipeline.verify(credentials: creds)
+                oauthMode = "auto"
+                testResult = "Session \(Int(s))%  ·  Week \(Int(w))%"
+                state = .connectedAuto
+                appState.rebuildPipeline()
+                appState.refreshNow()
+            } catch {
+                state = .error(error.localizedDescription)
+            }
+        }
+    }
+
+    private func saveManual() {
+        let at = manualAccess.trimmingCharacters(in: .whitespaces)
+        let rt = manualRefresh.trimmingCharacters(in: .whitespaces)
+        guard !at.isEmpty, !rt.isEmpty else { return }
+        OAuthKeychain.saveManual(accessToken: at, refreshToken: rt)
+        state = .verifying
+        Task {
+            do {
+                guard let creds = OAuthKeychain.loadManual() else { throw URLError(.badServerResponse) }
+                let (s, w) = try await OAuthPipeline.verify(credentials: creds)
+                oauthMode = "manual"
+                testResult = "Session \(Int(s))%  ·  Week \(Int(w))%"
+                manualAccess = ""
+                manualRefresh = ""
+                state = .connectedManual
+                appState.rebuildPipeline()
+                appState.refreshNow()
+            } catch {
+                OAuthKeychain.deleteManual()
+                state = .error("Verification failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func retryAuto() {
+        guard let creds = OAuthKeychain.load() else {
+            state = .promptNoAuto
+            return
+        }
+        state = .verifying
+        Task {
+            do {
+                let (s, w) = try await OAuthPipeline.verify(credentials: creds)
+                oauthMode = "auto"
+                testResult = "Session \(Int(s))%  ·  Week \(Int(w))%"
+                state = .connectedAuto
+                appState.rebuildPipeline()
+                appState.refreshNow()
+            } catch {
+                state = .error(error.localizedDescription)
+            }
+        }
+    }
+
+    private func testOAuth() {
+        let creds = oauthMode == "manual" ? OAuthKeychain.loadManual() : OAuthKeychain.load()
+        guard let creds else { return }
+        isTesting = true
+        testResult = ""
+        Task {
+            defer { isTesting = false }
+            do {
+                let (s, w) = try await OAuthPipeline.verify(credentials: creds)
+                testResult = "Session \(Int(s))%  ·  Week \(Int(w))%"
+            } catch {
+                testResult = "Error: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func disconnect() {
+        if oauthMode == "manual" { OAuthKeychain.deleteManual() }
+        oauthMode = ""
+        testResult = ""
+        manualAccess = ""
+        manualRefresh = ""
+        appState.rebuildPipeline()
+        state = OAuthKeychain.load() != nil ? .promptAuto : .promptNoAuto
+    }
+}
+
 private struct DataSettingsTab: View {
     let appState: AppState
 
@@ -58,6 +304,62 @@ private struct DataSettingsTab: View {
 
     var body: some View {
         Form {
+            OAuthConnectionSection(appState: appState)
+
+            Section("Statusline Bridge") {
+                LabeledContent("Stale after") {
+                    HStack {
+                        Slider(value: $statuslineStalenessSeconds, in: 30...300, step: 30)
+                            .frame(width: 120)
+                        Text("\(Int(statuslineStalenessSeconds))s")
+                            .monospacedDigit()
+                            .frame(width: 32, alignment: .trailing)
+                    }
+                }
+                LabeledContent("API fallback cooldown") {
+                    HStack {
+                        Slider(value: $statuslineFallbackCooldownSeconds, in: 60...300, step: 30)
+                            .frame(width: 120)
+                        Text("\(Int(statuslineFallbackCooldownSeconds))s")
+                            .monospacedDigit()
+                            .frame(width: 32, alignment: .trailing)
+                    }
+                }
+                Text("Primary source. Claude Code pushes rate-limit data here every second while running (refreshInterval: 1). When stale, falls back to OAuth usage API, then claude.ai usage API.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Polling") {
+                LabeledContent("Poll (popover open)") {
+                    HStack {
+                        Slider(value: $pollIntervalActiveSeconds, in: 5...60, step: 5)
+                            .frame(width: 120)
+                        Text("\(Int(pollIntervalActiveSeconds))s")
+                            .monospacedDigit()
+                            .frame(width: 32, alignment: .trailing)
+                    }
+                }
+                LabeledContent("Poll (background)") {
+                    HStack {
+                        Slider(value: $pollIntervalBackgroundSeconds, in: 15...300, step: 15)
+                            .frame(width: 120)
+                        Text("\(Int(pollIntervalBackgroundSeconds))s")
+                            .monospacedDigit()
+                            .frame(width: 32, alignment: .trailing)
+                    }
+                }
+                LabeledContent("Mark stale after") {
+                    HStack {
+                        Slider(value: $staleAfterSeconds, in: 60...600, step: 30)
+                            .frame(width: 120)
+                        Text("\(Int(staleAfterSeconds))s")
+                            .monospacedDigit()
+                            .frame(width: 32, alignment: .trailing)
+                    }
+                }
+            }
+
             Section("Claude.ai Connection") {
                 if isConnected {
                     LabeledContent("Status") {
@@ -110,7 +412,6 @@ private struct DataSettingsTab: View {
                         .buttonStyle(.borderless)
                         .help(showSessionKey ? "Hide" : "Show (enables paste)")
                     }
-
                     HStack(alignment: .center, spacing: 10) {
                         Text("Org ID")
                             .frame(width: 90, alignment: .leading)
@@ -129,70 +430,16 @@ private struct DataSettingsTab: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(sessionKey.trimmingCharacters(in: .whitespaces).isEmpty ||
                                   orgId.trimmingCharacters(in: .whitespaces).isEmpty)
-                    Text("Find in browser: DevTools → Application → Cookies → claude.ai → sessionKey. Org ID is in the lastActiveOrg cookie.")
+                    Text("Fallback #3 — claude.ai usage API when OAuth is unavailable. Find sessionKey in browser DevTools → Application → Cookies → claude.ai. Org ID is in the lastActiveOrg cookie.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                }
-            }
-
-            Section("Statusline Bridge") {
-                LabeledContent("Stale after") {
-                    HStack {
-                        Slider(value: $statuslineStalenessSeconds, in: 30...300, step: 30)
-                            .frame(width: 120)
-                        Text("\(Int(statuslineStalenessSeconds))s")
-                            .monospacedDigit()
-                            .frame(width: 32, alignment: .trailing)
-                    }
-                }
-                LabeledContent("API fallback cooldown") {
-                    HStack {
-                        Slider(value: $statuslineFallbackCooldownSeconds, in: 60...300, step: 30)
-                            .frame(width: 120)
-                        Text("\(Int(statuslineFallbackCooldownSeconds))s")
-                            .monospacedDigit()
-                            .frame(width: 32, alignment: .trailing)
-                    }
-                }
-                Text("Statusline data comes directly from Claude Code on every API call. When stale, the API fallback is rate-limited to avoid hitting usage limits.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Polling") {
-                LabeledContent("Poll (popover open)") {
-                    HStack {
-                        Slider(value: $pollIntervalActiveSeconds, in: 5...60, step: 5)
-                            .frame(width: 120)
-                        Text("\(Int(pollIntervalActiveSeconds))s")
-                            .monospacedDigit()
-                            .frame(width: 32, alignment: .trailing)
-                    }
-                }
-                LabeledContent("Poll (background)") {
-                    HStack {
-                        Slider(value: $pollIntervalBackgroundSeconds, in: 15...300, step: 15)
-                            .frame(width: 120)
-                        Text("\(Int(pollIntervalBackgroundSeconds))s")
-                            .monospacedDigit()
-                            .frame(width: 32, alignment: .trailing)
-                    }
-                }
-                LabeledContent("Mark stale after") {
-                    HStack {
-                        Slider(value: $staleAfterSeconds, in: 60...600, step: 30)
-                            .frame(width: 120)
-                        Text("\(Int(staleAfterSeconds))s")
-                            .monospacedDigit()
-                            .frame(width: 32, alignment: .trailing)
-                    }
                 }
             }
         }
         .formStyle(.grouped)
         .padding()
         .onAppear { loadKeychainState() }
-        .onChange(of: staleAfterSeconds)   { _, _ in AppGroupConfig.syncDisplaySettings() }
+        .onChange(of: staleAfterSeconds) { _, _ in AppGroupConfig.syncDisplaySettings() }
     }
 
     private func loadKeychainState() {
@@ -234,8 +481,6 @@ private struct DataSettingsTab: View {
         connectionStatus = ""
         rebuild()
     }
-
-
 
     private func testConnection() {
         guard let creds = ClaudeAIKeychain.load() else { return }

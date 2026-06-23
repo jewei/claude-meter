@@ -1,22 +1,21 @@
 import Foundation
 
-/// Pipeline that fetches utilization percentages from claude.ai/api/organizations/{orgId}/usage
-/// and enriches them with real-time message counts from the JSONL journal.
+/// Pipeline that fetches utilization percentages from claude.ai/api/organizations/{orgId}/usage.
 ///
-/// Falls back to `StatsCachePipeline` on transient API errors. Auth failures do not fall back.
+/// Falls back to `CachedSnapshotPipeline` on transient API errors. Auth failures do not fall back.
 public struct ClaudeAIPipeline: ClaudeMeterPipeline {
 
     public let client: ClaudeAIUsageClient
     public let journal: JournalReader
     public let store: SnapshotStore
-    public let fallback: StatsCachePipeline
+    public let fallback: any ClaudeMeterPipeline
     public let thresholds: UsageThresholds
 
     public init(
         client: ClaudeAIUsageClient,
         journal: JournalReader = JournalReader(),
         store: SnapshotStore,
-        fallback: StatsCachePipeline,
+        fallback: any ClaudeMeterPipeline,
         thresholds: UsageThresholds = .default
     ) {
         self.client = client
@@ -92,7 +91,7 @@ public struct ClaudeAIPipeline: ClaudeMeterPipeline {
                 message: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             )
             let previousPollAt = try? store.readLatest()?.lastSuccessfulPollAt
-            let fallbackResult = try await fallback.poll(now: now, journalCounts: journalCounts)
+            let fallbackResult = try await fallback.poll(now: now)
 
             var snapshot = fallbackResult.snapshot
             if var snap = snapshot, let previousPollAt {

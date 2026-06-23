@@ -2,9 +2,10 @@ import Foundation
 
 /// Primary pipeline that reads Claude Code's own rate-limit data via the statusline bridge.
 ///
-/// When the bridge file is fresh (default: 2 min), uses its `rate_limits` data directly.
-/// When stale, falls back to the inner pipeline (ClaudeAIPipeline or StatsCachePipeline)
-/// but rate-limits those API calls to at most once per cooldown window (default: 1 min).
+/// Fallback order when stale (rate-limited by `statuslineFallbackCooldownSeconds`):
+/// 1. Statusline bridge (`~/.claude-meter/statusline.json`)
+/// 2. OAuth usage API (`GET /api/oauth/usage` with Bearer token)
+/// 3. claude.ai usage API (`GET /api/organizations/{orgId}/usage` with sessionKey cookie)
 public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     private let fallback: any ClaudeMeterPipeline

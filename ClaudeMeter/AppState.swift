@@ -227,23 +227,23 @@ final class AppState: ObservableObject {
 
     private static func makePipeline(store: SnapshotStore) -> any ClaudeMeterPipeline {
         let thresholds = AppGroupConfig.currentThresholds()
-        let statsPipeline = StatsCachePipeline(store: store, thresholds: thresholds)
+        let terminal = CachedSnapshotPipeline(store: store)
 
-        let innerPipeline: any ClaudeMeterPipeline
+        let claudeLayer: any ClaudeMeterPipeline
         if let creds = ClaudeAIKeychain.load() {
             let client = ClaudeAIUsageClient(sessionKey: creds.sessionKey, orgId: creds.orgId)
-            innerPipeline = ClaudeAIPipeline(
+            claudeLayer = ClaudeAIPipeline(
                 client: client,
                 store: store,
-                fallback: statsPipeline,
+                fallback: terminal,
                 thresholds: thresholds
             )
         } else {
-            innerPipeline = statsPipeline
+            claudeLayer = terminal
         }
 
-        let oauthFallback = OAuthPipeline(fallback: innerPipeline, store: store, thresholds: thresholds)
-        return StatuslinePipeline(fallback: oauthFallback, store: store, thresholds: thresholds)
+        let oauthLayer = OAuthPipeline(fallback: claudeLayer, store: store, thresholds: thresholds)
+        return StatuslinePipeline(fallback: oauthLayer, store: store, thresholds: thresholds)
     }
 }
 

@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+# Usage: scripts/release.sh [version] [build]
+#   version  e.g. 1.1   (default: reads MARKETING_VERSION from project)
+#   build    e.g. 2     (default: reads CURRENT_PROJECT_VERSION from project)
+#
+# Prerequisites:
+#   • Xcode with a valid Developer ID signing identity
+#   • xcrun notarytool credentials stored: notarytool store-credentials "notarytool"
+#   • gh CLI authenticated: gh auth login
+#   • Project must build cleanly (Sparkle SPM package resolved)
+
+set -euo pipefail
+
+# ── Config ────────────────────────────────────────────────────────────────────
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT="$PROJECT_DIR/ClaudeMeter.xcodeproj"
+SCHEME="ClaudeMeter"
+APP_NAME="ClaudeMeter"
+TEAM_ID="4L4SS26L9J"
+APPLE_ID="jewei.mak@gmail.com"
+KEYCHAIN_PROFILE="notarytool"
+GITHUB_REPO="jewei/claude-meter"
+MIN_MACOS="14.0"
+
+# ── Version ───────────────────────────────────────────────────────────────────
+
+read_build_setting() {
+    xcodebuild -project "$PROJECT" -scheme "$SCHEME" \
+        -configuration Release -showBuildSettings 2>/dev/null \
+        | awk -v key="$1" '$1 == key { print $3; exit }'
+}
+
+VERSION="${1:-$(read_build_setting MARKETING_VERSION)}"
+BUILD="${2:-$(read_build_setting CURRENT_PROJECT_VERSION)}"
+
+if [[ -z "$VERSION" || -z "$BUILD" ]]; then
+    echo "error: could not read version from project. Pass them as arguments." >&2
+    exit 1
+fi
+
+DMG_NAME="$APP_NAME-$VERSION.dmg"
+TAG="v$VERSION"
+
+echo "▶ Releasing $APP_NAME $VERSION (build $BUILD)"
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+
+BUILD_DIR="$PROJECT_DIR/build"
+ARCHIVE_PATH="$BUILD_DIR/$APP_NAME.xcarchive"
+EXPORT_DIR="$BUILD_DIR/export"
+APP_PATH="$EXPORT_DIR/$APP_NAME.app"
+ZIP_PATH="$BUILD_DIR/$APP_NAME-notarize.zip"
+DMG_PATH="$BUILD_DIR/$DMG_NAME"
+EXPORT_OPTIONS="$BUILD_DIR/ExportOptions.plist"
+
+rm -rf "$BUILD_DIR"
+mkdir -p "$BUILD_DIR"
+
+# ── Locate sign_update ────────────────────────────────────────────────────────
+
+SIGN_UPDATE=$(find ~/Library/Developer/Xcode/DerivedData -name "sign_update" \
+    -path "*/Sparkle/bin/sign_update" 2>/dev/null | grep -v old_dsa | head -1)
+if [[ -z "$SIGN_UPDATE" ]]; then
+    echo "error: Sparkle sign_update not found in DerivedData." >&2
+    echo "       Build the project in Xcode at least once to resolve SPM packages." >&2
+    exit 1
+fi
+
+# ── Archive ───────────────────────────────────────────────────────────────────
+
+echo "▶ Archiving…"
+xcodebuild archive \
+    -project "$PROJECT" \
+    -scheme "$SCHEME" \
+    -configuration Release \
+    -archivePath "$ARCHIVE_PATH" \
+    -destination "generic/platform=macOS" \
+    ONLY_ACTIVE_ARCH=NO \
+    | xcpretty --quiet 2>/dev/null || true
+
+if [[ ! -d "$ARCHIVE_PATH" ]]; then
+    echo "error: archive failed — run with 'set -x' or check Xcode for details." >&2
+    exit 1
+fi
+
+# ── Export ────────────────────────────────────────────────────────────────────
+
+echo "▶ Exporting…"
+cat > "$EXPORT_OPTIONS" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>developer-id</string>
+    <key>teamID</key>
+    <string>$TEAM_ID</string>
+    <key>signingStyle</key>
+    <string>automatic</string>
+</dict>
+</plist>
+PLIST
+
+xcodebuild -exportArchive \
+    -archivePath "$ARCHIVE_PATH" \
+    -exportPath "$EXPORT_DIR" \
+    -exportOptionsPlist "$EXPORT_OPTIONS" \
+    | xcpretty --quiet 2>/dev/null || true
+
+if [[ ! -d "$APP_PATH" ]]; then
+    echo "error: export failed." >&2
+    exit 1
+fi
+
+# ── Notarize ──────────────────────────────────────────────────────────────────
+
+echo "▶ Zipping for notarization…"
+ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
+
+echo "▶ Submitting to Apple notary service…"
+xcrun notarytool submit "$ZIP_PATH" \
+    --apple-id "$APPLE_ID" \
+    --team-id "$TEAM_ID" \
+    --keychain-profile "$KEYCHAIN_PROFILE" \
+    --wait
+
+echo "▶ Stapling…"
+xcrun stapler staple "$APP_PATH"
+
+# ── DMG ───────────────────────────────────────────────────────────────────────
+
+echo "▶ Creating DMG…"
+hdiutil create \
+    -volname "Claude Meter" \
+    -srcfolder "$APP_PATH" \
+    -ov -format UDZO \
+    "$DMG_PATH"
+
+# ── Sign for Sparkle ──────────────────────────────────────────────────────────
+
+echo "▶ Signing DMG for Sparkle…"
+SIGN_OUTPUT=$("$SIGN_UPDATE" "$DMG_PATH")
+SIGNATURE=$(echo "$SIGN_OUTPUT" | grep -o 'sparkle:edSignature="[^"]*"' | cut -d'"' -f2)
+LENGTH=$(echo "$SIGN_OUTPUT"    | grep -o 'length="[^"]*"'              | cut -d'"' -f2)
+
+echo "   edSignature: $SIGNATURE"
+echo "   length:      $LENGTH"
+
+# ── Update appcast.xml ────────────────────────────────────────────────────────
+
+echo "▶ Updating appcast.xml…"
+PUBDATE=$(date -u '+%a, %d %b %Y %H:%M:%S +0000')
+DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/$TAG/$DMG_NAME"
+
+cat > "$PROJECT_DIR/appcast.xml" <<XML
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <channel>
+        <title>Claude Meter</title>
+        <link>https://raw.githubusercontent.com/$GITHUB_REPO/main/appcast.xml</link>
+        <description>Claude Meter release feed</description>
+        <language>en</language>
+        <item>
+            <title>Version $VERSION</title>
+            <pubDate>$PUBDATE</pubDate>
+            <sparkle:version>$BUILD</sparkle:version>
+            <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>$MIN_MACOS</sparkle:minimumSystemVersion>
+            <enclosure
+                url="$DOWNLOAD_URL"
+                sparkle:edSignature="$SIGNATURE"
+                length="$LENGTH"
+                type="application/octet-stream"
+            />
+        </item>
+    </channel>
+</rss>
+XML
+
+# ── Commit & push appcast ─────────────────────────────────────────────────────
+
+echo "▶ Committing appcast.xml…"
+git -C "$PROJECT_DIR" add appcast.xml
+git -C "$PROJECT_DIR" commit -m "Release $TAG"
+git -C "$PROJECT_DIR" push
+
+# ── GitHub Release ────────────────────────────────────────────────────────────
+
+echo "▶ Creating GitHub release $TAG…"
+gh release create "$TAG" "$DMG_PATH" \
+    --repo "$GITHUB_REPO" \
+    --title "Claude Meter $VERSION" \
+    --notes "Download and open **$DMG_NAME** to install."
+
+echo ""
+echo "✓ Released Claude Meter $VERSION"
+echo "  https://github.com/$GITHUB_REPO/releases/tag/$TAG"

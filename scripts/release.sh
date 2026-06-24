@@ -179,20 +179,24 @@ cat > "$PROJECT_DIR/appcast.xml" <<XML
 </rss>
 XML
 
-# ── Commit & push appcast ─────────────────────────────────────────────────────
-
-echo "▶ Committing appcast.xml…"
-git -C "$PROJECT_DIR" add appcast.xml
-git -C "$PROJECT_DIR" commit -m "Release $TAG"
-git -C "$PROJECT_DIR" push
-
 # ── GitHub Release ────────────────────────────────────────────────────────────
+# Publish the release (with the DMG asset) BEFORE the appcast is pushed, so the
+# Sparkle feed can never advertise a download URL that doesn't exist yet. If this
+# step fails, the appcast was not pushed and the previous release stays live.
 
 echo "▶ Creating GitHub release ${TAG}…"
 gh release create "$TAG" "$DMG_PATH" \
     --repo "$GITHUB_REPO" \
     --title "Claude Meter $VERSION" \
     --notes "Download and open **$DMG_NAME** to install."
+
+# ── Commit & push appcast ─────────────────────────────────────────────────────
+# Done last: the appcast goes live to Sparkle only once the DMG is downloadable.
+
+echo "▶ Committing appcast.xml…"
+git -C "$PROJECT_DIR" add appcast.xml
+git -C "$PROJECT_DIR" commit -m "Release $TAG"
+git -C "$PROJECT_DIR" push
 
 echo ""
 echo "✓ Released Claude Meter $VERSION"

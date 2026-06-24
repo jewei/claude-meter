@@ -3,6 +3,10 @@
 A macOS menu bar app that shows your Claude usage at a glance — current 5-hour
 session and weekly limits, with color-coded progress and optional notifications.
 
+<p align="center">
+  <img src="assets/claude-meter-screenshot.png" alt="Claude Meter screenshot showing Claude and Cursor usage cards" width="420">
+</p>
+
 ## Features
 
 - **Menu bar meter** — current-session and weekly usage percentages, always visible.

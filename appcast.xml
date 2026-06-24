@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Release checklist: replace PLACEHOLDER signature and length via generate_appcast before publishing a higher sparkle:version. -->
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
     <channel>
         <title>Claude Meter</title>
@@ -7,15 +6,15 @@
         <description>Claude Meter release feed</description>
         <language>en</language>
         <item>
-            <title>Version 1.0</title>
-            <pubDate>Tue, 23 Jun 2026 00:00:00 +0000</pubDate>
-            <sparkle:version>1</sparkle:version>
-            <sparkle:shortVersionString>1.0</sparkle:shortVersionString>
+            <title>Version 1.1</title>
+            <pubDate>Wed, 24 Jun 2026 05:25:21 +0000</pubDate>
+            <sparkle:version>2</sparkle:version>
+            <sparkle:shortVersionString>1.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <enclosure
-                url="https://github.com/jewei/claude-meter/releases/download/v1.0/ClaudeMeter-1.0.dmg"
-                sparkle:edSignature="Ee3c0/si7g7MhaDe2gV+CWtmomC4QgNDBp41Xbk5TSe1DFKjvSMd8Z1V0ZjBCUewth5GK9IqvCZh4UvgTUdACA=="
-                length="2680458"
+                url="https://github.com/jewei/claude-meter/releases/download/v1.1/ClaudeMeter-1.1.dmg"
+                sparkle:edSignature="TuKoEw8sfVcdM08LRENNqF4Y2w3SiheeMJ2vpcOKyhYdIiGVseIPsgsIXXP5Wonkv8FJp9wnSZAB1t2lbcRzAw=="
+                length="3415679"
                 type="application/octet-stream"
             />
         </item>

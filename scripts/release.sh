@@ -68,6 +68,27 @@ PBXPROJ="$PROJECT/project.pbxproj"
 sed -i '' -E "s/(MARKETING_VERSION = )[^;]*;/\1$VERSION;/g" "$PBXPROJ"
 sed -i '' -E "s/(CURRENT_PROJECT_VERSION = )[^;]*;/\1$BUILD;/g" "$PBXPROJ"
 
+# ── Changelog notes ───────────────────────────────────────────────────────────
+# Capture the [Unreleased] section body now and fail fast if it's empty — no
+# point building for ten minutes only to discover there are no release notes.
+# The file itself is promoted to the new version only after the GitHub release
+# succeeds (see "Promote changelog" below), matching the commit-last philosophy.
+
+CHANGELOG="$PROJECT_DIR/CHANGELOG.md"
+RELEASE_NOTES="$(awk '
+    /^## \[Unreleased\]/ { capture = 1; next }
+    /^## \[/ && capture  { exit }
+    capture              { print }
+' "$CHANGELOG" | sed -e '/./,$!d' | sed -e :a -e '/^\n*$/{$d;N;ba}')"
+
+if [[ -z "${RELEASE_NOTES//[[:space:]]/}" ]]; then
+    echo "error: CHANGELOG.md [Unreleased] section is empty — add release notes first." >&2
+    exit 1
+fi
+
+# Previous tag, captured before any tag is created, for the changelog compare link.
+PREV_TAG="$(git -C "$PROJECT_DIR" describe --tags --abbrev=0 2>/dev/null || true)"
+
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
 BUILD_DIR="$PROJECT_DIR/build"
@@ -211,13 +232,36 @@ echo "▶ Creating GitHub release ${TAG}…"
 gh release create "$TAG" "$DMG_PATH" \
     --repo "$GITHUB_REPO" \
     --title "Claude Meter $VERSION" \
-    --notes "Download and open **$DMG_NAME** to install."
+    --notes "$RELEASE_NOTES
 
-# ── Commit & push appcast ─────────────────────────────────────────────────────
+---
+Download and open **$DMG_NAME** to install."
+
+# ── Promote changelog ─────────────────────────────────────────────────────────
+# The release now exists, so stamp [Unreleased] → [VERSION] - DATE, open a fresh
+# empty Unreleased section above it, and refresh the compare links at the bottom.
+
+echo "▶ Promoting CHANGELOG.md…"
+TODAY="$(date -u '+%Y-%m-%d')"
+if [[ -n "$PREV_TAG" ]]; then
+    VERSION_LINK="[$VERSION]: https://github.com/$GITHUB_REPO/compare/$PREV_TAG...$TAG"
+else
+    VERSION_LINK="[$VERSION]: https://github.com/$GITHUB_REPO/releases/tag/$TAG"
+fi
+
+CM_VERSION="$VERSION" CM_DATE="$TODAY" \
+CM_UNREL="[Unreleased]: https://github.com/$GITHUB_REPO/compare/$TAG...HEAD" \
+CM_VERLINK="$VERSION_LINK" \
+perl -0pi -e '
+    s{## \[Unreleased\]\n}{"## [Unreleased]\n\n## [$ENV{CM_VERSION}] - $ENV{CM_DATE}\n"}e;
+    s{^\[Unreleased\]:.*$}{"$ENV{CM_UNREL}\n$ENV{CM_VERLINK}"}me;
+' "$CHANGELOG"
+
+# ── Commit & push ─────────────────────────────────────────────────────────────
 # Done last: the appcast goes live to Sparkle only once the DMG is downloadable.
 
-echo "▶ Committing version bump + appcast.xml…"
-git -C "$PROJECT_DIR" add appcast.xml ClaudeMeter.xcodeproj/project.pbxproj
+echo "▶ Committing version bump + changelog + appcast.xml…"
+git -C "$PROJECT_DIR" add appcast.xml CHANGELOG.md ClaudeMeter.xcodeproj/project.pbxproj
 git -C "$PROJECT_DIR" commit -m "Release $TAG"
 git -C "$PROJECT_DIR" push
 

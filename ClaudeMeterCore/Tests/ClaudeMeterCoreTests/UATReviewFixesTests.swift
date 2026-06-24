@@ -51,6 +51,13 @@ struct DiagnosticsSanitizerTests {
         #expect(!out.contains("browser-cookie-value"))
         #expect(out.contains("sessionKey=[redacted]"))
     }
+
+    @Test func redactsJWT() {
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyfDEyMyIsImV4cCI6OTk5OX0.abc-DEF_123"
+        let out = DiagnosticsSanitizer.sanitize("token: \(jwt)")
+        #expect(!out.contains(jwt))
+        #expect(out.contains("[redacted]"))
+    }
 }
 
 @Suite("CredentialValidator")

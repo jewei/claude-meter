@@ -6,6 +6,9 @@ struct UsageCardView: View {
     let window: LimitWindow
     let now: Date
     var thresholds: UsageThresholds = .default
+    /// Optional brand glyph (asset name) shown before the title.
+    var leadingIcon: String? = nil
+    var leadingIconColor: Color = .secondary
 
     /// Rolling windows past their reset read as 0% (see `LimitWindow.resolved`),
     /// so an idle session never lingers on a stale percentage.
@@ -13,7 +16,14 @@ struct UsageCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(spacing: 7) {
+                if let leadingIcon {
+                    Image(leadingIcon)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 15, height: 15)
+                        .foregroundStyle(leadingIconColor)
+                }
                 Text(label)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.primary)

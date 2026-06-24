@@ -16,6 +16,11 @@ final class AppState: ObservableObject {
     @Published private(set) var isActive: Bool
     @Published private(set) var hasEnabledDataSource: Bool
 
+    // Cursor is a parallel, optional source (separate billing model from Claude).
+    @Published var cursorUsage: CursorUsage? = nil
+    @Published var cursorError: String? = nil
+    private let cursorProvider = CursorUsageProvider()
+
     var pipeline: any ClaudeMeterPipeline
     let notificationEngine = NotificationEngine()
     private let store: SnapshotStore
@@ -196,6 +201,15 @@ final class AppState: ObservableObject {
             }
         }
 
+        if AppSettings.hasClaudeSource {
+            await pollClaude(generation: generation)
+        }
+        if AppSettings.cursorSourceEnabled {
+            await pollCursor(generation: generation)
+        }
+    }
+
+    private func pollClaude(generation: Int) async {
         do {
             let result = try await pipeline.poll(now: Date())
             guard generation == pipelineGeneration, canPoll else { return }
@@ -229,6 +243,21 @@ final class AppState: ObservableObject {
         } catch {
             guard generation == pipelineGeneration, canPoll else { return }
             lastError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    /// Cursor runs independently of the Claude pipeline so a Cursor failure never
+    /// affects Claude state (and vice versa).
+    private func pollCursor(generation: Int) async {
+        do {
+            let usage = try await cursorProvider.fetchUsage(now: Date())
+            guard generation == pipelineGeneration, canPoll else { return }
+            cursorUsage = usage
+            cursorError = nil
+        } catch {
+            guard generation == pipelineGeneration, canPoll else { return }
+            if case CursorError.notDetected = error { cursorUsage = nil }
+            cursorError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
 
@@ -344,6 +373,7 @@ enum AppSettings {
     static let statuslineSourceEnabledKey = "statuslineSourceEnabled"
     static let oauthSourceEnabledKey = "oauthSourceEnabled"
     static let claudeAISourceEnabledKey = "claudeAISourceEnabled"
+    static let cursorSourceEnabledKey = "cursorSourceEnabled"
 
     static var isActive: Bool {
         get { UserDefaults.standard.bool(forKey: isActiveKey) }
@@ -365,8 +395,18 @@ enum AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: claudeAISourceEnabledKey) }
     }
 
-    static var hasEnabledDataSource: Bool {
+    /// Cursor defaults off — it's an opt-in source with a different billing model.
+    static var cursorSourceEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: cursorSourceEnabledKey) }
+        set { UserDefaults.standard.set(newValue, forKey: cursorSourceEnabledKey) }
+    }
+
+    static var hasClaudeSource: Bool {
         statuslineSourceEnabled || oauthSourceEnabled || claudeAISourceEnabled
+    }
+
+    static var hasEnabledDataSource: Bool {
+        hasClaudeSource || cursorSourceEnabled
     }
 
     private static func boolDefaultingTrue(forKey key: String) -> Bool {

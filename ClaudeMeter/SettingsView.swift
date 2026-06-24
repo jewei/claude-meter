@@ -359,7 +359,9 @@ private struct DataSettingsTab: View {
     @AppStorage(AppSettings.statuslineSourceEnabledKey) private var statuslineSourceEnabled = true
     @AppStorage(AppSettings.oauthSourceEnabledKey) private var oauthSourceEnabled = true
     @AppStorage(AppSettings.claudeAISourceEnabledKey) private var claudeAISourceEnabled = true
+    @AppStorage(AppSettings.cursorSourceEnabledKey) private var cursorSourceEnabled = false
 
+    @State private var cursorStatus = ""
     @State private var sessionKey = ""
     @State private var orgId = ""
     @State private var isConnected = false
@@ -407,13 +409,51 @@ private struct DataSettingsTab: View {
                 ) {
                     claudeAIContent
                 }
+
+                DataSourceCard(
+                    icon: "cursorarrow.rays",
+                    iconColor: .teal,
+                    title: "Cursor",
+                    subtitle: "Read Cursor billing-period usage.",
+                    isEnabled: $cursorSourceEnabled
+                ) {
+                    cursorContent
+                }
             }
             .padding(20)
         }
-        .onAppear { loadKeychainState() }
+        .onAppear { loadKeychainState(); loadCursorStatus() }
         .onChange(of: statuslineSourceEnabled) { _, _ in appState.rebuildPipeline() }
         .onChange(of: oauthSourceEnabled) { _, _ in appState.rebuildPipeline() }
         .onChange(of: claudeAISourceEnabled) { _, _ in appState.rebuildPipeline() }
+        .onChange(of: cursorSourceEnabled) { _, _ in loadCursorStatus(); appState.rebuildPipeline() }
+    }
+
+    @ViewBuilder
+    private var cursorContent: some View {
+        if cursorSourceEnabled {
+            HStack(spacing: 6) {
+                Image(systemName: cursorStatus.hasPrefix("Connected") ? "checkmark.circle.fill" : "exclamationmark.circle")
+                    .foregroundStyle(cursorStatus.hasPrefix("Connected") ? .green : .secondary)
+                Text(cursorStatus.isEmpty ? "Checking…" : cursorStatus)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private func loadCursorStatus() {
+        guard cursorSourceEnabled else { cursorStatus = ""; return }
+        Task.detached {
+            let status: String
+            if let creds = CursorTokenStore.detect() {
+                let plan = creds.membership.map { " · \($0)" } ?? ""
+                status = "Connected\(creds.email.map { ": \($0)" } ?? "")\(plan)"
+            } else {
+                status = "Cursor not detected — sign in to the Cursor app."
+            }
+            await MainActor.run { cursorStatus = status }
+        }
     }
 
     @ViewBuilder

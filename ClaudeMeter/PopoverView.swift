@@ -6,6 +6,7 @@ struct PopoverView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.openSettings) private var openSettings
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @AppStorage(AppSettings.cursorSourceEnabledKey) private var cursorSourceEnabled = false
     @State private var now = Date()
 
     private var usageThresholds: UsageThresholds {
@@ -17,6 +18,9 @@ struct PopoverView: View {
     }
 
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    /// Claude "clay" brand color used to tint the Claude glyph.
+    private static let claudeTint = Color(hex: "D97757")
 
     var body: some View {
         VStack(spacing: 0) {
@@ -66,22 +70,30 @@ struct PopoverView: View {
 
     // MARK: - Main content
 
+    private var hasCursor: Bool {
+        cursorSourceEnabled && appState.cursorUsage != nil
+    }
+
+    private var hasAnyData: Bool {
+        appState.snapshot != nil || hasCursor
+    }
+
     @ViewBuilder
     private var mainContent: some View {
         if needsOnboarding {
             onboardingContent
         } else if !appState.isActive {
-            if let snap = appState.snapshot {
-                usageState(snap)
+            if hasAnyData {
+                dataState
             } else {
                 inactiveState
             }
         } else if !appState.hasEnabledDataSource {
             noSourcesState
-        } else if appState.snapshot == nil && appState.isLoading {
+        } else if !hasAnyData && appState.isLoading {
             loadingState
-        } else if let snap = appState.snapshot {
-            usageState(snap)
+        } else if hasAnyData {
+            dataState
         } else if appState.lastError != nil {
             errorState
         } else {
@@ -219,34 +231,100 @@ struct PopoverView: View {
     }
 
     @ViewBuilder
-    private func usageState(_ snap: ClaudeUsageSnapshot) -> some View {
+    private var dataState: some View {
         VStack(spacing: 0) {
-            if let apiWarning = appState.primarySourceWarning {
-                apiDegradedNotice(apiWarning)
-                Divider()
-            } else if appState.lastError != nil {
-                pollErrorNotice
-                Divider()
+            if let snap = appState.snapshot {
+                if let apiWarning = appState.primarySourceWarning {
+                    apiDegradedNotice(apiWarning)
+                    Divider()
+                } else if appState.lastError != nil {
+                    pollErrorNotice
+                    Divider()
+                }
+                if appState.isStale {
+                    staleNotice
+                    Divider()
+                }
+                UsageCardView(
+                    label: "Current Session",
+                    window: snap.limits.currentSession,
+                    now: now,
+                    thresholds: usageThresholds,
+                    leadingIcon: "ClaudeLogo",
+                    leadingIconColor: Self.claudeTint
+                )
+                Divider().padding(.horizontal, 14)
+                UsageCardView(
+                    label: "This Week",
+                    window: snap.limits.currentWeekAllModels,
+                    now: now,
+                    thresholds: usageThresholds,
+                    leadingIcon: "ClaudeLogo",
+                    leadingIconColor: Self.claudeTint
+                )
             }
-            if appState.isStale {
-                staleNotice
-                Divider()
+            if hasCursor, let cursor = appState.cursorUsage {
+                if appState.snapshot != nil { Divider().padding(.horizontal, 14) }
+                cursorCard(cursor)
             }
-            UsageCardView(
-                label: "Current Session",
-                window: snap.limits.currentSession,
-                now: now,
-                thresholds: usageThresholds
-            )
-            Divider().padding(.horizontal, 14)
-            UsageCardView(
-                label: "This Week",
-                window: snap.limits.currentWeekAllModels,
-                now: now,
-                thresholds: usageThresholds
-            )
         }
     }
+
+    // MARK: - Cursor card
+
+    private func cursorCard(_ usage: CursorUsage) -> some View {
+        let severity = usageThresholds.severity(for: usage.percentUsed)
+        let tint: Color = {
+            switch severity {
+            case .warning: return .orange
+            case .critical, .overLimit: return .red
+            default: return .accentColor
+            }
+        }()
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image("CursorLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 15, height: 15)
+                Text("Cursor").font(.body.weight(.semibold))
+                Spacer()
+                Text(usage.clampedPercent.map { "\(Int($0.rounded()))%" } ?? "—")
+                    .font(.body.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(severity == .normal || severity == .unknown ? Color.primary : tint)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.primary.opacity(0.12))
+                    Capsule().fill(tint)
+                        .frame(width: max(0, geo.size.width * ((usage.clampedPercent ?? 0) / 100)))
+                }
+            }
+            .frame(height: 5)
+            if let subtitle = cursorSubtitle(usage) {
+                Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private func cursorSubtitle(_ usage: CursorUsage) -> String? {
+        var parts: [String] = []
+        if let spend = usage.spendText { parts.append("\(spend) spent") }
+        if let end = usage.periodEnd, end > now {
+            parts.append("Resets \(Self.cursorDateFormatter.string(from: end))")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private static let cursorDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .none
+        return f
+    }()
 
     // MARK: - Notices
 

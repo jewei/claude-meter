@@ -9,6 +9,8 @@ public enum DiagnosticsSanitizer {
         #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#
     private static let sessionKeyPattern = #"sk-ant-[A-Za-z0-9_-]+"#
     private static let oidcTokenPattern = #"oidc-[A-Za-z0-9._~+/\-=]+"#
+    /// JWTs (e.g. Cursor access/refresh tokens): three base64url segments.
+    private static let jwtPattern = #"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"#
     private static let bearerTokenPattern = #"(?i)(Bearer)\s+[A-Za-z0-9._~+/\-=]+"#
     private static let sessionCookiePattern = #"(?i)(sessionKey=)[^;\s]+"#
     private static let labeledTokenPattern =
@@ -23,6 +25,11 @@ public enum DiagnosticsSanitizer {
         )
         result = result.replacingOccurrences(
             of: oidcTokenPattern,
+            with: "[redacted]",
+            options: .regularExpression
+        )
+        result = result.replacingOccurrences(
+            of: jwtPattern,
             with: "[redacted]",
             options: .regularExpression
         )

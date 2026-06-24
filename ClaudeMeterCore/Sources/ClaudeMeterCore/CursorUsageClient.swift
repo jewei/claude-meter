@@ -1,8 +1,10 @@
 import Foundation
 
-public enum CursorError: Error, LocalizedError {
+public enum CursorError: Error, LocalizedError, Equatable {
     case notDetected
     case unauthorized
+    case forbidden
+    case usageDisabled
     case invalidResponse
     case httpError(Int)
 
@@ -10,6 +12,8 @@ public enum CursorError: Error, LocalizedError {
         switch self {
         case .notDetected:    "Cursor not detected — sign in to the Cursor app."
         case .unauthorized:   "Cursor session expired — open Cursor to refresh it."
+        case .forbidden:      "Cursor denied the request — check your account permissions."
+        case .usageDisabled:  "Cursor usage tracking is disabled for this account."
         case .invalidResponse: "Cursor returned an unexpected response."
         case .httpError(let code): "Cursor request failed (HTTP \(code))."
         }
@@ -40,29 +44,38 @@ public final class CursorUsageProvider: @unchecked Sendable {
 
     private let stateQueue = DispatchQueue(label: "com.jewei.claudemeter.cursor-provider.state")
     private var cachedAccessToken: String?
+    private var cachedRefreshToken: String?
 
     public init() {}
 
     public func fetchUsage(now: Date = Date()) async throws -> CursorUsage {
         guard let creds = CursorTokenStore.detect() else { throw CursorError.notDetected }
 
-        var token = cachedToken() ?? creds.accessToken
-        if CursorTokenStore.isExpiringSoon(token, now: now), let refreshToken = creds.refreshToken,
+        let refreshToken = readCachedRefreshToken() ?? creds.refreshToken
+        var token = readCachedAccessToken() ?? creds.accessToken
+
+        if CursorTokenStore.isExpiringSoon(token, now: now), let refreshToken,
            let refreshed = try? await refresh(refreshToken) {
-            token = refreshed
-            setCachedToken(refreshed)
+            token = refreshed.accessToken
+            setCachedTokens(access: refreshed.accessToken, refresh: refreshed.refreshToken)
         }
 
         do {
             return try await fetch(token: token, credentials: creds, now: now)
         } catch CursorError.unauthorized {
-            guard let refreshToken = creds.refreshToken,
+            if token != creds.accessToken {
+                setCachedTokens(access: nil, refresh: nil)
+                do {
+                    return try await fetch(token: creds.accessToken, credentials: creds, now: now)
+                } catch CursorError.unauthorized { }
+            }
+            guard let refreshToken = readCachedRefreshToken() ?? creds.refreshToken,
                   let refreshed = try? await refresh(refreshToken) else {
-                setCachedToken(nil)
+                setCachedTokens(access: nil, refresh: nil)
                 throw CursorError.unauthorized
             }
-            setCachedToken(refreshed)
-            return try await fetch(token: refreshed, credentials: creds, now: now)
+            setCachedTokens(access: refreshed.accessToken, refresh: refreshed.refreshToken)
+            return try await fetch(token: refreshed.accessToken, credentials: creds, now: now)
         }
     }
 
@@ -72,14 +85,15 @@ public final class CursorUsageProvider: @unchecked Sendable {
         let usageData = try await connectPost(path: Self.usagePath, token: token)
         let response = try JSONDecoder().decode(CursorUsageResponse.self, from: usageData)
 
-        var planName: String?
-        if let planData = try? await connectPost(path: Self.planInfoPath, token: token),
+        var planName = credentials.membership
+        if planName == nil,
+           let planData = try? await connectPost(path: Self.planInfoPath, token: token),
            let plan = try? JSONDecoder().decode(CursorPlanInfoResponse.self, from: planData) {
             planName = plan.planInfo?.planName
         }
 
-        return response.usage(
-            planName: planName ?? credentials.membership,
+        return try response.validatedUsage(
+            planName: planName,
             email: credentials.email,
             now: now
         )
@@ -97,12 +111,18 @@ public final class CursorUsageProvider: @unchecked Sendable {
         guard let http = response as? HTTPURLResponse else { throw CursorError.invalidResponse }
         switch http.statusCode {
         case 200: return data
-        case 401, 403: throw CursorError.unauthorized
+        case 401: throw CursorError.unauthorized
+        case 403: throw CursorError.forbidden
         default: throw CursorError.httpError(http.statusCode)
         }
     }
 
-    private func refresh(_ refreshToken: String) async throws -> String {
+    private struct RefreshResult: Sendable {
+        let accessToken: String
+        let refreshToken: String?
+    }
+
+    private func refresh(_ refreshToken: String) async throws -> RefreshResult {
         var request = URLRequest(url: Self.tokenURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -115,16 +135,28 @@ public final class CursorUsageProvider: @unchecked Sendable {
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw CursorError.unauthorized
         }
-        return try JSONDecoder().decode(CursorOAuthResponse.self, from: data).accessToken
+        let decoded = try JSONDecoder().decode(CursorOAuthResponse.self, from: data)
+        return RefreshResult(accessToken: decoded.accessToken, refreshToken: decoded.refreshToken)
     }
 
     // MARK: - In-memory token cache
 
-    private func cachedToken() -> String? {
+    private func readCachedAccessToken() -> String? {
         stateQueue.sync { cachedAccessToken }
     }
 
-    private func setCachedToken(_ token: String?) {
-        stateQueue.sync { cachedAccessToken = token }
+    private func readCachedRefreshToken() -> String? {
+        stateQueue.sync { cachedRefreshToken }
+    }
+
+    private func setCachedTokens(access: String?, refresh: String?) {
+        stateQueue.sync {
+            cachedAccessToken = access
+            if let refresh {
+                cachedRefreshToken = refresh
+            } else if access == nil {
+                cachedRefreshToken = nil
+            }
+        }
     }
 }

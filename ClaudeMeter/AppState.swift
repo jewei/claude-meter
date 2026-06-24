@@ -19,6 +19,7 @@ final class AppState: ObservableObject {
     // Cursor is a parallel, optional source (separate billing model from Claude).
     @Published var cursorUsage: CursorUsage? = nil
     @Published var cursorError: String? = nil
+    @Published var cursorLastPolledAt: Date? = nil
     private let cursorProvider = CursorUsageProvider()
 
     var pipeline: any ClaudeMeterPipeline
@@ -149,7 +150,36 @@ final class AppState: ObservableObject {
     }
 
     var isStale: Bool {
-        AppGroupConfig.isSnapshotStale(lastPollAt: snapshot?.lastSuccessfulPollAt)
+        let claudeStale = AppGroupConfig.isSnapshotStale(lastPollAt: snapshot?.lastSuccessfulPollAt)
+        let cursorStale = AppSettings.cursorSourceEnabled
+            && cursorUsage != nil
+            && AppGroupConfig.isSnapshotStale(lastPollAt: cursorLastPolledAt)
+        return claudeStale || cursorStale
+    }
+
+    var cursorIsStale: Bool {
+        AppGroupConfig.isSnapshotStale(lastPollAt: cursorLastPolledAt)
+    }
+
+    func setCursorSourceEnabled(_ enabled: Bool) {
+        hasEnabledDataSource = AppSettings.hasEnabledDataSource
+        if enabled {
+            if isActive { startPolling() }
+        } else {
+            clearCursorState()
+            if canPoll {
+                // Claude sources may still be enabled.
+            } else {
+                stopPolling()
+                isLoading = false
+            }
+        }
+    }
+
+    func clearCursorState() {
+        cursorUsage = nil
+        cursorError = nil
+        cursorLastPolledAt = nil
     }
 
     func rebuildPipeline() {
@@ -173,12 +203,22 @@ final class AppState: ObservableObject {
     }
 
     var severity: UsageSeverity {
-        guard let snap = snapshot else { return .unknown }
         let thresholds = Self.currentThresholds()
-        return UsageSeverity.highest(
-            thresholds.severity(for: snap.limits.currentSession.percentUsed),
-            thresholds.severity(for: snap.limits.currentWeekAllModels.percentUsed)
-        )
+        var result: UsageSeverity = .unknown
+        if let snap = snapshot {
+            result = UsageSeverity.highest(
+                result,
+                thresholds.severity(for: snap.limits.currentSession.percentUsed)
+            )
+            result = UsageSeverity.highest(
+                result,
+                thresholds.severity(for: snap.limits.currentWeekAllModels.percentUsed)
+            )
+        }
+        if AppSettings.cursorSourceEnabled, let cursor = cursorUsage {
+            result = UsageSeverity.highest(result, thresholds.severity(for: cursor.percentUsed))
+        }
+        return result
     }
 
     static func currentThresholds() -> UsageThresholds {
@@ -202,9 +242,14 @@ final class AppState: ObservableObject {
         }
 
         if AppSettings.hasClaudeSource {
-            await pollClaude(generation: generation)
-        }
-        if AppSettings.cursorSourceEnabled {
+            async let claude: Void = pollClaude(generation: generation)
+            if AppSettings.cursorSourceEnabled {
+                async let cursor: Void = pollCursor(generation: generation)
+                _ = await (claude, cursor)
+            } else {
+                await claude
+            }
+        } else if AppSettings.cursorSourceEnabled {
             await pollCursor(generation: generation)
         }
     }
@@ -254,9 +299,15 @@ final class AppState: ObservableObject {
             guard generation == pipelineGeneration, canPoll else { return }
             cursorUsage = usage
             cursorError = nil
+            cursorLastPolledAt = Date()
         } catch {
             guard generation == pipelineGeneration, canPoll else { return }
-            if case CursorError.notDetected = error { cursorUsage = nil }
+            switch error {
+            case CursorError.notDetected, CursorError.unauthorized, CursorError.forbidden:
+                cursorUsage = nil
+            default:
+                break
+            }
             cursorError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }

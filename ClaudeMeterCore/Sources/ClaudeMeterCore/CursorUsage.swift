@@ -77,6 +77,12 @@ struct CursorUsageResponse: Decodable {
         )
     }
 
+    /// Validates API flags before mapping to display state.
+    func validatedUsage(planName: String?, email: String?, now: Date) throws -> CursorUsage {
+        if enabled == false { throw CursorError.usageDisabled }
+        return usage(planName: planName, email: email, now: now)
+    }
+
     /// Cursor returns the cycle boundary as a string that is either epoch
     /// milliseconds/seconds or an ISO-8601 timestamp.
     static func parseDate(_ string: String?) -> Date? {

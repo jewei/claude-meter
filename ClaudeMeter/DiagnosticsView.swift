@@ -51,21 +51,33 @@ struct DiagnosticsView: View {
                 LabeledContent("Source", value: DiagnosticsSanitizer.sanitize(snap.source.command))
                 LabeledContent("Parser", value: snap.parserVersion)
             }
+            if AppSettings.cursorSourceEnabled {
+                LabeledContent("Cursor", value: appState.cursorUsage != nil ? "Connected" : "Not available")
+            }
         }
     }
 
     private var pollSection: some View {
         Section("Last Poll") {
-            LabeledContent("Time", value: lastPollTimeText)
+            LabeledContent("Claude", value: claudePollTimeText)
             if let err = appState.lastError {
-                LabeledContent("Error") {
+                LabeledContent("Claude error") {
                     Text(DiagnosticsSanitizer.sanitize(err))
                         .foregroundStyle(Color.cmCritical)
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
                 }
-            } else {
-                LabeledContent("Error", value: "None")
+            }
+            if AppSettings.cursorSourceEnabled {
+                LabeledContent("Cursor", value: cursorPollTimeText)
+                if let err = appState.cursorError {
+                    LabeledContent("Cursor error") {
+                        Text(DiagnosticsSanitizer.sanitize(err))
+                            .foregroundStyle(Color.cmCritical)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                }
             }
         }
     }
@@ -96,8 +108,15 @@ struct DiagnosticsView: View {
 
     // MARK: - Helpers
 
-    private var lastPollTimeText: String {
-        guard let date = appState.lastPolledAt else { return "Never" }
+    private var claudePollTimeText: String {
+        guard let date = appState.snapshot?.lastSuccessfulPollAt ?? appState.lastPolledAt else {
+            return "Never"
+        }
+        return isoFormatter.string(from: date)
+    }
+
+    private var cursorPollTimeText: String {
+        guard let date = appState.cursorLastPolledAt else { return "Never" }
         return isoFormatter.string(from: date)
     }
 
@@ -128,10 +147,16 @@ struct DiagnosticsView: View {
             "  Mode: \(dataSourceMode)",
             "",
             "Last Poll",
-            "  Time: \(lastPollTimeText)",
-            "  Error: \(DiagnosticsSanitizer.sanitize(appState.lastError ?? "None"))",
-            "",
+            "  Claude: \(claudePollTimeText)",
+            "  Claude error: \(DiagnosticsSanitizer.sanitize(appState.lastError ?? "None"))",
         ]
+        if AppSettings.cursorSourceEnabled {
+            lines += [
+                "  Cursor: \(cursorPollTimeText)",
+                "  Cursor error: \(DiagnosticsSanitizer.sanitize(appState.cursorError ?? "None"))",
+            ]
+        }
+        lines += [""]
 
         if let snap = appState.snapshot {
             lines += [

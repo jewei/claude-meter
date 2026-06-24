@@ -22,15 +22,23 @@ public enum CursorTokenStore {
     private static let sqlite3Path = "/usr/bin/sqlite3"
     private static let securityPath = "/usr/bin/security"
 
+    private static let stateKeys = [
+        "cursorAuth/accessToken",
+        "cursorAuth/refreshToken",
+        "cursorAuth/cachedEmail",
+        "cursorAuth/stripeMembershipType",
+    ]
+
     // MARK: - Detection
 
     /// Best-effort detection of Cursor credentials. Returns nil when Cursor isn't
     /// installed / signed in.
     public static func detect() -> CursorCredentials? {
-        var access = readStateValue("cursorAuth/accessToken")
-        var refresh = readStateValue("cursorAuth/refreshToken")
-        let email = readStateValue("cursorAuth/cachedEmail")
-        let membership = readStateValue("cursorAuth/stripeMembershipType")?.lowercased()
+        let values = readStateValues(stateKeys)
+        var access = values["cursorAuth/accessToken"]
+        var refresh = values["cursorAuth/refreshToken"]
+        let email = values["cursorAuth/cachedEmail"]
+        let membership = values["cursorAuth/stripeMembershipType"]?.lowercased()
 
         if access?.isEmpty ?? true { access = keychainValue(service: "cursor-access-token") }
         if refresh?.isEmpty ?? true { refresh = keychainValue(service: "cursor-refresh-token") }
@@ -67,25 +75,37 @@ public enum CursorTokenStore {
     /// True when the token is missing an expiry, already expired, or expires
     /// within `buffer` seconds (default 5 minutes — matches Cursor's own buffer).
     public static func isExpiringSoon(_ accessToken: String, buffer: TimeInterval = 300, now: Date = Date()) -> Bool {
-        guard let exp = expiry(of: accessToken) else { return false }
+        guard let exp = expiry(of: accessToken) else { return true }
         return exp.timeIntervalSince(now) < buffer
     }
 
     // MARK: - SQLite read
 
-    static func readStateValue(_ key: String) -> String? {
-        guard FileManager.default.fileExists(atPath: stateDBPath) else { return nil }
+    static func readStateValues(_ keys: [String]) -> [String: String] {
+        guard FileManager.default.fileExists(atPath: stateDBPath), !keys.isEmpty else { return [:] }
         // Keys are fixed constants, so the inline query is injection-safe.
-        let query = "SELECT value FROM ItemTable WHERE key='\(key)' LIMIT 1;"
-        guard let output = run(sqlite3Path, ["-readonly", stateDBPath, query]) else { return nil }
-        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        let quoted = keys.map { "'\($0)'" }.joined(separator: ", ")
+        let query = "SELECT key, value FROM ItemTable WHERE key IN (\(quoted));"
+        guard let output = run(sqlite3Path, ["-readonly", stateDBPath, query]) else { return [:] }
+
+        var result: [String: String] = [:]
+        for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
+            let parts = line.split(separator: "|", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { continue }
+            let value = unquoteStoredValue(parts[1])
+            if !value.isEmpty { result[parts[0]] = value }
+        }
+        return result
+    }
+
+    static func readStateValue(_ key: String) -> String? {
+        readStateValues([key])[key]
     }
 
     private static func keychainValue(service: String) -> String? {
         guard let output = run(securityPath, ["find-generic-password", "-s", service, "-w"]) else { return nil }
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        return trimmed.isEmpty ? nil : unquoteStoredValue(trimmed)
     }
 
     // MARK: - Helpers
@@ -97,20 +117,31 @@ public enum CursorTokenStore {
         return Data(base64Encoded: s)
     }
 
+    static func unquoteStoredValue(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2,
+              trimmed.hasPrefix("\""),
+              trimmed.hasSuffix("\"")
+        else { return trimmed }
+        return String(trimmed.dropFirst().dropLast())
+    }
+
     private static func run(_ launchPath: String, _ arguments: [String]) -> String? {
         guard FileManager.default.isExecutableFile(atPath: launchPath) else { return nil }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: launchPath)
         process.arguments = arguments
         let stdout = Pipe()
+        let stderr = Pipe()
         process.standardOutput = stdout
-        process.standardError = Pipe()
+        process.standardError = stderr
         do {
             try process.run()
         } catch {
             return nil
         }
         let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        _ = stderr.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { return nil }
         return String(data: data, encoding: .utf8)

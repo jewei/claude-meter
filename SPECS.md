@@ -122,6 +122,15 @@ its own toggle.
 | 2        | `oauthSourceEnabled`      | `true`  | Claude Code OAuth usage API   |
 | 3        | `claudeAISourceEnabled`   | `true`  | claude.ai session usage API   |
 
+A fourth source is available outside the Claude fallback chain:
+
+| Key                    | Default | Source                                      |
+| ---------------------- | ------- | ------------------------------------------- |
+| `cursorSourceEnabled`  | `false` | Cursor billing-period usage (unofficial API) |
+
+Cursor is polled in parallel when enabled; it does not participate in the
+Claude `StatuslinePipeline -> OAuthPipeline -> …` chain.
+
 The pipeline must preserve this order while skipping disabled methods. For
 example:
 
@@ -146,7 +155,8 @@ Connecting a method may turn its toggle on:
 The menu bar label contains:
 
 - SF Symbol icon.
-- Optional current-session percent text from the latest snapshot.
+- Optional current-session percent text from the latest snapshot, or Cursor
+  percent when Cursor is the only source with data.
 
 Icon selection:
 

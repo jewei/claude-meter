@@ -362,6 +362,8 @@ private struct DataSettingsTab: View {
     @AppStorage(AppSettings.cursorSourceEnabledKey) private var cursorSourceEnabled = false
 
     @State private var cursorStatus = ""
+    @State private var cursorStatusGeneration = 0
+    @State private var cursorStatusTask: Task<Void, Never>?
     @State private var sessionKey = ""
     @State private var orgId = ""
     @State private var isConnected = false
@@ -414,7 +416,7 @@ private struct DataSettingsTab: View {
                     icon: "cursorarrow.rays",
                     iconColor: .teal,
                     title: "Cursor",
-                    subtitle: "Read Cursor billing-period usage.",
+                    subtitle: "Read Cursor billing-period usage (unofficial API; may break).",
                     isEnabled: $cursorSourceEnabled
                 ) {
                     cursorContent
@@ -426,16 +428,28 @@ private struct DataSettingsTab: View {
         .onChange(of: statuslineSourceEnabled) { _, _ in appState.rebuildPipeline() }
         .onChange(of: oauthSourceEnabled) { _, _ in appState.rebuildPipeline() }
         .onChange(of: claudeAISourceEnabled) { _, _ in appState.rebuildPipeline() }
-        .onChange(of: cursorSourceEnabled) { _, _ in loadCursorStatus(); appState.rebuildPipeline() }
+        .onChange(of: cursorSourceEnabled) { _, enabled in
+            loadCursorStatus()
+            appState.setCursorSourceEnabled(enabled)
+        }
     }
 
     @ViewBuilder
     private var cursorContent: some View {
         if cursorSourceEnabled {
-            HStack(spacing: 6) {
-                Image(systemName: cursorStatus.hasPrefix("Connected") ? "checkmark.circle.fill" : "exclamationmark.circle")
-                    .foregroundStyle(cursorStatus.hasPrefix("Connected") ? .green : .secondary)
-                Text(cursorStatus.isEmpty ? "Checking…" : cursorStatus)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: cursorStatus.hasPrefix("Connected") ? "checkmark.circle.fill" : "exclamationmark.circle")
+                        .foregroundStyle(cursorStatus.hasPrefix("Connected") ? .green : .secondary)
+                    Text(cursorStatus.isEmpty ? "Checking…" : cursorStatus)
+                }
+                if let err = appState.cursorError {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text(err)
+                    }
+                    .foregroundStyle(.red)
+                }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -443,17 +457,34 @@ private struct DataSettingsTab: View {
     }
 
     private func loadCursorStatus() {
-        guard cursorSourceEnabled else { cursorStatus = ""; return }
-        Task.detached {
+        cursorStatusTask?.cancel()
+        guard cursorSourceEnabled else {
+            cursorStatus = ""
+            return
+        }
+        cursorStatus = ""
+        cursorStatusGeneration += 1
+        let generation = cursorStatusGeneration
+        cursorStatusTask = Task {
             let status: String
             if let creds = CursorTokenStore.detect() {
                 let plan = creds.membership.map { " · \($0)" } ?? ""
-                status = "Connected\(creds.email.map { ": \($0)" } ?? "")\(plan)"
+                let emailPart = creds.email.map { ": \(Self.maskedEmail($0))" } ?? ""
+                status = "Connected\(emailPart)\(plan)"
             } else {
                 status = "Cursor not detected — sign in to the Cursor app."
             }
+            guard !Task.isCancelled, generation == cursorStatusGeneration else { return }
             await MainActor.run { cursorStatus = status }
         }
+    }
+
+    private static func maskedEmail(_ email: String) -> String {
+        let parts = email.split(separator: "@", maxSplits: 1)
+        guard parts.count == 2 else { return "***" }
+        let local = parts[0]
+        let masked = local.count <= 1 ? "*" : "\(local.prefix(1))***"
+        return "\(masked)@\(parts[1])"
     }
 
     @ViewBuilder

@@ -53,9 +53,33 @@ struct CursorUsageTests {
         #expect(CursorTokenStore.isExpiringSoon(token, buffer: 300, now: now.addingTimeInterval(3500)))
     }
 
-    @Test func nonJWTHasNoExpiryAndIsNotConsideredExpiring() {
+    @Test func opaqueTokenTreatedAsExpiringSoon() {
         #expect(CursorTokenStore.expiry(of: "not-a-jwt") == nil)
-        #expect(CursorTokenStore.isExpiringSoon("not-a-jwt") == false)
+        #expect(CursorTokenStore.isExpiringSoon("not-a-jwt") == true)
+    }
+
+    @Test func unquotesJsonStoredValues() {
+        #expect(CursorTokenStore.unquoteStoredValue("\"token-value\"") == "token-value")
+        #expect(CursorTokenStore.unquoteStoredValue("plain") == "plain")
+    }
+
+    @Test func disabledUsageThrows() throws {
+        let json = """
+        { "planUsage": { "totalSpend": 0, "limit": 0, "totalPercentUsed": 0 }, "enabled": false }
+        """
+        let response = try JSONDecoder().decode(CursorUsageResponse.self, from: Data(json.utf8))
+        #expect(throws: CursorError.usageDisabled) {
+            try response.validatedUsage(planName: nil, email: nil, now: Date())
+        }
+    }
+
+    @Test func refreshResponseDecodesRotatedRefreshToken() throws {
+        let json = """
+        { "access_token": "new-access", "refresh_token": "new-refresh" }
+        """
+        let response = try JSONDecoder().decode(CursorOAuthResponse.self, from: Data(json.utf8))
+        #expect(response.accessToken == "new-access")
+        #expect(response.refreshToken == "new-refresh")
     }
 
     // MARK: - Helpers

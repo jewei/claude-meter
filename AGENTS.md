@@ -73,6 +73,14 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 - **Keychain** — `ClaudeAIKeychain`, service `com.jewei.claudemeter`, accounts `claudeai.sessionKey` and `claudeai.orgId`. Session key is a browser cookie; never log it. Org ID is pasted manually (auto-detect may pick the wrong org).
 - **Failure handling** — transient errors fall back to `CachedSnapshotPipeline` and surface a `ParseWarning` (`field: "claude.ai API"`); auth failures (401/403) are fatal and do **not** fall back.
 
+## Cursor usage (opt-in)
+
+- **Separate from Claude pipeline** — `cursorSourceEnabled` defaults `false`; polled in parallel via `pollCursor`, not part of `makePipeline()`.
+- **Token read-only** — `CursorTokenStore` reads `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` (batched `sqlite3 -readonly`) with Keychain fallback (`cursor-access-token` / `cursor-refresh-token`). Never writes back.
+- **API** — unofficial Connect-RPC on `api2.cursor.sh` (`GetCurrentPeriodUsage`); may break without notice. `totalPercentUsed` is authoritative over raw spend/limit.
+- **Refresh** — in-memory only for the app session; rotated refresh tokens are cached in `CursorUsageProvider`. Open Cursor if refresh fails.
+- **UX** — `cursorError` surfaces in popover/settings/diagnostics; menu bar severity includes Cursor when enabled. Not in widget/notifications yet.
+
 ## Notifications
 
 - **`NotificationEngine` is an actor**; only processes non-stale snapshots; thresholds via `AppGroupConfig.currentThresholds(defaults:)`.
@@ -92,7 +100,7 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 
 ## Diagnostics sanitizer
 
-Always sanitize before logging or copying. `DiagnosticsSanitizer.sanitize` redacts emails, home paths (`/Users/<name>`), UUIDs, `sk-ant-*` / `oidc-*` tokens, `Bearer …`, `sessionKey=…`, labeled token fields (`access[_]token`, `refresh[_]token`), and labeled CLI fields (`Session name:`, `Organization:`, `Cwd:`, `Email:`, `Session id:`).
+Always sanitize before logging or copying. `DiagnosticsSanitizer.sanitize` redacts emails, home paths (`/Users/<name>`), UUIDs, `sk-ant-*` / `oidc-*` tokens, JWTs (`eyJ…`), `Bearer …`, `sessionKey=…`, labeled token fields (`access[_]token`, `refresh[_]token`), and labeled CLI fields (`Session name:`, `Organization:`, `Cwd:`, `Email:`, `Session id:`).
 
 ---
 
@@ -102,3 +110,4 @@ Always sanitize before logging or copying. `DiagnosticsSanitizer.sanitize` redac
 - No explicit `fsync` on snapshot atomic writes.
 - No in-app notice when the claude.ai session key (logout / ~90 days) or the OAuth access token expires.
 - `default.json` collides if multiple sessions ever lack a `session_id` (rare — Claude Code always sends one).
+- Cursor usage is not in the widget or notification engine yet.

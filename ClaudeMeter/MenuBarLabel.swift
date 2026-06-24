@@ -28,9 +28,7 @@ struct MenuBarLabel: View {
 
     private var iconName: String {
         if appState.isLoading { return "arrow.clockwise" }
-        if appState.lastError != nil && appState.snapshot == nil {
-            return "exclamationmark.circle"
-        }
+        if showsErrorIcon { return "exclamationmark.circle" }
         if appState.isStale { return "clock.badge.exclamationmark" }
         switch appState.severity {
         case .warning: return "gauge.with.dots.needle.67percent"
@@ -39,8 +37,25 @@ struct MenuBarLabel: View {
         }
     }
 
+    private var showsErrorIcon: Bool {
+        if appState.lastError != nil && appState.snapshot == nil { return true }
+        if AppSettings.cursorSourceEnabled,
+           appState.cursorError != nil,
+           appState.cursorUsage == nil,
+           appState.snapshot == nil {
+            return true
+        }
+        return false
+    }
+
     private var labelText: String? {
-        guard let snap = appState.snapshot else { return nil }
-        return snap.limits.currentSession.displayPercent
+        if let snap = appState.snapshot {
+            return snap.limits.currentSession.displayPercent
+        }
+        if AppSettings.cursorSourceEnabled,
+           let percent = appState.cursorUsage?.clampedPercent {
+            return "\(Int(percent.rounded()))%"
+        }
+        return nil
     }
 }

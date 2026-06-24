@@ -96,6 +96,8 @@ struct PopoverView: View {
             dataState
         } else if appState.lastError != nil {
             errorState
+        } else if cursorSourceEnabled && appState.cursorError != nil {
+            cursorErrorState
         } else {
             setupState
         }
@@ -181,12 +183,18 @@ struct PopoverView: View {
     private var loadingState: some View {
         VStack(spacing: 10) {
             ProgressView().scaleEffect(0.8)
-            Text("Checking Claude…")
+            Text(loadingMessage)
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 32)
+    }
+
+    private var loadingMessage: String {
+        if AppSettings.hasClaudeSource && cursorSourceEnabled { return "Checking usage…" }
+        if cursorSourceEnabled && !AppSettings.hasClaudeSource { return "Checking Cursor…" }
+        return "Checking Claude…"
     }
 
     private var setupState: some View {
@@ -196,10 +204,42 @@ struct PopoverView: View {
                 .foregroundStyle(.secondary)
             Text("No usage data yet")
                 .font(.system(size: 13, weight: .medium))
-            Text("Open Claude Code so the statusline bridge can publish usage, or connect OAuth/claude.ai in Settings.")
+            Text(setupMessage)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
+        .padding(.horizontal, 16)
+    }
+
+    private var setupMessage: String {
+        if cursorSourceEnabled && !AppSettings.hasClaudeSource {
+            return "Sign in to the Cursor app so Claude Meter can read your billing usage."
+        }
+        if AppSettings.hasClaudeSource && cursorSourceEnabled {
+            return "Open Claude Code or sign in to Cursor, or connect OAuth/claude.ai in Settings."
+        }
+        return "Open Claude Code so the statusline bridge can publish usage, or connect OAuth/claude.ai in Settings."
+    }
+
+    private var cursorErrorState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "exclamationmark.circle")
+                .font(.system(size: 28))
+                .foregroundStyle(.red)
+            Text("Could not read Cursor usage")
+                .font(.system(size: 13, weight: .medium))
+            if let err = appState.cursorError {
+                Text(err)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            Button("Open Settings") { openSettingsAndCompleteOnboarding() }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 28)
@@ -265,6 +305,13 @@ struct PopoverView: View {
             }
             if hasCursor, let cursor = appState.cursorUsage {
                 if appState.snapshot != nil { Divider().padding(.horizontal, 14) }
+                if appState.cursorError != nil {
+                    cursorPollErrorNotice
+                    Divider()
+                } else if appState.cursorIsStale {
+                    cursorStaleNotice
+                    Divider()
+                }
                 cursorCard(cursor)
             }
         }
@@ -354,6 +401,31 @@ struct PopoverView: View {
         }
         .font(.body)
         .foregroundStyle(.orange)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private var cursorPollErrorNotice: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle")
+            Text(appState.cursorError ?? "Cursor refresh failed — showing last known data")
+                .lineLimit(3)
+        }
+        .font(.body)
+        .foregroundStyle(.orange)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private var cursorStaleNotice: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "clock")
+            Text("Cursor data may be outdated")
+        }
+        .font(.body)
+        .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -476,7 +548,9 @@ struct PopoverView: View {
     }
 
     private var updatedText: String {
-        guard let polledAt = appState.snapshot?.lastSuccessfulPollAt ?? appState.lastPolledAt else {
+        let claudeAt = appState.snapshot?.lastSuccessfulPollAt ?? appState.lastPolledAt
+        let cursorAt = appState.cursorLastPolledAt
+        guard let polledAt = [claudeAt, cursorAt].compactMap({ $0 }).max() else {
             return "Not yet polled"
         }
         let elapsed = Int(now.timeIntervalSince(polledAt))
@@ -499,6 +573,7 @@ struct PopoverView: View {
             || ClaudeAIKeychain.load() != nil
             || OAuthKeychain.load() != nil
             || OAuthKeychain.loadManual() != nil
+            || CursorTokenStore.isAvailable()
             || Self.claudeMeterDirectoryExists {
             hasCompletedOnboarding = true
         }

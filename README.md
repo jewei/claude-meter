@@ -7,9 +7,9 @@ session and weekly limits, with color-coded progress and optional notifications.
 
 - **Menu bar meter** — current-session and weekly usage percentages, always visible.
 - **Zero-config with Claude Code** — installs a transparent statusline bridge; no API keys needed.
-- **Optional sources** — Claude Code OAuth usage API and the claude.ai usage API as fallbacks.
+- **Optional sources** — Claude Code OAuth usage API, the claude.ai usage API, and (opt-in) Cursor billing-period usage.
 - **Desktop widget**, threshold-based notifications, launch at login, and auto-updates.
-- **Private** — local-first; credentials live in the macOS Keychain and are never logged.
+- **Private** — local-first; Claude credentials live in the macOS Keychain. Cursor reads the locally signed-in Cursor app's token store (read-only); nothing is logged.
 
 ## Requirements
 

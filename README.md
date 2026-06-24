@@ -32,4 +32,9 @@ Running the app requires a provisioning profile (App Group entitlement).
 
 ## License
 
-© Jewei Mak. See the repository for details.
+[MIT](LICENSE) © Jewei Mak
+
+## Disclaimer
+
+Claude Meter is an independent, community project. It is not affiliated with,
+endorsed by, or sponsored by Anthropic. "Claude" is a trademark of Anthropic.

@@ -767,6 +767,14 @@ private struct AboutSettingsTab: View {
                         .tracking(1)
                 }
                 .padding(.top, 4)
+
+                Text("An independent community project. Not affiliated with or endorsed by Anthropic. \"Claude\" is a trademark of Anthropic.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 40)
+                    .padding(.top, 8)
             }
 
             Spacer()

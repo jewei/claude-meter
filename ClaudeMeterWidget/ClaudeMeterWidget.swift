@@ -108,6 +108,7 @@ struct ClaudeMeterProvider: TimelineProvider {
 
 // MARK: - Widget configuration
 
+@main
 struct ClaudeMeterWidget: Widget {
     let kind = "ClaudeMeterWidget"
 

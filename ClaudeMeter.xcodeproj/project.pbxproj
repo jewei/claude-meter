@@ -13,6 +13,7 @@
 		53F33AD45698499A81E9BD5D /* MenuBarLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D39F041AC0894892922A9F90 /* MenuBarLabel.swift */; };
 		60B15B0A00A24EE9A3EED2B1 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07DBE9DE99AE4570ABDAA767 /* SettingsView.swift */; };
 		69BE2128EB0F41ACBF84F636 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0B0219D0744A52A145A257 /* AppState.swift */; };
+		A1B2C3D4E5F60718293A4B5C /* AppUpdater.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5D /* AppUpdater.swift */; };
 		C1D2E3F4A5B6C7D8E9F0A1B2 /* PowerMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2D3E4F5A6B7C8D9E0F1A2B3 /* PowerMonitor.swift */; };
 		6D0A86762E7646A0B0D33439 /* UsageCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 270C84D9D514496BA99A010A /* UsageCardView.swift */; };
 		86A371C31B9048C1BF2F59F8 /* PopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3715D40A5AE0421A91C5BED0 /* PopoverView.swift */; };
@@ -64,6 +65,7 @@
 		803E43377A64429FBFAFB75C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		9A2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ClaudeMeterWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A33698B9F9BB4AE4BDF69097 /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B5D /* AppUpdater.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdater.swift; sourceTree = "<group>"; };
 		AA2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeMeterWidgetBundle.swift; sourceTree = "<group>"; };
 		AB2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeMeterWidget.swift; sourceTree = "<group>"; };
 		AC2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClaudeMeterWidget.entitlements; sourceTree = "<group>"; };
@@ -105,6 +107,7 @@
 			children = (
 				262C9E3CBCA04E07BB465F9B /* ClaudeMeterApp.swift */,
 				AD0B0219D0744A52A145A257 /* AppState.swift */,
+				A1B2C3D4E5F60718293A4B5D /* AppUpdater.swift */,
 				C2D3E4F5A6B7C8D9E0F1A2B3 /* PowerMonitor.swift */,
 				A33698B9F9BB4AE4BDF69097 /* DesignTokens.swift */,
 				D39F041AC0894892922A9F90 /* MenuBarLabel.swift */,
@@ -271,6 +274,7 @@
 			files = (
 				B39A8BBB94F64426BDF7E3C0 /* ClaudeMeterApp.swift in Sources */,
 				69BE2128EB0F41ACBF84F636 /* AppState.swift in Sources */,
+				A1B2C3D4E5F60718293A4B5C /* AppUpdater.swift in Sources */,
 				C1D2E3F4A5B6C7D8E9F0A1B2 /* PowerMonitor.swift in Sources */,
 				328C7D858BAA4A39B59ED745 /* DesignTokens.swift in Sources */,
 				53F33AD45698499A81E9BD5D /* MenuBarLabel.swift in Sources */,

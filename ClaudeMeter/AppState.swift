@@ -1,6 +1,5 @@
 import AppKit
 import ClaudeMeterCore
-import Sparkle
 import SwiftUI
 import WidgetKit
 
@@ -29,8 +28,7 @@ final class AppState: ObservableObject {
     var pipeline: any ClaudeMeterPipeline
     let notificationEngine = NotificationEngine()
     private let store: SnapshotStore
-    private let updaterDelegate: UpdaterDelegate
-    private let updaterController: SPUStandardUpdaterController
+    private let appUpdater: AppUpdater
     private var pollTask: Task<Void, Never>?
     private var rebuildDebounceTask: Task<Void, Never>?
     private var pipelineGeneration = 0
@@ -76,17 +74,8 @@ final class AppState: ObservableObject {
         self.store = store
         self.isActive = AppSettings.isActive
         self.hasEnabledDataSource = AppSettings.hasEnabledDataSource
-        // Create delegate and controller before self is fully available so we can pass the
-        // delegate reference at construction time (SPUStandardUpdaterController doesn't
-        // allow changing its user driver delegate after init).
-        let delegate = UpdaterDelegate()
-        let controller = SPUStandardUpdaterController(
-            startingUpdater: true,
-            updaterDelegate: nil,
-            userDriverDelegate: delegate
-        )
-        self.updaterDelegate = delegate
-        self.updaterController = controller
+        let appUpdater = AppUpdater(startingUpdater: true)
+        self.appUpdater = appUpdater
         self.pipeline = AppState.makePipeline(store: store)
         // Self is fully initialized from here on.
         self.snapshot = try? store.readLatest()
@@ -94,7 +83,7 @@ final class AppState: ObservableObject {
         if snapshot == nil, let record = try? store.readLastError() {
             self.lastError = record.message
         }
-        delegate.appState = self
+        appUpdater.appState = self
         let monitor = PowerMonitor()
         monitor.onWake = { [weak self] in self?.refreshNow() }
         self.powerMonitor = monitor
@@ -103,20 +92,15 @@ final class AppState: ObservableObject {
     }
 
     init(pipeline: any ClaudeMeterPipeline, initialSnapshot: ClaudeUsageSnapshot? = nil) {
-        let delegate = UpdaterDelegate()
         self.store = SnapshotStore(directory: FileManager.default.temporaryDirectory)
         self.isActive = true
         self.hasEnabledDataSource = true
-        self.updaterDelegate = delegate
-        self.updaterController = SPUStandardUpdaterController(
-            startingUpdater: false,
-            updaterDelegate: nil,
-            userDriverDelegate: delegate
-        )
+        let appUpdater = AppUpdater(startingUpdater: false)
+        self.appUpdater = appUpdater
         self.pipeline = pipeline
         self.snapshot = initialSnapshot
         self.lastPolledAt = initialSnapshot?.lastSuccessfulPollAt
-        delegate.appState = self
+        appUpdater.appState = self
     }
 
     deinit {
@@ -161,8 +145,7 @@ final class AppState: ObservableObject {
     }
 
     func checkForUpdates() {
-        NSApp.setActivationPolicy(.regular)
-        updaterController.updater.checkForUpdates()
+        appUpdater.checkForUpdates()
     }
 
     func refreshNow() {
@@ -518,56 +501,6 @@ final class AppState: ObservableObject {
                         message: DiagnosticsSanitizer.sanitize(message)
                     ))
             }
-        }
-    }
-}
-
-// MARK: - Sparkle user driver delegate
-
-// @unchecked Sendable + nonisolated(unsafe): Sparkle calls these from the main thread;
-// mutations hop to MainActor via Task for safe off-main fallback.
-private final class UpdaterDelegate: NSObject, SPUStandardUserDriverDelegate, @unchecked Sendable {
-    nonisolated(unsafe) weak var appState: AppState?
-
-    var supportsGentleScheduledUpdateReminders: Bool { true }
-
-    func standardUserDriverShouldHandleShowingScheduledUpdate(
-        _ update: SUAppcastItem,
-        andInImmediateFocus immediateFocus: Bool
-    ) -> Bool {
-        // Delegate handles background scheduled checks (immediateFocus == false);
-        // let Sparkle handle any check the user explicitly triggered.
-        immediateFocus
-    }
-
-    func standardUserDriverWillHandleShowingUpdate(
-        _ handleShowingUpdate: Bool,
-        forUpdate update: SUAppcastItem,
-        state: SPUUserUpdateState
-    ) {
-        Task { @MainActor [weak appState] in
-            guard let appState else { return }
-            if handleShowingUpdate {
-                NSApp.setActivationPolicy(.regular)
-            } else {
-                appState.updateAvailable = true
-                await appState.notificationEngine.postUpdateAvailable(
-                    version: update.displayVersionString
-                )
-            }
-        }
-    }
-
-    func standardUserDriverDidReceiveUserAttention(forUpdate update: SUAppcastItem) {
-        Task { @MainActor [weak appState] in
-            appState?.updateAvailable = false
-        }
-    }
-
-    func standardUserDriverWillFinishUpdateSession() {
-        Task { @MainActor [weak appState] in
-            appState?.updateAvailable = false
-            NSApp.setActivationPolicy(.accessory)
         }
     }
 }

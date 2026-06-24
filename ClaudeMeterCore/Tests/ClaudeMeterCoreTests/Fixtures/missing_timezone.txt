@@ -1,9 +1,0 @@
-Model:            claude-opus-4-8
-
-Current session
-████████████▌                                      25% used
-Resets 2:50pm
-
-Current week (all models)
-███████████████                                    30% used
-Resets Jun 27 at 3pm

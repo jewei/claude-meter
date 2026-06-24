@@ -118,14 +118,6 @@
 			path = ClaudeMeter;
 			sourceTree = "<group>";
 		};
-		538093EE2FE9371200231EE5 /* Recovered References */ = {
-			isa = PBXGroup;
-			children = (
-				AE2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework */,
-			);
-			name = "Recovered References";
-			sourceTree = "<group>";
-		};
 		6065E92A9B9B40F79BC316EB /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -152,7 +144,6 @@
 				0A02B602D5924ABE89324079 /* ClaudeMeter */,
 				8A2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget */,
 				6065E92A9B9B40F79BC316EB /* Products */,
-				538093EE2FE9371200231EE5 /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};

@@ -96,7 +96,7 @@ struct UsageCardView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         } else if let raw = resolvedWindow.rawResetText {
-            Text(raw == "rolling 7 days" ? "Last 7 days" : "Resets \(raw)")
+            Text("Resets \(raw)")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }

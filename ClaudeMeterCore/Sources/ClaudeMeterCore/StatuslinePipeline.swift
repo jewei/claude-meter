@@ -3,7 +3,7 @@ import Foundation
 /// Primary pipeline that reads Claude Code's own rate-limit data via the statusline bridge.
 ///
 /// Fallback order when stale (rate-limited to once per minute):
-/// 1. Statusline bridge (`~/.claude-meter/statusline.json`)
+/// 1. Statusline bridge (`~/.claude-meter/sessions/<session_id>.json`, merged)
 /// 2. OAuth usage API (`GET /api/oauth/usage` with Bearer token)
 /// 3. claude.ai usage API (`GET /api/organizations/{orgId}/usage` with sessionKey cookie)
 public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable {

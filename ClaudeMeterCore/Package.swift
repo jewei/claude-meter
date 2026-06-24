@@ -15,8 +15,7 @@ let package = Package(
         .testTarget(
             name: "ClaudeMeterCoreTests",
             dependencies: ["ClaudeMeterCore"],
-            path: "Tests/ClaudeMeterCoreTests",
-            resources: [.copy("Fixtures")]
+            path: "Tests/ClaudeMeterCoreTests"
         )
     ]
 )

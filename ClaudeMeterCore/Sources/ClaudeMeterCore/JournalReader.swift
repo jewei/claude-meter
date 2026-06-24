@@ -23,14 +23,15 @@ public struct JournalReader: Sendable {
         self.cache = cache
     }
 
-    /// Returns a dict of local-date-string → assistant message count for all days
-    /// within `days` days ending at `now`.
+    /// Returns a dict of local-date-string → assistant message count for the
+    /// last `days` calendar days ending at `now` (inclusive).
     public func messageCounts(
         daysBack days: Int = 7,
         now: Date = Date()
     ) -> [String: Int] {
         let cal = Calendar.current
-        let cutoff = cal.startOfDay(for: cal.date(byAdding: .day, value: -days, to: now)!)
+        let offset = -(max(days, 1) - 1)
+        let cutoff = cal.startOfDay(for: cal.date(byAdding: .day, value: offset, to: now)!)
         let fm = FileManager.default
 
         guard let projectDirs = try? fm.contentsOfDirectory(
@@ -142,7 +143,7 @@ public struct JournalReader: Sendable {
         return nil
     }
 
-    static func dayString(from date: Date) -> String {
+    public static func dayString(from date: Date) -> String {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
         f.locale = Locale(identifier: "en_US_POSIX")

@@ -26,11 +26,14 @@ public struct ClaudeAIPipeline: ClaudeMeterPipeline {
     }
 
     public func poll(now: Date) async throws -> ParseResult {
-        let journalCounts = journal.messageCounts(daysBack: 7, now: now)
+        let journal = self.journal
+        let journalCounts = await Task.detached {
+            journal.messageCounts(daysBack: 7, now: now)
+        }.value
 
         do {
             let usage = try await client.fetchUsage()
-            let todayStr = StatsCacheReader.dayString(from: now)
+            let todayStr = JournalReader.dayString(from: now)
             let todayMsgs = journalCounts[todayStr] ?? 0
             let weekMsgs = journalCounts.values.reduce(0, +)
 
@@ -94,7 +97,7 @@ public struct ClaudeAIPipeline: ClaudeMeterPipeline {
             let fallbackResult = try await fallback.poll(now: now)
 
             var snapshot = fallbackResult.snapshot
-            if var snap = snapshot, let previousPollAt {
+            if var snap = snapshot {
                 snap.lastSuccessfulPollAt = previousPollAt
                 snap.state.isStale = true
                 snapshot = snap

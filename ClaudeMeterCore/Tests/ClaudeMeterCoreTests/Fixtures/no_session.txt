@@ -1,6 +1,0 @@
-Version:          2.1.185
-Model:            claude-opus-4-8
-
-Current week (all models)
-███████████████                                    30% used
-Resets Jun 27 at 3pm (Asia/Kuala_Lumpur)

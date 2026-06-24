@@ -358,7 +358,6 @@ private struct WindowRow: View {
 
     private var resetText: String {
         guard let date = resolvedWindow.resetsAt else {
-            if resolvedWindow.rawResetText == "rolling 7 days" { return "Last 7 days" }
             return resolvedWindow.rawResetText.map { "Resets \($0)" } ?? "—"
         }
         let diff = date.timeIntervalSince(referenceDate)

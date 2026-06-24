@@ -4,8 +4,8 @@ import Foundation
 ///
 /// Claude Code sends a rich JSON payload to the `statusLine.command` in
 /// `~/.claude/settings.json` via stdin on every API call. The bridge snippet
-/// captures this data atomically to `~/.claude-meter/statusline.json` without
-/// disrupting any existing statusline command.
+/// captures this data atomically to per-session files under
+/// `~/.claude-meter/sessions/` without disrupting any existing statusline command.
 public enum StatuslineBridge: Sendable {
 
     // MARK: - Paths
@@ -36,7 +36,7 @@ public enum StatuslineBridge: Sendable {
     /// Inline bash snippet: reads stdin, extracts `session_id`, and atomically
     /// writes the payload to `~/.claude-meter/sessions/<session_id>.json`, then
     /// pipes stdin through to the next command unchanged.
-    static let bridgeSnippet = #"bash -c 'I=$(cat);D=$HOME/.claude-meter/sessions;mkdir -p "$D" 2>/dev/null;S=$(printf "%s" "$I"|sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p");[ -z "$S" ]&&S=default;T="$D/.tmp.$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/$S.json" 2>/dev/null||rm -f "$T" 2>/dev/null;printf "%s" "$I"'"#
+    static let bridgeSnippet = #"bash -c 'I=$(cat);D=$HOME/.claude-meter/sessions;mkdir -p "$D" 2>/dev/null;S=$(printf "%s" "$I"|sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p");S=$(printf "%s" "$S"|tr -cd "[:alnum:]._-");[ -z "$S" ]&&S=default;T="$D/.tmp.$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/$S.json" 2>/dev/null||rm -f "$T" 2>/dev/null;printf "%s" "$I"'"#
 
     /// Snippets from earlier app versions; recognised so `install()` can migrate
     /// them to the current snippet and `uninstall()` can remove them cleanly.
@@ -180,7 +180,12 @@ public enum StatuslineBridge: Sendable {
             if ra != rb { return ra < rb }
             return a.usedPercentage < b.usedPercentage
         }
-        let sevenDay = payloads.compactMap(\.sevenDay).max { $0.usedPercentage < $1.usedPercentage }
+        let sevenDay = payloads.compactMap(\.sevenDay).max { a, b in
+            let ra = a.resetsAt ?? .distantPast
+            let rb = b.resetsAt ?? .distantPast
+            if ra != rb { return ra < rb }
+            return a.usedPercentage < b.usedPercentage
+        }
 
         return StatuslinePayload(
             fiveHour: fiveHour,

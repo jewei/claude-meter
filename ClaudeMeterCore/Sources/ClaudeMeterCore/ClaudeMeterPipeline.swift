@@ -5,8 +5,6 @@ public protocol ClaudeMeterPipeline: Sendable {
     func poll(now: Date) async throws -> ParseResult
 }
 
-extension StatsCachePipeline: ClaudeMeterPipeline {}
-
 /// Terminal fallback: serves the last persisted snapshot marked stale.
 public struct CachedSnapshotPipeline: Sendable {
     public let store: SnapshotStore

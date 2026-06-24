@@ -37,7 +37,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     }
 
     public func poll(now: Date) async throws -> ParseResult {
-        let oauthMode = UserDefaults.standard.string(forKey: "oauthMode") ?? ""
+        let oauthMode = UserDefaults.standard.string(forKey: AppGroupConfig.oauthModeKey) ?? ""
         guard !oauthMode.isEmpty else {
             return try await fallback.poll(now: now)
         }
@@ -59,8 +59,6 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             setCachedCredentials(refreshed)
             if oauthMode == "manual" {
                 OAuthKeychain.saveManual(accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
-            } else {
-                OAuthKeychain.save(refreshed)
             }
         }
 
@@ -75,8 +73,6 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             setCachedCredentials(refreshed)
             if oauthMode == "manual" {
                 OAuthKeychain.saveManual(accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
-            } else {
-                OAuthKeychain.save(refreshed)
             }
             if let result = try? await fetchAndBuild(token: refreshed.accessToken, now: now) {
                 return result

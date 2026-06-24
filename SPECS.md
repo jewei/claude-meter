@@ -536,8 +536,7 @@ Freshness and merge:
   fresh file but stale numbers — see below).
 - `StatuslineBridge.readData(maxAge:)` reads **every** fresh session file and
   `mergePayloads` picks the freshest reading per window: latest `resets_at` for
-  the five-hour window (most recent observation), max `used_percentage` for the
-  weekly window (usage is monotonic). This prevents the meter flipping between
+  the five-hour and weekly windows (most recent `resets_at` observation). This prevents the meter flipping between
   concurrent sessions' snapshots.
 - Fresh statusline data is accepted only when it includes at least one rate-limit
   window: `five_hour` or `seven_day`.
@@ -942,8 +941,7 @@ product behavior.
 
 - `~/.claude/stats-cache.json` as a user-facing setup path.
 - `StatsCachePipeline` in the production poll chain.
-- `StatsCacheReader` in production polling, except indirect helper use for
-  local day strings in `ClaudeAIPipeline`.
+- `StatsCacheReader` as a production data source.
 - CLI status parsing as a production data source.
 - Running `claude status` as a subprocess.
 - Raw Claude CLI output collection as a user-facing diagnostic feature.
@@ -974,24 +972,14 @@ product behavior.
 - History retention setting (`historyRetentionDays`).
 - sqlite3 linker dependency.
 
-### 11.4 Legacy code intentionally retained but not production
+### 11.4 Removed legacy CLI stack
 
-The following remain in the package for tests, fixtures, or SwiftUI previews,
-but should not be reintroduced into the production polling path without a new
-product decision:
+The following were removed from the package (previously kept for tests/previews only):
 
-- `StatsCachePipeline`
-- `StatsCacheReader`
-- `SnapshotPipeline`
-- `ClaudeOutputParser`
-- `CommandRunner`
-- `CLIPathDetector`
-- `ANSIStripper`
+- `StatsCachePipeline`, `StatsCacheReader`, `SnapshotPipeline`
+- `ClaudeOutputParser`, `CommandRunner`, `CLIPathDetector`, `ANSIStripper`, `TokenParser`, `ResetTimeParser`
 
-`StatsCacheReader` should not be used as a production data source; its local
-day-string helper may still be reused by `ClaudeAIPipeline`. `JournalReader` is
-still used by `ClaudeAIPipeline` to supplement display with message counts; that
-is the only production journal use.
+`JournalReader` remains in production: `ClaudeAIPipeline` uses it for cosmetic message-count labels on the claude.ai tier.
 
 ---
 

@@ -103,8 +103,30 @@ struct StatuslineBridgeTests {
     // Five-hour: latest reset wins (the current session), not the highest percentage.
     #expect(merged?.fiveHour?.usedPercentage == 7)
     #expect(merged?.fiveHour?.resetsAt == Date(timeIntervalSince1970: 1782256200))
-    // Weekly usage is monotonic, so the maximum is freshest.
+    // Weekly: latest `resets_at` wins (same as five-hour); stale idle sessions
+    // after a reset must not inflate the merged percentage.
     #expect(merged?.sevenDay?.usedPercentage == 61)
+  }
+
+  @Test func mergePayloadsWeeklyPrefersLatestResetAfterRegression() {
+    func payload(
+      sevenDayPct: Double, sevenDayReset: TimeInterval, capturedAt: Date
+    ) -> StatuslineBridge.StatuslinePayload {
+      StatuslineBridge.StatuslinePayload(
+        fiveHour: nil,
+        sevenDay: .init(usedPercentage: sevenDayPct, resetsAt: Date(timeIntervalSince1970: sevenDayReset)),
+        sessionId: "s", sessionName: nil, cwd: nil, modelId: nil, modelDisplayName: nil,
+        totalCostUsd: nil, totalApiDurationMs: nil, codeLinesAdded: nil, codeLinesRemoved: nil,
+        cliVersion: nil, capturedAt: capturedAt
+      )
+    }
+
+    let staleIdle = payload(sevenDayPct: 60, sevenDayReset: 1_780_000_000, capturedAt: Date(timeIntervalSince1970: 100))
+    let activeFresh = payload(sevenDayPct: 5, sevenDayReset: 1_782_000_000, capturedAt: Date(timeIntervalSince1970: 200))
+
+    let merged = StatuslineBridge.mergePayloads([staleIdle, activeFresh])
+    #expect(merged?.sevenDay?.usedPercentage == 5)
+    #expect(merged?.sevenDay?.resetsAt == Date(timeIntervalSince1970: 1_782_000_000))
   }
 
   @Test func mergePayloadsReturnsNilForEmptyInput() {

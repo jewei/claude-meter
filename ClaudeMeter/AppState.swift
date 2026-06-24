@@ -28,10 +28,12 @@ final class AppState: ObservableObject {
     private let updaterDelegate: UpdaterDelegate
     private let updaterController: SPUStandardUpdaterController
     private var pollTask: Task<Void, Never>?
+    private var rebuildDebounceTask: Task<Void, Never>?
     private var pipelineGeneration = 0
     private var refreshPending = false
 
     private static let pollIntervalSeconds: TimeInterval = 60
+    private static let rebuildDebounceMilliseconds: UInt64 = 300
 
     var primarySourceWarning: String? {
         lastPollResult?.warnings.first { $0.field == "claude.ai API" }?.message
@@ -101,6 +103,7 @@ final class AppState: ObservableObject {
 
     deinit {
         pollTask?.cancel()
+        rebuildDebounceTask?.cancel()
     }
 
     func startPolling() {
@@ -149,12 +152,15 @@ final class AppState: ObservableObject {
         isPopoverOpen = false
     }
 
+    var claudeIsStale: Bool {
+        AppGroupConfig.isSnapshotStale(lastPollAt: snapshot?.lastSuccessfulPollAt)
+    }
+
     var isStale: Bool {
-        let claudeStale = AppGroupConfig.isSnapshotStale(lastPollAt: snapshot?.lastSuccessfulPollAt)
         let cursorStale = AppSettings.cursorSourceEnabled
             && cursorUsage != nil
             && AppGroupConfig.isSnapshotStale(lastPollAt: cursorLastPolledAt)
-        return claudeStale || cursorStale
+        return claudeIsStale || cursorStale
     }
 
     var cursorIsStale: Bool {
@@ -166,6 +172,7 @@ final class AppState: ObservableObject {
         if enabled {
             if isActive { startPolling() }
         } else {
+            pipelineGeneration += 1
             clearCursorState()
             if canPoll {
                 // Claude sources may still be enabled.
@@ -182,11 +189,27 @@ final class AppState: ObservableObject {
         cursorLastPolledAt = nil
     }
 
+    /// Debounced rebuild for source toggles — avoids restarting the poll loop on every flip.
+    func scheduleRebuildPipeline() {
+        rebuildDebounceTask?.cancel()
+        rebuildDebounceTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.rebuildDebounceMilliseconds))
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self?.rebuildPipeline() }
+        }
+    }
+
     func rebuildPipeline() {
         pipelineGeneration += 1
         hasEnabledDataSource = AppSettings.hasEnabledDataSource
         pipeline = AppState.makePipeline(store: store)
-        startPolling()
+        installStatuslineBridgeIfNeeded()
+        if canPoll && pollTask == nil {
+            startPolling()
+        } else if !canPoll {
+            stopPolling()
+            isLoading = false
+        }
     }
 
     func setActive(_ active: Bool) {
@@ -204,15 +227,18 @@ final class AppState: ObservableObject {
 
     var severity: UsageSeverity {
         let thresholds = Self.currentThresholds()
+        let now = Date()
         var result: UsageSeverity = .unknown
         if let snap = snapshot {
+            let session = snap.limits.currentSession.resolved(asOf: now)
+            let week = snap.limits.currentWeekAllModels.resolved(asOf: now)
             result = UsageSeverity.highest(
                 result,
-                thresholds.severity(for: snap.limits.currentSession.percentUsed)
+                thresholds.severity(for: session.percentUsed)
             )
             result = UsageSeverity.highest(
                 result,
-                thresholds.severity(for: snap.limits.currentWeekAllModels.percentUsed)
+                thresholds.severity(for: week.percentUsed)
             )
         }
         if AppSettings.cursorSourceEnabled, let cursor = cursorUsage {
@@ -227,6 +253,7 @@ final class AppState: ObservableObject {
 
     private func poll() async {
         guard canPoll else { return }
+        installStatuslineBridgeIfNeeded()
         let generation = pipelineGeneration
         guard !isLoading else {
             refreshPending = true
@@ -255,8 +282,12 @@ final class AppState: ObservableObject {
     }
 
     private func pollClaude(generation: Int) async {
+        let pipeline = self.pipeline
+        let now = Date()
         do {
-            let result = try await pipeline.poll(now: Date())
+            let result = try await Task.detached {
+                try await pipeline.poll(now: now)
+            }.value
             guard generation == pipelineGeneration, canPoll else { return }
 
             lastPollResult = result
@@ -273,7 +304,7 @@ final class AppState: ObservableObject {
                 await notificationEngine.process(
                     snapshot: snap,
                     previous: previous,
-                    isStale: isStale || snap.state.isStale
+                    isStale: claudeIsStale || snap.state.isStale
                 )
                 if shouldReloadWidget(previous: previous, current: snap) {
                     WidgetCenter.shared.reloadAllTimelines()
@@ -294,14 +325,22 @@ final class AppState: ObservableObject {
     /// Cursor runs independently of the Claude pipeline so a Cursor failure never
     /// affects Claude state (and vice versa).
     private func pollCursor(generation: Int) async {
+        let provider = cursorProvider
+        let now = Date()
         do {
-            let usage = try await cursorProvider.fetchUsage(now: Date())
-            guard generation == pipelineGeneration, canPoll else { return }
+            let usage = try await Task.detached {
+                try await provider.fetchUsage(now: now)
+            }.value
+            guard generation == pipelineGeneration,
+                  canPoll,
+                  AppSettings.cursorSourceEnabled else { return }
             cursorUsage = usage
             cursorError = nil
             cursorLastPolledAt = Date()
         } catch {
-            guard generation == pipelineGeneration, canPoll else { return }
+            guard generation == pipelineGeneration,
+                  canPoll,
+                  AppSettings.cursorSourceEnabled else { return }
             switch error {
             case CursorError.notDetected, CursorError.unauthorized, CursorError.forbidden:
                 cursorUsage = nil
@@ -425,6 +464,7 @@ enum AppSettings {
     static let oauthSourceEnabledKey = "oauthSourceEnabled"
     static let claudeAISourceEnabledKey = "claudeAISourceEnabled"
     static let cursorSourceEnabledKey = "cursorSourceEnabled"
+    static let oauthModeKey = AppGroupConfig.oauthModeKey
 
     static var isActive: Bool {
         get { UserDefaults.standard.bool(forKey: isActiveKey) }

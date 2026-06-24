@@ -78,7 +78,7 @@ xcodebuild archive \
     -archivePath "$ARCHIVE_PATH" \
     -destination "generic/platform=macOS" \
     ONLY_ACTIVE_ARCH=NO \
-    | xcpretty --quiet 2>/dev/null || true
+    | xcpretty --quiet 2>/dev/null
 
 if [[ ! -d "$ARCHIVE_PATH" ]]; then
     echo "error: archive failed — run with 'set -x' or check Xcode for details." >&2
@@ -107,7 +107,7 @@ xcodebuild -exportArchive \
     -archivePath "$ARCHIVE_PATH" \
     -exportPath "$EXPORT_DIR" \
     -exportOptionsPlist "$EXPORT_OPTIONS" \
-    | xcpretty --quiet 2>/dev/null || true
+    | xcpretty --quiet 2>/dev/null
 
 if [[ ! -d "$APP_PATH" ]]; then
     echo "error: export failed." >&2

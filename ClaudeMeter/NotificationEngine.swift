@@ -147,14 +147,14 @@ actor NotificationEngine {
         return status == .authorized || status == .provisional
     }
 
-    private static let shortTimeFormatter: DateFormatter = {
+    private static nonisolated(unsafe) let shortTimeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.timeStyle = .short
         f.dateStyle = .none
         return f
     }()
 
-    private static let shortDateTimeFormatter: DateFormatter = {
+    private static nonisolated(unsafe) let shortDateTimeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.timeStyle = .short
         f.dateStyle = .short
@@ -172,8 +172,4 @@ actor NotificationEngine {
         }
         return Self.shortDateTimeFormatter.string(from: date)
     }
-}
-
-private extension Double {
-    var positive: Double? { self > 0 ? self : nil }
 }

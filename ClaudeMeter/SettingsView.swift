@@ -106,7 +106,7 @@ private struct OAuthConnectionSection: View {
     let appState: AppState
 
     @AppStorage(AppSettings.oauthSourceEnabledKey) private var oauthSourceEnabled = true
-    @AppStorage("oauthMode") private var oauthMode = ""
+    @AppStorage(AppSettings.oauthModeKey) private var oauthMode = ""
     @State private var state: OAuthSetupState = .idle
     @State private var showAccessToken = false
     @State private var showRefreshToken = false
@@ -122,7 +122,6 @@ private struct OAuthConnectionSection: View {
             }
         }
         .onAppear { loadState() }
-        .onChange(of: oauthSourceEnabled) { _, _ in appState.rebuildPipeline() }
     }
 
     private var isConnected: Bool {
@@ -168,6 +167,11 @@ private struct OAuthConnectionSection: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+            }
+            if state == .connectedAuto {
+                Text("Reads Claude Code's Keychain; refreshed tokens stay in memory for this session only.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
             if !testResult.isEmpty {
                 Text(testResult)
@@ -425,9 +429,9 @@ private struct DataSettingsTab: View {
             .padding(20)
         }
         .onAppear { loadKeychainState(); loadCursorStatus() }
-        .onChange(of: statuslineSourceEnabled) { _, _ in appState.rebuildPipeline() }
-        .onChange(of: oauthSourceEnabled) { _, _ in appState.rebuildPipeline() }
-        .onChange(of: claudeAISourceEnabled) { _, _ in appState.rebuildPipeline() }
+        .onChange(of: statuslineSourceEnabled) { _, _ in appState.scheduleRebuildPipeline() }
+        .onChange(of: oauthSourceEnabled) { _, _ in appState.scheduleRebuildPipeline() }
+        .onChange(of: claudeAISourceEnabled) { _, _ in appState.scheduleRebuildPipeline() }
         .onChange(of: cursorSourceEnabled) { _, enabled in
             loadCursorStatus()
             appState.setCursorSourceEnabled(enabled)

@@ -15,7 +15,7 @@ public struct ParseResult: Sendable {
         warnings: [ParseWarning],
         errors: [ParseError],
         rawHash: String,
-        parserVersion: String = ClaudeOutputParser.parserVersion
+        parserVersion: String = "unknown"
     ) {
         self.snapshot = snapshot
         self.warnings = warnings

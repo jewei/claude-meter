@@ -573,7 +573,7 @@ struct PopoverView: View {
             || ClaudeAIKeychain.load() != nil
             || OAuthKeychain.load() != nil
             || OAuthKeychain.loadManual() != nil
-            || CursorTokenStore.isAvailable()
+            || CursorTokenStore.isStateDBPresent()
             || Self.claudeMeterDirectoryExists {
             hasCompletedOnboarding = true
         }
@@ -624,7 +624,7 @@ struct PopoverView: View {
 extension AppState {
     static var preview: AppState {
         let snap = ClaudeUsageSnapshot(
-            parserVersion: "stats-cache-1.0",
+            parserVersion: "preview-1.0",
             createdAt: Date(),
             lastSuccessfulPollAt: Date(),
             source: SourceInfo(cliPath: "/Users/jewei/.claude/stats-cache.json", command: "stats-cache"),
@@ -644,7 +644,8 @@ extension AppState {
             state: SnapshotState(status: .ok, severity: .warning)
         )
         let store = SnapshotStore(directory: FileManager.default.temporaryDirectory)
-        let pipeline = StatsCachePipeline(store: store)
+        try? store.writeLatest(snap)
+        let pipeline = CachedSnapshotPipeline(store: store)
         return AppState(pipeline: pipeline, initialSnapshot: snap)
     }
 }

@@ -21,6 +21,7 @@ public enum CursorTokenStore {
 
     private static let sqlite3Path = "/usr/bin/sqlite3"
     private static let securityPath = "/usr/bin/security"
+    private static let processTimeoutSeconds: TimeInterval = 10
 
     private static let stateKeys = [
         "cursorAuth/accessToken",
@@ -52,11 +53,14 @@ public enum CursorTokenStore {
         )
     }
 
-    /// True when Cursor's state DB or Keychain entry exists (used to show a
-    /// "not detected" hint without reading the token itself).
-    public static func isAvailable() -> Bool {
+    /// True when Cursor's state DB exists (filesystem-only; no Keychain/subprocess).
+    public static func isStateDBPresent() -> Bool {
         FileManager.default.fileExists(atPath: stateDBPath)
-            || keychainValue(service: "cursor-access-token") != nil
+    }
+
+    /// True when Cursor's state DB or Keychain entry exists (used before polling).
+    public static func isAvailable() -> Bool {
+        isStateDBPresent() || keychainValue(service: "cursor-access-token") != nil
     }
 
     // MARK: - JWT expiry
@@ -135,15 +139,27 @@ public enum CursorTokenStore {
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
-        do {
-            try process.run()
-        } catch {
+
+        let semaphore = DispatchSemaphore(value: 0)
+        final class TerminationBox: @unchecked Sendable { var status: Int32 = -1 }
+        let box = TerminationBox()
+        DispatchQueue.global(qos: .utility).async {
+            defer { semaphore.signal() }
+            do {
+                try process.run()
+            } catch {
+                return
+            }
+            process.waitUntilExit()
+            box.status = process.terminationStatus
+        }
+        if semaphore.wait(timeout: .now() + processTimeoutSeconds) == .timedOut {
+            process.terminate()
             return nil
         }
+        guard box.status == 0 else { return nil }
         let data = stdout.fileHandleForReading.readDataToEndOfFile()
         _ = stderr.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
         return String(data: data, encoding: .utf8)
     }
 }

@@ -7,6 +7,7 @@ public enum AppGroupConfig {
     public static let warningThresholdKey = "warningThresholdPercent"
     public static let criticalThresholdKey = "criticalThresholdPercent"
     public static let staleAfterSecondsKey = "staleAfterSeconds"
+    public static let oauthModeKey = "oauthMode"
 
     public static var sharedDefaults: UserDefaults? {
         UserDefaults(suiteName: suiteName)

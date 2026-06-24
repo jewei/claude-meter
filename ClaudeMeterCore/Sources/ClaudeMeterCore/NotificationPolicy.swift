@@ -26,15 +26,15 @@ public enum NotificationPolicy {
         [
             evaluate(
                 scope: "session",
-                current: snapshot.limits.currentSession,
-                previous: previous?.limits.currentSession,
+                current: snapshot.limits.currentSession.resolved(asOf: now),
+                previous: previous?.limits.currentSession.resolved(asOf: now),
                 thresholds: thresholds,
                 now: now
             ),
             evaluate(
                 scope: "weekly",
-                current: snapshot.limits.currentWeekAllModels,
-                previous: previous?.limits.currentWeekAllModels,
+                current: snapshot.limits.currentWeekAllModels.resolved(asOf: now),
+                previous: previous?.limits.currentWeekAllModels.resolved(asOf: now),
                 thresholds: thresholds,
                 now: now
             ),

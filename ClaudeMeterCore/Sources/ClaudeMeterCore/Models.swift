@@ -152,6 +152,17 @@ public struct LimitWindow: Codable, Equatable, Sendable {
         percentUsed.map { min(100.0, max(0.0, $0)) }
     }
 
+    /// Returns the window as it should be interpreted at `now`. Claude's
+    /// rate-limit windows are *rolling*, so once `resetsAt` has passed the window
+    /// has reset: usage returns to 0% and the (unpredictable) next reset time is
+    /// dropped. This guards against open-but-idle Claude Code sessions and cached
+    /// snapshots surfacing a stale percentage hours after the window actually
+    /// reset. Windows with no usage value or no reset time are returned unchanged.
+    public func resolved(asOf now: Date) -> LimitWindow {
+        guard percentUsed != nil, let reset = resetsAt, reset <= now else { return self }
+        return LimitWindow(percentUsed: 0, resetsAt: nil, rawResetText: nil, rawValueText: rawValueText)
+    }
+
     public var isOverLimit: Bool { (percentUsed ?? 0) > 100 }
 
     /// UI-friendly percent string, e.g. `25%`, `84.5%`, `100%+`.

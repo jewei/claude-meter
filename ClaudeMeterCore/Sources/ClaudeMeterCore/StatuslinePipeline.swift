@@ -30,7 +30,7 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     public func poll(now: Date) async throws -> ParseResult {
         // Primary: use statusline bridge if data is fresh and contains rate limits.
         if StatuslineBridge.isDataFresh(maxAge: stalenessThreshold),
-           let payload = try? StatuslineBridge.readData(),
+           let payload = try? StatuslineBridge.readData(maxAge: stalenessThreshold),
            payload.fiveHour != nil || payload.sevenDay != nil
         {
             let snapshot = buildSnapshot(from: payload, now: now)
@@ -93,18 +93,27 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
         }
     }
 
-    private func buildSnapshot(from payload: StatuslineBridge.StatuslinePayload, now: Date) -> ClaudeUsageSnapshot {
-        let sessionWindow = payload.fiveHour.map { w in
-            LimitWindow(percentUsed: w.usedPercentage, resetsAt: w.resetsAt)
-        } ?? LimitWindow()
+    /// Maps a bridge rate-limit window to a display window.
+    ///
+    /// Claude's rate-limit windows are *rolling*, so when a window's `resets_at`
+    /// has passed it is expired: usage has reset to 0%. Open-but-idle Claude Code
+    /// sessions keep re-emitting their last (now stale) snapshot every second, so
+    /// without this check the meter shows a stale percentage (e.g. 25%) hours after
+    /// the window actually reset. We can't predict the next rolling reset, so the
+    /// countdown is dropped until activity resumes.
+    static func displayWindow(for window: StatuslineBridge.RateLimitWindow?, now: Date) -> LimitWindow {
+        guard let window else { return LimitWindow() }
+        return LimitWindow(percentUsed: window.usedPercentage, resetsAt: window.resetsAt)
+            .resolved(asOf: now)
+    }
 
-        let weekWindow = payload.sevenDay.map { w in
-            LimitWindow(percentUsed: w.usedPercentage, resetsAt: w.resetsAt)
-        } ?? LimitWindow()
+    private func buildSnapshot(from payload: StatuslineBridge.StatuslinePayload, now: Date) -> ClaudeUsageSnapshot {
+        let sessionWindow = Self.displayWindow(for: payload.fiveHour, now: now)
+        let weekWindow = Self.displayWindow(for: payload.sevenDay, now: now)
 
         let severity = UsageSeverity.highest(
-            thresholds.severity(for: payload.fiveHour?.usedPercentage),
-            thresholds.severity(for: payload.sevenDay?.usedPercentage)
+            thresholds.severity(for: sessionWindow.percentUsed),
+            thresholds.severity(for: weekWindow.percentUsed)
         )
 
         let sessionInfo: SessionInfo? = {

@@ -5,8 +5,10 @@ import Testing
 @Suite("OAuthKeychain")
 struct OAuthKeychainTests {
   @Test func parsesClaudeCodeKeychainJSON() {
+    // Expiry computed relative to now so the test never goes stale with wall-clock time.
+    let futureMs = Int((Date().timeIntervalSince1970 + 3600) * 1000)
     let json = """
-    {"claudeAiOauth":{"accessToken":"sk-ant-oat01-test","refreshToken":"rt-test","expiresAt":1782228831860,"scopes":["user"]}}
+    {"claudeAiOauth":{"accessToken":"sk-ant-oat01-test","refreshToken":"rt-test","expiresAt":\(futureMs),"scopes":["user"]}}
     """
     let creds = OAuthKeychain.parseForTesting(json)
     #expect(creds?.accessToken == "sk-ant-oat01-test")

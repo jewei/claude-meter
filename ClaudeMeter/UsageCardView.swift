@@ -7,6 +7,10 @@ struct UsageCardView: View {
     let now: Date
     var thresholds: UsageThresholds = .default
 
+    /// Rolling windows past their reset read as 0% (see `LimitWindow.resolved`),
+    /// so an idle session never lingers on a stale percentage.
+    private var resolvedWindow: LimitWindow { window.resolved(asOf: now) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
@@ -39,7 +43,7 @@ struct UsageCardView: View {
     }
 
     private var percentText: String {
-        window.displayPercent ?? window.rawValueText ?? "—"
+        resolvedWindow.displayPercent ?? resolvedWindow.rawValueText ?? "—"
     }
 
     @ViewBuilder
@@ -77,11 +81,11 @@ struct UsageCardView: View {
 
     @ViewBuilder
     private var resetTimeLabel: some View {
-        if let resetsAt = window.resetsAt {
+        if let resetsAt = resolvedWindow.resetsAt {
             Text(resetDescription(resetsAt))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-        } else if let raw = window.rawResetText {
+        } else if let raw = resolvedWindow.rawResetText {
             Text(raw == "rolling 7 days" ? "Last 7 days" : "Resets \(raw)")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -91,7 +95,7 @@ struct UsageCardView: View {
     // MARK: - Helpers
 
     private var severity: UsageSeverity {
-        thresholds.severity(for: window.percentUsed)
+        thresholds.severity(for: resolvedWindow.percentUsed)
     }
 
     private var percentColor: Color {
@@ -113,27 +117,29 @@ struct UsageCardView: View {
     }
 
     private var fillFraction: Double {
-        guard let pct = window.clampedPercent else { return 0 }
+        guard let pct = resolvedWindow.clampedPercent else { return 0 }
         return min(1.0, pct / 100.0)
     }
 
     private func resetDescription(_ date: Date) -> String {
         guard date > now else { return "Resetting…" }
         let interval = date.timeIntervalSince(now)
-        if interval < 3600 {
-            let mins = max(1, Int(interval / 60))
-            return "Resets in \(mins)m"
+        // Near-term windows (e.g. the 5-hour session) read better as a countdown;
+        // windows days away read better as an absolute date.
+        if interval >= 24 * 3600 {
+            return "Resets \(Self.dateTimeFormatter.string(from: date))"
         }
-        if Calendar.current.isDate(date, inSameDayAs: now) {
-            return "Resets at \(Self.timeFormatter.string(from: date))"
-        }
-        return "Resets \(Self.dateTimeFormatter.string(from: date))"
+        if interval < 60 { return "Resets in 1m" }
+        let relative = Self.durationFormatter.string(from: interval) ?? "soon"
+        return "Resets in \(relative)"
     }
 
-    private static let timeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.timeStyle = .short
-        f.dateStyle = .none
+    private static let durationFormatter: DateComponentsFormatter = {
+        let f = DateComponentsFormatter()
+        f.unitsStyle = .abbreviated
+        f.allowedUnits = [.hour, .minute]
+        f.maximumUnitCount = 2
+        f.zeroFormattingBehavior = .dropAll
         return f
     }()
 
@@ -146,7 +152,7 @@ struct UsageCardView: View {
 
     private var accessibilityText: String {
         var parts = ["\(label) usage \(percentText)"]
-        if let resetsAt = window.resetsAt {
+        if let resetsAt = resolvedWindow.resetsAt {
             parts.append(resetDescription(resetsAt))
         }
         return parts.joined(separator: ", ")

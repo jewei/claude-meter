@@ -1,253 +1,380 @@
-# Claude Meter — SPECS.md
+# Claude Meter Current Specification
 
-**Status:** Draft v0.3
-**Date:** 2026-06-23
-**Target platform:** macOS menu bar app (SwiftUI `MenuBarExtra`)
-**Primary input source:** `claude.ai/api/organizations/{orgId}/usage` (HTTP API via session key)
-**Fallback source:** `~/.claude/stats-cache.json` + `~/.claude/projects/**/*.jsonl`
-
----
-
-## 1. Summary
-
-Claude Meter is a macOS menu bar app that monitors Claude usage-limit state in a glanceable, always-visible status bar item. It runs persistently in the background, polls the claude.ai usage API on a configurable interval, and displays current session and weekly usage in a popover.
-
-The app answers these questions at a glance:
-
-- How much of the current Claude session limit is used?
-- When does the current session reset?
-- How much of the weekly all-model limit is used?
-- When does the weekly limit reset?
-- Is the data fresh or stale?
-
-**Primary surface:** SwiftUI `MenuBarExtra` with `.window` popover style.
-**No Dock icon** in production (`LSUIElement = YES`).
-**WidgetKit extension** is available as an additional surface.
+This file is the rebuild spec for the current Claude Meter app. It captures the
+features and architecture that are still part of the product, plus the legacy
+features that were intentionally discarded. A new implementation should be able
+to start from this document without relying on the older `SPECS.md`.
 
 ---
 
-## 2. Goals
+## 1. Product shape
 
-### 2.1 Product goals
+Claude Meter is a macOS menu bar app that shows Claude usage-limit percentages.
 
-1. Provide a compact, always-visible indication of Claude usage limits.
-2. Surface reset times in the user's local timezone.
-3. Warn before limits become blocking.
-4. Degrade cleanly when the API is unreachable or the session key expires, falling back to local cache data.
-5. Stay out of the user's way: small footprint, low CPU, no visible Dock icon.
+- It is a menu-bar-only app (`LSUIElement = YES`), with no Dock icon.
+- The menu bar item uses `MenuBarExtra` with `.window` style.
+- The main UI is a compact SwiftUI popover.
+- A WidgetKit extension displays the same latest snapshot from the App Group.
+- The core parsing/pipeline/storage code lives in `ClaudeMeterCore`, a Swift
+  package with no AppKit or SwiftUI dependencies.
 
-### 2.2 Engineering goals
+The app intentionally focuses on:
 
-1. Keep the pipeline isolated from the UI — pure Swift, no AppKit/SwiftUI imports in core library.
-2. Make API polling safe: bounded timeout, no overlapping polls, testable.
-3. Store the latest snapshot in a simple JSON file; share via App Group with the WidgetKit extension.
-4. Keep historical data separate from the live snapshot.
-5. All shared state flows through a single observable data store.
+1. Current session usage.
+2. Current week usage across all models.
+3. Stale/error state.
+4. Optional notifications when usage crosses configured thresholds.
 
----
-
-## 3. Non-goals
-
-1. Do not use the `claude` CLI as a subprocess for live data (it outputs a TUI, not plain text).
-2. Do not scrape network traffic or bypass Claude plan limits.
-3. Do not expose account email, organization, or cwd in logs.
-4. Do not promise sub-15-second updates.
-5. Do not support automated limit evasion, account rotation, or usage spoofing.
+It no longer includes history, charts, mini monitors, stats-cache setup, or CLI
+status parsing in the production path.
 
 ---
 
-## 4. Key platform assumptions
+## 2. Current user-facing behavior
 
-1. The app runs as the user's macOS account.
-2. The user has a Claude Pro/Max account and can obtain a session key from their browser cookies.
-3. The claude.ai API (`/api/organizations/{orgId}/usage`) returns `five_hour.utilization`, `seven_day.utilization`, and `resets_at`.
-4. Session keys expire when the user logs out of claude.ai or approximately every 90 days.
-5. When the API is unavailable, `~/.claude/stats-cache.json` provides recent usage data (may lag by one session).
-6. `stats-cache.json` dates are in the user's local calendar timezone.
+### 2.1 Global active/inactive state
 
----
+Claude Meter has a global state:
 
-## 5. API response example
+- **Active**: polling is allowed.
+- **Inactive / Paused**: no usage data is fetched.
 
-Primary data source — `GET https://claude.ai/api/organizations/{orgId}/usage`:
+Rules:
 
-```json
-{
-  "five_hour": {
-    "utilization": 0.25,
-    "resets_at": "2026-06-22T06:50:00Z"
-  },
-  "seven_day": {
-    "utilization": 0.3,
-    "resets_at": "2026-06-27T07:00:00Z"
-  }
-}
-```
+- Default is inactive. `UserDefaults.bool(forKey:)` naturally returns `false`
+  for a missing key, so first launch starts paused.
+- First-run onboarding explicitly calls `AppState.setActive(false)`.
+- Manual refresh is disabled/no-op while inactive.
+- Scheduled polling is disabled while inactive.
+- If a poll is already in flight and the user pauses, the late result is
+  ignored (poll guards on `pipelineGeneration` and `canPoll` after each await).
+- The menu bar icon is dimmed while inactive:
+  - secondary foreground style
+  - `opacity(0.5)`
+- The popover **header** has an Active/Paused **toggle switch** (not a footer
+  button). Flipping it calls `AppState.setActive(_:)`.
+- If paused with a cached snapshot, the popover still shows the last known usage
+  cards (there is no separate "paused" banner over them).
+- If paused without a cached snapshot, the popover shows a paused empty state:
+  "Paused" + "Turn on the toggle above to start fetching usage data."
 
-`utilization` is a fraction (0.0–1.0+). Multiply by 100 for percentage display.
+Persisted key:
 
----
+| Key        | Type | Default | Meaning                             |
+| ---------- | ---- | ------- | ----------------------------------- |
+| `isActive` | Bool | `false` | Global active/inactive polling gate |
 
-## 6. User stories
+### 2.2 First-run onboarding
 
-### 6.1 Implemented
+On first run (`hasCompletedOnboarding == false`):
 
-1. As a Claude user, I can glance at my menu bar and see current session usage percentage.
-2. As a Claude user, I can click the menu bar item to see session and weekly usage in a popover.
-3. As a Claude user, I can see reset times in my local timezone.
-4. As a Claude user, I can tell whether the displayed data is fresh or stale.
-5. As a Claude user, I can press "Refresh" to poll immediately.
-6. As a Claude user, I can enter my session key and org ID in Settings to enable API-based data.
-7. As a Claude user, I can quit the app from the popover footer.
-8. As a Claude user, I can receive local notifications at configurable thresholds.
-9. As a Claude user, I can view usage in a macOS desktop widget (WidgetKit).
+- The popover's main content shows an inline welcome screen (not a sheet): the
+  app logo, "Welcome to Claude Meter", a short instruction to configure data
+  sources, and a chevron pointing at the footer.
+- While onboarding, `AppState.setActive(false)` is called so the app starts
+  paused.
+- There are no dedicated "Open Settings"/"Continue" buttons in the welcome
+  content. The footer **Settings (gear)** button completes onboarding —
+  `openSettingsAndCompleteOnboarding()` sets `hasCompletedOnboarding = true` and
+  opens Settings.
+- `skipOnboardingForExistingUsers()` auto-completes onboarding when a snapshot,
+  claude.ai/OAuth credentials, or the `~/.claude-meter` directory already exist,
+  so upgrading users don't see the welcome screen.
 
-### 6.2 Post-MVP
+Rendering the welcome copy must not probe credentials; the keychain/directory
+checks happen only in the skip decision on appear.
 
-1. As a Claude user, I can see historical usage over the last 7 / 30 days as a chart.
-2. As a Claude user, I can export local history to CSV or JSON.
-3. As a Claude user, I can track multiple Claude accounts.
+Persisted key:
 
----
+| Key                      | Type | Default | Meaning                                         |
+| ------------------------ | ---- | ------- | ----------------------------------------------- |
+| `hasCompletedOnboarding` | Bool | `false` | Whether first-run onboarding has been dismissed |
 
-## 7. Functional requirements
+### 2.3 Polling cadence
 
-### 7.1 App architecture
+Refresh cadence is fixed:
 
-Claude Meter is a single macOS app target with **no Dock icon**. It lives entirely in the menu bar. Its responsibilities:
+- Scheduled app polling: once per minute.
+- Statusline stale threshold: 60 seconds.
+- API fallback cooldown after stale statusline: 60 seconds.
 
-1. Load credentials from Keychain on startup.
-2. Poll the claude.ai API (or fallback stats-cache) on a configurable interval.
-3. Persist the latest snapshot to the App Group container.
-4. Update the `MenuBarExtra` icon and popover reactively.
-5. Deliver local notifications at configured thresholds.
-6. Provide a settings panel reachable from the popover.
-7. Provide a diagnostics view for debugging.
+There are no user-facing polling interval sliders.
 
-### 7.2 Menu bar icon
+Polling starts only if:
 
-The icon conveys the highest-severity usage state at a glance.
+1. Global `isActive == true`, and
+2. At least one data source toggle is enabled.
 
-**Icon variants:**
+If no source toggle is enabled:
 
-| State            | Display                     |
-| ---------------- | --------------------------- |
-| Normal (< 80%)   | `25%` text label            |
-| Warning (80–94%) | Label with yellow tint      |
-| Critical (≥ 95%) | Label with red tint         |
-| Stale            | Icon with clock badge       |
-| Error            | Icon with exclamation badge |
-| Loading          | Animated spinner            |
+- No scheduled polling runs.
+- Manual refresh is disabled/no-op.
+- Popover shows "No data methods enabled".
 
-**Label format:** Session percentage only (e.g. `25%`). Full details in the popover.
+### 2.4 Data source toggles and priority
 
-### 7.3 Popover — main view
+Settings -> Data shows the three data sources in priority order. Each source has
+its own toggle.
 
-Triggered by clicking the menu bar icon. Uses `.menuBarExtraStyle(.window)`.
+| Priority | Key                       | Default | Source                        |
+| -------- | ------------------------- | ------- | ----------------------------- |
+| 1        | `statuslineSourceEnabled` | `true`  | Claude Code statusline bridge |
+| 2        | `oauthSourceEnabled`      | `true`  | Claude Code OAuth usage API   |
+| 3        | `claudeAISourceEnabled`   | `true`  | claude.ai session usage API   |
+
+The pipeline must preserve this order while skipping disabled methods. For
+example:
+
+- Statusline on, OAuth on, claude.ai on:
+  `StatuslinePipeline -> OAuthPipeline -> ClaudeAIPipeline -> CachedSnapshotPipeline`
+- Statusline off, OAuth on, claude.ai on:
+  `OAuthPipeline -> ClaudeAIPipeline -> CachedSnapshotPipeline`
+- Statusline on, OAuth off, claude.ai on:
+  `StatuslinePipeline -> ClaudeAIPipeline -> CachedSnapshotPipeline`
+- Only claude.ai on:
+  `ClaudeAIPipeline -> CachedSnapshotPipeline`
+- All off:
+  no polling; do not call `CachedSnapshotPipeline` on a timer.
+
+Connecting a method may turn its toggle on:
+
+- Saving/using OAuth credentials sets `oauthSourceEnabled = true`.
+- Saving claude.ai credentials sets `claudeAISourceEnabled = true`.
+
+### 2.5 Menu bar label
+
+The menu bar label contains:
+
+- SF Symbol icon.
+- Optional current-session percent text from the latest snapshot.
+
+Icon selection:
+
+- Loading: `arrow.clockwise`, animated rotation.
+- Fatal/no snapshot error: `exclamationmark.circle`.
+- Stale: `clock.badge.exclamationmark`.
+- Warning: `gauge.with.dots.needle.67percent`.
+- Critical/over limit: `gauge.with.dots.needle.100percent`.
+- Normal/unknown/default: `gauge.with.dots.needle.33percent`.
+
+Inactive styling:
+
+- Use secondary foreground style.
+- Opacity 50%.
+
+### 2.6 Popover
+
+The popover is fixed at 320pt wide and has:
+
+- Header:
+  - title "Claude Meter"
+  - Active/Paused toggle switch
+- Optional update-available notice (tappable, triggers `checkForUpdates()`).
+- Main content.
+- Footer (left to right):
+  - last update text
+  - Settings (gear) button
+  - Refresh button (self-contained spinner)
+  - Quit (power) button
 
 **Popover layout (top to bottom):**
 
 ```
 ┌─────────────────────────────────────┐
-│ Claude Meter           [⚙] [↻] [✕]  │  ← Header bar
+│ Claude Meter                  [ ◯ ] │  ← Header: title + active toggle
 ├─────────────────────────────────────┤
-│ CURRENT SESSION                     │
-│ ████████████░░░░░░░░░░░ 25%         │
+│ Current Session                25%  │
+│ ████████████░░░░░░░░░░░             │
 │ Resets in 42m                       │
 ├─────────────────────────────────────┤
-│ THIS WEEK                           │
-│ ███████████████░░░░░░░░ 30%         │
-│ Resets Jun 27, 3:00 PM              │
+│ This Week                      30%  │
+│ ███████████████░░░░░░░░             │
+│ Resets 27 Jun 2026 at 3:00 PM       │
 ├─────────────────────────────────────┤
-│ Updated 14s ago    [Refresh] [⏻]    │  ← Footer
+│ Updated 14s ago        [⚙] [↻] [⏻]  │  ← Footer
 └─────────────────────────────────────┘
 ```
 
-Footer actions:
+Main content states (selected in order by `mainContent`):
 
-1. Last updated age (auto-refreshes the display every second).
-2. Refresh Now button.
-3. Quit app button (power icon, calls `NSApplication.shared.terminate(nil)`).
-4. Open Settings (gear icon in header).
-5. Close popover (×).
+1. **Onboarding** (`hasCompletedOnboarding == false`)
+   - Inline welcome screen (see 2.2).
+2. **Paused, with snapshot** (`!isActive`, snapshot present)
+   - Shows the latest usage cards (no extra paused banner).
+3. **Paused, no snapshot** (`!isActive`, no snapshot)
+   - "Paused" + "Turn on the toggle above to start fetching usage data."
+4. **No data methods enabled** (`!hasEnabledDataSource`)
+   - "No data methods enabled"
+   - "Turn on at least one method in Settings → Data."
+   - Open Settings button
+5. **Loading** (no snapshot yet, `isLoading`)
+   - Spinner and "Checking Claude…"
+6. **Usage** (snapshot present)
+   - Current Session card, This Week card
+   - Optional degraded (claude.ai warning / poll error) and stale notices above
+     the cards
+7. **Error** (`lastError != nil`, no snapshot)
+   - Session-expired copy (offers Settings) when session credentials fail.
+   - Parse-error or generic read-error copy otherwise.
+8. **Setup / no data** (fallback)
+   - "No usage data yet"
+   - Direct users to open Claude Code for statusline data or connect OAuth /
+     claude.ai in Settings.
 
-### 7.4 Settings panel
+### 2.7 Settings
 
-Accessible via gear icon. Window floats above other windows (`NSWindow.level = .floating`). Width 480px.
+Settings window:
 
-**Data tab:**
+- SwiftUI `TabView` hosted in the `Settings` scene.
+- Floating window level, because this is an LSUIElement menu bar app
+  (`FloatingWindowAccessor`).
+- Fixed size: width 560, height 500.
 
-- **Claude.ai Connection** section:
-  - Session key field (plain/secure toggle with eye button, width 260px, placeholder `sk-ant-sid02-…`)
-  - Org ID field (width 260px, placeholder `UUID`)
-  - Connect / Test connection / Disconnect buttons
-  - Test result feedback (shows "Session X% · Week Y%" or error)
-- **Polling** section:
-  - Poll interval when popover is open (default 15s)
-  - Poll interval in background (default 60s)
-  - Mark stale after (default 180s)
+Tabs (in order, with SF Symbols):
 
-**Display tab:**
+1. **Data** — `cylinder.split.1x2`
+2. **Notifications** — `bell`
+3. **Advanced** — `slider.horizontal.3`
+4. **About** — `info.circle`
 
+There is no longer a separate **Display** tab; the severity thresholds moved
+into the **Notifications** tab. The global **Active** toggle is not in Settings
+either — it lives in the popover header (see 2.1 / 2.6).
+
+#### Data tab
+
+Scrolling layout with a "Data Sources" header and subtitle noting that multiple
+sources can be enabled for redundancy. Three data-source cards
+(`DataSourceCard`), each with an icon, title, subtitle, and an enable switch.
+Toggling any source calls `rebuildPipeline()`.
+
+1. **Statusline Bridge** — icon `terminal`, primary tint
+   - Key: `statuslineSourceEnabled` (default true).
+   - Subtitle: "Check statusline once per minute."
+   - No extra controls; the bridge installs automatically and idempotently on
+     launch.
+2. **Claude Code OAuth** — icon `key.fill`, yellow
+   - Key: `oauthSourceEnabled` (default true).
+   - Subtitle: "Use OAuth credentials from Keychain."
+   - Embeds a stateful connection section (`OAuthConnectionSection`) driven by
+     `oauthMode` (`""` | `auto` | `manual`). States: idle, prompt (auto /
+     no-auto), manual entry, verifying, connected (auto / manual), error.
+     - **Auto**: "Connect" uses the Claude Code credentials already in the
+       Keychain; "Enter manually" switches to token entry.
+     - **Manual**: access-token and refresh-token fields with show/hide toggles;
+       "Save and connect" stores them in the app-owned Keychain entry.
+     - On connect, verifies via `OAuthPipeline.verify` and shows
+       "Session X% · Week Y%", then rebuilds the pipeline and refreshes.
+     - Connected state offers "Re-authenticate" and "Disconnect" (manual
+       disconnect deletes the app-owned Keychain entry and clears `oauthMode`).
+   - When the source toggle is off, the section is hidden.
+3. **Claude.ai Session** — icon `globe`, blue
+   - Key: `claudeAISourceEnabled` (default true).
+   - Subtitle: "Use web session usage API."
+   - **Not connected**: session-key field (show/hide) + Org ID field, "Connect".
+     Validates session-key format and org-ID UUID via `CredentialValidator`;
+     help text points to browser DevTools → Cookies → claude.ai.
+   - **Connected**: "Test connection" (shows "Session X% · Week Y%") and
+     "Disconnect".
+   - Surfaces a "Session expired. Please login again." banner when an error
+     mentions session expiry / session key / 401.
+
+No poll-interval or staleness sliders appear in Settings; those are internal
+constants / `AppGroupConfig` values.
+
+#### Notifications tab
+
+Grouped `Form`.
+
+- **Enable notifications** toggle (`enableNotifications`, default true) with copy
+  explaining that a notification posts when session or weekly usage crosses the
+  warning or critical threshold, one per threshold per reset window.
 - **Severity Thresholds** section:
-  - Warning threshold % (default 80%)
-  - Critical threshold % (default 95%)
+  - "Warning at" — **slider**, range 50–90, step 5, default 80
+    (`warningThresholdPercent`).
+  - "Critical at" — **slider**, range 60–100, step 5, default 95
+    (`criticalThresholdPercent`).
+  - Clamp: if critical ≤ warning, critical is bumped to `min(100, warning + 5)`.
+  - Changes sync to the App Group (`AppGroupConfig.syncDisplaySettings`) and
+    apply immediately to both the meter colors and notifications.
 
-**Notifications tab:**
+(These thresholds drive the meter/progress-bar colors as well as notifications;
+they previously lived on a separate Display tab and used steppers.)
 
-- Enable notifications toggle
-- Per-trigger toggles (session warning, session critical, week warning, week critical)
+#### Advanced tab
 
-**Advanced tab:**
+Grouped `Form`.
 
-- Launch at login toggle
-- History retention days (default 180)
-- Diagnostics button
+- **App**: "Launch at login" (`launchAtLogin`), registered/unregistered via
+  `SMAppService.mainApp` and synced from the system status on appear.
+- **Updates**: "Check for updates automatically" (`SUEnableAutomaticChecks`) plus
+  a "Check for updates…" button (Sparkle).
+- **Diagnostics**: "Open Diagnostics…" presents the diagnostics sheet
+  (`DiagnosticsView`).
 
-### 7.5 Diagnostics view
+#### About tab
 
-A secondary view showing:
+Centered identity panel:
 
-1. Data source mode (claude.ai API vs stats cache + journal).
-2. Last poll time.
-3. Last error message.
-4. Parser warnings list.
-5. Parser version and snapshot schema version.
-6. Snapshot creation time.
-7. History record count and store path.
-8. "Copy sanitized diagnostics" button — redacts email, home paths, labeled fields.
+- App logo loaded from the asset catalog (`Image("AppLogo")`) rather than
+  `NSApplication.shared.applicationIconImage`, which returns the generic macOS
+  placeholder for LSUIElement apps.
+- "Claude Meter" title and a "VERSION &lt;x&gt;" badge from
+  `CFBundleShortVersionString`.
+- A "GitHub" link to `https://github.com/jewei/claude-meter` and a
+  "© JEWEI MAK" line.
 
 ---
 
-## 8. Data collection
+## 3. Architecture
 
-### 8.1 Primary: claude.ai API client
+### 3.1 Targets/modules
 
-```swift
-public struct ClaudeAIUsageClient: Sendable {
-    public let sessionKey: String
-    public let orgId: String
-    public func fetchUsage() async throws -> UsageData
-}
-```
+| Component | Target/module                   | Responsibilities                                                                                                |
+| --------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Main app  | `ClaudeMeter` app target        | SwiftUI UI, menu bar, settings, keychain wrapper for claude.ai, Sparkle integration, polling orchestration      |
+| Core      | `ClaudeMeterCore` Swift package | Models, snapshot store, pipelines, statusline bridge, OAuth keychain, API clients, parsing, notification policy |
+| Widget    | `ClaudeMeterWidgetExtension`    | WidgetKit views reading latest snapshot from App Group only                                                     |
 
-Endpoint: `GET https://claude.ai/api/organizations/{orgId}/usage`
+### 3.2 App state
 
-Auth: `Cookie: sessionKey=<value>` header (manual, not system cookie storage).
+`AppState` is `@MainActor final class AppState: ObservableObject`.
 
-Session config: `URLSessionConfiguration.ephemeral` with `httpShouldSetCookies = false` and `httpCookieAcceptPolicy = .never` to prevent system cookie interference.
+Published state:
 
-Error types: `unauthorized` (401), `httpError(Int)`, `missingFields`, `invalidURL`, `invalidResponse`.
+- `snapshot: ClaudeUsageSnapshot?`
+- `lastPollResult: ParseResult?`
+- `isLoading: Bool`
+- `lastError: String?`
+- `lastPolledAt: Date?`
+- `isPopoverOpen: Bool`
+- `updateAvailable: Bool`
+- `isActive: Bool`
+- `hasEnabledDataSource: Bool`
 
-### 8.2 Fallback: stats-cache + journal
+Owned services:
 
-Used when no Keychain credentials exist, or when the API call throws any error.
+- `pipeline: any ClaudeMeterPipeline`
+- `store: SnapshotStore`
+- `notificationEngine: NotificationEngine`
+- Sparkle updater controller/delegate
+- polling `Task`
 
-- `StatsCacheReader` reads `~/.claude/stats-cache.json` for session/week usage percentages.
-- `JournalReader` scans `~/.claude/projects/**/*.jsonl` for real-time message counts (supplements stale cache).
-- API failure is surfaced as a `ParseWarning` in the result; UI still shows fallback data.
+Important rules:
 
-### 8.3 Pipeline protocol
+- `lastPolledAt` advances only on successful snapshot updates.
+- Failed polls set `lastError` but do not advance `lastPolledAt`.
+- `rebuildPipeline()`:
+  - increments generation
+  - refreshes `hasEnabledDataSource`
+  - rebuilds pipeline from current source toggles
+  - restarts polling only if polling is allowed
+- Poll results are ignored if pipeline generation changed or if polling became
+  disallowed while the poll was in flight.
+
+### 3.3 Pipeline protocol
+
+Core protocol:
 
 ```swift
 public protocol ClaudeMeterPipeline: Sendable {
@@ -255,359 +382,623 @@ public protocol ClaudeMeterPipeline: Sendable {
 }
 ```
 
-`ClaudeAIPipeline` and `StatsCachePipeline` both conform. `AppState.pipeline` is typed as `any ClaudeMeterPipeline`.
+`AppState.pipeline` is typed as `any ClaudeMeterPipeline`.
 
-### 8.4 Polling rules
+Production pipeline factory builds from bottom to top:
 
-1. Polling is performed by a background `Task` while the app is running.
-2. Skip if a poll is already in flight.
-3. Apply exponential backoff (cap at 5 minutes) on repeated failures.
-4. Advance `lastPolledAt` only on successful snapshot updates.
-5. Reload WidgetKit timelines after each successful poll.
+1. Start with `CachedSnapshotPipeline`.
+2. Wrap with `ClaudeAIPipeline` if `claudeAISourceEnabled` and credentials
+   exist.
+3. Wrap with `OAuthPipeline` if `oauthSourceEnabled`.
+4. Wrap with `StatuslinePipeline` if `statuslineSourceEnabled`.
 
-**Default poll intervals:**
+Disabled layers are skipped.
 
-| Condition       | Interval |
-| --------------- | -------- |
-| Popover visible | 15 s     |
-| Background      | 60 s     |
+### 3.4 Snapshot storage
 
----
+`SnapshotStore` writes JSON files:
 
-## 9. Credential storage
+- `current.json`
+- `last-error.json`
+- `current.raw.txt` exists for legacy diagnostics support only.
 
-Session key and org ID are stored in the macOS Keychain:
+Factories:
 
-- **Service:** `com.jewei.claudemeter`
-- **Session key account:** `claudeai.sessionKey`
-- **Org ID account:** `claudeai.orgId`
+- `SnapshotStore.appGroup(suiteName:)`
+- `SnapshotStore.applicationSupport()`
+- `SnapshotStore(directory:)`
 
-Wrapper: `ClaudeAIKeychain` (enum with `save`, `load`, `delete` static methods).
+Main app store selection:
 
-The main app target is not sandboxed; Security framework works without special entitlements.
+1. Prefer App Group container.
+2. If available, migrate latest snapshot from legacy Application Support into
+   App Group.
+3. Fall back to Application Support.
+4. Last fallback: temporary directory.
 
-Never log or display the raw session key. The diagnostics sanitizer already redacts home paths and email — session keys are not stored anywhere that gets logged.
+Widget store selection:
 
----
+- App Group only.
+- No Application Support fallback in the widget.
 
-## 10. Data model
+App Group:
 
-### 10.1 Snapshot JSON schema
+- Suite/container: `group.com.jewei.claudemeter`
 
-Written atomically to the App Group container:
+### 3.5 Snapshot model
 
-```text
-~/Library/Group Containers/group.com.jewei.claudemeter/current.json
-```
+Primary model: `ClaudeUsageSnapshot`.
 
-```json
-{
-  "schemaVersion": 1,
-  "parserVersion": "0.1.0",
-  "createdAt": "2026-06-22T06:45:00Z",
-  "lastSuccessfulPollAt": "2026-06-22T06:45:00Z",
-  "source": {
-    "cliPath": "",
-    "command": "claude.ai API"
-  },
-  "limits": {
-    "currentSession": {
-      "percentUsed": 25.0,
-      "resetsAt": "2026-06-22T06:50:00Z",
-      "rawValueText": "42 msgs"
-    },
-    "currentWeekAllModels": {
-      "percentUsed": 30.0,
-      "resetsAt": "2026-06-27T07:00:00Z"
-    }
-  },
-  "state": {
-    "status": "ok",
-    "severity": "normal"
-  }
-}
-```
+Important fields:
 
-### 10.2 Core Swift types
+- `schemaVersion`
+- `parserVersion`
+- `createdAt`
+- `lastSuccessfulPollAt`
+- `source`
+- `account`
+- `session`
+- `limits`
+- `models`
+- `mcp`
+- `settingSources`
+- `state`
 
-```swift
-struct ClaudeUsageSnapshot: Codable, Equatable {
-    var schemaVersion: Int
-    var parserVersion: String
-    var createdAt: Date
-    var lastSuccessfulPollAt: Date?
-    var source: SourceInfo
-    var session: SessionInfo?        // activeModel only; name/cwd not populated
-    var limits: LimitInfo
-    var state: SnapshotState
-}
+The current UI uses primarily:
 
-struct LimitInfo: Codable, Equatable {
-    var currentSession: LimitWindow
-    var currentWeekAllModels: LimitWindow
-}
+- `limits.currentSession`
+- `limits.currentWeekAllModels`
+- `state.severity`
+- `state.isStale`
+- `lastSuccessfulPollAt`
+- `parserVersion`
+- `source.command` for diagnostics
 
-struct LimitWindow: Codable, Equatable {
-    var percentUsed: Double?
-    var resetsAt: Date?
-    var rawResetText: String?
-    var rawValueText: String?        // "N msgs" for fallback display
-}
-```
+`LimitWindow`:
 
-### 10.3 Enums
+- `percentUsed: Double?`
+- `resetsAt: Date?`
+- `rawResetText: String?`
+- `rawValueText: String?`
 
-```swift
-enum SnapshotStatus: String, Codable {
-    case ok
-    case stale
-    case unauthenticated
-    case parseError
-    case unknownError
-}
+Display rules:
 
-enum UsageSeverity: String, Codable {
-    case normal      // 0..<80
-    case warning     // 80..<95
-    case critical    // 95...100
-    case overLimit   // >100
-    case unknown
-}
-```
+- Clamp display percent to 0...100.
+- If raw percent is greater than 100, display `100%+`.
+- Whole percentages display without decimal; otherwise one decimal.
+- `resolved(asOf:)` — a window whose `resetsAt` has passed is treated as a reset
+  rolling window: `percentUsed` becomes 0 and `resetsAt` is dropped. Applied in
+  `StatuslinePipeline.displayWindow` (so statusline snapshots are stored
+  pre-resolved, feeding severity + notifications) and at the view layer
+  (`UsageCardView`, widget `WindowRow`).
+
+Severity:
+
+- warning default: 80%.
+- critical default: 95%.
+- `< warning` => normal.
+- `warning ..< critical` => warning.
+- `critical ... 100` => critical.
+- `> 100` => overLimit.
+- nil/invalid => unknown.
 
 ---
 
-## 11. Storage
+## 4. Data sources
 
-### 11.1 Live snapshot
+### 4.1 Priority 1: Statusline bridge
 
-Written atomically (write temp → rename):
+Pipeline: `StatuslinePipeline`.
 
-```text
-group.com.jewei.claudemeter/current.json       ← primary (App Group)
-~/Library/Application Support/ClaudeMeter/current.json  ← legacy fallback
-```
+Source files (one per Claude Code session):
 
-### 11.2 Preferences
+- `~/.claude-meter/sessions/<session_id>.json`
+- `~/.claude-meter/statusline.json` — legacy single file, still read during the
+  migration window and aged out by the freshness filter.
 
-Stored in `UserDefaults` standard suite. Display settings (thresholds, staleAfterSeconds) are synced to the App Group suite so the widget can read them without the app being running.
+Bridge install:
 
-### 11.3 Historical storage
+- Installed only when polling is allowed and statusline source is enabled.
+- `StatuslineBridge.install()` is idempotent and self-healing.
+- It edits `~/.claude/settings.json`.
+- It rebuilds `statusLine.command` to exactly `<current snippet> | <user command>`:
+  - It first strips **every** known bridge snippet (current + `legacyBridgeSnippets`)
+    via `strippedOfAnyBridge`, which loops to collapse accumulated duplicates and
+    migrate old single-file installs.
+  - The snippet extracts the payload's `session_id` (via `sed` on the compact
+    JSON) and atomically writes stdin to `sessions/<session_id>.json`
+    (`default.json` when the id is empty/missing).
+  - Pipe order matters: the bridge must capture stdin before the user's command,
+    and it `printf`s stdin through unchanged so the user's statusline still
+    renders.
+- If no existing command exists, command is `bridge > /dev/null`.
+- It sets `statusLine.refreshInterval = 1`.
+- It must not overwrite invalid existing Claude settings:
+  - Missing settings file is treated as `{}`.
+  - Invalid JSON throws.
+  - Non-object JSON root throws.
+- Install failures are sanitized and written to `last-error.json`.
 
-SQLite in the app container:
+Freshness and merge:
 
-```text
-group.com.jewei.claudemeter/history.sqlite
-```
+- A payload is fresh when its file was modified within 60 seconds (so an
+  idle-but-closed session's file ages out; an idle-but-open session keeps a
+  fresh file but stale numbers — see below).
+- `StatuslineBridge.readData(maxAge:)` reads **every** fresh session file and
+  `mergePayloads` picks the freshest reading per window: latest `resets_at` for
+  the five-hour window (most recent observation), max `used_percentage` for the
+  weekly window (usage is monotonic). This prevents the meter flipping between
+  concurrent sessions' snapshots.
+- Fresh statusline data is accepted only when it includes at least one rate-limit
+  window: `five_hour` or `seven_day`.
+- If fresh and accepted, no lower-priority source is called.
+- If stale/missing/unusable, fall through to the next enabled source.
+- API fallback through the statusline layer is rate-limited to once per minute.
 
-Records are pruned on append to `historyRetentionDays` (default 180). Keeps the most recent N records (DESC limit, then reverse).
+Rolling-window expiry:
+
+- Claude's windows are **rolling**. An open-but-idle session keeps re-emitting its
+  last snapshot every second, so file mtime is not a data-freshness signal —
+  `resets_at` is. A window whose `resets_at` has passed is expired and reads 0%.
+- `LimitWindow.resolved(asOf:)` encodes this (past reset → `percentUsed: 0`,
+  `resetsAt: nil`). It is applied in `StatuslinePipeline.displayWindow` (severity +
+  notifications) and at the view layer (`UsageCardView`, widget `WindowRow`).
+
+Parsing:
+
+- `rate_limits.five_hour.used_percentage`
+- `rate_limits.seven_day.used_percentage`
+- `resets_at` as Unix epoch seconds
+- Numeric JSON values must accept `Double`, `Int`, and `NSNumber`.
+- Model/cost fields may be parsed, but shared snapshots must not persist
+  high-sensitivity session identifiers from statusline.
+
+Privacy:
+
+- Do not persist statusline `session_id`, `session_name`, or `cwd` into the
+  shared App Group snapshot.
+- It is acceptable to persist lower-sensitivity model display name and aggregate
+  cost/duration/line counts.
+
+Parser version:
+
+- `statusline-1.0`
+
+### 4.2 Priority 2: Claude Code OAuth usage API
+
+Pipeline: `OAuthPipeline`.
+
+Endpoint:
+
+- `GET https://api.anthropic.com/api/oauth/usage`
+
+Headers:
+
+- `Authorization: Bearer <access token>`
+- `anthropic-beta: oauth-2025-04-20`
+- `Accept: application/json`
+
+Session:
+
+- Use `URLSessionConfiguration.ephemeral`.
+- `httpShouldSetCookies = false`.
+- `httpCookieAcceptPolicy = .never`.
+- Request timeout: 10 seconds.
+
+Mode gate:
+
+- `oauthMode == "auto"`: read Claude Code credentials.
+- `oauthMode == "manual"`: read app-owned manual OAuth credentials.
+- Empty `oauthMode`: OAuth layer falls through without calling API.
+- `oauthSourceEnabled == false`: OAuth layer is not built at all.
+
+Claude Code credentials:
+
+- Service: `Claude Code-credentials`.
+- Account: `NSUserName()` / current user.
+- JSON block: `claudeAiOauth`.
+- Required fields:
+  - `accessToken`
+  - `refreshToken`
+  - `expiresAt` in integer milliseconds since epoch.
+- Parse `expiresAt` from `Double`, `Int`, or `NSNumber`.
+
+Manual credentials:
+
+- Service: `com.jewei.claudemeter-oauth`.
+- Account: `oauthManual`.
+- Stored as the same JSON shape under `claudeAiOauth`.
+
+Keychain implementation:
+
+- On macOS / when Security.framework is available, read/write generic passwords
+  with Security.framework APIs.
+- Do not pass token JSON as command-line argv to `/usr/bin/security`.
+- Non-Security fallback may use `/usr/bin/security`; it is not the macOS
+  production path.
+
+Token refresh:
+
+- Refresh when expired or within 60 seconds of expiry.
+- Endpoint: `POST https://console.anthropic.com/v1/oauth/token`
+- JSON body:
+  - `grant_type = "refresh_token"`
+  - `refresh_token`
+  - `client_id = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"`
+- If refresh succeeds, update Keychain best-effort.
+- In-memory cached credentials survive within app session if Keychain write
+  fails.
+
+Concurrency:
+
+- `OAuthPipeline` is `@unchecked Sendable`.
+- Mutable `cachedCredentials` must be protected by a serial queue or equivalent.
+
+API response:
+
+- Decode the full response object, not `[String: QuotaEntry]`, because the API
+  includes unrelated fields (`limits`, `spend`, `extra_usage`, nulls).
+- `utilization` is already a 0...100 percentage.
+- Do not multiply utilization by 100.
+
+Parser version:
+
+- `oauth-api-1.0`
+
+### 4.3 Priority 3: claude.ai usage API
+
+Pipeline: `ClaudeAIPipeline`.
+
+Endpoint:
+
+- `GET https://claude.ai/api/organizations/{orgId}/usage`
+
+Header:
+
+- `Cookie: sessionKey=<session key>`
+
+Session:
+
+- Use `URLSessionConfiguration.ephemeral`.
+- `httpShouldSetCookies = false`.
+- `httpCookieAcceptPolicy = .never`.
+- Do not use `URLSession.shared`, because it can interfere with manual Cookie
+  headers.
+
+Credentials:
+
+- Stored by `ClaudeAIKeychain` in macOS Keychain.
+- Service: `com.jewei.claudemeter`.
+- Accounts:
+  - `claudeai.sessionKey`
+  - `claudeai.orgId`
+- Session key is a browser cookie and must never be logged.
+- Org ID is a UUID and is pasted manually by user.
+
+Behavior:
+
+- If `claudeAISourceEnabled == false`, this layer is not built.
+- If credentials are missing, this layer is skipped.
+- Auth failures (401/403) are fatal for this source and produce a parse error;
+  do not fall back to cached snapshot on auth failure.
+- Transient failures fall back to `CachedSnapshotPipeline` and surface a
+  `ParseWarning` with field `claude.ai API`.
+- Message counts from `JournalReader` may be included as `rawValueText` when
+  available.
+
+Parser version:
+
+- `claude-ai-api-1.0`
+
+### 4.4 Terminal fallback: cached snapshot
+
+Pipeline: `CachedSnapshotPipeline`.
+
+Behavior:
+
+- Reads latest snapshot from `SnapshotStore`.
+- Marks `snapshot.state.isStale = true`.
+- Returns a warning field `cache` with message `Serving cached snapshot`.
+- Throws `CachedSnapshotError.noSnapshot` if no snapshot exists.
+
+Important:
+
+- This is a fallback inside an enabled source pipeline.
+- If global active is false or all source toggles are false, the app should not
+  poll the cached snapshot just to update UI.
 
 ---
 
-## 12. UI states
+## 5. Widget
 
-### 12.1 No credentials
+Target: `ClaudeMeterWidgetExtension`.
 
-```
-Claude Meter
-Open Settings → Data to connect to claude.ai.
-[Open Settings]
-```
+Rules:
 
-### 12.2 Loading state
+- Widget is sandboxed.
+- It reads from `SnapshotStore.appGroup(suiteName:)` only.
+- It must not fall back to Application Support.
+- If App Group is unavailable or no snapshot exists, show "No data" gracefully.
 
-Initial poll in flight.
+Timeline:
 
-```
-Checking…
-```
+- Load latest snapshot.
+- Compute thresholds from `AppGroupConfig.currentThresholds()`.
+- Compute staleness from `AppGroupConfig.isSnapshotStale(..., now: entry.date)`.
+- Refresh at the earlier of:
+  - next reset time
+  - 15 minutes from now
 
-### 12.3 OK state (< 80%)
+Families:
 
-```
-CURRENT SESSION      25%
-████████░░░░░░░░░░░░
-Resets in 2h 10m
+- `.systemSmall`
+- `.systemMedium`
+- `.systemLarge`
 
-THIS WEEK            30%
-████████████░░░░░░░░
-Resets Jun 27, 3:00 PM
-```
+Design:
 
-### 12.4 Warning state (80–94%)
-
-```
-CURRENT SESSION      84%
-████████████████░░░░
-Resets in 42m
-```
-
-### 12.5 Critical state (≥ 95%)
-
-```
-CURRENT SESSION      96%
-████████████████████
-Resets in 9m
-```
-
-### 12.6 Stale state
-
-Data exists but older than `staleAfterSeconds`.
-
-### 12.7 Error / fallback state
-
-When API fails, data from stats-cache is shown with a warning in diagnostics. No error is shown in the popover if usable data is available.
+- Widget duplicates its `Color(widgetHex:)` helper locally.
+- Do not import app-target design token files into the widget target.
+- Widget uses dark background `#10131b`.
 
 ---
 
-## 13. Visual design
+## 6. Notifications
 
-1. Dark glassmorphism aesthetic with `.ultraThinMaterial` background.
-2. Progress bars: capsule shape with glow on fill.
-3. Severity colors: normal → green `#4be257`; warning → yellow `#fdbb2c`; critical → red `#ff5f56`.
-4. Monospaced digits for all percentages and countdowns.
-5. Percent always visible; do not rely on color alone for state.
-6. Values > 100% display as `100%+`.
-7. Reset time is more prominent than secondary stats.
+`NotificationEngine` is an actor.
 
----
+Authorization:
 
-## 14. Notifications
+- Request notification authorization once if status is `.notDetermined`.
+- Treat `.authorized` and `.provisional` as allowed.
 
-Local `UserNotifications` from the app. No sound by default.
+Enablement:
 
-**Triggers:**
+- `enableNotifications` defaults to true when key is absent.
 
-1. Session usage crosses warning threshold (80%).
-2. Session usage crosses critical threshold (95%).
-3. Weekly usage crosses warning threshold (80%).
-4. Weekly usage crosses critical threshold (95%).
-5. Session reset occurs (optional, disabled by default).
+Thresholds:
 
-**Deduplication:**
+- Use `AppGroupConfig.currentThresholds(defaults:)`, not raw standard defaults,
+  so notifications match display/widget thresholds.
 
-1. Notify once per threshold crossing per reset window.
-2. Do not repeat warning after critical has fired.
-3. Reset notification state after the corresponding reset time passes.
-4. Do not notify if data is stale.
-5. If `resetsAt` is nil, use start of today UTC as the dedup anchor.
+Trigger rules:
 
----
+- Process notifications only for non-stale snapshots.
+- Trigger when session or weekly usage crosses warning/critical threshold.
+- One notification per `(scope, level, reset-window)`.
+- If `resetsAt` is nil, the dedup key falls back to the start of the next local
+  day (`fallbackResetAnchor`) so severity escalation still notifies.
+- Critical suppresses warning if critical already fired for same scope/window.
 
-## 15. Settings schema
+Delivery:
 
-**Stored in UserDefaults standard suite (unless noted):**
+- No sound.
+- Mark fired only after `UNUserNotificationCenter.add` succeeds.
 
-| Setting                         | Type   | Default |
-| ------------------------------- | ------ | ------- |
-| `pollIntervalActiveSeconds`     | Double | `15`    |
-| `pollIntervalBackgroundSeconds` | Double | `60`    |
-| `staleAfterSeconds`             | Double | `180`   |
-| `warningThresholdPercent`       | Double | `80`    |
-| `criticalThresholdPercent`      | Double | `95`    |
-| `launchAtLogin`                 | Bool   | `false` |
-| `enableNotifications`           | Bool   | `true`  |
-| `historyRetentionDays`          | Int    | `180`   |
+Sparkle:
 
-**Stored in macOS Keychain (service `com.jewei.claudemeter`):**
-
-| Key                   | Purpose                  |
-| --------------------- | ------------------------ |
-| `claudeai.sessionKey` | claude.ai browser cookie |
-| `claudeai.orgId`      | Organization UUID        |
-
-Removed settings (no longer in codebase): `claudeCliPath`, `statusCommand`, `statsCommand`, `cliTimeoutSeconds`, `privacyMode`, `enableDiagnosticsRawOutput`, `dailyMessageLimit`, `weeklyMessageLimit`, `statsCachePath`, `journalProjectsPath`.
+- Background scheduled update availability may post a gentle notification.
+- User-triggered update checks are left to Sparkle's standard UI.
 
 ---
 
-## 16. Security and privacy
+## 7. Diagnostics and sanitization
 
-1. **Session key stored in macOS Keychain** — never written to disk in plaintext, never logged.
-2. No analytics.
-3. Diagnostics sanitizer redacts: email addresses → `[redacted]`, home directory paths → `/Users/[redacted]/…`, labeled fields (Session name, Organization, Email, etc.) → `[redacted]`.
-4. Preferences stored locally; no cloud sync.
-5. The session key is a browser session cookie. It has the same access as the logged-in browser — treat it as a credential.
-6. The app makes outbound HTTPS calls to `claude.ai` only; no other network endpoints.
+Diagnostics UI:
 
----
+- Shows data source mode based on `parserVersion` prefix:
+  - `statusline` -> Statusline bridge
+  - `oauth` -> OAuth usage API
+  - `claude-ai` -> claude.ai API
+  - otherwise cached snapshot
+- Shows last poll time/error.
+- Shows parser warnings.
+- Copies sanitized diagnostics text to clipboard.
 
-## 17. Accessibility
+Always sanitize before display/copy/logging:
 
-1. All progress bars have text equivalents (`.accessibilityLabel`).
-2. VoiceOver label: `"Session usage 25 percent, resets in 2 hours 10 minutes. Weekly usage 30 percent, resets June 27 at 3 PM."`.
-3. Warning/critical state conveyed through color AND icon/text.
-4. All popover controls keyboard navigable.
-
----
-
-## 18. Error handling
-
-| Condition           | Behavior                                             |
-| ------------------- | ---------------------------------------------------- |
-| No credentials      | Show setup prompt in popover                         |
-| API 401             | Show "Session key invalid or expired" warning        |
-| API error / timeout | Fall back to stats-cache; show warning in diag       |
-| Stats-cache missing | Show "No data" state                                 |
-| Stale snapshot      | Show clock badge; popover shows "Last updated X ago" |
-
----
-
-## 19. Testing
-
-### 19.1 Core library tests
-
-- `StatsCacheReader` parses known `stats-cache.json` fixture correctly.
-- `JournalReader` counts today's messages from JSONL fixture.
-- `ClaudeAIPipeline` falls back and adds warning when `ClaudeAIUsageClient` throws.
-- `HistoryStore` prunes to retention cutoff on append.
-- `SnapshotStore` performs atomic write and reads back correctly.
-- `NotificationEngine` deduplicates within the same reset window.
-- `DiagnosticsSanitizer` redacts email, home path, labeled fields.
-
-### 19.2 Legacy parser tests (kept for regression coverage)
-
-`ClaudeOutputParser` and `SnapshotPipeline` tests remain but are not exercised in production; the CLI output path is removed.
+- Email addresses -> `[redacted]`
+- Home directory paths (`/Users/<name>/...`) -> `/Users/[redacted]`
+- UUIDs -> `[redacted]`
+- Claude session keys matching `sk-ant-*` -> `[redacted]`
+- OAuth/OIDC tokens matching `oidc-*` -> `[redacted]`
+- `Authorization: Bearer ...` -> `Bearer [redacted]`
+- `sessionKey=...` cookie values -> `sessionKey=[redacted]`
+- Labeled token fields:
+  - `accessToken`
+  - `access_token`
+  - `refreshToken`
+  - `refresh_token`
+- Labeled CLI fields:
+  - `Session name:`
+  - `Organization:`
+  - `Cwd:`
+  - `Email:`
+  - `Session id:`
 
 ---
 
-## 20. Acceptance criteria
+## 8. Settings and persistence reference
 
-MVP is complete when:
+### 8.1 UserDefaults
 
-1. The app polls `claude.ai/api/organizations/{orgId}/usage` and displays session/week usage percentages.
-2. Session key and org ID are stored/loaded from Keychain.
-3. The API failure path falls back to stats-cache and shows usable data.
-4. The popover renders session and weekly cards with progress bars and reset times.
-5. The menu bar label shows session percentage only; clicking reveals both cards.
-6. Severity thresholds affect icon color and notification triggers.
-7. Settings panel: Data tab allows connecting/disconnecting the session; Display tab allows threshold adjustment.
-8. Diagnostics view shows current mode (API vs fallback) and last error.
-9. Widget shows session and week data from the App Group snapshot.
+| Area          | Key                        | Type   | Default         | Notes                                                   |
+| ------------- | -------------------------- | ------ | --------------- | ------------------------------------------------------- |
+| Onboarding    | `hasCompletedOnboarding`   | Bool   | false           | First-run sheet gate                                    |
+| Data          | `isActive`                 | Bool   | false           | Global active/inactive gate                             |
+| Data          | `statuslineSourceEnabled`  | Bool   | true            | Source toggle, priority 1                               |
+| Data          | `oauthSourceEnabled`       | Bool   | true            | Source toggle, priority 2                               |
+| Data          | `claudeAISourceEnabled`    | Bool   | true            | Source toggle, priority 3                               |
+| Data          | `oauthMode`                | String | `""`            | `""`, `auto`, or `manual`                               |
+| Notifications | `warningThresholdPercent`  | Double | 80              | Slider 50–90; synced to App Group; drives meter colors  |
+| Notifications | `criticalThresholdPercent` | Double | 95              | Slider 60–100; synced to App Group; drives meter colors |
+| UI staleness  | `staleAfterSeconds`        | Double | 180             | Supported by `AppGroupConfig`; no Settings control      |
+| Notifications | `enableNotifications`      | Bool   | true            | Missing key means enabled                               |
+| Advanced      | `launchAtLogin`            | Bool   | false           | Synced with `SMAppService`                              |
+| Updates       | `SUEnableAutomaticChecks`  | Bool   | Sparkle default | Sparkle setting                                         |
+
+### 8.2 Keychain
+
+| Purpose               | Service                       | Account               | Value                                   |
+| --------------------- | ----------------------------- | --------------------- | --------------------------------------- |
+| Claude Code OAuth     | `Claude Code-credentials`     | `NSUserName()`        | Claude Code JSON with `claudeAiOauth`   |
+| Manual OAuth          | `com.jewei.claudemeter-oauth` | `oauthManual`         | Same JSON shape with app-entered tokens |
+| claude.ai session key | `com.jewei.claudemeter`       | `claudeai.sessionKey` | Browser `sessionKey` cookie             |
+| claude.ai org ID      | `com.jewei.claudemeter`       | `claudeai.orgId`      | UUID string                             |
+
+### 8.3 App Group
+
+Suite:
+
+- `group.com.jewei.claudemeter`
+
+App Group stores:
+
+- Latest snapshot JSON.
+- Last error JSON.
+- Display settings synced from standard defaults.
 
 ---
 
-## 21. Glossary
+## 9. Build and project maintenance
 
-| Term            | Meaning                                                                        |
-| --------------- | ------------------------------------------------------------------------------ |
-| Popover         | The SwiftUI `MenuBarExtra` `.window` view shown when clicking the icon         |
-| Snapshot        | Latest parsed usage state persisted to `current.json`                          |
-| Current session | Claude's rolling 5-hour usage window                                           |
-| Current week    | Claude's weekly all-model usage window                                         |
-| Stale           | Snapshot older than `staleAfterSeconds`                                        |
-| Severity        | `normal` / `warning` / `critical` / `overLimit` based on percentage thresholds |
-| Session key     | Browser cookie (`sk-ant-sid02-…`) used to authenticate claude.ai API calls     |
-| Org ID          | UUID identifying the user's Claude organization                                |
+Build commands:
+
+```bash
+xcodebuild -scheme ClaudeMeter -configuration Debug CODE_SIGNING_ALLOWED=NO
+swift test --package-path ClaudeMeterCore
+```
+
+Signing:
+
+- App Group entitlement requires a real provisioning profile to run.
+- `CODE_SIGNING_ALLOWED=NO` is enough for compilation checks.
+
+Project file:
+
+- `ClaudeMeter.xcodeproj/project.pbxproj` is hand-maintained.
+- No xcodegen.
+- Every new source file needs:
+  - `PBXFileReference`
+  - `PBXBuildFile`
+  - group child entry
+  - Sources/Frameworks build phase entry as appropriate
+- Use consistent 24-character hex UUIDs.
+
+Swift/concurrency:
+
+- Core package should remain Swift 6 strict-concurrency friendly.
+- Formatter singletons like `DateFormatter`, `NumberFormatter`, and
+  `ISO8601DateFormatter` are not Sendable. Either create per call or isolate
+  behind serial access / `nonisolated(unsafe)` only with a clear invariant.
+- Do not call `queue.sync` from work already running on the same serial queue.
+- Fire-and-forget work launched from `@MainActor` via `Task.detached` must only
+  capture Sendable state.
 
 ---
 
-## 22. Implementation phases (historical reference)
+## 10. Current tests to preserve/extend
 
-- **Phase 1** — Parser and fixture harness ✅
-- **Phase 2** — Data pipeline (CLI subprocess) ✅ (now superseded by API pipeline)
-- **Phase 3** — MenuBarExtra app shell ✅
-- **Phase 4** — Notifications ✅
-- **Phase 5** — Settings and onboarding ✅
-- **Phase 6** — WidgetKit extension ✅
-- **Phase 7** — History and polish ✅
-- **Phase 8** — claude.ai API as primary source (replaced CLI), Keychain credential storage, Privacy Mode removed ✅
+Core tests cover:
+
+- Diagnostics sanitizer.
+- Credential validation.
+- Claude AI error auth classification.
+- OAuth keychain parsing.
+- OAuth usage response decoding and percent scale.
+- Statusline bridge refresh interval, integer percentage parsing, and invalid
+  settings JSON guard.
+- Snapshot store.
+- Notification policy.
+- Legacy parser/pipeline behavior retained for fixtures.
+
+Future changes should add tests when modifying:
+
+- source toggle pipeline composition
+- active/inactive polling gate
+- statusline bridge install/uninstall
+- OAuth refresh behavior
+- diagnostic redaction
+- widget App Group-only reads
+
+---
+
+## 11. Explicitly discarded legacy features
+
+These existed in older plans or code paths but are not part of the current
+product behavior.
+
+### 11.1 Removed from production behavior
+
+- `~/.claude/stats-cache.json` as a user-facing setup path.
+- `StatsCachePipeline` in the production poll chain.
+- `StatsCacheReader` in production polling, except indirect helper use for
+  local day strings in `ClaudeAIPipeline`.
+- CLI status parsing as a production data source.
+- Running `claude status` as a subprocess.
+- Raw Claude CLI output collection as a user-facing diagnostic feature.
+- User-configurable CLI path.
+- User-configurable CLI timeout.
+- Polling interval sliders.
+- Statusline stale-after slider.
+- API fallback cooldown slider.
+- Stats-cache path setting.
+- Daily/weekly manual message limit settings.
+- Journal projects path setting.
+- Privacy mode setting.
+
+### 11.2 Removed UI/screens
+
+- History view.
+- Mini monitor view.
+- SQLite-backed usage history.
+- Charts/timelines based on retained history.
+- Stats-cache onboarding copy.
+- Stats-cache missing error copy.
+- Model row kept only for stats-cache fallback.
+
+### 11.3 Removed persistence/storage
+
+- SQLite `HistoryStore`.
+- `history.sqlite`.
+- History retention setting (`historyRetentionDays`).
+- sqlite3 linker dependency.
+
+### 11.4 Legacy code intentionally retained but not production
+
+The following remain in the package for tests, fixtures, or SwiftUI previews,
+but should not be reintroduced into the production polling path without a new
+product decision:
+
+- `StatsCachePipeline`
+- `StatsCacheReader`
+- `SnapshotPipeline`
+- `ClaudeOutputParser`
+- `CommandRunner`
+- `CLIPathDetector`
+- `ANSIStripper`
+
+`StatsCacheReader` should not be used as a production data source; its local
+day-string helper may still be reused by `ClaudeAIPipeline`. `JournalReader` is
+still used by `ClaudeAIPipeline` to supplement display with message counts; that
+is the only production journal use.
+
+---
+
+## 12. Non-goals for a clean rebuild
+
+Do not rebuild:
+
+- Historical storage or charts.
+- SQLite.
+- Stats-cache-first onboarding.
+- CLI scraping.
+- A Dock app UI.
+- A widget that reads outside the App Group.
+- User-editable polling cadence.
+- Multiple statusline bridge variants.
+- Logging of raw credentials, cookies, session IDs, home paths, or emails.
+
+The clean rebuild should be a small menu bar app with a core pipeline, one
+latest snapshot, explicit pause/source controls, sanitized diagnostics, optional
+notifications, and an App Group widget.

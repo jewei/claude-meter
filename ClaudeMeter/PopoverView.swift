@@ -93,7 +93,9 @@ struct PopoverView: View {
         VStack(spacing: 16) {
             Spacer(minLength: 8)
 
-            Image(nsImage: NSApplication.shared.applicationIconImage)
+            // Asset catalog image, not `applicationIconImage` (which returns the
+            // generic macOS placeholder for LSUIElement apps).
+            Image("AppLogo")
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 56, height: 56)
@@ -331,23 +333,12 @@ struct PopoverView: View {
                 openSettingsAndCompleteOnboarding()
             }
             if !needsOnboarding {
-                Button {
+                RefreshButton(
+                    isLoading: appState.isLoading,
+                    isEnabled: appState.isActive && appState.hasEnabledDataSource
+                ) {
                     appState.refreshNow()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
-                .help("Refresh")
-                .disabled(appState.isLoading || !appState.isActive || !appState.hasEnabledDataSource)
-                .rotationEffect(appState.isLoading ? .degrees(360) : .zero)
-                .animation(
-                    appState.isLoading
-                        ? .linear(duration: 1).repeatForever(autoreverses: false)
-                        : .default,
-                    value: appState.isLoading
-                )
             }
             footerButton("power", help: "Quit Claude Meter") {
                 NSApplication.shared.terminate(nil)
@@ -365,6 +356,45 @@ struct PopoverView: View {
         }
         .buttonStyle(.plain)
         .help(help)
+    }
+
+    /// Self-contained refresh control. The spinner is driven by `TimelineView(.animation)`
+    /// rather than a `.repeatForever` animation so the forever-repeating transaction can't
+    /// leak into the footer's per-second relayout (the "Updated Ns ago" counter), which made
+    /// the icon drift out of its slot. The fixed frame keeps the layout slot stable while spinning.
+    private struct RefreshButton: View {
+        let isLoading: Bool
+        let isEnabled: Bool
+        let action: () -> Void
+
+        var body: some View {
+            Button(action: action) {
+                Group {
+                    if isLoading {
+                        TimelineView(.animation) { context in
+                            icon.rotationEffect(.degrees(Self.angle(at: context.date)))
+                        }
+                    } else {
+                        icon
+                    }
+                }
+                .frame(width: 16, height: 16)
+            }
+            .buttonStyle(.plain)
+            .help("Refresh")
+            .disabled(isLoading || !isEnabled)
+        }
+
+        private var icon: some View {
+            Image(systemName: "arrow.clockwise")
+                .font(.body)
+                .foregroundStyle(.secondary)
+        }
+
+        private static func angle(at date: Date) -> Double {
+            // One full revolution per second, continuous.
+            date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1) * 360
+        }
     }
 
     private var updatedText: String {

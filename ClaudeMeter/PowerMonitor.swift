@@ -29,7 +29,7 @@ final class PowerMonitor {
 
     init() {
         let center = NSWorkspace.shared.notificationCenter
-        for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification] {
+        for name in [NSWorkspace.screensDidSleepNotification] {
             observers.tokens.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.isDisplayAsleep = true }
             })

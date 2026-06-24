@@ -53,7 +53,7 @@ struct MenuBarLabel: View {
         guard appState.isActive else { return nil }
         let now = Date()
         if let snap = appState.snapshot {
-            return snap.limits.currentSession.resolved(asOf: now).displayPercent
+            return snap.limits.bindingDisplayPercent(asOf: now)
         }
         if AppSettings.cursorSourceEnabled,
            let percent = appState.cursorUsage?.clampedPercent {

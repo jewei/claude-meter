@@ -74,4 +74,14 @@ struct OAuthPipelineTests {
     ))
     #expect(OAuthPipeline.retryAfterDate(from: response, now: Date()) == nil)
   }
+
+  @Test func bindingDisplayPercentUsesHighestWindow() {
+    let now = Date()
+    let limits = LimitInfo(
+      currentSession: LimitWindow(percentUsed: 20, resetsAt: now.addingTimeInterval(3600)),
+      currentWeekAllModels: LimitWindow(percentUsed: 40, resetsAt: now.addingTimeInterval(86400)),
+      currentWeekOpus: LimitWindow(percentUsed: 92, resetsAt: now.addingTimeInterval(86400))
+    )
+    #expect(limits.bindingDisplayPercent(asOf: now) == "92%")
+  }
 }

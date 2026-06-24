@@ -23,6 +23,7 @@ final class AppState: ObservableObject {
     @Published var cursorUsage: CursorUsage? = nil
     @Published var cursorError: String? = nil
     @Published var cursorLastPolledAt: Date? = nil
+    @Published var costScanPartial = false
     private let cursorProvider = CursorUsageProvider()
 
     var pipeline: any ClaudeMeterPipeline
@@ -34,7 +35,7 @@ final class AppState: ObservableObject {
     private var rebuildDebounceTask: Task<Void, Never>?
     private var pipelineGeneration = 0
     private var refreshPending = false
-    private let powerMonitor = PowerMonitor()
+    private var powerMonitor: PowerMonitor?
 
     private static let pollIntervalSeconds: TimeInterval = 60
     private static let rebuildDebounceMilliseconds: UInt64 = 300
@@ -91,9 +92,9 @@ final class AppState: ObservableObject {
             self.lastError = record.message
         }
         delegate.appState = self
-        // Refresh immediately when the machine wakes so the menu-bar number isn't
-        // stale by a whole interval after the user returns.
-        powerMonitor.onWake = { [weak self] in self?.refreshNow() }
+        let monitor = PowerMonitor()
+        monitor.onWake = { [weak self] in self?.refreshNow() }
+        self.powerMonitor = monitor
         startPolling()
         Task { await notificationEngine.requestAuthorizationIfNeeded() }
     }
@@ -135,9 +136,9 @@ final class AppState: ObservableObject {
                 // asleep (PowerMonitor.onWake handles the immediate refresh on
                 // wake), and stretch the interval on battery to reduce drain.
                 let interval: TimeInterval
-                if self.powerMonitor.isDisplayAsleep {
+                if self.powerMonitor?.isDisplayAsleep == true {
                     interval = Self.asleepRecheckSeconds
-                } else if self.powerMonitor.isOnBattery {
+                } else if self.powerMonitor?.isOnBattery == true {
                     interval = Self.pollIntervalSeconds * Self.batteryPollMultiplier
                 } else {
                     interval = Self.pollIntervalSeconds
@@ -145,7 +146,7 @@ final class AppState: ObservableObject {
                 try? await Task.sleep(for: .seconds(interval))
                 guard !Task.isCancelled else { break }
                 // Re-check: the display may have gone to sleep during the wait.
-                guard !self.powerMonitor.isDisplayAsleep else { continue }
+                guard self.powerMonitor?.isDisplayAsleep != true else { continue }
                 await self.poll()
             }
         }
@@ -314,11 +315,12 @@ final class AppState: ObservableObject {
     private func pollClaude(generation: Int) async {
         let pipeline = self.pipeline
         let now = Date()
-        await refreshServiceStatus(generation: generation)
+        async let serviceStatusTask: Void = refreshServiceStatus(generation: generation)
         do {
             let result = try await Task.detached {
                 try await pipeline.poll(now: now)
             }.value
+            await serviceStatusTask
             guard generation == pipelineGeneration, canPoll else { return }
 
             lastPollResult = result
@@ -332,14 +334,15 @@ final class AppState: ObservableObject {
             if var snap = result.snapshot {
                 // Enrich with per-model token/cost usage scanned from local logs.
                 // Independent of which tier produced the rate-limit snapshot.
-                let models = await Self.scanCostModels(now: now)
-                if !models.isEmpty { snap.models = models }
+                let costResult = await Self.scanCostModels(now: now)
+                if !costResult.models.isEmpty { snap.models = costResult.models }
+                costScanPartial = costResult.isPartialEstimate
                 // Opus weekly, extra-usage spend, and plan live only in the OAuth
                 // response. When another source (statusline/claude.ai) produced the
                 // snapshot, layer those fields on if OAuth creds are available.
                 let enrichment = await oauthEnrichment(for: snap, now: now)
                 if let enrichment { Self.apply(enrichment, to: &snap) }
-                if !models.isEmpty || enrichment != nil {
+                if !costResult.models.isEmpty || enrichment != nil {
                     try? store.writeLatest(snap)
                 }
                 snapshot = snap
@@ -360,8 +363,10 @@ final class AppState: ObservableObject {
                 lastError = nil
             }
         } catch {
+            await serviceStatusTask
             guard generation == pipelineGeneration, canPoll else { return }
-            lastError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            lastError = DiagnosticsSanitizer.sanitize(message)
         }
     }
 
@@ -390,7 +395,9 @@ final class AppState: ObservableObject {
             default:
                 break
             }
-            cursorError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            cursorError = DiagnosticsSanitizer.sanitize(
+                (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            )
         }
     }
 
@@ -428,9 +435,9 @@ final class AppState: ObservableObject {
 
     /// Scans local Claude Code transcripts for per-model token/cost usage (last 7
     /// days). Disk work runs off-main; only the result returns to the actor.
-    private static func scanCostModels(now: Date) async -> [ModelUsage] {
+    private static func scanCostModels(now: Date) async -> CostUsageResult {
         await Task.detached(priority: .utility) {
-            CostUsageScanner().scan(daysBack: 7, now: now).models
+            CostUsageScanner().scan(daysBack: 7, now: now)
         }.value
     }
 

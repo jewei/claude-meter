@@ -38,13 +38,24 @@ public struct HTTPRetryPolicy: Sendable {
 
     /// No retries.
     public static let none = HTTPRetryPolicy(maxRetries: 0, retryableStatus: [])
-    /// One retry for a transient GET/HEAD failure.
-    public static let transient = HTTPRetryPolicy(maxRetries: 1)
+    /// One retry for a transient GET/HEAD failure. Excludes 429 — callers that
+    /// need rate-limit backoff (OAuth) handle it themselves.
+    public static let transient = HTTPRetryPolicy(
+        maxRetries: 1,
+        retryableStatus: [408, 500, 502, 503, 504]
+    )
 
     private static let idempotentMethods: Set<String> = ["GET", "HEAD", "OPTIONS"]
 
     func shouldRetry(status: Int, attempt: Int, method: String) -> Bool {
         guard attempt < maxRetries, retryableStatus.contains(status) else { return false }
+        guard idempotentMethodsOnly else { return true }
+        return Self.idempotentMethods.contains(method.uppercased())
+    }
+
+    func shouldRetryTransport(attempt: Int, method: String) -> Bool {
+        guard maxRetries > 0 else { return false }
+        guard attempt < maxRetries else { return false }
         guard idempotentMethodsOnly else { return true }
         return Self.idempotentMethods.contains(method.uppercased())
     }
@@ -91,18 +102,35 @@ public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
     public func send(_ request: URLRequest, retry: HTTPRetryPolicy) async throws -> (Data, HTTPURLResponse) {
         var attempt = 0
         while true {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
-            guard retry.shouldRetry(
-                status: http.statusCode,
-                attempt: attempt,
-                method: request.httpMethod ?? "GET"
-            ) else {
-                return (data, http)
+            do {
+                let (data, response) = try await session.data(for: request)
+                guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+                guard retry.shouldRetry(
+                    status: http.statusCode,
+                    attempt: attempt,
+                    method: request.httpMethod ?? "GET"
+                ) else {
+                    return (data, http)
+                }
+                let wait = retry.delay(attempt: attempt, retryAfter: http.value(forHTTPHeaderField: "Retry-After"))
+                if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
+                attempt += 1
+            } catch let error as URLError where Self.isRetryableTransportError(error)
+                && retry.shouldRetryTransport(attempt: attempt, method: request.httpMethod ?? "GET") {
+                let wait = retry.delay(attempt: attempt, retryAfter: nil)
+                if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
+                attempt += 1
             }
-            let wait = retry.delay(attempt: attempt, retryAfter: http.value(forHTTPHeaderField: "Retry-After"))
-            if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
-            attempt += 1
+        }
+    }
+
+    private static func isRetryableTransportError(_ error: URLError) -> Bool {
+        switch error.code {
+        case .timedOut, .networkConnectionLost, .notConnectedToInternet,
+             .cannotConnectToHost, .dnsLookupFailed, .cannotFindHost:
+            return true
+        default:
+            return false
         }
     }
 }

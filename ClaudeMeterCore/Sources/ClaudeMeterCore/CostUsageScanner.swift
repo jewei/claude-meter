@@ -16,7 +16,7 @@ public struct CostUsageScanner: Sendable {
     /// Files larger than this are tail-read; transcripts are append-only so recent
     /// activity lives at the end.
     private static let maxFullReadBytes: UInt64 = 8 * 1024 * 1024
-    private static let tailReadBytes: UInt64 = 1024 * 1024
+    private static let tailReadBytes: UInt64 = 4 * 1024 * 1024
 
     public init(
         projectsPath: URL? = nil,
@@ -44,6 +44,7 @@ public struct CostUsageScanner: Sendable {
 
         // Sum tokens per (day, model) across all files, then collapse to per-model.
         var byDayModel: [DayModelKey: TokenTotals] = [:]
+        var isPartial = false
 
         for projectDir in projectDirs {
             var isDir: ObjCBool = false
@@ -62,10 +63,19 @@ public struct CostUsageScanner: Sendable {
 
                 let perFile: [DayModelKey: TokenTotals]
                 if let cached = cache.cached(for: file.path, modDate: modDate, fileSize: fileSize) {
-                    perFile = cached
+                    perFile = cached.totals
+                    if cached.isPartial { isPartial = true }
                 } else {
-                    perFile = parse(file: file, fileSize: fileSize)
-                    cache.store(path: file.path, modDate: modDate, fileSize: fileSize, value: perFile)
+                    let parsed = parse(file: file, fileSize: fileSize)
+                    perFile = parsed.totals
+                    if parsed.isPartial { isPartial = true }
+                    cache.store(
+                        path: file.path,
+                        modDate: modDate,
+                        fileSize: fileSize,
+                        value: parsed.totals,
+                        isPartial: parsed.isPartial
+                    )
                 }
                 for (key, totals) in perFile where key.day >= cutoffDayString(cutoff) {
                     byDayModel[key, default: .zero].add(totals)
@@ -73,20 +83,30 @@ public struct CostUsageScanner: Sendable {
             }
         }
 
-        return aggregate(byDayModel, todayStr: todayStr)
+        return aggregate(byDayModel, todayStr: todayStr, isPartial: isPartial)
+    }
+
+    private struct ParseResult {
+        let totals: [DayModelKey: TokenTotals]
+        let isPartial: Bool
     }
 
     // MARK: - Parsing
 
-    private func parse(file: URL, fileSize: UInt64) -> [DayModelKey: TokenTotals] {
-        guard let handle = try? FileHandle(forReadingFrom: file) else { return [:] }
+    private func parse(file: URL, fileSize: UInt64) -> ParseResult {
+        guard let handle = try? FileHandle(forReadingFrom: file) else {
+            return ParseResult(totals: [:], isPartial: false)
+        }
         defer { try? handle.close() }
 
-        let readFrom: UInt64 = fileSize > Self.maxFullReadBytes
+        let tailRead = fileSize > Self.maxFullReadBytes
+        let readFrom: UInt64 = tailRead
             ? (fileSize > Self.tailReadBytes ? fileSize - Self.tailReadBytes : 0)
             : 0
         if readFrom > 0 { try? handle.seek(toOffset: readFrom) }
-        guard let data = try? handle.readToEnd(), !data.isEmpty else { return [:] }
+        guard let data = try? handle.readToEnd(), !data.isEmpty else {
+            return ParseResult(totals: [:], isPartial: tailRead)
+        }
 
         let text = String(decoding: data, as: UTF8.self)
         let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
@@ -96,7 +116,7 @@ public struct CostUsageScanner: Sendable {
         // Dedup cumulative streaming chunks by message id + request id.
         var unique: [String: ParsedMessage] = [:]
         let decoder = JSONDecoder()
-        for line in body {
+        for (lineIndex, line) in body.enumerated() {
             guard line.contains("\"usage\""), line.contains("\"assistant\"") else { continue }
             guard let lineData = line.data(using: .utf8),
                   let entry = try? decoder.decode(TranscriptLine.self, from: lineData),
@@ -107,7 +127,11 @@ public struct CostUsageScanner: Sendable {
                   let date = JournalReader.parseTimestamp(tsStr) else { continue }
 
             let model = message.model ?? "unknown"
-            let key = "\(message.id ?? "")|\(entry.requestId ?? "")"
+            let key = dedupeKey(
+                messageId: message.id,
+                requestId: entry.requestId,
+                lineIndex: lineIndex
+            )
             let totals = TokenTotals(
                 input: usage.inputTokens ?? 0,
                 output: usage.outputTokens ?? 0,
@@ -130,12 +154,24 @@ public struct CostUsageScanner: Sendable {
         for msg in unique.values {
             result[DayModelKey(day: msg.day, model: msg.model), default: .zero].add(msg.totals)
         }
-        return result
+        return ParseResult(totals: result, isPartial: tailRead)
+    }
+
+    /// Stable dedupe key for streaming chunks. Lines without ids are keyed by
+    /// line index so distinct messages aren't collapsed.
+    private func dedupeKey(messageId: String?, requestId: String?, lineIndex: Int) -> String {
+        if let id = messageId, !id.isEmpty { return "\(id)|\(requestId ?? "")" }
+        if let rid = requestId, !rid.isEmpty { return "|\(rid)|\(lineIndex)" }
+        return "line:\(lineIndex)"
     }
 
     // MARK: - Aggregation
 
-    private func aggregate(_ byDayModel: [DayModelKey: TokenTotals], todayStr: String) -> CostUsageResult {
+    private func aggregate(
+        _ byDayModel: [DayModelKey: TokenTotals],
+        todayStr: String,
+        isPartial: Bool
+    ) -> CostUsageResult {
         var perModel: [String: TokenTotals] = [:]
         var todayCost = 0.0
         var totalCost = 0.0
@@ -158,7 +194,12 @@ public struct CostUsageScanner: Sendable {
             )
         }.sorted { ($0.costUsd ?? 0) > ($1.costUsd ?? 0) }
 
-        return CostUsageResult(models: models, totalCostUsd: totalCost, todayCostUsd: todayCost)
+        return CostUsageResult(
+            models: models,
+            totalCostUsd: totalCost,
+            todayCostUsd: todayCost,
+            isPartialEstimate: isPartial
+        )
     }
 
     private func cost(forModel model: String, totals: TokenTotals) -> Double {
@@ -182,14 +223,22 @@ public struct CostUsageResult: Sendable, Equatable {
     public let models: [ModelUsage]
     public let totalCostUsd: Double
     public let todayCostUsd: Double
+    /// `true` when one or more transcript files were tail-read and totals may be incomplete.
+    public let isPartialEstimate: Bool
 
-    public init(models: [ModelUsage], totalCostUsd: Double, todayCostUsd: Double) {
+    public init(
+        models: [ModelUsage],
+        totalCostUsd: Double,
+        todayCostUsd: Double,
+        isPartialEstimate: Bool = false
+    ) {
         self.models = models
         self.totalCostUsd = totalCostUsd
         self.todayCostUsd = todayCostUsd
+        self.isPartialEstimate = isPartialEstimate
     }
 
-    public static let empty = CostUsageResult(models: [], totalCostUsd: 0, todayCostUsd: 0)
+    public static let empty = CostUsageResult(models: [], totalCostUsd: 0, todayCostUsd: 0, isPartialEstimate: false)
 
     public var isEmpty: Bool { models.isEmpty }
 }
@@ -272,25 +321,48 @@ public final class CostUsageCache: @unchecked Sendable {
         let modDate: Date
         let fileSize: UInt64
         let value: [DayModelKey: TokenTotals]
+        let isPartial: Bool
     }
+
+    private static let maxEntries = 512
 
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
+    private var accessOrder: [String] = []
 
     public init() {}
 
-    func cached(for path: String, modDate: Date, fileSize: UInt64) -> [DayModelKey: TokenTotals]? {
+    func cached(for path: String, modDate: Date, fileSize: UInt64) -> (totals: [DayModelKey: TokenTotals], isPartial: Bool)? {
         lock.lock()
         defer { lock.unlock() }
         guard let entry = entries[path], entry.modDate == modDate, entry.fileSize == fileSize else {
             return nil
         }
-        return entry.value
+        touchLocked(path)
+        return (entry.value, entry.isPartial)
     }
 
-    func store(path: String, modDate: Date, fileSize: UInt64, value: [DayModelKey: TokenTotals]) {
+    func store(
+        path: String,
+        modDate: Date,
+        fileSize: UInt64,
+        value: [DayModelKey: TokenTotals],
+        isPartial: Bool
+    ) {
         lock.lock()
-        entries[path] = Entry(modDate: modDate, fileSize: fileSize, value: value)
+        entries[path] = Entry(modDate: modDate, fileSize: fileSize, value: value, isPartial: isPartial)
+        touchLocked(path)
+        while accessOrder.count > Self.maxEntries, let oldest = accessOrder.first {
+            accessOrder.removeFirst()
+            entries.removeValue(forKey: oldest)
+        }
         lock.unlock()
+    }
+
+    private func touchLocked(_ path: String) {
+        if let idx = accessOrder.firstIndex(of: path) {
+            accessOrder.remove(at: idx)
+        }
+        accessOrder.append(path)
     }
 }

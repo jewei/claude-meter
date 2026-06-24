@@ -79,6 +79,7 @@ public extension LimitWindow {
         let total = kind.duration
         guard total > 0 else { return nil }
         let remaining = reset.timeIntervalSince(now)
+        guard remaining >= 0, remaining <= total else { return nil }
         let elapsed = total - remaining
         return min(100, max(0, elapsed / total * 100))
     }

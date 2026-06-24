@@ -71,6 +71,7 @@ struct ClaudeMeterProvider: TimelineProvider {
         let nextReset = [
             entry.snapshot?.limits.currentSession.resetsAt,
             entry.snapshot?.limits.currentWeekAllModels.resetsAt,
+            entry.snapshot?.limits.currentWeekOpus?.resetsAt,
         ]
         .compactMap { $0 }
         .filter { $0 > now }
@@ -260,6 +261,15 @@ private struct LargeWidgetView: View {
                     thresholds: entry.thresholds,
                     referenceDate: entry.date
                 )
+                if let opus = snap.limits.currentWeekOpus {
+                    Divider().opacity(0.2)
+                    WindowRow(
+                        label: "WEEK (OPUS)",
+                        window: opus,
+                        thresholds: entry.thresholds,
+                        referenceDate: entry.date
+                    )
+                }
 
             } else {
                 Spacer()

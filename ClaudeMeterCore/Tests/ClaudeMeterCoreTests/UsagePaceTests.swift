@@ -59,13 +59,14 @@ struct LimitWindowPaceTests {
         #expect(w.resolved(asOf: now).pace(kind: .session, asOf: now) == .unknown)
     }
 
-    @Test("Elapsed clamps to 0–100") func clamps() {
-        // Reset already passed → elapsed would exceed 100, clamps to 100.
-        let past = LimitWindow(percentUsed: 50, resetsAt: now.addingTimeInterval(-3600))
-        #expect(past.percentTimeElapsed(kind: .session, asOf: now) == 100)
-        // Reset further out than the window span → elapsed negative, clamps to 0.
+    @Test("Implausible reset time yields unknown elapsed") func implausibleReset() {
+        // Reset further out than the window span → unknown, not clamped to 0.
         let far = LimitWindow(percentUsed: 50, resetsAt: now.addingTimeInterval(10 * 3600))
-        #expect(far.percentTimeElapsed(kind: .session, asOf: now) == 0)
+        #expect(far.percentTimeElapsed(kind: .session, asOf: now) == nil)
+        #expect(far.pace(kind: .session, asOf: now) == .unknown)
+        // Reset already passed → unknown (not 100% elapsed).
+        let past = LimitWindow(percentUsed: 50, resetsAt: now.addingTimeInterval(-3600))
+        #expect(past.percentTimeElapsed(kind: .session, asOf: now) == nil)
     }
 
     @Test("Insight describes deviation") func insight() {

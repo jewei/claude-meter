@@ -10,13 +10,6 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     private let fallback: any ClaudeMeterPipeline
     private let store: SnapshotStore
     private let thresholds: UsageThresholds
-    // In-memory cache survives token refresh within a session even if Keychain write fails.
-    private let stateQueue = DispatchQueue(label: "com.jewei.claudemeter.oauth-pipeline.state")
-    private var cachedCredentials: OAuthCredentials? = nil
-    // When Anthropic returns 429, back off until this time before calling the API
-    // again (honoring Retry-After when present). Falling through to the fallback
-    // pipeline meanwhile avoids hammering the endpoint and earning a longer block.
-    private var blockedUntil: Date? = nil
 
     /// Default backoff when a 429 carries no usable `Retry-After`. Matches the
     /// app's 60 s poll cadence so we retry on the next cycle.
@@ -47,25 +40,26 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         }
 
         // Honor an active 429 backoff: skip the API and serve the fallback.
-        if isRateLimited(now: now) {
+        if OAuthSharedState.isRateLimited(now: now) {
             return try await fallback.poll(now: now)
         }
 
-        let sourceCreds: OAuthCredentials? = oauthMode == "manual"
-            ? OAuthKeychain.loadManual()
-            : OAuthKeychain.load()
-        guard let loaded = cachedCredentialsValue() ?? sourceCreds else {
+        let keychainResult = oauthMode == "manual"
+            ? OAuthKeychain.loadManualResult()
+            : OAuthKeychain.loadResult()
+        let sourceCreds = Self.credentials(from: keychainResult)
+        guard let loaded = OAuthSharedState.cachedCredentials() ?? sourceCreds else {
             return try await fallback.poll(now: now)
         }
         var creds = loaded
 
         if creds.isExpired {
             guard let refreshed = try? await refreshToken(creds) else {
-                setCachedCredentials(nil)
+                OAuthSharedState.setCachedCredentials(nil)
                 return try await fallback.poll(now: now)
             }
             creds = refreshed
-            setCachedCredentials(refreshed)
+            OAuthSharedState.setCachedCredentials(refreshed)
             if oauthMode == "manual" {
                 OAuthKeychain.saveManual(accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
             }
@@ -77,14 +71,15 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         } catch OAuthError.unauthorized {
             // Token rejected despite appearing valid — attempt one refresh.
             guard let refreshed = try? await refreshToken(creds) else {
-                setCachedCredentials(nil)
+                OAuthSharedState.setCachedCredentials(nil)
                 return try await fallback.poll(now: now)
             }
-            setCachedCredentials(refreshed)
+            OAuthSharedState.setCachedCredentials(refreshed)
             if oauthMode == "manual" {
                 OAuthKeychain.saveManual(accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
             }
-            if let result = try? await fetchAndBuild(token: refreshed.accessToken, plan: plan, now: now) {
+            let refreshedPlan = ClaudePlan.displayName(subscriptionType: refreshed.subscriptionType)
+            if let result = try? await fetchAndBuild(token: refreshed.accessToken, plan: refreshedPlan, now: now) {
                 return result
             }
             return try await fallback.poll(now: now)
@@ -93,26 +88,13 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         }
     }
 
-    private func cachedCredentialsValue() -> OAuthCredentials? {
-        stateQueue.sync { cachedCredentials }
-    }
-
-    private func setCachedCredentials(_ credentials: OAuthCredentials?) {
-        stateQueue.sync { cachedCredentials = credentials }
-    }
-
-    /// True while a prior 429 backoff is still in effect.
-    private func isRateLimited(now: Date) -> Bool {
-        stateQueue.sync {
-            guard let until = blockedUntil else { return false }
-            if now >= until { blockedUntil = nil; return false }
-            return true
-        }
-    }
-
-    private func recordRateLimit(retryAfter: Date?, now: Date) {
-        stateQueue.sync {
-            blockedUntil = retryAfter ?? now.addingTimeInterval(Self.defaultRateLimitBackoff)
+    /// Resolves Keychain read into credentials, preferring in-memory cache on a
+    /// transient lock so a momentary Keychain block doesn't look like "missing".
+    private static func credentials(from result: KeychainReadResult<OAuthCredentials>) -> OAuthCredentials? {
+        switch result {
+        case let .found(creds): return creds
+        case .temporarilyUnavailable: return OAuthSharedState.cachedCredentials()
+        case .missing, .invalid: return nil
         }
     }
 
@@ -162,8 +144,11 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     public static func fetchEnrichment(now: Date = Date()) async -> OAuthEnrichment? {
         let oauthMode = UserDefaults.standard.string(forKey: AppGroupConfig.oauthModeKey) ?? ""
         guard !oauthMode.isEmpty else { return nil }
-        let sourceCreds = oauthMode == "manual" ? OAuthKeychain.loadManual() : OAuthKeychain.load()
-        guard var creds = sourceCreds else { return nil }
+        guard !OAuthSharedState.isRateLimited(now: now) else { return nil }
+        let keychainResult = oauthMode == "manual"
+            ? OAuthKeychain.loadManualResult()
+            : OAuthKeychain.loadResult()
+        guard var creds = credentials(from: keychainResult) else { return nil }
         if creds.isExpired {
             guard let refreshed = try? await verifyRefresh(creds) else { return nil }
             creds = OAuthCredentials(
@@ -172,8 +157,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 expiresAt: refreshed.expiresAt,
                 subscriptionType: creds.subscriptionType
             )
+            OAuthSharedState.setCachedCredentials(creds)
         }
-        guard let usage = try? await requestUsage(token: creds.accessToken) else { return nil }
+        guard let usage = try? await requestUsage(token: creds.accessToken, now: now) else { return nil }
         let opus = usage.sevenDayOpus.flatMap { entry -> LimitWindow? in
             guard let u = entry.utilization else { return nil }
             return LimitWindow(percentUsed: u, resetsAt: entry.resetsAt.flatMap(parseDate)).resolved(asOf: now)
@@ -189,9 +175,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         return enrichment.isEmpty ? nil : enrichment
     }
 
-    /// Shared static usage GET (no instance rate-limit gate). Used by `verify` and
+    /// Shared usage GET. Honors the process-wide 429 backoff used by `poll` and
     /// `fetchEnrichment`.
-    private static func requestUsage(token: String) async throws -> UsageResponse {
+    private static func requestUsage(token: String, now: Date = Date()) async throws -> UsageResponse {
         var request = URLRequest(url: usageURL)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
@@ -200,6 +186,13 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         let (data, http) = try await transport.send(request)
         guard http.statusCode == 200 else {
             if http.statusCode == 401 || http.statusCode == 403 { throw OAuthError.unauthorized }
+            if http.statusCode == 429 {
+                OAuthSharedState.recordRateLimit(
+                    retryAfter: retryAfterDate(from: http, now: now),
+                    now: now
+                )
+                throw OAuthError.rateLimited
+            }
             throw OAuthError.httpError(http.statusCode)
         }
         return try JSONDecoder().decode(UsageResponse.self, from: data)
@@ -222,7 +215,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         return OAuthCredentials(
             accessToken: resp.accessToken,
             refreshToken: resp.refreshToken ?? credentials.refreshToken,
-            expiresAt: Date().addingTimeInterval(Double(resp.expiresIn))
+            expiresAt: Date().addingTimeInterval(Double(resp.expiresIn)),
+            subscriptionType: credentials.subscriptionType
         )
     }
 
@@ -252,7 +246,10 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         guard http.statusCode == 200 else {
             if http.statusCode == 401 || http.statusCode == 403 { throw OAuthError.unauthorized }
             if http.statusCode == 429 {
-                recordRateLimit(retryAfter: Self.retryAfterDate(from: http, now: now), now: now)
+                OAuthSharedState.recordRateLimit(
+                    retryAfter: Self.retryAfterDate(from: http, now: now),
+                    now: now
+                )
                 throw OAuthError.rateLimited
             }
             throw OAuthError.httpError(http.statusCode)
@@ -297,7 +294,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         return OAuthCredentials(
             accessToken: resp.accessToken,
             refreshToken: resp.refreshToken ?? credentials.refreshToken,
-            expiresAt: Date().addingTimeInterval(Double(resp.expiresIn))
+            expiresAt: Date().addingTimeInterval(Double(resp.expiresIn)),
+            subscriptionType: credentials.subscriptionType
         )
     }
 
@@ -415,6 +413,45 @@ internal struct ExtraUsageEntry: Decodable {
             utilization: utilization,
             currency: currency
         )
+    }
+}
+
+// MARK: - Shared OAuth session state
+
+/// Process-wide OAuth backoff + in-memory token cache shared by the instance
+/// pipeline and static enrichment fetches.
+private enum OAuthSharedState {
+    private static let lock = NSLock()
+    private static nonisolated(unsafe) var blockedUntil: Date?
+    private static nonisolated(unsafe) var cachedCreds: OAuthCredentials?
+
+    static func isRateLimited(now: Date) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let until = blockedUntil else { return false }
+        if now >= until {
+            blockedUntil = nil
+            return false
+        }
+        return true
+    }
+
+    static func recordRateLimit(retryAfter: Date?, now: Date) {
+        lock.lock()
+        blockedUntil = retryAfter ?? now.addingTimeInterval(60)
+        lock.unlock()
+    }
+
+    static func cachedCredentials() -> OAuthCredentials? {
+        lock.lock()
+        defer { lock.unlock() }
+        return cachedCreds
+    }
+
+    static func setCachedCredentials(_ credentials: OAuthCredentials?) {
+        lock.lock()
+        cachedCreds = credentials
+        lock.unlock()
     }
 }
 

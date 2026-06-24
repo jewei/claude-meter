@@ -39,13 +39,14 @@ struct RedirectGuardTests {
 @Suite("HTTPRetryPolicy")
 struct HTTPRetryPolicyTests {
     @Test func retriesIdempotentTransientStatus() {
-        #expect(HTTPRetryPolicy.transient.shouldRetry(status: 429, attempt: 0, method: "GET"))
+        #expect(HTTPRetryPolicy.transient.shouldRetry(status: 503, attempt: 0, method: "GET"))
         #expect(HTTPRetryPolicy.transient.shouldRetry(status: 503, attempt: 0, method: "HEAD"))
+        #expect(!HTTPRetryPolicy.transient.shouldRetry(status: 429, attempt: 0, method: "GET"))
     }
 
     @Test func doesNotRetryNonIdempotentOrExhausted() {
-        #expect(!HTTPRetryPolicy.transient.shouldRetry(status: 429, attempt: 0, method: "POST"))
-        #expect(!HTTPRetryPolicy.transient.shouldRetry(status: 429, attempt: 1, method: "GET"))  // maxRetries=1
+        #expect(!HTTPRetryPolicy.transient.shouldRetry(status: 503, attempt: 0, method: "POST"))
+        #expect(!HTTPRetryPolicy.transient.shouldRetry(status: 503, attempt: 1, method: "GET"))  // maxRetries=1
         #expect(!HTTPRetryPolicy.transient.shouldRetry(status: 404, attempt: 0, method: "GET"))
         #expect(!HTTPRetryPolicy.none.shouldRetry(status: 429, attempt: 0, method: "GET"))
     }
@@ -112,10 +113,16 @@ struct KeychainStatusMappingTests {
     }
 
     @Test func lockedOrErrorIsTemporarilyUnavailable() {
-        for status in [errSecInteractionNotAllowed, errSecAuthFailed, OSStatus(-99999)] {
+        for status in [errSecInteractionNotAllowed, OSStatus(-99999)] {
             if case .temporarilyUnavailable = OAuthKeychain.mapKeychainStatus(status, data: nil) {} else {
                 Issue.record("expected .temporarilyUnavailable for \(status)")
             }
+        }
+    }
+
+    @Test func authFailedIsInvalid() {
+        if case .invalid = OAuthKeychain.mapKeychainStatus(errSecAuthFailed, data: nil) {} else {
+            Issue.record("expected .invalid for errSecAuthFailed")
         }
     }
 }

@@ -145,6 +145,22 @@ public struct LimitInfo: Codable, Equatable, Sendable {
         self.currentWeekOpus = currentWeekOpus
         self.extraUsage = extraUsage
     }
+
+    /// Display percent for the window with the highest resolved usage — matches
+    /// menu-bar severity when Opus weekly is the binding limit.
+    public func bindingDisplayPercent(asOf now: Date) -> String? {
+        var highest: LimitWindow?
+        var maxPct = -1.0
+        for window in [currentSession, currentWeekAllModels, currentWeekOpus].compactMap({ $0 }) {
+            let resolved = window.resolved(asOf: now)
+            let pct = resolved.percentUsed ?? -1
+            if pct > maxPct {
+                maxPct = pct
+                highest = resolved
+            }
+        }
+        return highest?.displayPercent
+    }
 }
 
 /// Monthly pay-as-you-go overage, surfaced by the OAuth usage API as `extra_usage`.

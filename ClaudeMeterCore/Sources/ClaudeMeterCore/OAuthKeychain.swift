@@ -93,6 +93,8 @@ public enum OAuthKeychain: Sendable {
 
     /// Writes updated tokens back to the existing Keychain entry, preserving all other fields.
     /// Best-effort: silently ignores failures.
+    /// Reserved for explicit write-back to Claude Code's entry; auto refresh stays in-memory only.
+    @available(*, deprecated, message: "Auto OAuth refresh is in-memory only; use saveManual for app-owned creds.")
     public static func save(_ credentials: OAuthCredentials) {
         guard let current = findClaudeCodeCredentialsJSON(),
               let data = current.data(using: .utf8),
@@ -272,10 +274,11 @@ public enum OAuthKeychain: Sendable {
             return .found(string)
         case errSecItemNotFound:
             return .missing
+        case errSecAuthFailed:
+            return .invalid
         default:
-            // Locked Keychain (errSecInteractionNotAllowed), auth failure, user
-            // cancel, or any unexpected status → transient. Never assume "missing"
-            // on error, or we'd drop valid credentials on a momentary lock.
+            // Locked Keychain (errSecInteractionNotAllowed), user cancel, or any
+            // unexpected status → transient. Never assume "missing" on error.
             return .temporarilyUnavailable
         }
     }

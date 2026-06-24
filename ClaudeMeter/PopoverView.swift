@@ -365,6 +365,11 @@ struct PopoverView: View {
                     .foregroundStyle(.secondary)
                 Text("Last 7 days")
                     .font(.body.weight(.semibold))
+                if appState.costScanPartial {
+                    Text("partial")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 Text(Self.usd(total))
                     .font(.body.weight(.semibold))

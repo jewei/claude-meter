@@ -51,6 +51,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release tooling derives the marketing version and build number automatically,
   bakes them into the build, and uses this changelog as the GitHub release notes.
 
+### Fixed
+
+- OAuth enrichment now shares the same 429 backoff as the main OAuth pipeline, so
+  statusline-primary users no longer hammer the usage API after a rate limit.
+- Plan badge no longer disappears after an in-session OAuth token refresh
+  (`subscriptionType` is preserved).
+- Menu-bar usage percent now reflects the binding limit (including Opus weekly),
+  matching severity icon semantics.
+- Browser cookie import matches `claude.ai` hosts exactly (not substring matches
+  like `evilclaude.ai`).
+- Cost estimates label "partial" when large transcript files are tail-read; dedup
+  no longer collapses messages missing ids.
+- Pace badges treat implausible `resets_at` values as unknown instead of
+  clamping to misleading hot/cold readings.
+- PowerMonitor no longer parks polling on `willSleep` (cancelled sleep could
+  stall refreshes for up to 5 minutes).
+- Poll and cursor errors shown in the UI are sanitized like bridge diagnostics.
+- Service-status fetch runs concurrently with usage polling (no longer blocks the
+  primary refresh).
+- Widget shows Opus weekly when available; release script tags the release commit
+  (not pre-build HEAD) and reads `TEAM_ID`/`APPLE_ID` from env.
+
 ## [1.2] - 2026-06-24
 
 ### Added

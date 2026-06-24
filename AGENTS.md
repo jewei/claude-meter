@@ -23,7 +23,7 @@ The App Group entitlement needs a real provisioning profile to _run_;
 - **Pipeline protocol** — `ClaudeMeterPipeline.poll(now:) async throws -> ParseResult`; `AppState.pipeline` is `any ClaudeMeterPipeline`.
 - **`project.pbxproj` is hand-maintained** (no xcodegen). A new file needs a `PBXFileReference`, `PBXBuildFile`, group child entry, and build-phase entry, all with consistent 24-char hex UUIDs.
 - **`JournalReader`** — used by `ClaudeAIPipeline` for cosmetic message-count labels (disk scan runs off-main).
-- **`CostUsageScanner`** — scans `~/.claude/projects/**/*.jsonl` `assistant` lines for `message.usage`, dedups streaming chunks by `message.id + requestId` taking the **max** per token field (counts are cumulative, summing over-counts), prices per family via `ModelPricing` (`opus`/`haiku`/Sonnet-default substring match — estimates only), and fills `ClaudeUsageSnapshot.models` (last 7 days). `AppState.scanCostModels` runs it off-main after each poll, independent of which tier produced the rate-limit snapshot. Per-file cache (`CostUsageCache`) keyed by mtime+size; window filtering at read time.
+- **`CostUsageScanner`** — scans `~/.claude/projects/**/*.jsonl` `assistant` lines for `message.usage`, dedups streaming chunks by `message.id + requestId` (or line index when ids are absent) taking the **max** per token field (counts are cumulative, summing over-counts), prices per family via `ModelPricing` (`opus`/`haiku`/Sonnet-default substring match — estimates only), and fills `ClaudeUsageSnapshot.models` (last 7 days). Files >8 MB are tail-read (4 MB); `CostUsageResult.isPartialEstimate` surfaces incomplete totals. Per-file cache (`CostUsageCache`) keyed by mtime+size with LRU cap (512); window filtering at read time.
 
 ### Data-source fallback order
 
@@ -43,17 +43,17 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 
 `scheduleRebuildPipeline()` debounces source-toggle rebuilds (300 ms) and does not restart an active poll loop.
 
-**Energy-aware poll loop** — `AppState.startPolling()` is gated by `PowerMonitor` (app target; AppKit `NSWorkspace` sleep/wake + IOKit battery — never in Core). While `isDisplayAsleep` the loop skips polling and re-checks every 300 s (`asleepRecheckSeconds`); `PowerMonitor.onWake` triggers an immediate `refreshNow()` so the number isn't stale a full interval after wake. On battery the 60 s base is ×2 (`batteryPollMultiplier`). `PowerMonitor` is `@MainActor`; its `NSWorkspace` observer tokens live in a plain `ObserverBag` so cleanup runs from a nonisolated `deinit` (a `@MainActor` class can't touch isolated non-`Sendable` state from its own deinit under Swift 6).
+**Energy-aware poll loop** — `AppState.startPolling()` is gated by `PowerMonitor` (app target; AppKit `NSWorkspace` sleep/wake + IOKit battery — never in Core). Parking uses `screensDidSleep` only (not `willSleep`, so a cancelled sleep doesn't stall polling). While `isDisplayAsleep` the loop skips polling and re-checks every 300 s (`asleepRecheckSeconds`); `PowerMonitor.onWake` triggers an immediate `refreshNow()` so the number isn't stale a full interval after wake. On battery the 60 s base is ×2 (`batteryPollMultiplier`). `PowerMonitor` is `@MainActor`; its `NSWorkspace` observer tokens live in a plain `ObserverBag` so cleanup runs from a nonisolated `deinit` (a `@MainActor` class can't touch isolated non-`Sendable` state from its own deinit under Swift 6). Test `AppState.init(pipeline:)` skips `PowerMonitor`.
 
 ### Networking — `ProviderHTTP.swift`
 
 - **All** provider HTTP goes through `ProviderHTTPClient.shared` (a `HTTPTransport`): one cookie-less ephemeral session (10 s) behind `RedirectGuardDelegate`, which drops any redirect that isn't same-origin HTTPS — credentials (`Bearer`/`Cookie`) must never be replayed off-origin or downgraded. OAuth, claude.ai, and status clients all use it.
-- `HTTPRetryPolicy` (`.none` / `.transient`) gives bounded retries (idempotent methods only, honors `Retry-After`, exp backoff capped at 8 s). claude.ai + status GETs use `.transient`; OAuth keeps its own cross-poll 429 `blockedUntil` gate and uses `.none`.
+- `HTTPRetryPolicy` (`.none` / `.transient`) gives bounded retries (idempotent methods only, honors `Retry-After`, exp backoff capped at 8 s). `.transient` excludes 429 (OAuth handles its own backoff) and also retries selected `URLError` timeouts. claude.ai + status GETs use `.transient`; OAuth keeps its own cross-poll 429 `blockedUntil` gate and uses `.none`.
 - **Inject a stub `HTTPTransport`** to unit-test a client without network (see `AnthropicStatusClient(transport:)` and `TransportInjectionTests`).
 
 ### Keychain reads
 
-- `OAuthKeychain.loadResult()` / `loadManualResult()` return `KeychainReadResult { found / missing / temporarilyUnavailable / invalid }`; `mapKeychainStatus` classifies the `OSStatus` (a locked Keychain → `temporarilyUnavailable`, never `missing`, so a transient lock doesn't drop the source). `load()`/`loadManual()` remain the `Optional` convenience wrappers.
+- `OAuthKeychain.loadResult()` / `loadManualResult()` return `KeychainReadResult { found / missing / temporarilyUnavailable / invalid }`; `mapKeychainStatus` classifies the `OSStatus` (a locked Keychain → `temporarilyUnavailable`, `errSecAuthFailed` → `invalid`, never `missing` on error). `OAuthPipeline.poll` and `fetchEnrichment` branch on these (prefer in-memory cache on `.temporarilyUnavailable`). `load()`/`loadManual()` remain the `Optional` convenience wrappers.
 
 ---
 
@@ -72,7 +72,7 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 
 - **File mtime ≠ data freshness** — an open-but-idle session re-emits its last (stale) snapshot every second, so the file stays fresh while the numbers are hours old. The real freshness signal is `resets_at`.
 - **Expired windows read 0%** — Claude's windows are _rolling_, so once `resets_at` passes the window has reset. `LimitWindow.resolved(asOf:)` encodes it (past reset → `percentUsed: 0`, `resetsAt: nil`; next reset isn't predictable so no countdown). Applied in `StatuslinePipeline.displayWindow`, menu bar, `UsageCardView`, widget, and `NotificationPolicy`. Widget timeline refreshes at `min(nextReset, now+15m)`.
-- **Usage pace** (`UsagePace.swift`) — `LimitWindow` has `percentUsed` + `resetsAt` but **not** the window span, so pace takes a `LimitWindowKind` (`.session` = 5 h, `.weekly` = 7 d). `percentTimeElapsed(kind:asOf:)` = `(span − timeUntilReset)/span`; `pace` classifies used vs. elapsed (±5 pt = on pace). Compute on the **`resolved(asOf:)`** window so a just-reset window reads `.unknown`, not stale. `UsageCardView(paceKind:)` drives the badge; session→`.session`, both weekly cards→`.weekly`.
+- **Usage pace** (`UsagePace.swift`) — `LimitWindow` has `percentUsed` + `resetsAt` but **not** the window span, so pace takes a `LimitWindowKind` (`.session` = 5 h, `.weekly` = 7 d). `percentTimeElapsed(kind:asOf:)` = `(span − timeUntilReset)/span`; returns `nil` when `resets_at` is implausible (past reset or > span away). `pace` classifies used vs. elapsed (±5 pt = on pace). Compute on the **`resolved(asOf:)`** window so a just-reset window reads `.unknown`, not stale. `UsageCardView(paceKind:)` drives the badge; session→`.session`, both weekly cards→`.weekly`. Menu-bar percent uses `LimitInfo.bindingDisplayPercent` (highest window, matches severity).
 - **`lastPolledAt` advances only on successful polls**; derive staleness from `snapshot.lastSuccessfulPollAt` (`staleAfterSeconds`, default 180 s, in `AppGroupConfig`).
 - **Claude vs Cursor staleness** — `isStale` ORs both for menu-bar UX; Claude notifications use `claudeIsStale` only.
 
@@ -84,7 +84,7 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 - **Decode `UsageResponse`, not `[String: QuotaEntry]`** — the endpoint returns extra keys (`limits`, `spend`, `extra_usage`, nulls). `utilization` is already 0–100; don't ×100. `QuotaEntry.utilization` is optional so null/empty windows degrade to "unknown" instead of failing the whole decode.
 - **Windows mapped** — `five_hour` → session, `seven_day` → `currentWeekAllModels`, `seven_day_opus` → `currentWeekOpus` (often the binding limit for Max), `extra_usage` → `ExtraUsage` (monthly overage $). All feed severity + notifications (`weeklyOpus` scope). The statusline bridge and claude.ai client parse `seven_day_opus` too.
 - **Statusline can't see Opus/extra/plan** — Claude Code's statusline `rate_limits` only emits `five_hour` + `seven_day`. `seven_day_opus`, `extra_usage`, and `subscriptionType` exist **only** in the OAuth response. `OAuthPipeline.fetchEnrichment` fetches them and `AppState.oauthEnrichment` layers them onto a non-OAuth snapshot (gated on `oauthMode` being set). `extra_usage` amounts are integer **minor units** (`used_credits`/`monthly_limit` ÷ `10^decimal_places`), not dollars; `is_enabled:false` can coexist with real `used_credits` (e.g. `out_of_credits`).
-- **429 backoff** — `OAuthPipeline` honors `Retry-After` (delta-seconds or HTTP-date) via an in-pipeline `blockedUntil` gate; while blocked it skips the API and serves the fallback (default 60 s). Sends `User-Agent: claude-code/<ver>`.
+- **429 backoff** — `OAuthPipeline` honors `Retry-After` (delta-seconds or HTTP-date) via a process-wide `OAuthSharedState.blockedUntil` gate shared by `poll` and `fetchEnrichment`; while blocked both skip the API and serve the fallback (default 60 s). Token refresh preserves `subscriptionType`. Sends `User-Agent: claude-code/<ver>`.
 - **`expiresAt` is integer milliseconds** in the Keychain JSON; parse via `NSNumber`/`Int`/`Double`. Refresh when within 60 s of expiry.
 - **Token refresh** — `POST https://console.anthropic.com/v1/oauth/token`, `grant_type=refresh_token`, client id `9d1c250a-e61b-44d9-88ed-5944d1962f5e`; usage calls send `anthropic-beta: oauth-2025-04-20`. Ephemeral `URLSession`, no cookies, 10 s timeout.
 
@@ -93,7 +93,7 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 - **Manual Cookie needs an ephemeral session** — `URLSession.shared` drops/overrides the `Cookie` header; `ClaudeAIUsageClient` uses a private ephemeral session (`httpShouldSetCookies = false`, `httpCookieAcceptPolicy = .never`).
 - **Keychain** — `ClaudeAIKeychain`, service `com.jewei.claudemeter`, accounts `claudeai.sessionKey` and `claudeai.orgId`. Session key is a browser cookie; never log it.
 - **Org auto-resolve** — Org ID is optional in Settings; blank → `ClaudeAIUsageClient.resolveOrgId(sessionKey:)` calls `GET /api/organizations` and `selectOrganization` prefers the org with the `chat` capability (not blindly index 0), falling back to the first. Manual UUID paste still works.
-- **Browser cookie import** — `BrowserCookieImporter.importClaudeSessionKey()` reads the `sessionKey` cookie from Chromium browsers (Chrome/Brave/Edge/Arc/Chromium), Firefox, and Safari, then org auto-resolve fills the rest. Chromium decrypt: **v10** = PBKDF2-SHA1(pw,"saltysalt",1003,16) + AES-128-CBC (IV = 16×0x20); **v20** = AES-256-GCM (`v20`‖nonce12‖ct‖tag16) with a PBKDF2 32-byte key — **best-effort/unverified for v20 app-bound; iterate from device output**. Plaintext carries a 32-byte domain-hash prefix, so `extractSessionKey` locates the `sk-ant-` token. Reads via `sqlite3` + `security`; first Keychain access prompts the user. Cookie DBs are read `-readonly`, falling back to a `file:…?immutable=1` URI when the browser holds a WAL lock (Firefox while running blocks `-readonly`; spaces in the path are %20-encoded). Verified on-device: Chrome/Brave (v10), Firefox, Safari all import; v20 still unconfirmed (no v20 cookie seen yet). Never log the value (it's a credential).
+- **Browser cookie import** — `BrowserCookieImporter.importClaudeSessionKey()` reads the `sessionKey` cookie from Chromium browsers (Chrome/Brave/Edge/Arc/Chromium), Firefox, and Safari, then org auto-resolve fills the rest. Host matching is exact (`claude.ai` / `*.claude.ai` only). Chromium decrypt: **v10** = PBKDF2-SHA1(pw,"saltysalt",1003,16) + AES-128-CBC (IV = 16×0x20); **v20** = AES-256-GCM (`v20`‖nonce12‖ct‖tag16) with a PBKDF2 32-byte key — **best-effort/unverified for v20 app-bound; iterate from device output**. Plaintext carries a 32-byte domain-hash prefix, so `extractSessionKey` locates the `sk-ant-` token. Reads via `sqlite3` + `security`; first Keychain access prompts the user. Cookie DBs are read `-readonly`, falling back to a `file:…?immutable=1` URI when the browser holds a WAL lock (Firefox while running blocks `-readonly`; spaces in the path are %20-encoded). Verified on-device: Chrome/Brave (v10), Firefox, Safari all import; v20 still unconfirmed (no v20 cookie seen yet). Never log the value (it's a credential).
 - **Failure handling** — transient errors fall back to `CachedSnapshotPipeline` and surface a `ParseWarning` (`field: "claude.ai API"`); auth failures (401/403) are fatal and do **not** fall back.
 
 ## Cursor usage (opt-in)
@@ -112,6 +112,7 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 ## Widget / App Group
 
 - **Sandboxed** — never fall back to `applicationSupport()`; read `SnapshotStore.appGroup()` only and return `nil` gracefully.
+- **Opus weekly** — medium/large widget shows `WEEK (OPUS)` when present; timeline refresh includes `currentWeekOpus.resetsAt`.
 - **macOS 26 SDK** — `Widget`/`WidgetBundle` live in `SwiftUI`; the bundle file needs `import SwiftUI` even though it uses `WidgetKit` types.
 - **Design tokens aren't shared across targets** — duplicate `Color(hex:)` as `Color(widgetHex:)` in the widget. Intentional.
 
@@ -133,4 +134,4 @@ Always sanitize before logging or copying. `DiagnosticsSanitizer.sanitize` redac
 - No explicit `fsync` on snapshot atomic writes.
 - No in-app notice when the claude.ai session key (logout / ~90 days) or the OAuth access token expires.
 - `default.json` collides if multiple sessions ever lack a `session_id` (rare — Claude Code always sends one).
-- Cursor usage is not in the widget or notification engine yet.
+- Cursor usage is not in the notification engine yet.

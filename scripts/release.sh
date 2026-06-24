@@ -18,8 +18,8 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT="$PROJECT_DIR/ClaudeMeter.xcodeproj"
 SCHEME="ClaudeMeter"
 APP_NAME="ClaudeMeter"
-TEAM_ID="4L4SS26L9J"
-APPLE_ID="jewei.mak@gmail.com"
+TEAM_ID="${TEAM_ID:-4L4SS26L9J}"
+APPLE_ID="${APPLE_ID:-jewei.mak@gmail.com}"
 KEYCHAIN_PROFILE="notarytool"
 GITHUB_REPO="jewei/claude-meter"
 MIN_MACOS="14.0"
@@ -57,16 +57,6 @@ DMG_NAME="$APP_NAME-$VERSION.dmg"
 TAG="v$VERSION"
 
 echo "▶ Releasing $APP_NAME $VERSION (build $BUILD)"
-
-# ── Persist version into the project ──────────────────────────────────────────
-# Write the release version/build back into project.pbxproj so the repo always
-# reflects what shipped (and the no-arg default path stays correct next time).
-# The archive below also passes these on the command line, so the baked
-# Info.plist — and therefore the About tab — can never drift from the release.
-
-PBXPROJ="$PROJECT/project.pbxproj"
-sed -i '' -E "s/(MARKETING_VERSION = )[^;]*;/\1$VERSION;/g" "$PBXPROJ"
-sed -i '' -E "s/(CURRENT_PROJECT_VERSION = )[^;]*;/\1$BUILD;/g" "$PBXPROJ"
 
 # ── Changelog notes ───────────────────────────────────────────────────────────
 # Capture the [Unreleased] section body now and fail fast if it's empty — no
@@ -108,8 +98,7 @@ mkdir -p "$BUILD_DIR"
 
 # ── Locate sign_update ────────────────────────────────────────────────────────
 
-SIGN_UPDATE=$(find ~/Library/Developer/Xcode/DerivedData -name "sign_update" \
-    -path "*/Sparkle/bin/sign_update" 2>/dev/null | grep -v old_dsa | head -1)
+SIGN_UPDATE=$(find ~/Library/Developer/Xcode/DerivedData -path "*/Sparkle/bin/sign_update" -not -path "*/old_dsa/*" -print -quit 2>/dev/null)
 if [[ -z "$SIGN_UPDATE" ]]; then
     echo "error: Sparkle sign_update not found in DerivedData." >&2
     echo "       Build the project in Xcode at least once to resolve SPM packages." >&2
@@ -227,24 +216,11 @@ cat > "$PROJECT_DIR/appcast.xml" <<XML
 </rss>
 XML
 
-# ── GitHub Release ────────────────────────────────────────────────────────────
-# Publish the release (with the DMG asset) BEFORE the appcast is pushed, so the
-# Sparkle feed can never advertise a download URL that doesn't exist yet. If this
-# step fails, the appcast was not pushed and the previous release stays live.
+# ── Persist version + promote changelog + commit ──────────────────────────────
+# Bump project.pbxproj only after a successful build. Commit before creating the
+# GitHub release so the tag points at the release commit (appcast + changelog).
 
-echo "▶ Creating GitHub release ${TAG}…"
-gh release create "$TAG" "$DMG_PATH" \
-    --repo "$GITHUB_REPO" \
-    --title "Claude Meter $VERSION" \
-    --notes "$RELEASE_NOTES
-
----
-Download and open **$DMG_NAME** to install."
-
-# ── Promote changelog ─────────────────────────────────────────────────────────
-# The release now exists, so stamp [Unreleased] → [VERSION] - DATE, open a fresh
-# empty Unreleased section above it, and refresh the compare links at the bottom.
-
+PBXPROJ="$PROJECT/project.pbxproj"
 echo "▶ Promoting CHANGELOG.md…"
 TODAY="$(date -u '+%Y-%m-%d')"
 if [[ -n "$PREV_TAG" ]]; then
@@ -261,12 +237,31 @@ awk -v ver="$VERSION" -v date="$TODAY" -v unrel="$UNREL_LINK" -v verlink="$VERSI
                           { print }
 ' "$CHANGELOG" > "$CHANGELOG_TMP" && mv "$CHANGELOG_TMP" "$CHANGELOG"
 
-# ── Commit & push ─────────────────────────────────────────────────────────────
-# Done last: the appcast goes live to Sparkle only once the DMG is downloadable.
+sed -i '' -E "s/(MARKETING_VERSION = )[^;]*;/\1$VERSION;/g" "$PBXPROJ"
+sed -i '' -E "s/(CURRENT_PROJECT_VERSION = )[^;]*;/\1$BUILD;/g" "$PBXPROJ"
 
 echo "▶ Committing version bump + changelog + appcast.xml…"
 git -C "$PROJECT_DIR" add appcast.xml CHANGELOG.md ClaudeMeter.xcodeproj/project.pbxproj
 git -C "$PROJECT_DIR" commit -m "Release $TAG"
+RELEASE_COMMIT="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+
+# ── GitHub Release ────────────────────────────────────────────────────────────
+# Tag the release commit (not the pre-build HEAD) so source and assets align.
+
+echo "▶ Creating GitHub release ${TAG}…"
+gh release create "$TAG" "$DMG_PATH" \
+    --repo "$GITHUB_REPO" \
+    --target "$RELEASE_COMMIT" \
+    --title "Claude Meter $VERSION" \
+    --notes "$RELEASE_NOTES
+
+---
+Download and open **$DMG_NAME** to install."
+
+# ── Push ──────────────────────────────────────────────────────────────────────
+# Appcast goes live only once the DMG is downloadable at the tagged release.
+
+echo "▶ Pushing to origin…"
 git -C "$PROJECT_DIR" push
 
 echo ""

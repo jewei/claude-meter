@@ -75,6 +75,14 @@ struct BrowserCookieImporterTests {
         #expect(BrowserCookieImporter.parseBinaryCookies(Data("nope".utf8)).isEmpty)
     }
 
+    @Test func isClaudeAiHostMatchesExactAndSubdomains() {
+        #expect(BrowserCookieImporter.isClaudeAiHost("claude.ai"))
+        #expect(BrowserCookieImporter.isClaudeAiHost(".claude.ai"))
+        #expect(BrowserCookieImporter.isClaudeAiHost("api.claude.ai"))
+        #expect(!BrowserCookieImporter.isClaudeAiHost("evilclaude.ai"))
+        #expect(!BrowserCookieImporter.isClaudeAiHost("notclaude.ai"))
+    }
+
     // MARK: - Live, on-device diagnostic (opt-in)
 
     /// Runs against the real browsers on this machine. Skipped unless

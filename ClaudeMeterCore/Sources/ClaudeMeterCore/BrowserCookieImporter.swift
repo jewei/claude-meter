@@ -85,9 +85,51 @@ public enum BrowserCookieImporter {
             }
             lines.append("\(browser.displayName): keychainPW=\(pw != nil) cookie=\(cookieFound) version=\(version) decrypted=\(decrypted)")
         }
-        lines.append("Firefox: sessionKey=\(importFirefox() != nil)")
-        lines.append("Safari: sessionKey=\(importSafari() != nil)")
+        lines.append("Firefox: sessionKey=\(probeFirefoxSessionKey())")
+        lines.append("Safari: sessionKey=\(probeSafariSessionKey())")
         return lines.joined(separator: "\n")
+    }
+
+    /// Probe-only: whether a plausible session key exists (no decryption).
+    static func probeFirefoxSessionKey() -> Bool {
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Firefox/Profiles")
+        guard let profiles = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else {
+            return false
+        }
+        let sql = """
+        SELECT 1 FROM moz_cookies
+        WHERE name='sessionKey' AND (host = 'claude.ai' OR host LIKE '%.claude.ai')
+        LIMIT 1;
+        """
+        for profile in profiles {
+            let db = profile.appendingPathComponent("cookies.sqlite")
+            guard FileManager.default.fileExists(atPath: db.path) else { continue }
+            if let row = runSQLite(dbPath: db.path, sql: sql)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               row == "1" {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Probe-only: whether a plausible session key exists (reads cookie file only).
+    static func probeSafariSessionKey() -> Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let paths = [
+            home.appendingPathComponent("Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies"),
+            home.appendingPathComponent("Library/Cookies/Cookies.binarycookies"),
+        ]
+        for path in paths {
+            guard let data = try? Data(contentsOf: path) else { continue }
+            if parseBinaryCookies(data).contains(where: {
+                isClaudeAiHost($0.domain) && $0.name == "sessionKey" && isPlausibleSessionKey($0.value)
+            }) {
+                return true
+            }
+        }
+        return false
     }
 
     // MARK: - Value validation
@@ -96,6 +138,12 @@ public enum BrowserCookieImporter {
     /// generic `sk-ant-` prefix to be forgiving of format tweaks.
     static func isPlausibleSessionKey(_ value: String) -> Bool {
         value.hasPrefix("sk-ant-")
+    }
+
+    /// Whether a cookie host/domain is exactly claude.ai or a subdomain thereof.
+    static func isClaudeAiHost(_ host: String) -> Bool {
+        let h = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        return h == "claude.ai" || h.hasSuffix(".claude.ai")
     }
 
     /// Chromium plaintext often carries a 32-byte domain-hash prefix and trailing
@@ -197,7 +245,11 @@ public enum BrowserCookieImporter {
     }
 
     private static func chromiumEncryptedSessionKeyHex(dbPath: String) -> String? {
-        let sql = "SELECT hex(encrypted_value) FROM cookies WHERE host_key LIKE '%claude.ai' AND name='sessionKey' LIMIT 1;"
+        let sql = """
+        SELECT hex(encrypted_value) FROM cookies
+        WHERE name='sessionKey' AND (host_key = 'claude.ai' OR host_key LIKE '%.claude.ai')
+        LIMIT 1;
+        """
         let out = runSQLite(dbPath: dbPath, sql: sql)?.trimmingCharacters(in: .whitespacesAndNewlines)
         return (out?.isEmpty == false) ? out : nil
     }
@@ -249,7 +301,11 @@ public enum BrowserCookieImporter {
         guard let profiles = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else {
             return nil
         }
-        let sql = "SELECT value FROM moz_cookies WHERE host LIKE '%claude.ai' AND name='sessionKey' LIMIT 1;"
+        let sql = """
+        SELECT value FROM moz_cookies
+        WHERE name='sessionKey' AND (host = 'claude.ai' OR host LIKE '%.claude.ai')
+        LIMIT 1;
+        """
         for profile in profiles {
             let db = profile.appendingPathComponent("cookies.sqlite")
             guard FileManager.default.fileExists(atPath: db.path) else { continue }
@@ -273,7 +329,7 @@ public enum BrowserCookieImporter {
         for path in paths {
             guard let data = try? Data(contentsOf: path) else { continue }
             for cookie in parseBinaryCookies(data)
-            where cookie.domain.contains("claude.ai") && cookie.name == "sessionKey" {
+            where Self.isClaudeAiHost(cookie.domain) && cookie.name == "sessionKey" {
                 if isPlausibleSessionKey(cookie.value) { return cookie.value }
             }
         }
@@ -413,22 +469,30 @@ public enum BrowserCookieImporter {
         process.standardError = stderr
 
         let semaphore = DispatchSemaphore(value: 0)
-        final class Box: @unchecked Sendable { var status: Int32 = -1 }
+        final class Box: @unchecked Sendable {
+            var status: Int32 = -1
+            var output = Data()
+        }
         let box = Box()
         DispatchQueue.global(qos: .utility).async {
             defer { semaphore.signal() }
+            let outHandle = stdout.fileHandleForReading
+            let drain = DispatchQueue(label: "BrowserCookieImporter.stdout")
+            drain.async {
+                box.output = outHandle.readDataToEndOfFile()
+            }
             do { try process.run() } catch { return }
             process.waitUntilExit()
+            drain.sync {}
             box.status = process.terminationStatus
+            _ = stderr.fileHandleForReading.readDataToEndOfFile()
         }
         if semaphore.wait(timeout: .now() + processTimeout) == .timedOut {
             process.terminate()
             return nil
         }
         guard box.status == 0 else { return nil }
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        _ = stderr.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)
+        return String(data: box.output, encoding: .utf8)
     }
 }
 

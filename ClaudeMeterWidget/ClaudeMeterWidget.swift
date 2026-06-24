@@ -324,12 +324,15 @@ private struct WindowRow: View {
     let thresholds: UsageThresholds
     let referenceDate: Date
 
+    /// Rolling windows past their reset read as 0% (see `LimitWindow.resolved`).
+    private var resolvedWindow: LimitWindow { window.resolved(asOf: referenceDate) }
+
     private var fraction: Double {
-        (window.clampedPercent ?? 0) / 100
+        (resolvedWindow.clampedPercent ?? 0) / 100
     }
 
     private var color: Color {
-        severityColor(for: window.percentUsed, thresholds: thresholds)
+        severityColor(for: resolvedWindow.percentUsed, thresholds: thresholds)
     }
 
     var body: some View {
@@ -339,7 +342,7 @@ private struct WindowRow: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(window.displayPercent ?? "—")
+                Text(resolvedWindow.displayPercent ?? "—")
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .foregroundStyle(color)
             }
@@ -354,9 +357,9 @@ private struct WindowRow: View {
     }
 
     private var resetText: String {
-        guard let date = window.resetsAt else {
-            if window.rawResetText == "rolling 7 days" { return "Last 7 days" }
-            return window.rawResetText.map { "Resets \($0)" } ?? "—"
+        guard let date = resolvedWindow.resetsAt else {
+            if resolvedWindow.rawResetText == "rolling 7 days" { return "Last 7 days" }
+            return resolvedWindow.rawResetText.map { "Resets \($0)" } ?? "—"
         }
         let diff = date.timeIntervalSince(referenceDate)
         if diff <= 0 { return "Resetting…" }
@@ -368,7 +371,7 @@ private struct WindowRow: View {
     }
 
     private var accessibilityText: String {
-        "\(label) usage \(window.displayPercent ?? "unknown"), \(resetText)"
+        "\(label) usage \(resolvedWindow.displayPercent ?? "unknown"), \(resetText)"
     }
 }
 

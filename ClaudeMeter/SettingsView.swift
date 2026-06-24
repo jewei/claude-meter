@@ -714,7 +714,10 @@ private struct AboutSettingsTab: View {
                         .frame(width: 168, height: 168)
                         .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
 
-                    Image(nsImage: NSApplication.shared.applicationIconImage)
+                    // Load the artwork directly from the asset catalog rather than
+                    // `NSApplication.shared.applicationIconImage`, which returns the
+                    // generic macOS placeholder for LSUIElement (agent) apps.
+                    Image("AppLogo")
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 96, height: 96)

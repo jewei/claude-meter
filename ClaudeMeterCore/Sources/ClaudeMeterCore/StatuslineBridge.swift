@@ -13,6 +13,15 @@ public enum StatuslineBridge: Sendable {
     static let dataDir: URL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".claude-meter")
 
+    /// Per-session payloads live here, one file per Claude Code `session_id`.
+    /// Multiple concurrent sessions each write their own file so they no longer
+    /// clobber a single shared file (which caused the meter to flip between
+    /// sessions' rate-limit snapshots).
+    static let sessionsDir: URL = dataDir
+        .appendingPathComponent("sessions")
+
+    /// Legacy single-file path written by pre-multisession installs. Still read
+    /// during migration; new installs write into `sessionsDir`.
     public static let statuslineFilePath: URL = dataDir
         .appendingPathComponent("statusline.json")
 
@@ -21,14 +30,21 @@ public enum StatuslineBridge: Sendable {
 
     // MARK: - Bridge snippet
 
-    /// Unique substring used to detect if our bridge is already installed.
-    private static let bridgeMarker = ".claude-meter/statusline.json"
-
     /// Re-run the statusline command every second while Claude Code is open (minimum allowed).
     private static let refreshIntervalSeconds = 1
 
-    /// Inline bash snippet: reads stdin, saves atomically, pipes through to next command.
-    private static let bridgeSnippet = #"bash -c 'I=$(cat);D=$HOME/.claude-meter;mkdir -p "$D" 2>/dev/null;T="$D/.sl-$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/statusline.json" 2>/dev/null||rm -f "$T" 2>/dev/null;printf "%s" "$I"'"#
+    /// Inline bash snippet: reads stdin, extracts `session_id`, and atomically
+    /// writes the payload to `~/.claude-meter/sessions/<session_id>.json`, then
+    /// pipes stdin through to the next command unchanged.
+    static let bridgeSnippet = #"bash -c 'I=$(cat);D=$HOME/.claude-meter/sessions;mkdir -p "$D" 2>/dev/null;S=$(printf "%s" "$I"|sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p");[ -z "$S" ]&&S=default;T="$D/.tmp.$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/$S.json" 2>/dev/null||rm -f "$T" 2>/dev/null;printf "%s" "$I"'"#
+
+    /// Snippets from earlier app versions; recognised so `install()` can migrate
+    /// them to the current snippet and `uninstall()` can remove them cleanly.
+    static let legacyBridgeSnippets: [String] = [
+        #"bash -c 'I=$(cat);D=$HOME/.claude-meter;mkdir -p "$D" 2>/dev/null;T="$D/.sl-$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/statusline.json" 2>/dev/null||rm -f "$T" 2>/dev/null;printf "%s" "$I"'"#
+    ]
+
+    private static var allBridgeSnippets: [String] { [bridgeSnippet] + legacyBridgeSnippets }
 
     // MARK: - Install / uninstall
 
@@ -40,19 +56,23 @@ public enum StatuslineBridge: Sendable {
                 .appendingPathComponent(".claude").path
         ) else { return }
 
-        try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
 
         var settings = try readSettings()
         var needsWrite = false
 
+        // Strip any bridge variant (current or legacy) to recover the user's own
+        // command, then prepend the current snippet. This migrates old installs.
         let currentCmd = statusLineCommand(in: settings)
-        if !currentCmd.contains(bridgeMarker) {
-            let newCmd = currentCmd.isEmpty
-                ? bridgeSnippet + " > /dev/null"
-                : bridgeSnippet + " | " + currentCmd
-            upsertStatusLine(command: newCmd, in: &settings)
+        let userCmd = strippedOfAnyBridge(from: currentCmd)
+        let desiredCmd = userCmd.isEmpty
+            ? bridgeSnippet + " > /dev/null"
+            : bridgeSnippet + " | " + userCmd
+        if currentCmd != desiredCmd {
+            upsertStatusLine(command: desiredCmd, in: &settings)
             needsWrite = true
-        } else if ensureRefreshInterval(in: &settings) {
+        }
+        if ensureRefreshInterval(in: &settings) {
             needsWrite = true
         }
 
@@ -65,25 +85,48 @@ public enum StatuslineBridge: Sendable {
     public static func uninstall() throws {
         var settings = try readSettings()
         let currentCmd = statusLineCommand(in: settings)
-        guard currentCmd.contains(bridgeMarker) else { return }
+        let restored = strippedOfAnyBridge(from: currentCmd)
+        guard restored != currentCmd else { return }
 
-        let restored = removedBridgeSnippet(from: currentCmd)
         if restored.isEmpty {
             settings.removeValue(forKey: "statusLine")
         } else {
             setStatusLineCommand(restored, in: &settings)
         }
         try writeSettings(settings)
+        try? FileManager.default.removeItem(at: sessionsDir)
         try? FileManager.default.removeItem(at: statuslineFilePath)
     }
 
     // MARK: - Freshness check
 
-    /// Returns true if the statusline file exists and was modified within `maxAge` seconds.
+    /// Returns true if any session payload (or the legacy file) was modified
+    /// within `maxAge` seconds — i.e. at least one Claude Code session is active.
     public static func isDataFresh(maxAge: TimeInterval = 300) -> Bool {
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: statuslineFilePath.path),
-              let modDate = attrs[.modificationDate] as? Date else { return false }
-        return Date().timeIntervalSince(modDate) < maxAge
+        !freshPayloadFiles(maxAge: maxAge).isEmpty
+    }
+
+    /// All payload files modified within `maxAge` seconds: per-session files plus
+    /// the legacy single file (present only on not-yet-migrated installs).
+    private static func freshPayloadFiles(maxAge: TimeInterval, now: Date = Date()) -> [URL] {
+        var urls: [URL] = []
+        let keys: [URLResourceKey] = [.contentModificationDateKey]
+        if let entries = try? FileManager.default.contentsOfDirectory(
+            at: sessionsDir, includingPropertiesForKeys: keys
+        ) {
+            for url in entries where url.pathExtension == "json" {
+                if let mod = (try? url.resourceValues(forKeys: Set(keys)))?.contentModificationDate,
+                   now.timeIntervalSince(mod) < maxAge {
+                    urls.append(url)
+                }
+            }
+        }
+        if let mod = (try? FileManager.default.attributesOfItem(
+            atPath: statuslineFilePath.path))?[.modificationDate] as? Date,
+           now.timeIntervalSince(mod) < maxAge {
+            urls.append(statuslineFilePath)
+        }
+        return urls
     }
 
     // MARK: - Data model
@@ -111,13 +154,52 @@ public enum StatuslineBridge: Sendable {
 
     // MARK: - Read data
 
-    /// Reads and parses the statusline payload from `~/.claude-meter/statusline.json`.
-    /// Returns nil if the file doesn't exist; throws on parse failure.
-    public static func readData() throws -> StatuslinePayload? {
-        try readData(from: statuslineFilePath)
+    /// Reads and merges payloads from every active Claude Code session.
+    ///
+    /// Each session caches the rate-limit state from *its* last API call, so
+    /// concurrent sessions report different snapshots of varying staleness. We
+    /// merge by recency: the five-hour window with the latest `resets_at` is the
+    /// most recent observation, and weekly usage only grows so the highest value
+    /// is freshest. Returns nil when no fresh payload exists.
+    public static func readData(maxAge: TimeInterval = 300) throws -> StatuslinePayload? {
+        let payloads = freshPayloadFiles(maxAge: maxAge)
+            .compactMap { try? readPayload(from: $0) }
+            .compactMap { $0 }
+        return mergePayloads(payloads)
     }
 
-    internal static func readData(from statuslineFilePath: URL) throws -> StatuslinePayload? {
+    /// Merges per-session payloads into a single coherent reading. Account-wide
+    /// windows are picked by observation recency; session metadata comes from the
+    /// most recently written file. Returns nil for an empty input.
+    static func mergePayloads(_ payloads: [StatuslinePayload]) -> StatuslinePayload? {
+        guard let base = payloads.max(by: { $0.capturedAt < $1.capturedAt }) else { return nil }
+
+        let fiveHour = payloads.compactMap(\.fiveHour).max { a, b in
+            let ra = a.resetsAt ?? .distantPast
+            let rb = b.resetsAt ?? .distantPast
+            if ra != rb { return ra < rb }
+            return a.usedPercentage < b.usedPercentage
+        }
+        let sevenDay = payloads.compactMap(\.sevenDay).max { $0.usedPercentage < $1.usedPercentage }
+
+        return StatuslinePayload(
+            fiveHour: fiveHour,
+            sevenDay: sevenDay,
+            sessionId: base.sessionId,
+            sessionName: base.sessionName,
+            cwd: base.cwd,
+            modelId: base.modelId,
+            modelDisplayName: base.modelDisplayName,
+            totalCostUsd: base.totalCostUsd,
+            totalApiDurationMs: base.totalApiDurationMs,
+            codeLinesAdded: base.codeLinesAdded,
+            codeLinesRemoved: base.codeLinesRemoved,
+            cliVersion: base.cliVersion,
+            capturedAt: base.capturedAt
+        )
+    }
+
+    internal static func readPayload(from statuslineFilePath: URL) throws -> StatuslinePayload? {
         guard let modDate = (try? FileManager.default.attributesOfItem(
             atPath: statuslineFilePath.path))?[.modificationDate] as? Date
         else { return nil }
@@ -213,11 +295,27 @@ public enum StatuslineBridge: Sendable {
         upsertStatusLine(command: cmd, in: &settings)
     }
 
-    private static func removedBridgeSnippet(from command: String) -> String {
-        let pipePrefix = bridgeSnippet + " | "
-        if command.hasPrefix(pipePrefix) { return String(command.dropFirst(pipePrefix.count)) }
-        if command == bridgeSnippet + " > /dev/null" { return "" }
-        return command
+    /// Removes every leading bridge snippet (current or legacy) from `command`,
+    /// returning the user's original command (empty if the bridge was the whole
+    /// command). Loops to collapse chains of duplicates that earlier versions
+    /// could accumulate. Returns `command` unchanged when no bridge is present.
+    static func strippedOfAnyBridge(from command: String) -> String {
+        var cmd = command
+        while true {
+            var didStrip = false
+            for snippet in allBridgeSnippets {
+                let pipePrefix = snippet + " | "
+                if cmd.hasPrefix(pipePrefix) {
+                    cmd = String(cmd.dropFirst(pipePrefix.count))
+                    didStrip = true
+                    break
+                }
+                if cmd == snippet + " > /dev/null" || cmd == snippet {
+                    return ""
+                }
+            }
+            if !didStrip { return cmd }
+        }
     }
 
     private static func writeSettings(_ settings: [String: Any]) throws {

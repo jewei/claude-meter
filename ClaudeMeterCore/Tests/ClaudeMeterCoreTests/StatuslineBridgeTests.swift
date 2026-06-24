@@ -32,6 +32,29 @@ struct StatuslineBridgeTests {
     #expect(!StatuslineBridge.ensureRefreshInterval(in: &settings))
   }
 
+  @Test func strippedOfAnyBridgeReturnsUserCommandUnchangedWhenNoBridge() {
+    #expect(StatuslineBridge.strippedOfAnyBridge(from: "my-statusline.sh") == "my-statusline.sh")
+  }
+
+  @Test func strippedOfAnyBridgeRecoversUserCommand() {
+    let cmd = StatuslineBridge.bridgeSnippet + " | my-statusline.sh"
+    #expect(StatuslineBridge.strippedOfAnyBridge(from: cmd) == "my-statusline.sh")
+  }
+
+  @Test func strippedOfAnyBridgeReturnsEmptyForBridgeOnly() {
+    #expect(StatuslineBridge.strippedOfAnyBridge(from: StatuslineBridge.bridgeSnippet + " > /dev/null") == "")
+  }
+
+  @Test func strippedOfAnyBridgeCollapsesAccumulatedDuplicates() {
+    // Earlier versions could prepend the bridge repeatedly; migration must collapse
+    // the whole chain back to the user's real command.
+    let legacy = StatuslineBridge.legacyBridgeSnippets[0]
+    let chain = Array(repeating: legacy, count: 5).joined(separator: " | ")
+      + " | " + StatuslineBridge.bridgeSnippet
+      + " | user-statusline.sh"
+    #expect(StatuslineBridge.strippedOfAnyBridge(from: chain) == "user-statusline.sh")
+  }
+
   @Test func readDataAcceptsIntegerPercentagesAndResetTimes() throws {
     let dir = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -51,9 +74,41 @@ struct StatuslineBridgeTests {
     """
     try json.data(using: .utf8)?.write(to: file)
 
-    let payload = try #require(StatuslineBridge.readData(from: file))
-    #expect(payload.fiveHour?.usedPercentage == 25)
-    #expect(payload.fiveHour?.resetsAt == Date(timeIntervalSince1970: 1770000000))
+    let payload = try StatuslineBridge.readPayload(from: file)
+    #expect(payload?.fiveHour?.usedPercentage == 25)
+    #expect(payload?.fiveHour?.resetsAt == Date(timeIntervalSince1970: 1770000000))
+  }
+
+  @Test func mergePayloadsPicksFreshestWindowAcrossSessions() {
+    func payload(
+      fiveHourPct: Double, fiveHourReset: TimeInterval,
+      sevenDayPct: Double, capturedAt: Date
+    ) -> StatuslineBridge.StatuslinePayload {
+      StatuslineBridge.StatuslinePayload(
+        fiveHour: .init(usedPercentage: fiveHourPct, resetsAt: Date(timeIntervalSince1970: fiveHourReset)),
+        sevenDay: .init(usedPercentage: sevenDayPct, resetsAt: Date(timeIntervalSince1970: 1782543600)),
+        sessionId: "s", sessionName: nil, cwd: nil, modelId: nil, modelDisplayName: nil,
+        totalCostUsd: nil, totalApiDurationMs: nil, codeLinesAdded: nil, codeLinesRemoved: nil,
+        cliVersion: nil, capturedAt: capturedAt
+      )
+    }
+
+    // Stale sessions report old five-hour windows (smaller reset) and lower weekly usage.
+    let stockhound = payload(fiveHourPct: 15, fiveHourReset: 1782111000, sevenDayPct: 29, capturedAt: Date(timeIntervalSince1970: 100))
+    let games = payload(fiveHourPct: 83, fiveHourReset: 1782214200, sevenDayPct: 61, capturedAt: Date(timeIntervalSince1970: 200))
+    let current = payload(fiveHourPct: 7, fiveHourReset: 1782256200, sevenDayPct: 61, capturedAt: Date(timeIntervalSince1970: 300))
+
+    let merged = StatuslineBridge.mergePayloads([stockhound, games, current])
+
+    // Five-hour: latest reset wins (the current session), not the highest percentage.
+    #expect(merged?.fiveHour?.usedPercentage == 7)
+    #expect(merged?.fiveHour?.resetsAt == Date(timeIntervalSince1970: 1782256200))
+    // Weekly usage is monotonic, so the maximum is freshest.
+    #expect(merged?.sevenDay?.usedPercentage == 61)
+  }
+
+  @Test func mergePayloadsReturnsNilForEmptyInput() {
+    #expect(StatuslineBridge.mergePayloads([]) == nil)
   }
 
   @Test func settingsParserAllowsMissingFileButRejectsInvalidJSON() throws {

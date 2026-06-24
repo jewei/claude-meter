@@ -188,7 +188,7 @@ git -C "$PROJECT_DIR" push
 
 # ── GitHub Release ────────────────────────────────────────────────────────────
 
-echo "▶ Creating GitHub release $TAG…"
+echo "▶ Creating GitHub release ${TAG}…"
 gh release create "$TAG" "$DMG_PATH" \
     --repo "$GITHUB_REPO" \
     --title "Claude Meter $VERSION" \

@@ -22,13 +22,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     /// app's 60 s poll cadence so we retry on the next cycle.
     private static let defaultRateLimitBackoff: TimeInterval = 60
 
-    private static let session: URLSession = {
-        let config = URLSessionConfiguration.ephemeral
-        config.httpShouldSetCookies = false
-        config.httpCookieAcceptPolicy = .never
-        config.timeoutIntervalForRequest = 10
-        return URLSession(configuration: config)
-    }()
+    // Requests go through the shared redirect-guarded transport (no cookies, 10 s
+    // timeout) so a Bearer token can't leak across an off-origin redirect.
+    private static let transport: any HTTPTransport = ProviderHTTPClient.shared
 
     private static let oauthClientId = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
     private static let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
@@ -132,8 +128,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw OAuthError.invalidResponse }
+        let (data, http) = try await transport.send(request)
         guard http.statusCode == 200 else {
             if http.statusCode == 401 || http.statusCode == 403 { throw OAuthError.unauthorized }
             throw OAuthError.httpError(http.statusCode)
@@ -202,8 +197,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw OAuthError.invalidResponse }
+        let (data, http) = try await transport.send(request)
         guard http.statusCode == 200 else {
             if http.statusCode == 401 || http.statusCode == 403 { throw OAuthError.unauthorized }
             throw OAuthError.httpError(http.statusCode)
@@ -220,8 +214,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             "refresh_token": credentials.refreshToken,
             "client_id": oauthClientId,
         ])
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+        let (data, http) = try await transport.send(request)
+        guard http.statusCode == 200 else {
             throw OAuthError.refreshFailed
         }
         let resp = try JSONDecoder().decode(TokenResponse.self, from: data)
@@ -254,8 +248,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await Self.session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw OAuthError.invalidResponse }
+        let (data, http) = try await Self.transport.send(request)
         guard http.statusCode == 200 else {
             if http.statusCode == 401 || http.statusCode == 403 { throw OAuthError.unauthorized }
             if http.statusCode == 429 {
@@ -296,8 +289,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             "refresh_token": credentials.refreshToken,
             "client_id": Self.oauthClientId,
         ])
-        let (data, response) = try await Self.session.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+        let (data, http) = try await Self.transport.send(request)
+        guard http.statusCode == 200 else {
             throw OAuthError.refreshFailed
         }
         let resp = try JSONDecoder().decode(TokenResponse.self, from: data)

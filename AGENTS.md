@@ -43,6 +43,16 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 
 `scheduleRebuildPipeline()` debounces source-toggle rebuilds (300 ms) and does not restart an active poll loop.
 
+### Networking — `ProviderHTTP.swift`
+
+- **All** provider HTTP goes through `ProviderHTTPClient.shared` (a `HTTPTransport`): one cookie-less ephemeral session (10 s) behind `RedirectGuardDelegate`, which drops any redirect that isn't same-origin HTTPS — credentials (`Bearer`/`Cookie`) must never be replayed off-origin or downgraded. OAuth, claude.ai, and status clients all use it.
+- `HTTPRetryPolicy` (`.none` / `.transient`) gives bounded retries (idempotent methods only, honors `Retry-After`, exp backoff capped at 8 s). claude.ai + status GETs use `.transient`; OAuth keeps its own cross-poll 429 `blockedUntil` gate and uses `.none`.
+- **Inject a stub `HTTPTransport`** to unit-test a client without network (see `AnthropicStatusClient(transport:)` and `TransportInjectionTests`).
+
+### Keychain reads
+
+- `OAuthKeychain.loadResult()` / `loadManualResult()` return `KeychainReadResult { found / missing / temporarilyUnavailable / invalid }`; `mapKeychainStatus` classifies the `OSStatus` (a locked Keychain → `temporarilyUnavailable`, never `missing`, so a transient lock doesn't drop the source). `load()`/`loadManual()` remain the `Optional` convenience wrappers.
+
 ---
 
 ## Statusline bridge

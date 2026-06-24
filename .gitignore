@@ -47,3 +47,6 @@ Icon?
 
 # Local Claude Code settings (personal)
 .claude/settings.local.json
+
+# Skills
+.claude/skills/mine-reference-codebase

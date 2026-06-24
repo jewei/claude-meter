@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Network requests now go through a shared, redirect-guarded transport that blocks
+  off-origin and HTTPS→HTTP redirects (so credentials can't leak), with bounded
+  retries on transient failures. Keychain reads distinguish a momentary lock from
+  missing credentials, so a locked Keychain no longer looks like "not connected".
 - claude.ai setup now auto-detects your organization ID from the session key — the
   Org ID field is optional; leave it blank and Claude Meter resolves it for you.
 - The OAuth usage source now backs off when Anthropic rate-limits (429), honoring

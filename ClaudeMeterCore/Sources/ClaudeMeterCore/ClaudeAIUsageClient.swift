@@ -40,15 +40,6 @@ public struct ClaudeAIUsageClient: Sendable {
         }
     }
 
-    /// URLSession that bypasses the system cookie store so our manual Cookie header is sent as-is.
-    private static let session: URLSession = {
-        let config = URLSessionConfiguration.ephemeral
-        config.httpShouldSetCookies = false
-        config.httpCookieAcceptPolicy = .never
-        config.timeoutIntervalForRequest = 10
-        return URLSession(configuration: config)
-    }()
-
     public func fetchUsage() async throws -> UsageData {
         guard CredentialValidator.isValidOrgId(orgId),
               let normalizedOrg = CredentialValidator.normalizedOrgId(orgId) else {
@@ -66,10 +57,7 @@ public struct ClaudeAIUsageClient: Sendable {
         request.setValue("https://claude.ai", forHTTPHeaderField: "Origin")
         request.setValue("https://claude.ai/", forHTTPHeaderField: "Referer")
 
-        let (data, response) = try await Self.session.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw ClaudeAIError.invalidResponse
-        }
+        let (data, http) = try await ProviderHTTPClient.shared.send(request, retry: .transient)
         guard http.statusCode == 200 else {
             if http.statusCode == 401 || http.statusCode == 403 {
                 throw ClaudeAIError.unauthorized
@@ -131,8 +119,7 @@ public struct ClaudeAIUsageClient: Sendable {
         request.setValue("https://claude.ai", forHTTPHeaderField: "Origin")
         request.setValue("https://claude.ai/", forHTTPHeaderField: "Referer")
 
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw ClaudeAIError.invalidResponse }
+        let (data, http) = try await ProviderHTTPClient.shared.send(request, retry: .transient)
         guard http.statusCode == 200 else {
             if http.statusCode == 401 || http.statusCode == 403 { throw ClaudeAIError.unauthorized }
             throw ClaudeAIError.httpError(http.statusCode)

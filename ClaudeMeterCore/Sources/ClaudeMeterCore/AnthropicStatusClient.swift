@@ -39,18 +39,17 @@ public struct AnthropicStatusClient: Sendable {
 
     private static let statusURL = URL(string: "https://status.anthropic.com/api/v2/status.json")!
 
-    private static let session: URLSession = {
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 10
-        return URLSession(configuration: config)
-    }()
+    private let transport: any HTTPTransport
 
-    public init() {}
+    public init(transport: any HTTPTransport = ProviderHTTPClient.shared) {
+        self.transport = transport
+    }
 
     /// Fetches the current status, or `nil` on any failure (status is advisory only).
     public func fetch() async -> ServiceStatus? {
-        guard let (data, response) = try? await Self.session.data(from: Self.statusURL),
-              let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+        let request = URLRequest(url: Self.statusURL)
+        guard let (data, http) = try? await transport.send(request, retry: .transient),
+              http.statusCode == 200 else {
             return nil
         }
         return Self.parse(data)

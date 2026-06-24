@@ -49,6 +49,8 @@ struct MenuBarLabel: View {
     }
 
     private var labelText: String? {
+        // Paused: show only the dimmed icon, no usage percent.
+        guard appState.isActive else { return nil }
         let now = Date()
         if let snap = appState.snapshot {
             return snap.limits.currentSession.resolved(asOf: now).displayPercent

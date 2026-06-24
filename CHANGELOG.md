@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- When paused, the menu bar shows only a dimmed icon and hides the usage
+  percent, making the inactive state clearer.
 - Release tooling derives the marketing version and build number automatically,
   bakes them into the build, and uses this changelog as the GitHub release notes.
 

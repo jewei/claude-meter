@@ -60,10 +60,19 @@ actor NotificationEngine {
     // MARK: - Delivery
 
     private func deliver(trigger: NotificationTrigger, snapshot: ClaudeUsageSnapshot) async {
-        let window = trigger.scope == "session"
-            ? snapshot.limits.currentSession
-            : snapshot.limits.currentWeekAllModels
-        let label = trigger.scope == "session" ? "Session" : "Weekly (all models)"
+        let window: LimitWindow
+        let label: String
+        switch trigger.scope {
+        case "session":
+            window = snapshot.limits.currentSession
+            label = "Session"
+        case "weeklyOpus":
+            window = snapshot.limits.currentWeekOpus ?? LimitWindow()
+            label = "Weekly (Opus)"
+        default:
+            window = snapshot.limits.currentWeekAllModels
+            label = "Weekly (all models)"
+        }
         let pct = window.displayPercent ?? "—"
         let key = NotificationPolicy.dedupKey(
             scope: trigger.scope,

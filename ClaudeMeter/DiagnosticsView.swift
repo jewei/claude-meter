@@ -5,6 +5,8 @@ struct DiagnosticsView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var copied = false
+    @State private var browserReport: String?
+    @State private var checkingBrowsers = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -13,6 +15,7 @@ struct DiagnosticsView: View {
                 pollSection
                 snapshotSection
                 warningsSection
+                browserImportSection
             }
             .formStyle(.grouped)
             .onAppear {}
@@ -106,6 +109,42 @@ struct DiagnosticsView: View {
         }
     }
 
+    private var browserImportSection: some View {
+        Section("Browser Cookie Import") {
+            LabeledContent("Check") {
+                Button {
+                    checkingBrowsers = true
+                    Task {
+                        let report = await Task.detached(priority: .userInitiated) {
+                            BrowserCookieImporter.diagnosticReport()
+                        }.value
+                        browserReport = report
+                        checkingBrowsers = false
+                    }
+                } label: {
+                    if checkingBrowsers {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Check browsers")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(checkingBrowsers)
+            }
+            if let browserReport {
+                Text(browserReport)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text("Reads the claude.ai session from installed browsers. May prompt for Keychain access. No secrets are shown or copied.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private var claudePollTimeText: String {
@@ -174,6 +213,14 @@ struct DiagnosticsView: View {
             for w in warnings {
                 let msg = DiagnosticsSanitizer.sanitize(w.message)
                 lines.append("  [\(w.field)] \(msg)")
+            }
+            lines.append("")
+        }
+
+        if let browserReport {
+            lines.append("Browser Cookie Import")
+            for line in browserReport.split(separator: "\n") {
+                lines.append("  \(line)")
             }
             lines.append("")
         }

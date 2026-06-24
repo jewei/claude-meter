@@ -44,3 +44,6 @@ Icon?
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+
+# Local Claude Code settings (personal)
+.claude/settings.local.json

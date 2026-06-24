@@ -13,6 +13,14 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     // In-memory cache survives token refresh within a session even if Keychain write fails.
     private let stateQueue = DispatchQueue(label: "com.jewei.claudemeter.oauth-pipeline.state")
     private var cachedCredentials: OAuthCredentials? = nil
+    // When Anthropic returns 429, back off until this time before calling the API
+    // again (honoring Retry-After when present). Falling through to the fallback
+    // pipeline meanwhile avoids hammering the endpoint and earning a longer block.
+    private var blockedUntil: Date? = nil
+
+    /// Default backoff when a 429 carries no usable `Retry-After`. Matches the
+    /// app's 60 s poll cadence so we retry on the next cycle.
+    private static let defaultRateLimitBackoff: TimeInterval = 60
 
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -42,6 +50,11 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             return try await fallback.poll(now: now)
         }
 
+        // Honor an active 429 backoff: skip the API and serve the fallback.
+        if isRateLimited(now: now) {
+            return try await fallback.poll(now: now)
+        }
+
         let sourceCreds: OAuthCredentials? = oauthMode == "manual"
             ? OAuthKeychain.loadManual()
             : OAuthKeychain.load()
@@ -62,8 +75,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             }
         }
 
+        let plan = ClaudePlan.displayName(subscriptionType: creds.subscriptionType)
         do {
-            return try await fetchAndBuild(token: creds.accessToken, now: now)
+            return try await fetchAndBuild(token: creds.accessToken, plan: plan, now: now)
         } catch OAuthError.unauthorized {
             // Token rejected despite appearing valid — attempt one refresh.
             guard let refreshed = try? await refreshToken(creds) else {
@@ -74,7 +88,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             if oauthMode == "manual" {
                 OAuthKeychain.saveManual(accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
             }
-            if let result = try? await fetchAndBuild(token: refreshed.accessToken, now: now) {
+            if let result = try? await fetchAndBuild(token: refreshed.accessToken, plan: plan, now: now) {
                 return result
             }
             return try await fallback.poll(now: now)
@@ -91,6 +105,21 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         stateQueue.sync { cachedCredentials = credentials }
     }
 
+    /// True while a prior 429 backoff is still in effect.
+    private func isRateLimited(now: Date) -> Bool {
+        stateQueue.sync {
+            guard let until = blockedUntil else { return false }
+            if now >= until { blockedUntil = nil; return false }
+            return true
+        }
+    }
+
+    private func recordRateLimit(retryAfter: Date?, now: Date) {
+        stateQueue.sync {
+            blockedUntil = retryAfter ?? now.addingTimeInterval(Self.defaultRateLimitBackoff)
+        }
+    }
+
     // MARK: - Settings verification
 
     public static func verify(credentials: OAuthCredentials) async throws -> (sessionPct: Double, weekPct: Double) {
@@ -102,6 +131,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         request.setValue("Bearer \(creds.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw OAuthError.invalidResponse }
         guard http.statusCode == 200 else {
@@ -117,6 +147,68 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             usage.fiveHour?.utilization ?? 0,
             usage.sevenDay?.utilization ?? 0
         )
+    }
+
+    // MARK: - Enrichment
+
+    /// OAuth-only fields the statusline and claude.ai sources can't provide.
+    public struct OAuthEnrichment: Sendable, Equatable {
+        public let opus: LimitWindow?
+        public let extraUsage: ExtraUsage?
+        public let plan: String?
+
+        public var isEmpty: Bool { opus == nil && extraUsage == nil && plan == nil }
+    }
+
+    /// Best-effort fetch of the Opus weekly window, extra-usage spend, and plan
+    /// from the OAuth usage API — used to enrich a snapshot produced by another
+    /// source (e.g. the statusline bridge, which omits these). Returns `nil` when
+    /// OAuth isn't configured or the call fails; never throws.
+    public static func fetchEnrichment(now: Date = Date()) async -> OAuthEnrichment? {
+        let oauthMode = UserDefaults.standard.string(forKey: AppGroupConfig.oauthModeKey) ?? ""
+        guard !oauthMode.isEmpty else { return nil }
+        let sourceCreds = oauthMode == "manual" ? OAuthKeychain.loadManual() : OAuthKeychain.load()
+        guard var creds = sourceCreds else { return nil }
+        if creds.isExpired {
+            guard let refreshed = try? await verifyRefresh(creds) else { return nil }
+            creds = OAuthCredentials(
+                accessToken: refreshed.accessToken,
+                refreshToken: refreshed.refreshToken,
+                expiresAt: refreshed.expiresAt,
+                subscriptionType: creds.subscriptionType
+            )
+        }
+        guard let usage = try? await requestUsage(token: creds.accessToken) else { return nil }
+        let opus = usage.sevenDayOpus.flatMap { entry -> LimitWindow? in
+            guard let u = entry.utilization else { return nil }
+            return LimitWindow(percentUsed: u, resetsAt: entry.resetsAt.flatMap(parseDate)).resolved(asOf: now)
+        }
+        let enrichment = OAuthEnrichment(
+            opus: opus,
+            extraUsage: usage.extraUsage?.model,
+            plan: ClaudePlan.displayName(
+                subscriptionType: creds.subscriptionType,
+                rateLimitTier: nil
+            )
+        )
+        return enrichment.isEmpty ? nil : enrichment
+    }
+
+    /// Shared static usage GET (no instance rate-limit gate). Used by `verify` and
+    /// `fetchEnrichment`.
+    private static func requestUsage(token: String) async throws -> UsageResponse {
+        var request = URLRequest(url: usageURL)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw OAuthError.invalidResponse }
+        guard http.statusCode == 200 else {
+            if http.statusCode == 401 || http.statusCode == 403 { throw OAuthError.unauthorized }
+            throw OAuthError.httpError(http.statusCode)
+        }
+        return try JSONDecoder().decode(UsageResponse.self, from: data)
     }
 
     private static func verifyRefresh(_ credentials: OAuthCredentials) async throws -> OAuthCredentials {
@@ -142,9 +234,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     // MARK: - API calls
 
-    private func fetchAndBuild(token: String, now: Date) async throws -> ParseResult {
-        let usage = try await fetchUsage(token: token)
-        let snapshot = buildSnapshot(usage: usage, now: now)
+    private func fetchAndBuild(token: String, plan: String?, now: Date) async throws -> ParseResult {
+        let usage = try await fetchUsage(token: token, now: now)
+        let snapshot = buildSnapshot(usage: usage, plan: plan, now: now)
         try? store.writeLatest(snapshot)
         try? store.clearLastError()
         return ParseResult(
@@ -156,18 +248,43 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         )
     }
 
-    private func fetchUsage(token: String) async throws -> UsageResponse {
+    private func fetchUsage(token: String, now: Date) async throws -> UsageResponse {
         var request = URLRequest(url: Self.usageURL)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
         let (data, response) = try await Self.session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw OAuthError.invalidResponse }
         guard http.statusCode == 200 else {
             if http.statusCode == 401 || http.statusCode == 403 { throw OAuthError.unauthorized }
+            if http.statusCode == 429 {
+                recordRateLimit(retryAfter: Self.retryAfterDate(from: http, now: now), now: now)
+                throw OAuthError.rateLimited
+            }
             throw OAuthError.httpError(http.statusCode)
         }
         return try JSONDecoder().decode(UsageResponse.self, from: data)
+    }
+
+    /// The usage endpoint is Claude Code-internal; identify as the CLI so Anthropic
+    /// doesn't reject an unrecognized client. Version is best-effort insurance.
+    static let userAgent = "claude-code/2.1.0"
+
+    /// Parses a `Retry-After` header (delta-seconds or HTTP-date). Returns the
+    /// absolute time to resume, or `nil` when absent/unparseable.
+    static func retryAfterDate(from response: HTTPURLResponse, now: Date) -> Date? {
+        guard let raw = (response.value(forHTTPHeaderField: "Retry-After"))?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty
+        else { return nil }
+        if let seconds = TimeInterval(raw), seconds >= 0 {
+            return now.addingTimeInterval(seconds)
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE',' dd MMM yyyy HH':'mm':'ss zzz"
+        return formatter.date(from: raw)
     }
 
     private func refreshToken(_ credentials: OAuthCredentials) async throws -> OAuthCredentials {
@@ -193,28 +310,41 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     // MARK: - Snapshot builder
 
-    private func buildSnapshot(usage: UsageResponse, now: Date) -> ClaudeUsageSnapshot {
-        let sessionWindow = usage.fiveHour.map { q in
-            LimitWindow(percentUsed: q.utilization, resetsAt: q.resetsAt.flatMap(Self.parseDate))
-        } ?? LimitWindow()
+    private func buildSnapshot(usage: UsageResponse, plan: String?, now: Date) -> ClaudeUsageSnapshot {
+        let sessionWindow = Self.window(from: usage.fiveHour)
+        let weekWindow = Self.window(from: usage.sevenDay)
+        let opusWindow = usage.sevenDayOpus.map { Self.window(from: $0) }
+        let extra = usage.extraUsage.map(\.model)
 
-        let weekWindow = usage.sevenDay.map { q in
-            LimitWindow(percentUsed: q.utilization, resetsAt: q.resetsAt.flatMap(Self.parseDate))
-        } ?? LimitWindow()
-
-        let severity = UsageSeverity.highest(
-            thresholds.severity(for: usage.fiveHour?.utilization),
-            thresholds.severity(for: usage.sevenDay?.utilization)
-        )
+        // The binding limit can be any window; aggregate all reported percentages
+        // (including Opus weekly) so the menu-bar icon reflects the real ceiling.
+        let severity = [
+            usage.fiveHour?.utilization,
+            usage.sevenDay?.utilization,
+            usage.sevenDayOpus?.utilization,
+        ].reduce(UsageSeverity.unknown) { UsageSeverity.highest($0, thresholds.severity(for: $1)) }
 
         return ClaudeUsageSnapshot(
             parserVersion: "oauth-api-1.0",
             createdAt: now,
             lastSuccessfulPollAt: now,
             source: SourceInfo(cliPath: "api.anthropic.com", command: "GET /api/oauth/usage"),
-            limits: LimitInfo(currentSession: sessionWindow, currentWeekAllModels: weekWindow),
+            account: plan.map { AccountInfo(loginMethod: "OAuth", plan: $0) },
+            limits: LimitInfo(
+                currentSession: sessionWindow,
+                currentWeekAllModels: weekWindow,
+                currentWeekOpus: opusWindow,
+                extraUsage: extra
+            ),
             state: SnapshotState(status: .ok, severity: severity)
         )
+    }
+
+    /// Builds a `LimitWindow` from a quota entry, dropping `nil` utilization to an
+    /// empty (unknown) window rather than fabricating 0%.
+    private static func window(from entry: QuotaEntry?) -> LimitWindow {
+        guard let entry, let utilization = entry.utilization else { return LimitWindow() }
+        return LimitWindow(percentUsed: utilization, resetsAt: entry.resetsAt.flatMap(parseDate))
     }
 
     private static func parseDate(_ string: String) -> Date? {
@@ -231,6 +361,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
 enum OAuthError: Error {
     case unauthorized
+    case rateLimited
     case invalidResponse
     case httpError(Int)
     case refreshFailed
@@ -241,20 +372,56 @@ enum OAuthError: Error {
 internal struct UsageResponse: Decodable {
     let fiveHour: QuotaEntry?
     let sevenDay: QuotaEntry?
+    /// Weekly Opus-only window — often the binding limit for Max subscribers.
+    let sevenDayOpus: QuotaEntry?
+    let extraUsage: ExtraUsageEntry?
 
     enum CodingKeys: String, CodingKey {
         case fiveHour = "five_hour"
         case sevenDay = "seven_day"
+        case sevenDayOpus = "seven_day_opus"
+        case extraUsage = "extra_usage"
     }
 }
 
 internal struct QuotaEntry: Decodable {
-    let utilization: Double
+    // Optional so a `null` (or a key the endpoint added but left empty) degrades to
+    // "no data" instead of failing the whole decode.
+    let utilization: Double?
     let resetsAt: String?
 
     enum CodingKeys: String, CodingKey {
         case utilization
         case resetsAt = "resets_at"
+    }
+}
+
+internal struct ExtraUsageEntry: Decodable {
+    let isEnabled: Bool?
+    let usedCredits: Double?
+    let monthlyLimit: Double?
+    let decimalPlaces: Int?
+    let utilization: Double?
+    let currency: String?
+
+    enum CodingKeys: String, CodingKey {
+        case isEnabled = "is_enabled"
+        case usedCredits = "used_credits"
+        case monthlyLimit = "monthly_limit"
+        case decimalPlaces = "decimal_places"
+        case utilization
+        case currency
+    }
+
+    var model: ExtraUsage {
+        ExtraUsage(
+            isEnabled: isEnabled ?? false,
+            usedCredits: usedCredits,
+            monthlyLimit: monthlyLimit,
+            decimalPlaces: decimalPlaces ?? 2,
+            utilization: utilization,
+            currency: currency
+        )
     }
 }
 

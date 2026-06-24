@@ -139,6 +139,7 @@ public enum StatuslineBridge: Sendable {
     public struct StatuslinePayload: Sendable {
         public let fiveHour: RateLimitWindow?
         public let sevenDay: RateLimitWindow?
+        public let sevenDayOpus: RateLimitWindow?
         public let sessionId: String?
         public let sessionName: String?
         public let cwd: String?
@@ -150,6 +151,38 @@ public enum StatuslineBridge: Sendable {
         public let codeLinesRemoved: Int?
         public let cliVersion: String?
         public let capturedAt: Date
+
+        public init(
+            fiveHour: RateLimitWindow?,
+            sevenDay: RateLimitWindow?,
+            sevenDayOpus: RateLimitWindow? = nil,
+            sessionId: String?,
+            sessionName: String?,
+            cwd: String?,
+            modelId: String?,
+            modelDisplayName: String?,
+            totalCostUsd: Double?,
+            totalApiDurationMs: Double?,
+            codeLinesAdded: Int?,
+            codeLinesRemoved: Int?,
+            cliVersion: String?,
+            capturedAt: Date
+        ) {
+            self.fiveHour = fiveHour
+            self.sevenDay = sevenDay
+            self.sevenDayOpus = sevenDayOpus
+            self.sessionId = sessionId
+            self.sessionName = sessionName
+            self.cwd = cwd
+            self.modelId = modelId
+            self.modelDisplayName = modelDisplayName
+            self.totalCostUsd = totalCostUsd
+            self.totalApiDurationMs = totalApiDurationMs
+            self.codeLinesAdded = codeLinesAdded
+            self.codeLinesRemoved = codeLinesRemoved
+            self.cliVersion = cliVersion
+            self.capturedAt = capturedAt
+        }
     }
 
     // MARK: - Read data
@@ -186,10 +219,17 @@ public enum StatuslineBridge: Sendable {
             if ra != rb { return ra < rb }
             return a.usedPercentage < b.usedPercentage
         }
+        let sevenDayOpus = payloads.compactMap(\.sevenDayOpus).max { a, b in
+            let ra = a.resetsAt ?? .distantPast
+            let rb = b.resetsAt ?? .distantPast
+            if ra != rb { return ra < rb }
+            return a.usedPercentage < b.usedPercentage
+        }
 
         return StatuslinePayload(
             fiveHour: fiveHour,
             sevenDay: sevenDay,
+            sevenDayOpus: sevenDayOpus,
             sessionId: base.sessionId,
             sessionName: base.sessionName,
             cwd: base.cwd,
@@ -231,6 +271,7 @@ public enum StatuslineBridge: Sendable {
         return StatuslinePayload(
             fiveHour: window("five_hour"),
             sevenDay: window("seven_day"),
+            sevenDayOpus: window("seven_day_opus"),
             sessionId: json["session_id"] as? String,
             sessionName: json["session_name"] as? String,
             cwd: cwd,

@@ -79,6 +79,28 @@ struct StatuslineBridgeTests {
     #expect(payload?.fiveHour?.resetsAt == Date(timeIntervalSince1970: 1770000000))
   }
 
+  @Test func readDataParsesOpusWeeklyWindow() throws {
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    let file = dir.appendingPathComponent("statusline.json")
+    let json = """
+    {
+      "rate_limits": {
+        "five_hour": { "used_percentage": 25, "resets_at": 1770000000 },
+        "seven_day_opus": { "used_percentage": 90, "resets_at": 1770500000 }
+      }
+    }
+    """
+    try json.data(using: .utf8)?.write(to: file)
+
+    let payload = try StatuslineBridge.readPayload(from: file)
+    #expect(payload?.sevenDayOpus?.usedPercentage == 90)
+    #expect(payload?.sevenDayOpus?.resetsAt == Date(timeIntervalSince1970: 1770500000))
+  }
+
   @Test func mergePayloadsPicksFreshestWindowAcrossSessions() {
     func payload(
       fiveHourPct: Double, fiveHourReset: TimeInterval,

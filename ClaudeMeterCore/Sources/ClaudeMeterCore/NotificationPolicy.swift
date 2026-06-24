@@ -38,6 +38,13 @@ public enum NotificationPolicy {
                 thresholds: thresholds,
                 now: now
             ),
+            evaluate(
+                scope: "weeklyOpus",
+                current: (snapshot.limits.currentWeekOpus ?? LimitWindow()).resolved(asOf: now),
+                previous: (previous?.limits.currentWeekOpus ?? LimitWindow()).resolved(asOf: now),
+                thresholds: thresholds,
+                now: now
+            ),
         ].flatMap { $0 }
     }
 

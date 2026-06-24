@@ -110,11 +110,10 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     private func buildSnapshot(from payload: StatuslineBridge.StatuslinePayload, now: Date) -> ClaudeUsageSnapshot {
         let sessionWindow = Self.displayWindow(for: payload.fiveHour, now: now)
         let weekWindow = Self.displayWindow(for: payload.sevenDay, now: now)
+        let opusWindow = payload.sevenDayOpus.map { Self.displayWindow(for: $0, now: now) }
 
-        let severity = UsageSeverity.highest(
-            thresholds.severity(for: sessionWindow.percentUsed),
-            thresholds.severity(for: weekWindow.percentUsed)
-        )
+        let severity = [sessionWindow.percentUsed, weekWindow.percentUsed, opusWindow?.percentUsed]
+            .reduce(UsageSeverity.unknown) { UsageSeverity.highest($0, thresholds.severity(for: $1)) }
 
         let sessionInfo: SessionInfo? = {
             guard payload.modelDisplayName != nil || payload.modelId != nil
@@ -142,7 +141,8 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
             session: sessionInfo,
             limits: LimitInfo(
                 currentSession: sessionWindow,
-                currentWeekAllModels: weekWindow
+                currentWeekAllModels: weekWindow,
+                currentWeekOpus: opusWindow
             ),
             state: SnapshotState(status: .ok, severity: severity)
         )

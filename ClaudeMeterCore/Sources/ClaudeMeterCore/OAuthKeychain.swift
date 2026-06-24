@@ -7,6 +7,20 @@ public struct OAuthCredentials: Sendable {
     public var accessToken: String
     public var refreshToken: String
     public var expiresAt: Date
+    /// Plan hint from Claude Code's credentials (`subscriptionType`), e.g. "max".
+    public var subscriptionType: String?
+
+    public init(
+        accessToken: String,
+        refreshToken: String,
+        expiresAt: Date,
+        subscriptionType: String? = nil
+    ) {
+        self.accessToken = accessToken
+        self.refreshToken = refreshToken
+        self.expiresAt = expiresAt
+        self.subscriptionType = subscriptionType
+    }
 
     /// True when the access token is expired or within 60 s of expiry.
     public var isExpired: Bool {
@@ -106,7 +120,8 @@ public enum OAuthKeychain: Sendable {
         return OAuthCredentials(
             accessToken: accessToken,
             refreshToken: refreshToken,
-            expiresAt: Date(timeIntervalSince1970: expiresAtMs / 1000)
+            expiresAt: Date(timeIntervalSince1970: expiresAtMs / 1000),
+            subscriptionType: oauth["subscriptionType"] as? String
         )
     }
 

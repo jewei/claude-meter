@@ -375,6 +375,7 @@ private struct DataSettingsTab: View {
     @State private var showSessionKey = false
     @State private var isTesting = false
     @State private var testResult = ""
+    @State private var isImporting = false
 
     var body: some View {
         ScrollView {
@@ -554,7 +555,7 @@ private struct DataSettingsTab: View {
                     .font(.caption)
                     .frame(width: 72, alignment: .leading)
                 TextField("", text: $orgId,
-                          prompt: Text("UUID").foregroundColor(.secondary))
+                          prompt: Text("Auto-detect").foregroundColor(.secondary))
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.caption, design: .monospaced))
             }
@@ -563,12 +564,25 @@ private struct DataSettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(connectionStatus.hasPrefix("Error") ? .red : .secondary)
             }
-            Button("Connect") { connect() }
-                .buttonStyle(.borderedProminent)
+            HStack(spacing: 8) {
+                Button("Connect") { connect() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(sessionKey.trimmingCharacters(in: .whitespaces).isEmpty || isImporting)
+                Button {
+                    importFromBrowser()
+                } label: {
+                    if isImporting {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("Import from browser", systemImage: "arrow.down.doc")
+                    }
+                }
+                .buttonStyle(.bordered)
                 .controlSize(.small)
-                .disabled(sessionKey.trimmingCharacters(in: .whitespaces).isEmpty ||
-                          orgId.trimmingCharacters(in: .whitespaces).isEmpty)
-            Text("Find sessionKey in browser DevTools → Application → Cookies → claude.ai.")
+                .disabled(isImporting)
+            }
+            Text("Import reads the claude.ai session from Chrome, Brave, Edge, Arc, Firefox, or Safari. Or paste sessionKey from DevTools → Application → Cookies → claude.ai. Org ID is detected automatically.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -602,18 +616,55 @@ private struct DataSettingsTab: View {
     private func connect() {
         let sk = sessionKey.trimmingCharacters(in: .whitespaces)
         let org = orgId.trimmingCharacters(in: .whitespaces)
-        guard !sk.isEmpty, !org.isEmpty else { return }
+        guard !sk.isEmpty else { return }
         guard CredentialValidator.isValidSessionKey(sk) else {
             connectionStatus = "Error: invalid session key format"
+            return
+        }
+        // Blank org → resolve it automatically from the session key.
+        if org.isEmpty {
+            connectionStatus = "Detecting organization…"
+            Task {
+                do {
+                    let resolved = try await ClaudeAIUsageClient.resolveOrgId(sessionKey: sk)
+                    finishConnect(sessionKey: sk, orgId: resolved)
+                } catch {
+                    connectionStatus = "Error: could not detect organization — \(error.localizedDescription)"
+                }
+            }
             return
         }
         guard let normalizedOrg = CredentialValidator.normalizedOrgId(org) else {
             connectionStatus = "Error: org ID must be a valid UUID"
             return
         }
-        if ClaudeAIKeychain.save(sessionKey: sk, orgId: normalizedOrg) {
+        finishConnect(sessionKey: sk, orgId: normalizedOrg)
+    }
+
+    private func importFromBrowser() {
+        isImporting = true
+        connectionStatus = "Importing from browser…"
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                BrowserCookieImporter.importClaudeSessionKey()
+            }.value
+            isImporting = false
+            switch result {
+            case .success(let cookie):
+                sessionKey = cookie.sessionKey
+                connectionStatus = "Imported from \(cookie.browser) — detecting organization…"
+                connect()  // org blank → auto-resolves, then saves
+            case .failure(let error):
+                connectionStatus = "Error: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func finishConnect(sessionKey sk: String, orgId resolvedOrg: String) {
+        if ClaudeAIKeychain.save(sessionKey: sk, orgId: resolvedOrg) {
             claudeAISourceEnabled = true
             sessionKey = ""
+            orgId = resolvedOrg
             isConnected = true
             connectionStatus = ""
             testResult = ""

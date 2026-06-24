@@ -30,6 +30,10 @@ struct PopoverView: View {
                 updateAvailableNotice
                 Divider()
             }
+            if let status = appState.serviceStatus, status.level.isIncident {
+                serviceStatusNotice(status)
+                Divider()
+            }
             mainContent
             Divider()
             footerBar
@@ -51,6 +55,14 @@ struct PopoverView: View {
             Text("Claude Meter")
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.primary)
+            if let plan = appState.snapshot?.account?.plan {
+                Text(plan)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Self.claudeTint)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Self.claudeTint.opacity(0.15), in: Capsule())
+            }
             Spacer()
             Toggle(isOn: activeBinding) { }
                 .toggleStyle(.switch)
@@ -302,6 +314,25 @@ struct PopoverView: View {
                     leadingIcon: "ClaudeLogo",
                     leadingIconColor: Self.claudeTint
                 )
+                if let opus = snap.limits.currentWeekOpus {
+                    Divider().padding(.horizontal, 14)
+                    UsageCardView(
+                        label: "This Week (Opus)",
+                        window: opus,
+                        now: now,
+                        thresholds: usageThresholds,
+                        leadingIcon: "ClaudeLogo",
+                        leadingIconColor: Self.claudeTint
+                    )
+                }
+                if let extra = snap.limits.extraUsage, extra.hasSpend {
+                    Divider().padding(.horizontal, 14)
+                    extraUsageRow(extra)
+                }
+                if !snap.models.isEmpty {
+                    Divider().padding(.horizontal, 14)
+                    costBreakdown(snap.models)
+                }
             }
             if hasCursor, let cursor = appState.cursorUsage {
                 if appState.snapshot != nil { Divider().padding(.horizontal, 14) }
@@ -315,6 +346,96 @@ struct PopoverView: View {
                 cursorCard(cursor)
             }
         }
+    }
+
+    // MARK: - Cost breakdown (local log scan, last 7 days)
+
+    private func costBreakdown(_ models: [ModelUsage]) -> some View {
+        // Total reflects all models; the per-row list hides sub-cent/no-cost noise
+        // (e.g. synthetic helper models) to keep the breakdown legible.
+        let total = models.reduce(0.0) { $0 + ($1.costUsd ?? 0) }
+        let rows = models.filter { ($0.costUsd ?? 0) >= 0.005 }.prefix(4)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 7) {
+                Image(systemName: "chart.bar")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                Text("Last 7 days")
+                    .font(.body.weight(.semibold))
+                Spacer()
+                Text(Self.usd(total))
+                    .font(.body.weight(.semibold))
+                    .monospacedDigit()
+            }
+            ForEach(rows, id: \.name) { model in
+                HStack {
+                    Text(model.displayName)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(Self.usd(model.costUsd ?? 0))
+                        .font(.subheadline)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private static func usd(_ value: Double) -> String {
+        value < 0.01 && value > 0
+            ? "<$0.01"
+            : String(format: "$%.2f", value)
+    }
+
+    // MARK: - Extra usage (pay-as-you-go overage)
+
+    private func extraUsageRow(_ extra: ExtraUsage) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "creditcard")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                Text("Extra usage")
+                    .font(.body.weight(.semibold))
+                if !extra.isEnabled {
+                    Text("paused")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.primary.opacity(0.1), in: Capsule())
+                }
+                Spacer()
+                Text(extraUsageText(extra))
+                    .font(.body.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
+            }
+            if let pct = extra.percentUsed {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.primary.opacity(0.12))
+                        Capsule().fill(Color.accentColor)
+                            .frame(width: max(0, geo.size.width * min(1, pct / 100)))
+                    }
+                }
+                .frame(height: 5)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private func extraUsageText(_ extra: ExtraUsage) -> String {
+        let symbol = extra.currency == "USD" || extra.currency == nil ? "$" : "\(extra.currency!) "
+        let used = String(format: "%@%.2f", symbol, extra.usedAmount ?? 0)
+        if let limit = extra.limitAmount, limit > 0 {
+            return used + String(format: " / %@%.2f", symbol, limit)
+        }
+        return used
     }
 
     // MARK: - Cursor card
@@ -391,6 +512,21 @@ struct PopoverView: View {
             .padding(.vertical, 8)
         }
         .buttonStyle(.plain)
+    }
+
+    private func serviceStatusNotice(_ status: ServiceStatus) -> some View {
+        let color: Color = status.level == .critical || status.level == .major ? .red : .orange
+        return HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.bubble")
+            Text("Anthropic: \(status.description)")
+                .lineLimit(2)
+            Spacer()
+        }
+        .font(.body)
+        .foregroundStyle(color)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
     }
 
     private var pollErrorNotice: some View {

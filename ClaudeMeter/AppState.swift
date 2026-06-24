@@ -13,6 +13,9 @@ final class AppState: ObservableObject {
     @Published var lastPolledAt: Date? = nil
     @Published var isPopoverOpen = false
     @Published var updateAvailable = false
+    /// Anthropic service status, refreshed alongside Claude polls. Surfaced only
+    /// during incidents to distinguish an outage from bad credentials.
+    @Published var serviceStatus: ServiceStatus? = nil
     @Published private(set) var isActive: Bool
     @Published private(set) var hasEnabledDataSource: Bool
 
@@ -240,6 +243,9 @@ final class AppState: ObservableObject {
                 result,
                 thresholds.severity(for: week.percentUsed)
             )
+            if let opus = snap.limits.currentWeekOpus?.resolved(asOf: now) {
+                result = UsageSeverity.highest(result, thresholds.severity(for: opus.percentUsed))
+            }
         }
         if AppSettings.cursorSourceEnabled, let cursor = cursorUsage {
             result = UsageSeverity.highest(result, thresholds.severity(for: cursor.percentUsed))
@@ -284,6 +290,7 @@ final class AppState: ObservableObject {
     private func pollClaude(generation: Int) async {
         let pipeline = self.pipeline
         let now = Date()
+        await refreshServiceStatus(generation: generation)
         do {
             let result = try await Task.detached {
                 try await pipeline.poll(now: now)
@@ -298,7 +305,19 @@ final class AppState: ObservableObject {
             }
 
             let previous = snapshot
-            if let snap = result.snapshot {
+            if var snap = result.snapshot {
+                // Enrich with per-model token/cost usage scanned from local logs.
+                // Independent of which tier produced the rate-limit snapshot.
+                let models = await Self.scanCostModels(now: now)
+                if !models.isEmpty { snap.models = models }
+                // Opus weekly, extra-usage spend, and plan live only in the OAuth
+                // response. When another source (statusline/claude.ai) produced the
+                // snapshot, layer those fields on if OAuth creds are available.
+                let enrichment = await oauthEnrichment(for: snap, now: now)
+                if let enrichment { Self.apply(enrichment, to: &snap) }
+                if !models.isEmpty || enrichment != nil {
+                    try? store.writeLatest(snap)
+                }
                 snapshot = snap
                 lastPolledAt = snap.lastSuccessfulPollAt ?? Date()
                 await notificationEngine.process(
@@ -349,6 +368,46 @@ final class AppState: ObservableObject {
             }
             cursorError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    /// Refreshes Anthropic service status off-main. Advisory only — failures clear
+    /// to `nil` so a status outage never masks usage data.
+    private func refreshServiceStatus(generation: Int) async {
+        let status = await Task.detached(priority: .utility) {
+            await AnthropicStatusClient().fetch()
+        }.value
+        guard generation == pipelineGeneration, canPoll else { return }
+        serviceStatus = status
+    }
+
+    /// Fetches OAuth-only enrichment (Opus window, extra usage, plan) when the
+    /// snapshot came from a non-OAuth source and OAuth creds are available. Returns
+    /// `nil` when not applicable. An OAuth-produced snapshot already has these.
+    private func oauthEnrichment(
+        for snap: ClaudeUsageSnapshot,
+        now: Date
+    ) async -> OAuthPipeline.OAuthEnrichment? {
+        guard AppSettings.oauthSourceEnabled,
+              snap.source.cliPath != "api.anthropic.com" else { return nil }
+        return await OAuthPipeline.fetchEnrichment(now: now)
+    }
+
+    private static func apply(_ e: OAuthPipeline.OAuthEnrichment, to snap: inout ClaudeUsageSnapshot) {
+        if let opus = e.opus { snap.limits.currentWeekOpus = opus }
+        if let extra = e.extraUsage { snap.limits.extraUsage = extra }
+        if let plan = e.plan {
+            var account = snap.account ?? AccountInfo()
+            account.plan = plan
+            snap.account = account
+        }
+    }
+
+    /// Scans local Claude Code transcripts for per-model token/cost usage (last 7
+    /// days). Disk work runs off-main; only the result returns to the actor.
+    private static func scanCostModels(now: Date) async -> [ModelUsage] {
+        await Task.detached(priority: .utility) {
+            CostUsageScanner().scan(daysBack: 7, now: now).models
+        }.value
     }
 
     private func shouldReloadWidget(

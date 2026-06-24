@@ -65,14 +65,22 @@ public struct AccountInfo: Codable, Equatable, Sendable {
     public var loginMethod: String?
     public var organization: String?
     public var email: String?
+    /// User-facing plan name (Max/Pro/Team/Enterprise), when inferable.
+    public var plan: String?
 
-    public init(loginMethod: String? = nil, organization: String? = nil, email: String? = nil) {
+    public init(
+        loginMethod: String? = nil,
+        organization: String? = nil,
+        email: String? = nil,
+        plan: String? = nil
+    ) {
         self.loginMethod = loginMethod
         self.organization = organization
         self.email = email
+        self.plan = plan
     }
 
-    var isEmpty: Bool { loginMethod == nil && organization == nil && email == nil }
+    var isEmpty: Bool { loginMethod == nil && organization == nil && email == nil && plan == nil }
 }
 
 // MARK: - Session
@@ -119,14 +127,74 @@ public struct SessionInfo: Codable, Equatable, Sendable {
 public struct LimitInfo: Codable, Equatable, Sendable {
     public var currentSession: LimitWindow
     public var currentWeekAllModels: LimitWindow
+    /// Weekly Opus-only window (`seven_day_opus`). Often the binding limit for Max
+    /// subscribers, who exhaust Opus weekly before the all-models weekly window.
+    /// `nil` when the source doesn't report it (older snapshots, non-OAuth shapes).
+    public var currentWeekOpus: LimitWindow?
+    /// Monthly pay-as-you-go overage spend (`extra_usage`), when enabled on the plan.
+    public var extraUsage: ExtraUsage?
 
     public init(
         currentSession: LimitWindow = LimitWindow(),
-        currentWeekAllModels: LimitWindow = LimitWindow()
+        currentWeekAllModels: LimitWindow = LimitWindow(),
+        currentWeekOpus: LimitWindow? = nil,
+        extraUsage: ExtraUsage? = nil
     ) {
         self.currentSession = currentSession
         self.currentWeekAllModels = currentWeekAllModels
+        self.currentWeekOpus = currentWeekOpus
+        self.extraUsage = extraUsage
     }
+}
+
+/// Monthly pay-as-you-go overage, surfaced by the OAuth usage API as `extra_usage`.
+///
+/// Amounts come as integer **credits in minor units** (e.g. cents) — divide by
+/// `10^decimalPlaces` to get a `currency` value. `isEnabled` reflects whether
+/// overage billing is currently active (it can be off, e.g. "out_of_credits",
+/// while `usedCredits` still shows the month's consumption).
+public struct ExtraUsage: Codable, Equatable, Sendable {
+    public var isEnabled: Bool
+    public var usedCredits: Double?
+    public var monthlyLimit: Double?
+    public var decimalPlaces: Int
+    /// 0–100 utilization when the API reports it directly.
+    public var utilization: Double?
+    public var currency: String?
+
+    public init(
+        isEnabled: Bool,
+        usedCredits: Double? = nil,
+        monthlyLimit: Double? = nil,
+        decimalPlaces: Int = 2,
+        utilization: Double? = nil,
+        currency: String? = nil
+    ) {
+        self.isEnabled = isEnabled
+        self.usedCredits = usedCredits
+        self.monthlyLimit = monthlyLimit
+        self.decimalPlaces = decimalPlaces
+        self.utilization = utilization
+        self.currency = currency
+    }
+
+    private var divisor: Double { pow(10.0, Double(decimalPlaces)) }
+
+    /// Spent amount in `currency` units (e.g. dollars).
+    public var usedAmount: Double? { usedCredits.map { $0 / divisor } }
+    /// Monthly budget in `currency` units.
+    public var limitAmount: Double? { monthlyLimit.map { $0 / divisor } }
+
+    /// Percent of the monthly overage budget consumed, preferring the API's own
+    /// utilization and falling back to used/limit. `nil` when not computable.
+    public var percentUsed: Double? {
+        if let utilization { return utilization }
+        guard let usedCredits, let monthlyLimit, monthlyLimit > 0 else { return nil }
+        return usedCredits / monthlyLimit * 100
+    }
+
+    /// `true` when there is positive spend worth surfacing.
+    public var hasSpend: Bool { (usedCredits ?? 0) > 0 }
 }
 
 public struct LimitWindow: Codable, Equatable, Sendable {
@@ -202,6 +270,24 @@ public struct ModelUsage: Codable, Equatable, Sendable {
         self.cacheReadTokens = cacheReadTokens
         self.cacheWriteTokens = cacheWriteTokens
         self.costUsd = costUsd
+    }
+
+    /// Friendly label for the model id: `claude-opus-4-8` → `Opus 4.8`,
+    /// `claude-3-5-sonnet-20241022` → `Sonnet 3.5`. Unknown families return the
+    /// raw id. Version = short (1–2 digit) numeric tokens; date-like tokens skipped.
+    public var displayName: String {
+        let lower = name.lowercased()
+        let family: String
+        if lower.contains("opus") { family = "Opus" }
+        else if lower.contains("sonnet") { family = "Sonnet" }
+        else if lower.contains("haiku") { family = "Haiku" }
+        else { return name }
+        let separators: Set<Character> = ["-", ".", "_"]
+        let tokens: [Substring] = name.split { separators.contains($0) }
+        let versionParts: [String] = tokens
+            .filter { $0.allSatisfy(\.isNumber) && $0.count <= 2 }
+            .map(String.init)
+        return versionParts.isEmpty ? family : "\(family) \(versionParts.joined(separator: "."))"
     }
 }
 

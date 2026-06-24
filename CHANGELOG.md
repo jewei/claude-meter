@@ -11,8 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Weekly Opus usage window, shown as its own card and factored into the menu-bar
+  severity and notifications. For Max plans this is often the limit you hit first.
+- Pay-as-you-go "Extra usage" overage spend (with a progress bar) is surfaced in
+  the popover, including when overage billing is paused.
+- Opus weekly, extra-usage spend, and plan now appear even on the statusline
+  source: when OAuth is connected, those OAuth-only fields enrich the snapshot.
+- Per-model token and estimated-cost breakdown for the last 7 days, scanned from
+  local Claude Code transcripts and shown in the popover.
+- Anthropic service-status banner in the popover during incidents, so an outage is
+  distinguishable from expired credentials.
+- Plan badge (Max/Pro/Team/Enterprise) in the popover header when detectable.
+- "Import from browser" for claude.ai setup: reads the session key from Chrome,
+  Brave, Edge, Arc, Firefox, or Safari and auto-detects the org — no manual paste.
+- Diagnostics has a "Check browsers" action reporting per-browser cookie-import
+  status (no secrets), to help troubleshoot the import.
+
 ### Changed
 
+- claude.ai setup now auto-detects your organization ID from the session key — the
+  Org ID field is optional; leave it blank and Claude Meter resolves it for you.
+- The OAuth usage source now backs off when Anthropic rate-limits (429), honoring
+  `Retry-After`, and identifies as the Claude Code CLI. Usage decoding tolerates
+  missing or null fields instead of failing the whole refresh.
 - When paused, the menu bar shows only a dimmed icon and hides the usage
   percent, making the inactive state clearer.
 - Release tooling derives the marketing version and build number automatically,

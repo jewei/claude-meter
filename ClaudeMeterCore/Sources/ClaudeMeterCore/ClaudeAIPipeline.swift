@@ -47,11 +47,12 @@ public struct ClaudeAIPipeline: ClaudeMeterPipeline {
                 resetsAt: usage.weekResetsAt,
                 rawValueText: weekMsgs > 0 ? "\(weekMsgs) msgs" : nil
             )
+            let opusWindow = usage.weekOpusPercent.map {
+                LimitWindow(percentUsed: $0, resetsAt: usage.weekOpusResetsAt)
+            }
 
-            let severity = UsageSeverity.highest(
-                thresholds.severity(for: usage.sessionPercent),
-                thresholds.severity(for: usage.weekPercent)
-            )
+            let severity = [usage.sessionPercent, usage.weekPercent, usage.weekOpusPercent]
+                .reduce(UsageSeverity.unknown) { UsageSeverity.highest($0, thresholds.severity(for: $1)) }
 
             let snapshot = ClaudeUsageSnapshot(
                 parserVersion: "claude-ai-api-1.0",
@@ -63,7 +64,8 @@ public struct ClaudeAIPipeline: ClaudeMeterPipeline {
                 ),
                 limits: LimitInfo(
                     currentSession: sessionWindow,
-                    currentWeekAllModels: weekWindow
+                    currentWeekAllModels: weekWindow,
+                    currentWeekOpus: opusWindow
                 ),
                 state: SnapshotState(status: .ok, severity: severity)
             )

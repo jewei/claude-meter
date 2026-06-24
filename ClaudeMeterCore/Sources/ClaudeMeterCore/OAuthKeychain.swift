@@ -91,64 +91,6 @@ public enum OAuthKeychain: Sendable {
         }
     }
 
-    /// Writes updated tokens back to the existing Keychain entry, preserving all other fields.
-    /// Best-effort: silently ignores failures.
-    /// Reserved for explicit write-back to Claude Code's entry; auto refresh stays in-memory only.
-    @available(*, deprecated, message: "Auto OAuth refresh is in-memory only; use saveManual for app-owned creds.")
-    public static func save(_ credentials: OAuthCredentials) {
-        guard let current = findClaudeCodeCredentialsJSON(),
-              let data = current.data(using: .utf8),
-              var json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-            return
-        }
-        var oauth = json["claudeAiOauth"] as? [String: Any] ?? [:]
-        oauth["accessToken"] = credentials.accessToken
-        oauth["refreshToken"] = credentials.refreshToken
-        oauth["expiresAt"] = credentials.expiresAt.timeIntervalSince1970 * 1000
-        json["claudeAiOauth"] = oauth
-        guard let updated = try? JSONSerialization.data(withJSONObject: json),
-              let updatedStr = String(data: updated, encoding: .utf8) else {
-            return
-        }
-        // -U: update if entry already exists
-        updateClaudeCodeCredentialsJSON(updatedStr)
-    }
-
-    // MARK: - Claude Code keychain access
-
-    /// `security find-generic-password -s 'Claude Code-credentials' -a "$(whoami)" -w`
-    private static func findClaudeCodeCredentialsJSON() -> String? {
-        let account = claudeCodeAccount
-        guard !account.isEmpty else { return nil }
-#if canImport(Security)
-        return readKeychainItem(service: service, account: account)
-#else
-        return runSecurity([
-            "find-generic-password",
-            "-s", service,
-            "-a", account,
-            "-w",
-        ])
-#endif
-    }
-
-    /// Updates Claude Code's existing credentials item without exposing tokens in process argv.
-    private static func updateClaudeCodeCredentialsJSON(_ json: String) {
-        let account = claudeCodeAccount
-        guard !account.isEmpty else { return }
-#if canImport(Security)
-        writeKeychainItem(service: service, account: account, value: json)
-#else
-        runSecurity([
-            "add-generic-password",
-            "-U",
-            "-s", service,
-            "-a", account,
-            "-w", json,
-        ])
-#endif
-    }
-
     // MARK: - Helpers
 
     /// Exposed for unit tests.
@@ -281,21 +223,6 @@ public enum OAuthKeychain: Sendable {
             // unexpected status → transient. Never assume "missing" on error.
             return .temporarilyUnavailable
         }
-    }
-
-    private static func readKeychainItem(service: String, account: String) -> String? {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: account,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne
-        ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              let string = String(data: data, encoding: .utf8) else { return nil }
-        return string
     }
 
     private static func deleteKeychainItem(service: String, account: String) {

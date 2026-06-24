@@ -147,21 +147,6 @@ struct SnapshotStoreTests {
         }
     }
 
-    // MARK: - Raw output
-
-    @Test("Writes and verifies raw output file exists")
-    func writesRawOutput() throws {
-        let store = try makeStore()
-        let text = "Current session\n25% used\nResets 2:50pm (Asia/Kuala_Lumpur)\n"
-
-        try store.writeRawOutput(text)
-
-        let rawURL = store.directory.appending(path: "current.raw.txt")
-        #expect(FileManager.default.fileExists(atPath: rawURL.path))
-        let readBack = try String(contentsOf: rawURL, encoding: .utf8)
-        #expect(readBack == text)
-    }
-
     // MARK: - Directory
 
     @Test("applicationSupport() creates ClaudeMeter directory")

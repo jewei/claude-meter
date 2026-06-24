@@ -11,6 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Cursor usage requests now use the shared redirect-guarded provider transport,
+  matching the credential-leak protections used by Claude sources.
+- OAuth-only enrichment for statusline/claude.ai snapshots is cached and
+  throttled to reduce redundant usage API calls while keeping Opus/extra/plan
+  fields visible between refreshes.
+
+### Fixed
+
+- OAuth refreshed-token cache is now scoped to the selected mode (`auto` vs
+  `manual`) and cleared on disconnect, preventing tokens from crossing source
+  modes inside one app session.
+- Stale statusline/cache snapshots now mark the menu bar and popover as stale
+  immediately instead of waiting for the age-based stale threshold.
+- Medium widget now shows the Opus weekly window when available, matching the
+  large widget and menu-bar severity.
+
 ## [1.3] - 2026-06-24
 
 ### Added

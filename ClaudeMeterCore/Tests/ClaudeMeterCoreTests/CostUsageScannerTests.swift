@@ -105,8 +105,8 @@ struct CostUsageScannerTests {
         #expect(result.models.count == 2)
         // Sorted by cost desc → Opus ($15) first.
         #expect(result.models.first?.name == "claude-opus-4-8")
-        #expect(abs(result.totalCostUsd - 18.0) < 0.001)   // 15 (opus) + 3 (sonnet)
-        #expect(abs(result.todayCostUsd - 18.0) < 0.001)
+        let totalCost = result.models.compactMap(\.costUsd).reduce(0, +)
+        #expect(abs(totalCost - 18.0) < 0.001)   // 15 (opus) + 3 (sonnet)
     }
 
     @Test func ignoresEntriesOutsideWindow() throws {

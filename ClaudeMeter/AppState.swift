@@ -36,8 +36,11 @@ final class AppState: ObservableObject {
     private var pipelineGeneration = 0
     private var refreshPending = false
     private var powerMonitor: PowerMonitor?
+    private var lastOAuthEnrichmentAt: Date?
+    private var cachedOAuthEnrichment: OAuthPipeline.OAuthEnrichment?
 
     private static let pollIntervalSeconds: TimeInterval = 60
+    private static let oauthEnrichmentIntervalSeconds: TimeInterval = 300
     private static let rebuildDebounceMilliseconds: UInt64 = 300
     /// How much to stretch the poll cadence while on battery, to cut idle drain
     /// when unplugged. Restored automatically on the next tick after plugging in.
@@ -188,7 +191,8 @@ final class AppState: ObservableObject {
         let cursorStale = AppSettings.cursorSourceEnabled
             && cursorUsage != nil
             && AppGroupConfig.isSnapshotStale(lastPollAt: cursorLastPolledAt)
-        return claudeIsStale || cursorStale
+        let claudeStale = claudeIsStale || snapshot?.state.isStale == true
+        return claudeStale || cursorStale
     }
 
     var cursorIsStale: Bool {
@@ -229,6 +233,8 @@ final class AppState: ObservableObject {
 
     func rebuildPipeline() {
         pipelineGeneration += 1
+        lastOAuthEnrichmentAt = nil
+        cachedOAuthEnrichment = nil
         hasEnabledDataSource = AppSettings.hasEnabledDataSource
         pipeline = AppState.makePipeline(store: store)
         installStatuslineBridgeIfNeeded()
@@ -420,7 +426,16 @@ final class AppState: ObservableObject {
     ) async -> OAuthPipeline.OAuthEnrichment? {
         guard AppSettings.oauthSourceEnabled,
               snap.source.cliPath != "api.anthropic.com" else { return nil }
-        return await OAuthPipeline.fetchEnrichment(now: now)
+        if let lastOAuthEnrichmentAt,
+           now.timeIntervalSince(lastOAuthEnrichmentAt) < Self.oauthEnrichmentIntervalSeconds {
+            return cachedOAuthEnrichment
+        }
+        lastOAuthEnrichmentAt = now
+        if let enrichment = await OAuthPipeline.fetchEnrichment(now: now) {
+            cachedOAuthEnrichment = enrichment
+            return enrichment
+        }
+        return cachedOAuthEnrichment
     }
 
     private static func apply(_ e: OAuthPipeline.OAuthEnrichment, to snap: inout ClaudeUsageSnapshot) {

@@ -84,4 +84,47 @@ struct OAuthPipelineTests {
     )
     #expect(limits.bindingDisplayPercent(asOf: now) == "92%")
   }
+
+  @Test func cachedCredentialsAreScopedByOAuthMode() {
+    OAuthPipeline.clearCachedCredentials()
+    defer { OAuthPipeline.clearCachedCredentials() }
+
+    let auto = OAuthCredentials(
+      accessToken: "auto-access",
+      refreshToken: "auto-refresh",
+      expiresAt: .distantFuture
+    )
+    let manual = OAuthCredentials(
+      accessToken: "manual-access",
+      refreshToken: "manual-refresh",
+      expiresAt: .distantFuture
+    )
+
+    OAuthPipeline.setCachedCredentialsForTesting(auto, oauthMode: "auto")
+    #expect(OAuthPipeline.credentials(from: .temporarilyUnavailable, oauthMode: "auto")?.accessToken == "auto-access")
+    #expect(OAuthPipeline.credentials(from: .temporarilyUnavailable, oauthMode: "manual") == nil)
+
+    OAuthPipeline.setCachedCredentialsForTesting(manual, oauthMode: "manual")
+    #expect(OAuthPipeline.credentials(from: .temporarilyUnavailable, oauthMode: "manual")?.accessToken == "manual-access")
+  }
+
+  @Test func sourceCredentialsBeatCachedCredentials() {
+    OAuthPipeline.clearCachedCredentials()
+    defer { OAuthPipeline.clearCachedCredentials() }
+
+    let cached = OAuthCredentials(
+      accessToken: "cached-access",
+      refreshToken: "cached-refresh",
+      expiresAt: .distantFuture
+    )
+    let source = OAuthCredentials(
+      accessToken: "source-access",
+      refreshToken: "source-refresh",
+      expiresAt: .distantFuture
+    )
+
+    OAuthPipeline.setCachedCredentialsForTesting(cached, oauthMode: "manual")
+    let resolved = OAuthPipeline.credentials(from: .found(source), oauthMode: "manual")
+    #expect(resolved?.accessToken == "source-access")
+  }
 }

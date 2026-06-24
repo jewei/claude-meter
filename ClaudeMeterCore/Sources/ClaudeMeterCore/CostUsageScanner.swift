@@ -28,12 +28,11 @@ public struct CostUsageScanner: Sendable {
         self.cache = cache
     }
 
-    /// Aggregated per-model usage/cost over the window plus today's spend.
+    /// Aggregated per-model usage/cost over the window.
     public func scan(daysBack days: Int = 7, now: Date = Date()) -> CostUsageResult {
         let cal = Calendar.current
         let offset = -(max(days, 1) - 1)
         let cutoff = cal.startOfDay(for: cal.date(byAdding: .day, value: offset, to: now)!)
-        let todayStr = JournalReader.dayString(from: now)
         let fm = FileManager.default
 
         guard let projectDirs = try? fm.contentsOfDirectory(
@@ -83,7 +82,7 @@ public struct CostUsageScanner: Sendable {
             }
         }
 
-        return aggregate(byDayModel, todayStr: todayStr, isPartial: isPartial)
+        return aggregate(byDayModel, isPartial: isPartial)
     }
 
     private struct ParseResult {
@@ -169,18 +168,12 @@ public struct CostUsageScanner: Sendable {
 
     private func aggregate(
         _ byDayModel: [DayModelKey: TokenTotals],
-        todayStr: String,
         isPartial: Bool
     ) -> CostUsageResult {
         var perModel: [String: TokenTotals] = [:]
-        var todayCost = 0.0
-        var totalCost = 0.0
 
         for (key, totals) in byDayModel {
             perModel[key.model, default: .zero].add(totals)
-            let cost = cost(forModel: key.model, totals: totals)
-            totalCost += cost
-            if key.day == todayStr { todayCost += cost }
         }
 
         let models = perModel.map { model, totals in
@@ -196,8 +189,6 @@ public struct CostUsageScanner: Sendable {
 
         return CostUsageResult(
             models: models,
-            totalCostUsd: totalCost,
-            todayCostUsd: todayCost,
             isPartialEstimate: isPartial
         )
     }
@@ -221,24 +212,18 @@ public struct CostUsageScanner: Sendable {
 
 public struct CostUsageResult: Sendable, Equatable {
     public let models: [ModelUsage]
-    public let totalCostUsd: Double
-    public let todayCostUsd: Double
     /// `true` when one or more transcript files were tail-read and totals may be incomplete.
     public let isPartialEstimate: Bool
 
     public init(
         models: [ModelUsage],
-        totalCostUsd: Double,
-        todayCostUsd: Double,
         isPartialEstimate: Bool = false
     ) {
         self.models = models
-        self.totalCostUsd = totalCostUsd
-        self.todayCostUsd = todayCostUsd
         self.isPartialEstimate = isPartialEstimate
     }
 
-    public static let empty = CostUsageResult(models: [], totalCostUsd: 0, todayCostUsd: 0, isPartialEstimate: false)
+    public static let empty = CostUsageResult(models: [], isPartialEstimate: false)
 
     public var isEmpty: Bool { models.isEmpty }
 }

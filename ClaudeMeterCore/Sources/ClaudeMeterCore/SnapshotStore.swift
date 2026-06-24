@@ -15,7 +15,6 @@ public struct LastErrorRecord: Codable, Equatable, Sendable {
 /// Files in `<directory>/`:
 ///   - `current.json`      — latest parsed snapshot (pretty-printed JSON)
 ///   - `last-error.json`   — most recent poll/parse failure
-///   - `current.raw.txt`   — raw CLI output (diagnostics only)
 ///
 /// Writes use `Data.write(.atomic)`, which creates a temp file in the same
 /// directory and renames it over the destination — atomic on APFS/HFS+.
@@ -27,7 +26,6 @@ public struct SnapshotStore: Sendable {
 
     private var currentURL: URL   { directory.appending(path: "current.json") }
     private var lastErrorURL: URL { directory.appending(path: "last-error.json") }
-    private var rawOutputURL: URL { directory.appending(path: "current.raw.txt") }
 
     // MARK: - Factory
 
@@ -107,20 +105,6 @@ public struct SnapshotStore: Sendable {
     public func clearLastError() throws {
         guard FileManager.default.fileExists(atPath: lastErrorURL.path) else { return }
         try FileManager.default.removeItem(at: lastErrorURL)
-    }
-
-    // MARK: - Raw output
-
-    /// Writes raw CLI output for diagnostics. No-op if `text` cannot be UTF-8 encoded.
-    public func writeRawOutput(_ text: String) throws {
-        guard let data = text.data(using: .utf8) else { return }
-        try writeAtomically(data, to: rawOutputURL)
-    }
-
-    /// Returns raw CLI output when diagnostics recording is enabled; nil when the file does not exist.
-    public func readRawOutput() throws -> String? {
-        guard FileManager.default.fileExists(atPath: rawOutputURL.path) else { return nil }
-        return try String(contentsOf: rawOutputURL, encoding: .utf8)
     }
 
     // MARK: - Atomic write

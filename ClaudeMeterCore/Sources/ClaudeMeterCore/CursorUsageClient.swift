@@ -28,25 +28,20 @@ public enum CursorError: Error, LocalizedError, Equatable {
 /// we never write back to Cursor's own store.
 public final class CursorUsageProvider: @unchecked Sendable {
 
-    private static let session: URLSession = {
-        let config = URLSessionConfiguration.ephemeral
-        config.httpShouldSetCookies = false
-        config.httpCookieAcceptPolicy = .never
-        config.timeoutIntervalForRequest = 20
-        return URLSession(configuration: config)
-    }()
-
     private static let baseURL = "https://api2.cursor.sh"
     private static let tokenURL = URL(string: "https://api2.cursor.sh/oauth/token")!
     private static let clientID = "KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB"
     private static let usagePath = "/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
     private static let planInfoPath = "/aiserver.v1.DashboardService/GetPlanInfo"
 
+    private let transport: any HTTPTransport
     private let stateQueue = DispatchQueue(label: "com.jewei.claudemeter.cursor-provider.state")
     private var cachedAccessToken: String?
     private var cachedRefreshToken: String?
 
-    public init() {}
+    public init(transport: any HTTPTransport = ProviderHTTPClient.shared) {
+        self.transport = transport
+    }
 
     public func fetchUsage(now: Date = Date()) async throws -> CursorUsage {
         guard let creds = CursorTokenStore.detect() else { throw CursorError.notDetected }
@@ -107,8 +102,7 @@ public final class CursorUsageProvider: @unchecked Sendable {
         request.setValue("1", forHTTPHeaderField: "Connect-Protocol-Version")
         request.httpBody = Data("{}".utf8)
 
-        let (data, response) = try await Self.session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw CursorError.invalidResponse }
+        let (data, http) = try await transport.send(request)
         switch http.statusCode {
         case 200: return data
         case 401: throw CursorError.unauthorized
@@ -131,8 +125,8 @@ public final class CursorUsageProvider: @unchecked Sendable {
             "client_id": Self.clientID,
             "refresh_token": refreshToken,
         ])
-        let (data, response) = try await Self.session.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+        let (data, http) = try await transport.send(request)
+        guard http.statusCode == 200 else {
             throw CursorError.unauthorized
         }
         let decoded = try JSONDecoder().decode(CursorOAuthResponse.self, from: data)

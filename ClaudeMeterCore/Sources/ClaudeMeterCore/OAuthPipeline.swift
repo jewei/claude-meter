@@ -35,7 +35,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     public func poll(now: Date) async throws -> ParseResult {
         let oauthMode = UserDefaults.standard.string(forKey: AppGroupConfig.oauthModeKey) ?? ""
-        guard !oauthMode.isEmpty else {
+        guard oauthMode == "auto" || oauthMode == "manual" else {
             return try await fallback.poll(now: now)
         }
 
@@ -47,19 +47,17 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         let keychainResult = oauthMode == "manual"
             ? OAuthKeychain.loadManualResult()
             : OAuthKeychain.loadResult()
-        let sourceCreds = Self.credentials(from: keychainResult)
-        guard let loaded = OAuthSharedState.cachedCredentials() ?? sourceCreds else {
+        guard var creds = Self.credentials(from: keychainResult, oauthMode: oauthMode) else {
             return try await fallback.poll(now: now)
         }
-        var creds = loaded
 
         if creds.isExpired {
             guard let refreshed = try? await refreshToken(creds) else {
-                OAuthSharedState.setCachedCredentials(nil)
+                OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
                 return try await fallback.poll(now: now)
             }
             creds = refreshed
-            OAuthSharedState.setCachedCredentials(refreshed)
+            OAuthSharedState.setCachedCredentials(refreshed, for: oauthMode)
             if oauthMode == "manual" {
                 OAuthKeychain.saveManual(accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
             }
@@ -71,10 +69,10 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         } catch OAuthError.unauthorized {
             // Token rejected despite appearing valid — attempt one refresh.
             guard let refreshed = try? await refreshToken(creds) else {
-                OAuthSharedState.setCachedCredentials(nil)
+                OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
                 return try await fallback.poll(now: now)
             }
-            OAuthSharedState.setCachedCredentials(refreshed)
+            OAuthSharedState.setCachedCredentials(refreshed, for: oauthMode)
             if oauthMode == "manual" {
                 OAuthKeychain.saveManual(accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
             }
@@ -90,12 +88,28 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     /// Resolves Keychain read into credentials, preferring in-memory cache on a
     /// transient lock so a momentary Keychain block doesn't look like "missing".
-    private static func credentials(from result: KeychainReadResult<OAuthCredentials>) -> OAuthCredentials? {
+    static func credentials(
+        from result: KeychainReadResult<OAuthCredentials>,
+        oauthMode: String
+    ) -> OAuthCredentials? {
         switch result {
         case let .found(creds): return creds
-        case .temporarilyUnavailable: return OAuthSharedState.cachedCredentials()
+        case .temporarilyUnavailable: return OAuthSharedState.cachedCredentials(for: oauthMode)
         case .missing, .invalid: return nil
         }
+    }
+
+    /// Clears in-memory OAuth tokens when the user disconnects or switches away
+    /// from OAuth, so refreshed credentials cannot outlive the selected source.
+    public static func clearCachedCredentials() {
+        OAuthSharedState.clearCachedCredentials()
+    }
+
+    static func setCachedCredentialsForTesting(
+        _ credentials: OAuthCredentials?,
+        oauthMode: String
+    ) {
+        OAuthSharedState.setCachedCredentials(credentials, for: oauthMode)
     }
 
     // MARK: - Settings verification
@@ -143,12 +157,12 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     /// OAuth isn't configured or the call fails; never throws.
     public static func fetchEnrichment(now: Date = Date()) async -> OAuthEnrichment? {
         let oauthMode = UserDefaults.standard.string(forKey: AppGroupConfig.oauthModeKey) ?? ""
-        guard !oauthMode.isEmpty else { return nil }
+        guard oauthMode == "auto" || oauthMode == "manual" else { return nil }
         guard !OAuthSharedState.isRateLimited(now: now) else { return nil }
         let keychainResult = oauthMode == "manual"
             ? OAuthKeychain.loadManualResult()
             : OAuthKeychain.loadResult()
-        guard var creds = credentials(from: keychainResult) else { return nil }
+        guard var creds = credentials(from: keychainResult, oauthMode: oauthMode) else { return nil }
         if creds.isExpired {
             guard let refreshed = try? await verifyRefresh(creds) else { return nil }
             creds = OAuthCredentials(
@@ -157,7 +171,10 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 expiresAt: refreshed.expiresAt,
                 subscriptionType: creds.subscriptionType
             )
-            OAuthSharedState.setCachedCredentials(creds)
+            OAuthSharedState.setCachedCredentials(creds, for: oauthMode)
+            if oauthMode == "manual" {
+                OAuthKeychain.saveManual(accessToken: creds.accessToken, refreshToken: creds.refreshToken)
+            }
         }
         guard let usage = try? await requestUsage(token: creds.accessToken, now: now) else { return nil }
         let opus = usage.sevenDayOpus.flatMap { entry -> LimitWindow? in
@@ -423,7 +440,7 @@ internal struct ExtraUsageEntry: Decodable {
 private enum OAuthSharedState {
     private static let lock = NSLock()
     private static nonisolated(unsafe) var blockedUntil: Date?
-    private static nonisolated(unsafe) var cachedCreds: OAuthCredentials?
+    private static nonisolated(unsafe) var cachedCredsByMode: [String: OAuthCredentials] = [:]
 
     static func isRateLimited(now: Date) -> Bool {
         lock.lock()
@@ -442,15 +459,25 @@ private enum OAuthSharedState {
         lock.unlock()
     }
 
-    static func cachedCredentials() -> OAuthCredentials? {
+    static func cachedCredentials(for oauthMode: String) -> OAuthCredentials? {
         lock.lock()
         defer { lock.unlock() }
-        return cachedCreds
+        return cachedCredsByMode[oauthMode]
     }
 
-    static func setCachedCredentials(_ credentials: OAuthCredentials?) {
+    static func setCachedCredentials(_ credentials: OAuthCredentials?, for oauthMode: String) {
         lock.lock()
-        cachedCreds = credentials
+        if let credentials {
+            cachedCredsByMode[oauthMode] = credentials
+        } else {
+            cachedCredsByMode[oauthMode] = nil
+        }
+        lock.unlock()
+    }
+
+    static func clearCachedCredentials() {
+        lock.lock()
+        cachedCredsByMode.removeAll()
         lock.unlock()
     }
 }

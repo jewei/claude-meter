@@ -208,6 +208,15 @@ private struct MediumWidgetView: View {
                     thresholds: entry.thresholds,
                     referenceDate: entry.date
                 )
+                if let opus = snap.limits.currentWeekOpus {
+                    Divider().opacity(0.2)
+                    WindowRow(
+                        label: "WEEK (OPUS)",
+                        window: opus,
+                        thresholds: entry.thresholds,
+                        referenceDate: entry.date
+                    )
+                }
             }
             .padding()
         } else {

@@ -410,7 +410,6 @@ Disabled layers are skipped.
 
 - `current.json`
 - `last-error.json`
-- `current.raw.txt` exists for legacy diagnostics support only.
 
 Factories:
 

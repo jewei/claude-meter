@@ -348,6 +348,7 @@ private struct OAuthConnectionSection: View {
 
     private func disconnect() {
         if oauthMode == "manual" { OAuthKeychain.deleteManual() }
+        OAuthPipeline.clearCachedCredentials()
         oauthMode = ""
         testResult = ""
         manualAccess = ""

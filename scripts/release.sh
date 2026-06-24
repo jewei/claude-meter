@@ -78,8 +78,12 @@ CHANGELOG="$PROJECT_DIR/CHANGELOG.md"
 RELEASE_NOTES="$(awk '
     /^## \[Unreleased\]/ { capture = 1; next }
     /^## \[/ && capture  { exit }
-    capture              { print }
-' "$CHANGELOG" | sed -e '/./,$!d' | sed -e :a -e '/^\n*$/{$d;N;ba}')"
+    capture {
+        if (!started && $0 ~ /^[[:space:]]*$/) next  # drop leading blank lines
+        started = 1
+        print
+    }
+' "$CHANGELOG")"
 
 if [[ -z "${RELEASE_NOTES//[[:space:]]/}" ]]; then
     echo "error: CHANGELOG.md [Unreleased] section is empty — add release notes first." >&2
@@ -249,13 +253,13 @@ else
     VERSION_LINK="[$VERSION]: https://github.com/$GITHUB_REPO/releases/tag/$TAG"
 fi
 
-CM_VERSION="$VERSION" CM_DATE="$TODAY" \
-CM_UNREL="[Unreleased]: https://github.com/$GITHUB_REPO/compare/$TAG...HEAD" \
-CM_VERLINK="$VERSION_LINK" \
-perl -0pi -e '
-    s{## \[Unreleased\]\n}{"## [Unreleased]\n\n## [$ENV{CM_VERSION}] - $ENV{CM_DATE}\n"}e;
-    s{^\[Unreleased\]:.*$}{"$ENV{CM_UNREL}\n$ENV{CM_VERLINK}"}me;
-' "$CHANGELOG"
+UNREL_LINK="[Unreleased]: https://github.com/$GITHUB_REPO/compare/$TAG...HEAD"
+CHANGELOG_TMP="$(mktemp)"
+awk -v ver="$VERSION" -v date="$TODAY" -v unrel="$UNREL_LINK" -v verlink="$VERSION_LINK" '
+    /^## \[Unreleased\]$/ { print; print ""; print "## [" ver "] - " date; next }
+    /^\[Unreleased\]:/    { print unrel; print verlink; next }
+                          { print }
+' "$CHANGELOG" > "$CHANGELOG_TMP" && mv "$CHANGELOG_TMP" "$CHANGELOG"
 
 # ── Commit & push ─────────────────────────────────────────────────────────────
 # Done last: the appcast goes live to Sparkle only once the DMG is downloadable.

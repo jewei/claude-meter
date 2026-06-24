@@ -245,8 +245,19 @@ git -C "$PROJECT_DIR" add appcast.xml CHANGELOG.md ClaudeMeter.xcodeproj/project
 git -C "$PROJECT_DIR" commit -m "Release $TAG"
 RELEASE_COMMIT="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
 
+# ── Push ──────────────────────────────────────────────────────────────────────
+# Push BEFORE creating the release: GitHub's target_commitish must already exist
+# on the remote, otherwise `gh release create` fails with HTTP 422 ("invalid").
+# The appcast download URL points at the release asset (uploaded below), which
+# doesn't exist until `gh release create` runs — so publishing the commit first
+# never exposes a dangling appcast.
+
+echo "▶ Pushing to origin…"
+git -C "$PROJECT_DIR" push
+
 # ── GitHub Release ────────────────────────────────────────────────────────────
 # Tag the release commit (not the pre-build HEAD) so source and assets align.
+# Use the full 40-char SHA — GitHub rejects abbreviated SHAs as target_commitish.
 
 echo "▶ Creating GitHub release ${TAG}…"
 gh release create "$TAG" "$DMG_PATH" \
@@ -257,12 +268,6 @@ gh release create "$TAG" "$DMG_PATH" \
 
 ---
 Download and open **$DMG_NAME** to install."
-
-# ── Push ──────────────────────────────────────────────────────────────────────
-# Appcast goes live only once the DMG is downloadable at the tagged release.
-
-echo "▶ Pushing to origin…"
-git -C "$PROJECT_DIR" push
 
 echo ""
 echo "✓ Released Claude Meter $VERSION"

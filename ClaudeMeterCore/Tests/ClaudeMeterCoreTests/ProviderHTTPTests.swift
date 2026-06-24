@@ -1,6 +1,7 @@
 import Foundation
 import Security
 import Testing
+
 @testable import ClaudeMeterCore
 
 @Suite("RedirectGuardDelegate")
@@ -8,27 +9,31 @@ struct RedirectGuardTests {
     private func url(_ s: String) -> URL { URL(string: s)! }
 
     @Test func allowsSameOriginHTTPS() {
-        #expect(RedirectGuardDelegate.isAllowed(
-            from: url("https://api.anthropic.com/api/oauth/usage"),
-            to: url("https://api.anthropic.com/api/oauth/usage?x=1")))
+        #expect(
+            RedirectGuardDelegate.isAllowed(
+                from: url("https://api.anthropic.com/api/oauth/usage"),
+                to: url("https://api.anthropic.com/api/oauth/usage?x=1")))
     }
 
     @Test func blocksCrossHost() {
-        #expect(!RedirectGuardDelegate.isAllowed(
-            from: url("https://api.anthropic.com/x"),
-            to: url("https://evil.example.com/x")))
+        #expect(
+            !RedirectGuardDelegate.isAllowed(
+                from: url("https://api.anthropic.com/x"),
+                to: url("https://evil.example.com/x")))
     }
 
     @Test func blocksHTTPSDowngrade() {
-        #expect(!RedirectGuardDelegate.isAllowed(
-            from: url("https://claude.ai/x"),
-            to: url("http://claude.ai/x")))
+        #expect(
+            !RedirectGuardDelegate.isAllowed(
+                from: url("https://claude.ai/x"),
+                to: url("http://claude.ai/x")))
     }
 
     @Test func blocksDifferentPort() {
-        #expect(!RedirectGuardDelegate.isAllowed(
-            from: url("https://claude.ai/x"),
-            to: url("https://claude.ai:8443/x")))
+        #expect(
+            !RedirectGuardDelegate.isAllowed(
+                from: url("https://claude.ai/x"),
+                to: url("https://claude.ai:8443/x")))
     }
 
     @Test func blocksNil() {
@@ -54,7 +59,7 @@ struct HTTPRetryPolicyTests {
     @Test func honorsRetryAfterCappedAtMax() {
         let policy = HTTPRetryPolicy(maxRetries: 2, baseDelay: 1, maxDelay: 8)
         #expect(policy.delay(attempt: 0, retryAfter: "5") == 5)
-        #expect(policy.delay(attempt: 0, retryAfter: "100") == 8)   // capped
+        #expect(policy.delay(attempt: 0, retryAfter: "100") == 8)  // capped
     }
 
     @Test func exponentialBackoffWhenNoRetryAfter() {
@@ -62,7 +67,7 @@ struct HTTPRetryPolicyTests {
         #expect(policy.delay(attempt: 0, retryAfter: nil) == 1)
         #expect(policy.delay(attempt: 1, retryAfter: nil) == 2)
         #expect(policy.delay(attempt: 2, retryAfter: nil) == 4)
-        #expect(policy.delay(attempt: 9, retryAfter: nil) == 8)     // capped
+        #expect(policy.delay(attempt: 9, retryAfter: nil) == 8)  // capped
     }
 }
 
@@ -71,8 +76,11 @@ struct HTTPRetryPolicyTests {
 private struct StubTransport: HTTPTransport {
     let data: Data
     let status: Int
-    func send(_ request: URLRequest, retry _: HTTPRetryPolicy) async throws -> (Data, HTTPURLResponse) {
-        let http = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+    func send(_ request: URLRequest, retry _: HTTPRetryPolicy) async throws -> (
+        Data, HTTPURLResponse
+    ) {
+        let http = HTTPURLResponse(
+            url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
         return (data, http)
     }
 }
@@ -81,14 +89,16 @@ private struct StubTransport: HTTPTransport {
 struct TransportInjectionTests {
     @Test func statusClientParsesInjectedResponse() async {
         let json = #"{"status":{"indicator":"major","description":"Partial outage"}}"#
-        let client = AnthropicStatusClient(transport: StubTransport(data: Data(json.utf8), status: 200))
+        let client = AnthropicStatusClient(
+            transport: StubTransport(data: Data(json.utf8), status: 200))
         let status = await client.fetch()
         #expect(status?.level == .major)
         #expect(status?.description == "Partial outage")
     }
 
     @Test func statusClientReturnsNilOnNon200() async {
-        let client = AnthropicStatusClient(transport: StubTransport(data: Data("{}".utf8), status: 503))
+        let client = AnthropicStatusClient(
+            transport: StubTransport(data: Data("{}".utf8), status: 503))
         #expect(await client.fetch() == nil)
     }
 }
@@ -101,27 +111,31 @@ struct KeychainStatusMappingTests {
     }
 
     @Test func successWithoutDataIsInvalid() {
-        if case .invalid = OAuthKeychain.mapKeychainStatus(errSecSuccess, data: nil) {} else {
+        if case .invalid = OAuthKeychain.mapKeychainStatus(errSecSuccess, data: nil) {
+        } else {
             Issue.record("expected .invalid")
         }
     }
 
     @Test func itemNotFoundIsMissing() {
-        if case .missing = OAuthKeychain.mapKeychainStatus(errSecItemNotFound, data: nil) {} else {
+        if case .missing = OAuthKeychain.mapKeychainStatus(errSecItemNotFound, data: nil) {
+        } else {
             Issue.record("expected .missing")
         }
     }
 
     @Test func lockedOrErrorIsTemporarilyUnavailable() {
         for status in [errSecInteractionNotAllowed, OSStatus(-99999)] {
-            if case .temporarilyUnavailable = OAuthKeychain.mapKeychainStatus(status, data: nil) {} else {
+            if case .temporarilyUnavailable = OAuthKeychain.mapKeychainStatus(status, data: nil) {
+            } else {
                 Issue.record("expected .temporarilyUnavailable for \(status)")
             }
         }
     }
 
     @Test func authFailedIsInvalid() {
-        if case .invalid = OAuthKeychain.mapKeychainStatus(errSecAuthFailed, data: nil) {} else {
+        if case .invalid = OAuthKeychain.mapKeychainStatus(errSecAuthFailed, data: nil) {
+        } else {
             Issue.record("expected .invalid for errSecAuthFailed")
         }
     }

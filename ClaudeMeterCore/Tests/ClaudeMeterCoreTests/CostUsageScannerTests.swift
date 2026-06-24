@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import ClaudeMeterCore
 
 @Suite("ModelPricing")
@@ -81,8 +82,12 @@ struct CostUsageScannerTests {
         let ts = iso(now)
         // Same id+requestId, cumulative usage: 100 then 250 input. Expect 250, not 350.
         let (scanner, root) = try makeScanner(lines: [
-            assistantLine(id: "m1", requestId: "r1", model: "claude-sonnet-4-6", input: 100, output: 10, ts: ts),
-            assistantLine(id: "m1", requestId: "r1", model: "claude-sonnet-4-6", input: 250, output: 40, ts: ts),
+            assistantLine(
+                id: "m1", requestId: "r1", model: "claude-sonnet-4-6", input: 100, output: 10,
+                ts: ts),
+            assistantLine(
+                id: "m1", requestId: "r1", model: "claude-sonnet-4-6", input: 250, output: 40,
+                ts: ts),
         ])
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -96,8 +101,12 @@ struct CostUsageScannerTests {
         let now = Date()
         let ts = iso(now)
         let (scanner, root) = try makeScanner(lines: [
-            assistantLine(id: "a", requestId: "1", model: "claude-opus-4-8", input: 1_000_000, output: 0, ts: ts),
-            assistantLine(id: "b", requestId: "2", model: "claude-sonnet-4-6", input: 1_000_000, output: 0, ts: ts),
+            assistantLine(
+                id: "a", requestId: "1", model: "claude-opus-4-8", input: 1_000_000, output: 0,
+                ts: ts),
+            assistantLine(
+                id: "b", requestId: "2", model: "claude-sonnet-4-6", input: 1_000_000, output: 0,
+                ts: ts),
         ])
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -106,14 +115,16 @@ struct CostUsageScannerTests {
         // Sorted by cost desc → Opus ($15) first.
         #expect(result.models.first?.name == "claude-opus-4-8")
         let totalCost = result.models.compactMap(\.costUsd).reduce(0, +)
-        #expect(abs(totalCost - 18.0) < 0.001)   // 15 (opus) + 3 (sonnet)
+        #expect(abs(totalCost - 18.0) < 0.001)  // 15 (opus) + 3 (sonnet)
     }
 
     @Test func ignoresEntriesOutsideWindow() throws {
         let now = Date()
         let old = iso(now.addingTimeInterval(-30 * 24 * 3600))
         let (scanner, root) = try makeScanner(lines: [
-            assistantLine(id: "old", requestId: "1", model: "claude-sonnet-4-6", input: 1_000_000, output: 0, ts: old),
+            assistantLine(
+                id: "old", requestId: "1", model: "claude-sonnet-4-6", input: 1_000_000, output: 0,
+                ts: old)
         ])
         defer { try? FileManager.default.removeItem(at: root) }
 

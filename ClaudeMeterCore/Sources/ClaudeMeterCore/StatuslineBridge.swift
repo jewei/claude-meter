@@ -17,12 +17,14 @@ public enum StatuslineBridge: Sendable {
     /// Multiple concurrent sessions each write their own file so they no longer
     /// clobber a single shared file (which caused the meter to flip between
     /// sessions' rate-limit snapshots).
-    static let sessionsDir: URL = dataDir
+    static let sessionsDir: URL =
+        dataDir
         .appendingPathComponent("sessions")
 
     /// Legacy single-file path written by pre-multisession installs. Still read
     /// during migration; new installs write into `sessionsDir`.
-    public static let statuslineFilePath: URL = dataDir
+    public static let statuslineFilePath: URL =
+        dataDir
         .appendingPathComponent("statusline.json")
 
     private static let claudeSettingsPath: URL = FileManager.default.homeDirectoryForCurrentUser
@@ -36,7 +38,8 @@ public enum StatuslineBridge: Sendable {
     /// Inline bash snippet: reads stdin, extracts `session_id`, and atomically
     /// writes the payload to `~/.claude-meter/sessions/<session_id>.json`, then
     /// pipes stdin through to the next command unchanged.
-    static let bridgeSnippet = #"bash -c 'I=$(cat);D=$HOME/.claude-meter/sessions;mkdir -p "$D" 2>/dev/null;S=$(printf "%s" "$I"|sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p");S=$(printf "%s" "$S"|tr -cd "[:alnum:]._-");[ -z "$S" ]&&S=default;T="$D/.tmp.$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/$S.json" 2>/dev/null||rm -f "$T" 2>/dev/null;printf "%s" "$I"'"#
+    static let bridgeSnippet =
+        #"bash -c 'I=$(cat);D=$HOME/.claude-meter/sessions;mkdir -p "$D" 2>/dev/null;S=$(printf "%s" "$I"|sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p");S=$(printf "%s" "$S"|tr -cd "[:alnum:]._-");[ -z "$S" ]&&S=default;T="$D/.tmp.$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/$S.json" 2>/dev/null||rm -f "$T" 2>/dev/null;printf "%s" "$I"'"#
 
     /// Snippets from earlier app versions; recognised so `install()` can migrate
     /// them to the current snippet and `uninstall()` can remove them cleanly.
@@ -51,10 +54,12 @@ public enum StatuslineBridge: Sendable {
     /// Installs the bridge snippet into `~/.claude/settings.json` and sets `refreshInterval` to 1.
     /// Idempotent — safe to call on every app launch.
     public static func install() throws {
-        guard FileManager.default.fileExists(
-            atPath: FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".claude").path
-        ) else { return }
+        guard
+            FileManager.default.fileExists(
+                atPath: FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent(".claude").path
+            )
+        else { return }
 
         try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
 
@@ -65,7 +70,8 @@ public enum StatuslineBridge: Sendable {
         // command, then prepend the current snippet. This migrates old installs.
         let currentCmd = statusLineCommand(in: settings)
         let userCmd = strippedOfAnyBridge(from: currentCmd)
-        let desiredCmd = userCmd.isEmpty
+        let desiredCmd =
+            userCmd.isEmpty
             ? bridgeSnippet + " > /dev/null"
             : bridgeSnippet + " | " + userCmd
         if currentCmd != desiredCmd {
@@ -116,14 +122,17 @@ public enum StatuslineBridge: Sendable {
         ) {
             for url in entries where url.pathExtension == "json" {
                 if let mod = (try? url.resourceValues(forKeys: Set(keys)))?.contentModificationDate,
-                   now.timeIntervalSince(mod) < maxAge {
+                    now.timeIntervalSince(mod) < maxAge
+                {
                     urls.append(url)
                 }
             }
         }
-        if let mod = (try? FileManager.default.attributesOfItem(
-            atPath: statuslineFilePath.path))?[.modificationDate] as? Date,
-           now.timeIntervalSince(mod) < maxAge {
+        if let mod =
+            (try? FileManager.default.attributesOfItem(
+                atPath: statuslineFilePath.path))?[.modificationDate] as? Date,
+            now.timeIntervalSince(mod) < maxAge
+        {
             urls.append(statuslineFilePath)
         }
         return urls
@@ -245,20 +254,23 @@ public enum StatuslineBridge: Sendable {
     }
 
     internal static func readPayload(from statuslineFilePath: URL) throws -> StatuslinePayload? {
-        guard let modDate = (try? FileManager.default.attributesOfItem(
-            atPath: statuslineFilePath.path))?[.modificationDate] as? Date
+        guard
+            let modDate =
+                (try? FileManager.default.attributesOfItem(
+                    atPath: statuslineFilePath.path))?[.modificationDate] as? Date
         else { return nil }
 
         let raw = try Data(contentsOf: statuslineFilePath)
         guard !raw.isEmpty,
-              let json = try JSONSerialization.jsonObject(with: raw) as? [String: Any]
+            let json = try JSONSerialization.jsonObject(with: raw) as? [String: Any]
         else { return nil }
 
         let rateLimits = json["rate_limits"] as? [String: Any]
 
         func window(_ key: String) -> RateLimitWindow? {
             guard let obj = rateLimits?[key] as? [String: Any],
-                  let pct = numericValue(obj["used_percentage"]) else { return nil }
+                let pct = numericValue(obj["used_percentage"])
+            else { return nil }
             let resetsAt = numericValue(obj["resets_at"]).map { Date(timeIntervalSince1970: $0) }
             return RateLimitWindow(usedPercentage: pct, resetsAt: resetsAt)
         }
@@ -328,8 +340,10 @@ public enum StatuslineBridge: Sendable {
     @discardableResult
     internal static func ensureRefreshInterval(in settings: inout [String: Any]) -> Bool {
         guard var statusLine = settings["statusLine"] as? [String: Any],
-              statusLine["command"] != nil else { return false }
-        let current = (statusLine["refreshInterval"] as? Int)
+            statusLine["command"] != nil
+        else { return false }
+        let current =
+            (statusLine["refreshInterval"] as? Int)
             ?? (statusLine["refreshInterval"] as? Double).map { Int($0) }
         guard current != refreshIntervalSeconds else { return false }
         statusLine["refreshInterval"] = refreshIntervalSeconds
@@ -365,7 +379,8 @@ public enum StatuslineBridge: Sendable {
     }
 
     private static func writeSettings(_ settings: [String: Any]) throws {
-        let data = try JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys])
+        let data = try JSONSerialization.data(
+            withJSONObject: settings, options: [.prettyPrinted, .sortedKeys])
         let dir = claudeSettingsPath.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try data.write(to: claudeSettingsPath, options: .atomic)

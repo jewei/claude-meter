@@ -1,5 +1,5 @@
-import SwiftUI
 import ClaudeMeterCore
+import SwiftUI
 
 struct MenuBarLabel: View {
     @ObservedObject var appState: AppState
@@ -40,9 +40,10 @@ struct MenuBarLabel: View {
     private var showsErrorIcon: Bool {
         if appState.lastError != nil && appState.snapshot == nil { return true }
         if AppSettings.cursorSourceEnabled,
-           appState.cursorError != nil,
-           appState.cursorUsage == nil,
-           appState.snapshot == nil {
+            appState.cursorError != nil,
+            appState.cursorUsage == nil,
+            appState.snapshot == nil
+        {
             return true
         }
         return false
@@ -56,7 +57,8 @@ struct MenuBarLabel: View {
             return snap.limits.bindingDisplayPercent(asOf: now)
         }
         if AppSettings.cursorSourceEnabled,
-           let percent = appState.cursorUsage?.clampedPercent {
+            let percent = appState.cursorUsage?.clampedPercent
+        {
             return "\(Int(percent.rounded()))%"
         }
         return nil

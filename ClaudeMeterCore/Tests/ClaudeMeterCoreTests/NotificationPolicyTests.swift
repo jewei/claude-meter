@@ -1,5 +1,6 @@
-import Testing
 import Foundation
+import Testing
+
 @testable import ClaudeMeterCore
 
 private let fixedNow = Date(timeIntervalSince1970: 1_782_108_000)
@@ -43,7 +44,8 @@ struct NotificationPolicyTests {
     func warningCrossing() {
         let previous = snapshot(session: 75)
         let current = snapshot(session: 85)
-        let triggers = NotificationPolicy.triggers(snapshot: current, previous: previous, now: fixedNow)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: previous, now: fixedNow)
         #expect(triggers.contains { $0.scope == "session" && $0.level == "warning" })
     }
 
@@ -51,7 +53,8 @@ struct NotificationPolicyTests {
     func noRepeatWarning() {
         let previous = snapshot(session: 85)
         let current = snapshot(session: 86)
-        let triggers = NotificationPolicy.triggers(snapshot: current, previous: previous, now: fixedNow)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: previous, now: fixedNow)
         #expect(triggers.isEmpty)
     }
 
@@ -59,7 +62,8 @@ struct NotificationPolicyTests {
     func criticalJump() {
         let previous = snapshot(session: 75)
         let current = snapshot(session: 96)
-        let triggers = NotificationPolicy.triggers(snapshot: current, previous: previous, now: fixedNow)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: previous, now: fixedNow)
         #expect(triggers.count == 1)
         #expect(triggers[0].level == "critical")
     }
@@ -68,7 +72,8 @@ struct NotificationPolicyTests {
     func warningToCritical() {
         let previous = snapshot(session: 85)
         let current = snapshot(session: 96)
-        let triggers = NotificationPolicy.triggers(snapshot: current, previous: previous, now: fixedNow)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: previous, now: fixedNow)
         #expect(triggers.contains { $0.scope == "session" && $0.level == "critical" })
         #expect(!triggers.contains { $0.level == "warning" })
     }
@@ -82,7 +87,8 @@ struct NotificationPolicyTests {
             resetsAt: nil,
             rawResetText: "unknown"
         )
-        let triggers = NotificationPolicy.triggers(snapshot: current, previous: previous, now: fixedNow)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: previous, now: fixedNow)
         #expect(triggers.contains { $0.scope == "session" && $0.level == "warning" })
     }
 
@@ -100,13 +106,15 @@ struct NotificationPolicyTests {
             limits: LimitInfo(currentSession: pastWindow),
             state: SnapshotState(status: .ok, severity: .critical)
         )
-        #expect(NotificationPolicy.triggers(snapshot: current, previous: nil, now: fixedNow).isEmpty)
+        #expect(
+            NotificationPolicy.triggers(snapshot: current, previous: nil, now: fixedNow).isEmpty)
     }
 
     @Test("dedupKey embeds scope, level, and reset epoch")
     func dedupKeyFormat() {
         let key = NotificationPolicy.dedupKey(scope: "session", level: "warning", resetAt: resetAt)
-        #expect(key == "com.claudemeter.notif.session.warning.\(Int(resetAt.timeIntervalSince1970))")
+        #expect(
+            key == "com.claudemeter.notif.session.warning.\(Int(resetAt.timeIntervalSince1970))")
     }
 
     @Test("expiredDedupKeys removes keys for past reset windows")

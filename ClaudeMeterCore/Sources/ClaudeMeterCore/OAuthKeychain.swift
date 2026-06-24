@@ -1,6 +1,7 @@
 import Foundation
+
 #if canImport(Security)
-import Security
+    import Security
 #endif
 
 public struct OAuthCredentials: Sendable {
@@ -39,7 +40,7 @@ public enum KeychainReadResult<Value: Sendable>: Sendable {
     case invalid
 
     public var value: Value? {
-        if case let .found(v) = self { return v }
+        if case .found(let v) = self { return v }
         return nil
     }
 }
@@ -70,20 +71,26 @@ public enum OAuthKeychain: Sendable {
     private static func readClaudeCodeCredentials() -> KeychainReadResult<String> {
         let account = claudeCodeAccount
         guard !account.isEmpty else { return .missing }
-#if canImport(Security)
-        return readKeychainItemResult(service: service, account: account)
-#else
-        guard let json = runSecurity(["find-generic-password", "-s", service, "-a", account, "-w"]) else {
-            return .missing
-        }
-        return .found(json)
-#endif
+        #if canImport(Security)
+            return readKeychainItemResult(service: service, account: account)
+        #else
+            guard
+                let json = runSecurity([
+                    "find-generic-password", "-s", service, "-a", account, "-w",
+                ])
+            else {
+                return .missing
+            }
+            return .found(json)
+        #endif
     }
 
     /// Maps a raw credentials-JSON read into a typed credentials result.
-    private static func parseResult(_ result: KeychainReadResult<String>) -> KeychainReadResult<OAuthCredentials> {
+    private static func parseResult(_ result: KeychainReadResult<String>) -> KeychainReadResult<
+        OAuthCredentials
+    > {
         switch result {
-        case let .found(json):
+        case .found(let json):
             return parse(json).map(KeychainReadResult.found) ?? .invalid
         case .missing: return .missing
         case .temporarilyUnavailable: return .temporarilyUnavailable
@@ -100,12 +107,12 @@ public enum OAuthKeychain: Sendable {
 
     private static func parse(_ jsonString: String?) -> OAuthCredentials? {
         guard let str = jsonString,
-              let data = str.data(using: .utf8),
-              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let oauth = obj["claudeAiOauth"] as? [String: Any],
-              let accessToken = oauth["accessToken"] as? String, !accessToken.isEmpty,
-              let refreshToken = oauth["refreshToken"] as? String, !refreshToken.isEmpty,
-              let expiresAtMs = numericValue(oauth["expiresAt"])
+            let data = str.data(using: .utf8),
+            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+            let oauth = obj["claudeAiOauth"] as? [String: Any],
+            let accessToken = oauth["accessToken"] as? String, !accessToken.isEmpty,
+            let refreshToken = oauth["refreshToken"] as? String, !refreshToken.isEmpty,
+            let expiresAtMs = numericValue(oauth["expiresAt"])
         else { return nil }
         return OAuthCredentials(
             accessToken: accessToken,
@@ -134,106 +141,122 @@ public enum OAuthKeychain: Sendable {
     }
 
     public static func loadManualResult() -> KeychainReadResult<OAuthCredentials> {
-#if canImport(Security)
-        return parseResult(readKeychainItemResult(service: manualService, account: manualAccount))
-#else
-        guard let json = runSecurity(["find-generic-password", "-s", manualService, "-a", manualAccount, "-w"]) else {
-            return .missing
-        }
-        return parseResult(.found(json))
-#endif
+        #if canImport(Security)
+            return parseResult(
+                readKeychainItemResult(service: manualService, account: manualAccount))
+        #else
+            guard
+                let json = runSecurity([
+                    "find-generic-password", "-s", manualService, "-a", manualAccount, "-w",
+                ])
+            else {
+                return .missing
+            }
+            return parseResult(.found(json))
+        #endif
     }
 
     public static func saveManual(accessToken: String, refreshToken: String) {
         let expiry = Date.distantFuture.timeIntervalSince1970 * 1000
-        guard let data = try? JSONSerialization.data(withJSONObject: [
-            "claudeAiOauth": [
-                "accessToken": accessToken,
-                "refreshToken": refreshToken,
-                "expiresAt": expiry
-            ] as [String: Any]
-        ]), let str = String(data: data, encoding: .utf8) else { return }
-#if canImport(Security)
-        writeKeychainItem(service: manualService, account: manualAccount, value: str)
-#else
-        runSecurity(["add-generic-password", "-U", "-s", manualService, "-a", manualAccount, "-w", str])
-#endif
+        guard
+            let data = try? JSONSerialization.data(withJSONObject: [
+                "claudeAiOauth": [
+                    "accessToken": accessToken,
+                    "refreshToken": refreshToken,
+                    "expiresAt": expiry,
+                ] as [String: Any]
+            ]), let str = String(data: data, encoding: .utf8)
+        else { return }
+        #if canImport(Security)
+            writeKeychainItem(service: manualService, account: manualAccount, value: str)
+        #else
+            runSecurity([
+                "add-generic-password", "-U", "-s", manualService, "-a", manualAccount, "-w", str,
+            ])
+        #endif
     }
 
     public static func deleteManual() {
-#if canImport(Security)
-        deleteKeychainItem(service: manualService, account: manualAccount)
-#else
-        runSecurity(["delete-generic-password", "-s", manualService, "-a", manualAccount])
-#endif
+        #if canImport(Security)
+            deleteKeychainItem(service: manualService, account: manualAccount)
+        #else
+            runSecurity(["delete-generic-password", "-s", manualService, "-a", manualAccount])
+        #endif
     }
 
     // MARK: - Helpers
 
-#if canImport(Security)
-    @discardableResult
-    private static func writeKeychainItem(service: String, account: String, value: String) -> Bool {
-        guard let data = value.data(using: .utf8) else { return false }
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: account
-        ]
-        let attrs: [CFString: Any] = [
-            kSecValueData: data
-        ]
-        let status = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
-        if status == errSecSuccess { return true }
-        if status == errSecItemNotFound {
-            var addQuery = query
-            addQuery[kSecValueData] = data
-            addQuery[kSecAttrAccessible] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-            return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+    #if canImport(Security)
+        @discardableResult
+        private static func writeKeychainItem(service: String, account: String, value: String)
+            -> Bool
+        {
+            guard let data = value.data(using: .utf8) else { return false }
+            let query: [CFString: Any] = [
+                kSecClass: kSecClassGenericPassword,
+                kSecAttrService: service,
+                kSecAttrAccount: account,
+            ]
+            let attrs: [CFString: Any] = [
+                kSecValueData: data
+            ]
+            let status = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
+            if status == errSecSuccess { return true }
+            if status == errSecItemNotFound {
+                var addQuery = query
+                addQuery[kSecValueData] = data
+                addQuery[kSecAttrAccessible] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+                return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+            }
+            return false
         }
-        return false
-    }
 
-    /// Reads an item and classifies the `OSStatus` so callers can tell a missing
-    /// item from a transient lock.
-    private static func readKeychainItemResult(service: String, account: String) -> KeychainReadResult<String> {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: account,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne
-        ]
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        return mapKeychainStatus(status, data: result as? Data)
-    }
-
-    /// Pure mapping of a Keychain read status to a result (exposed for tests).
-    static func mapKeychainStatus(_ status: OSStatus, data: Data?) -> KeychainReadResult<String> {
-        switch status {
-        case errSecSuccess:
-            guard let data, let string = String(data: data, encoding: .utf8) else { return .invalid }
-            return .found(string)
-        case errSecItemNotFound:
-            return .missing
-        case errSecAuthFailed:
-            return .invalid
-        default:
-            // Locked Keychain (errSecInteractionNotAllowed), user cancel, or any
-            // unexpected status → transient. Never assume "missing" on error.
-            return .temporarilyUnavailable
+        /// Reads an item and classifies the `OSStatus` so callers can tell a missing
+        /// item from a transient lock.
+        private static func readKeychainItemResult(service: String, account: String)
+            -> KeychainReadResult<String>
+        {
+            let query: [CFString: Any] = [
+                kSecClass: kSecClassGenericPassword,
+                kSecAttrService: service,
+                kSecAttrAccount: account,
+                kSecReturnData: true,
+                kSecMatchLimit: kSecMatchLimitOne,
+            ]
+            var result: AnyObject?
+            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            return mapKeychainStatus(status, data: result as? Data)
         }
-    }
 
-    private static func deleteKeychainItem(service: String, account: String) {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: account
-        ]
-        SecItemDelete(query as CFDictionary)
-    }
-#endif
+        /// Pure mapping of a Keychain read status to a result (exposed for tests).
+        static func mapKeychainStatus(_ status: OSStatus, data: Data?) -> KeychainReadResult<String>
+        {
+            switch status {
+            case errSecSuccess:
+                guard let data, let string = String(data: data, encoding: .utf8) else {
+                    return .invalid
+                }
+                return .found(string)
+            case errSecItemNotFound:
+                return .missing
+            case errSecAuthFailed:
+                return .invalid
+            default:
+                // Locked Keychain (errSecInteractionNotAllowed), user cancel, or any
+                // unexpected status → transient. Never assume "missing" on error.
+                return .temporarilyUnavailable
+            }
+        }
+
+        private static func deleteKeychainItem(service: String, account: String) {
+            let query: [CFString: Any] = [
+                kSecClass: kSecClassGenericPassword,
+                kSecAttrService: service,
+                kSecAttrAccount: account,
+            ]
+            SecItemDelete(query as CFDictionary)
+        }
+    #endif
 
     @discardableResult
     private static func runSecurity(_ args: [String]) -> String? {

@@ -34,27 +34,33 @@ public struct JournalReader: Sendable {
         let cutoff = cal.startOfDay(for: cal.date(byAdding: .day, value: offset, to: now)!)
         let fm = FileManager.default
 
-        guard let projectDirs = try? fm.contentsOfDirectory(
-            at: projectsPath,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ) else { return [:] }
+        guard
+            let projectDirs = try? fm.contentsOfDirectory(
+                at: projectsPath,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+        else { return [:] }
 
         var byDay: [String: Int] = [:]
         for projectDir in projectDirs {
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: projectDir.path, isDirectory: &isDir),
-                  isDir.boolValue else { continue }
-            guard let jsonlFiles = try? fm.contentsOfDirectory(
-                at: projectDir,
-                includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
-                options: [.skipsHiddenFiles]
-            ) else { continue }
+                isDir.boolValue
+            else { continue }
+            guard
+                let jsonlFiles = try? fm.contentsOfDirectory(
+                    at: projectDir,
+                    includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+                    options: [.skipsHiddenFiles]
+                )
+            else { continue }
             for jsonlFile in jsonlFiles {
                 guard jsonlFile.pathExtension == "jsonl" else { continue }
                 guard let attrs = try? fm.attributesOfItem(atPath: jsonlFile.path),
-                      let modDate = attrs[.modificationDate] as? Date,
-                      modDate >= cutoff else { continue }
+                    let modDate = attrs[.modificationDate] as? Date,
+                    modDate >= cutoff
+                else { continue }
                 let fileSize = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
                 if let cached = cache.cachedCounts(
                     for: jsonlFile.path,
@@ -113,9 +119,10 @@ public struct JournalReader: Sendable {
             guard line.contains("\"assistant\""), line.contains("\"timestamp\"") else { continue }
             guard let entry = parseJournalLine(line) else { continue }
             guard entry.type == "assistant",
-                  let tsStr = entry.timestamp,
-                  let date = Self.parseTimestamp(tsStr),
-                  date >= cutoff else { continue }
+                let tsStr = entry.timestamp,
+                let date = Self.parseTimestamp(tsStr),
+                date >= cutoff
+            else { continue }
             let dayStr = Self.dayString(from: date)
             counts[dayStr, default: 0] += 1
         }
@@ -176,8 +183,9 @@ public final class JournalCache: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard let entry = entries[path],
-              entry.modDate == modDate,
-              entry.fileSize == fileSize else { return nil }
+            entry.modDate == modDate,
+            entry.fileSize == fileSize
+        else { return nil }
         return entry.counts.filter { day, _ in
             guard let dayDate = JournalCache.parseDay(day) else { return false }
             return dayDate >= cutoff

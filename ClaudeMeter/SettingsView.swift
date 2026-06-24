@@ -1,7 +1,7 @@
-import SwiftUI
-import ServiceManagement
 import AppKit
 import ClaudeMeterCore
+import ServiceManagement
+import SwiftUI
 
 // MARK: - Root
 
@@ -169,9 +169,11 @@ private struct OAuthConnectionSection: View {
                 .controlSize(.small)
             }
             if state == .connectedAuto {
-                Text("Reads Claude Code's Keychain; refreshed tokens stay in memory for this session only.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Reads Claude Code's Keychain; refreshed tokens stay in memory for this session only."
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
             }
             if !testResult.isEmpty {
                 Text(testResult)
@@ -204,16 +206,20 @@ private struct OAuthConnectionSection: View {
                     .frame(width: 88, alignment: .leading)
                 Group {
                     if showAccessToken {
-                        TextField("", text: $manualAccess,
-                                  prompt: Text("oidc-…").foregroundColor(.secondary))
+                        TextField(
+                            "", text: $manualAccess,
+                            prompt: Text("oidc-…").foregroundColor(.secondary))
                     } else {
-                        SecureField("", text: $manualAccess,
-                                    prompt: Text("oidc-…").foregroundColor(.secondary))
+                        SecureField(
+                            "", text: $manualAccess,
+                            prompt: Text("oidc-…").foregroundColor(.secondary))
                     }
                 }
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.caption, design: .monospaced))
-                Button { showAccessToken.toggle() } label: {
+                Button {
+                    showAccessToken.toggle()
+                } label: {
                     Image(systemName: showAccessToken ? "eye.slash" : "eye")
                         .foregroundStyle(.secondary)
                 }
@@ -225,16 +231,20 @@ private struct OAuthConnectionSection: View {
                     .frame(width: 88, alignment: .leading)
                 Group {
                     if showRefreshToken {
-                        TextField("", text: $manualRefresh,
-                                  prompt: Text("Refresh token").foregroundColor(.secondary))
+                        TextField(
+                            "", text: $manualRefresh,
+                            prompt: Text("Refresh token").foregroundColor(.secondary))
                     } else {
-                        SecureField("", text: $manualRefresh,
-                                    prompt: Text("Refresh token").foregroundColor(.secondary))
+                        SecureField(
+                            "", text: $manualRefresh,
+                            prompt: Text("Refresh token").foregroundColor(.secondary))
                     }
                 }
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.caption, design: .monospaced))
-                Button { showRefreshToken.toggle() } label: {
+                Button {
+                    showRefreshToken.toggle()
+                } label: {
                     Image(systemName: showRefreshToken ? "eye.slash" : "eye")
                         .foregroundStyle(.secondary)
                 }
@@ -244,8 +254,9 @@ private struct OAuthConnectionSection: View {
                 Button("Save and connect") { saveManual() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
-                    .disabled(manualAccess.trimmingCharacters(in: .whitespaces).isEmpty ||
-                              manualRefresh.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(
+                        manualAccess.trimmingCharacters(in: .whitespaces).isEmpty
+                            || manualRefresh.trimmingCharacters(in: .whitespaces).isEmpty)
                 if oauthMode.isEmpty {
                     Button("Cancel") {
                         state = OAuthKeychain.load() != nil ? .promptAuto : .promptNoAuto
@@ -265,9 +276,9 @@ private struct OAuthConnectionSection: View {
 
     private func loadState() {
         switch oauthMode {
-        case "auto":   state = .connectedAuto
+        case "auto": state = .connectedAuto
         case "manual": state = OAuthKeychain.loadManual() != nil ? .connectedManual : .manualEntry
-        default:       state = OAuthKeychain.load() != nil ? .promptAuto : .promptNoAuto
+        default: state = OAuthKeychain.load() != nil ? .promptAuto : .promptNoAuto
         }
     }
 
@@ -308,7 +319,9 @@ private struct OAuthConnectionSection: View {
         state = .verifying
         Task {
             do {
-                guard let creds = OAuthKeychain.loadManual() else { throw URLError(.badServerResponse) }
+                guard let creds = OAuthKeychain.loadManual() else {
+                    throw URLError(.badServerResponse)
+                }
                 let (s, w) = try await OAuthPipeline.verify(credentials: creds)
                 oauthSourceEnabled = true
                 oauthMode = "manual"
@@ -384,10 +397,12 @@ private struct DataSettingsTab: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Data Sources")
                         .font(.title2.weight(.semibold))
-                    Text("Configure how Claude Meter collects your usage data. You can enable multiple sources for redundancy.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(
+                        "Configure how Claude Meter collects your usage data. You can enable multiple sources for redundancy."
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
 
                 DataSourceCard(
@@ -396,7 +411,7 @@ private struct DataSettingsTab: View {
                     title: "Statusline Bridge",
                     subtitle: "Check statusline once per minute.",
                     isEnabled: $statuslineSourceEnabled
-                ) { }
+                ) {}
 
                 DataSourceCard(
                     icon: "key.fill",
@@ -430,7 +445,10 @@ private struct DataSettingsTab: View {
             }
             .padding(20)
         }
-        .onAppear { loadKeychainState(); loadCursorStatus() }
+        .onAppear {
+            loadKeychainState()
+            loadCursorStatus()
+        }
         .onChange(of: statuslineSourceEnabled) { _, _ in appState.scheduleRebuildPipeline() }
         .onChange(of: oauthSourceEnabled) { _, _ in appState.scheduleRebuildPipeline() }
         .onChange(of: claudeAISourceEnabled) { _, _ in appState.scheduleRebuildPipeline() }
@@ -445,8 +463,11 @@ private struct DataSettingsTab: View {
         if cursorSourceEnabled {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
-                    Image(systemName: cursorStatus.hasPrefix("Connected") ? "checkmark.circle.fill" : "exclamationmark.circle")
-                        .foregroundStyle(cursorStatus.hasPrefix("Connected") ? .green : .secondary)
+                    Image(
+                        systemName: cursorStatus.hasPrefix("Connected")
+                            ? "checkmark.circle.fill" : "exclamationmark.circle"
+                    )
+                    .foregroundStyle(cursorStatus.hasPrefix("Connected") ? .green : .secondary)
                     Text(cursorStatus.isEmpty ? "Checking…" : cursorStatus)
                 }
                 if let err = appState.cursorError {
@@ -542,16 +563,20 @@ private struct DataSettingsTab: View {
                     .frame(width: 72, alignment: .leading)
                 Group {
                     if showSessionKey {
-                        TextField("", text: $sessionKey,
-                                  prompt: Text("sk-ant-sid02-…").foregroundColor(.secondary))
+                        TextField(
+                            "", text: $sessionKey,
+                            prompt: Text("sk-ant-sid02-…").foregroundColor(.secondary))
                     } else {
-                        SecureField("", text: $sessionKey,
-                                    prompt: Text("sk-ant-sid02-…").foregroundColor(.secondary))
+                        SecureField(
+                            "", text: $sessionKey,
+                            prompt: Text("sk-ant-sid02-…").foregroundColor(.secondary))
                     }
                 }
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.caption, design: .monospaced))
-                Button { showSessionKey.toggle() } label: {
+                Button {
+                    showSessionKey.toggle()
+                } label: {
                     Image(systemName: showSessionKey ? "eye.slash" : "eye")
                         .foregroundStyle(.secondary)
                 }
@@ -561,10 +586,12 @@ private struct DataSettingsTab: View {
                 Text("Org ID")
                     .font(.caption)
                     .frame(width: 72, alignment: .leading)
-                TextField("", text: $orgId,
-                          prompt: Text("Auto-detect").foregroundColor(.secondary))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.caption, design: .monospaced))
+                TextField(
+                    "", text: $orgId,
+                    prompt: Text("Auto-detect").foregroundColor(.secondary)
+                )
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.caption, design: .monospaced))
             }
             if !connectionStatus.isEmpty {
                 Text(connectionStatus)
@@ -575,7 +602,8 @@ private struct DataSettingsTab: View {
                 Button("Connect") { connect() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
-                    .disabled(sessionKey.trimmingCharacters(in: .whitespaces).isEmpty || isImporting)
+                    .disabled(
+                        sessionKey.trimmingCharacters(in: .whitespaces).isEmpty || isImporting)
                 Button {
                     importFromBrowser()
                 } label: {
@@ -589,9 +617,11 @@ private struct DataSettingsTab: View {
                 .controlSize(.small)
                 .disabled(isImporting)
             }
-            Text("Import reads the claude.ai session from Chrome, Brave, Edge, Arc, Firefox, or Safari. Or paste sessionKey from DevTools → Application → Cookies → claude.ai. Org ID is detected automatically.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            Text(
+                "Import reads the claude.ai session from Chrome, Brave, Edge, Arc, Firefox, or Safari. Or paste sessionKey from DevTools → Application → Cookies → claude.ai. Org ID is detected automatically."
+            )
+            .font(.caption2)
+            .foregroundStyle(.secondary)
         }
     }
 
@@ -599,12 +629,13 @@ private struct DataSettingsTab: View {
         let sources = [
             appState.lastError,
             testResult.hasPrefix("Error") ? testResult : nil,
-            connectionStatus.hasPrefix("Error") ? connectionStatus : nil
+            connectionStatus.hasPrefix("Error") ? connectionStatus : nil,
         ]
         for text in sources.compactMap({ $0 }) {
             if text.localizedCaseInsensitiveContains("session expired")
                 || text.localizedCaseInsensitiveContains("session key")
-                || text.localizedCaseInsensitiveContains("401") {
+                || text.localizedCaseInsensitiveContains("401")
+            {
                 return "Session expired. Please login again."
             }
         }
@@ -636,7 +667,8 @@ private struct DataSettingsTab: View {
                     let resolved = try await ClaudeAIUsageClient.resolveOrgId(sessionKey: sk)
                     finishConnect(sessionKey: sk, orgId: resolved)
                 } catch {
-                    connectionStatus = "Error: could not detect organization — \(error.localizedDescription)"
+                    connectionStatus =
+                        "Error: could not detect organization — \(error.localizedDescription)"
                 }
             }
             return
@@ -700,7 +732,8 @@ private struct DataSettingsTab: View {
             let client = ClaudeAIUsageClient(sessionKey: creds.sessionKey, orgId: creds.orgId)
             do {
                 let usage = try await client.fetchUsage()
-                testResult = "Session \(Int(usage.sessionPercent))%  ·  Week \(Int(usage.weekPercent))%"
+                testResult =
+                    "Session \(Int(usage.sessionPercent))%  ·  Week \(Int(usage.weekPercent))%"
             } catch {
                 testResult = "Error: \(error.localizedDescription)"
             }
@@ -723,9 +756,11 @@ private struct NotificationsSettingsTab: View {
         Form {
             Section {
                 Toggle("Enable notifications", isOn: $enableNotifications)
-                Text("Posts a notification when session or weekly usage crosses the warning or critical threshold. One notification per threshold per reset window.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Posts a notification when session or weekly usage crosses the warning or critical threshold. One notification per threshold per reset window."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             Section("Severity Thresholds") {
@@ -901,13 +936,15 @@ private struct AboutSettingsTab: View {
                 }
                 .padding(.top, 4)
 
-                Text("An independent community project. Not affiliated with or endorsed by Anthropic. \"Claude\" is a trademark of Anthropic.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 40)
-                    .padding(.top, 8)
+                Text(
+                    "An independent community project. Not affiliated with or endorsed by Anthropic. \"Claude\" is a trademark of Anthropic."
+                )
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 40)
+                .padding(.top, 8)
             }
 
             Spacer()

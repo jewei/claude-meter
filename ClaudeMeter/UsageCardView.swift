@@ -1,5 +1,5 @@
-import SwiftUI
 import ClaudeMeterCore
+import SwiftUI
 
 struct UsageCardView: View {
     let label: String
@@ -128,8 +128,9 @@ struct UsageCardView: View {
             }
             .font(.caption.weight(.medium))
             .foregroundStyle(paceColor)
-            .help(resolvedWindow.paceInsight(kind: paceKind, asOf: now)
-                ?? "Usage relative to time elapsed in this window")
+            .help(
+                resolvedWindow.paceInsight(kind: paceKind, asOf: now)
+                    ?? "Usage relative to time elapsed in this window")
         }
     }
 
@@ -150,19 +151,19 @@ struct UsageCardView: View {
 
     private var percentColor: Color {
         switch severity {
-        case .normal:   return .primary
-        case .warning:  return .orange
+        case .normal: return .primary
+        case .warning: return .orange
         case .critical, .overLimit: return .red
-        case .unknown:  return .secondary
+        case .unknown: return .secondary
         }
     }
 
     private var progressFillColor: Color {
         switch severity {
-        case .normal:   return .accentColor
-        case .warning:  return .orange
+        case .normal: return .accentColor
+        case .warning: return .orange
         case .critical, .overLimit: return .red
-        case .unknown:  return Color.primary.opacity(0.25)
+        case .unknown: return Color.primary.opacity(0.25)
         }
     }
 

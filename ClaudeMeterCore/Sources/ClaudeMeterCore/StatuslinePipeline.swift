@@ -30,8 +30,8 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     public func poll(now: Date) async throws -> ParseResult {
         // Primary: use statusline bridge if data is fresh and contains rate limits.
         if StatuslineBridge.isDataFresh(maxAge: stalenessThreshold),
-           let payload = try? StatuslineBridge.readData(maxAge: stalenessThreshold),
-           payload.fiveHour != nil || payload.sevenDay != nil
+            let payload = try? StatuslineBridge.readData(maxAge: stalenessThreshold),
+            payload.fiveHour != nil || payload.sevenDay != nil
         {
             let snapshot = buildSnapshot(from: payload, now: now)
             try? store.writeLatest(snapshot)
@@ -56,10 +56,13 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
             snap.state.isStale = true
             return ParseResult(
                 snapshot: snap,
-                warnings: [ParseWarning(
-                    field: "statusline",
-                    message: "Statusline stale; next API check in \(secondsUntilNextFallback(now: now))s"
-                )],
+                warnings: [
+                    ParseWarning(
+                        field: "statusline",
+                        message:
+                            "Statusline stale; next API check in \(secondsUntilNextFallback(now: now))s"
+                    )
+                ],
                 errors: [],
                 rawHash: "",
                 parserVersion: snap.parserVersion
@@ -79,7 +82,8 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
 
     private func markFallbackPollIfCooldownElapsed(now: Date) -> Bool {
         stateQueue.sync {
-            let cooldownElapsed = lastFallbackPollAt.map { now.timeIntervalSince($0) >= fallbackCooldown } ?? true
+            let cooldownElapsed =
+                lastFallbackPollAt.map { now.timeIntervalSince($0) >= fallbackCooldown } ?? true
             if cooldownElapsed {
                 lastFallbackPollAt = now
             }
@@ -101,23 +105,30 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     /// without this check the meter shows a stale percentage (e.g. 25%) hours after
     /// the window actually reset. We can't predict the next rolling reset, so the
     /// countdown is dropped until activity resumes.
-    static func displayWindow(for window: StatuslineBridge.RateLimitWindow?, now: Date) -> LimitWindow {
+    static func displayWindow(for window: StatuslineBridge.RateLimitWindow?, now: Date)
+        -> LimitWindow
+    {
         guard let window else { return LimitWindow() }
         return LimitWindow(percentUsed: window.usedPercentage, resetsAt: window.resetsAt)
             .resolved(asOf: now)
     }
 
-    private func buildSnapshot(from payload: StatuslineBridge.StatuslinePayload, now: Date) -> ClaudeUsageSnapshot {
+    private func buildSnapshot(from payload: StatuslineBridge.StatuslinePayload, now: Date)
+        -> ClaudeUsageSnapshot
+    {
         let sessionWindow = Self.displayWindow(for: payload.fiveHour, now: now)
         let weekWindow = Self.displayWindow(for: payload.sevenDay, now: now)
         let opusWindow = payload.sevenDayOpus.map { Self.displayWindow(for: $0, now: now) }
 
         let severity = [sessionWindow.percentUsed, weekWindow.percentUsed, opusWindow?.percentUsed]
-            .reduce(UsageSeverity.unknown) { UsageSeverity.highest($0, thresholds.severity(for: $1)) }
+            .reduce(UsageSeverity.unknown) {
+                UsageSeverity.highest($0, thresholds.severity(for: $1))
+            }
 
         let sessionInfo: SessionInfo? = {
-            guard payload.modelDisplayName != nil || payload.modelId != nil
-                || payload.totalCostUsd != nil
+            guard
+                payload.modelDisplayName != nil || payload.modelId != nil
+                    || payload.totalCostUsd != nil
             else { return nil }
             // Statusline exposes cwd/session identifiers; keep App Group snapshots widget-safe.
             return SessionInfo(

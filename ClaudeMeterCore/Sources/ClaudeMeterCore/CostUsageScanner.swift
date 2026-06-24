@@ -35,11 +35,13 @@ public struct CostUsageScanner: Sendable {
         let cutoff = cal.startOfDay(for: cal.date(byAdding: .day, value: offset, to: now)!)
         let fm = FileManager.default
 
-        guard let projectDirs = try? fm.contentsOfDirectory(
-            at: projectsPath,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ) else { return .empty }
+        guard
+            let projectDirs = try? fm.contentsOfDirectory(
+                at: projectsPath,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+        else { return .empty }
 
         // Sum tokens per (day, model) across all files, then collapse to per-model.
         var byDayModel: [DayModelKey: TokenTotals] = [:]
@@ -48,16 +50,18 @@ public struct CostUsageScanner: Sendable {
         for projectDir in projectDirs {
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: projectDir.path, isDirectory: &isDir), isDir.boolValue,
-                  let jsonlFiles = try? fm.contentsOfDirectory(
-                      at: projectDir,
-                      includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
-                      options: [.skipsHiddenFiles]
-                  ) else { continue }
+                let jsonlFiles = try? fm.contentsOfDirectory(
+                    at: projectDir,
+                    includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+                    options: [.skipsHiddenFiles]
+                )
+            else { continue }
 
             for file in jsonlFiles where file.pathExtension == "jsonl" {
                 guard let attrs = try? fm.attributesOfItem(atPath: file.path),
-                      let modDate = attrs[.modificationDate] as? Date,
-                      modDate >= cutoff else { continue }
+                    let modDate = attrs[.modificationDate] as? Date,
+                    modDate >= cutoff
+                else { continue }
                 let fileSize = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
 
                 let perFile: [DayModelKey: TokenTotals]
@@ -99,7 +103,8 @@ public struct CostUsageScanner: Sendable {
         defer { try? handle.close() }
 
         let tailRead = fileSize > Self.maxFullReadBytes
-        let readFrom: UInt64 = tailRead
+        let readFrom: UInt64 =
+            tailRead
             ? (fileSize > Self.tailReadBytes ? fileSize - Self.tailReadBytes : 0)
             : 0
         if readFrom > 0 { try? handle.seek(toOffset: readFrom) }
@@ -118,12 +123,13 @@ public struct CostUsageScanner: Sendable {
         for (lineIndex, line) in body.enumerated() {
             guard line.contains("\"usage\""), line.contains("\"assistant\"") else { continue }
             guard let lineData = line.data(using: .utf8),
-                  let entry = try? decoder.decode(TranscriptLine.self, from: lineData),
-                  entry.type == "assistant",
-                  let message = entry.message,
-                  let usage = message.usage,
-                  let tsStr = entry.timestamp,
-                  let date = JournalReader.parseTimestamp(tsStr) else { continue }
+                let entry = try? decoder.decode(TranscriptLine.self, from: lineData),
+                entry.type == "assistant",
+                let message = entry.message,
+                let usage = message.usage,
+                let tsStr = entry.timestamp,
+                let date = JournalReader.parseTimestamp(tsStr)
+            else { continue }
 
             let model = message.model ?? "unknown"
             let key = dedupeKey(
@@ -317,7 +323,9 @@ public final class CostUsageCache: @unchecked Sendable {
 
     public init() {}
 
-    func cached(for path: String, modDate: Date, fileSize: UInt64) -> (totals: [DayModelKey: TokenTotals], isPartial: Bool)? {
+    func cached(for path: String, modDate: Date, fileSize: UInt64) -> (
+        totals: [DayModelKey: TokenTotals], isPartial: Bool
+    )? {
         lock.lock()
         defer { lock.unlock() }
         guard let entry = entries[path], entry.modDate == modDate, entry.fileSize == fileSize else {
@@ -335,7 +343,8 @@ public final class CostUsageCache: @unchecked Sendable {
         isPartial: Bool
     ) {
         lock.lock()
-        entries[path] = Entry(modDate: modDate, fileSize: fileSize, value: value, isPartial: isPartial)
+        entries[path] = Entry(
+            modDate: modDate, fileSize: fileSize, value: value, isPartial: isPartial)
         touchLocked(path)
         while accessOrder.count > Self.maxEntries, let oldest = accessOrder.first {
             accessOrder.removeFirst()

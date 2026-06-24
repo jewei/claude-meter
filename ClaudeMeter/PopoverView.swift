@@ -1,6 +1,6 @@
-import SwiftUI
-import ClaudeMeterCore
 import AppKit
+import ClaudeMeterCore
+import SwiftUI
 
 struct PopoverView: View {
     @EnvironmentObject var appState: AppState
@@ -64,10 +64,12 @@ struct PopoverView: View {
                     .background(Self.claudeTint.opacity(0.15), in: Capsule())
             }
             Spacer()
-            Toggle(isOn: activeBinding) { }
+            Toggle(isOn: activeBinding) {}
                 .toggleStyle(.switch)
                 .labelsHidden()
-                .help(appState.isActive ? "Active — fetching usage data" : "Paused — not fetching usage data")
+                .help(
+                    appState.isActive
+                        ? "Active — fetching usage data" : "Paused — not fetching usage data")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -233,7 +235,8 @@ struct PopoverView: View {
         if AppSettings.hasClaudeSource && cursorSourceEnabled {
             return "Open Claude Code or sign in to Cursor, or connect OAuth/claude.ai in Settings."
         }
-        return "Open Claude Code so the statusline bridge can publish usage, or connect OAuth/claude.ai in Settings."
+        return
+            "Open Claude Code so the statusline bridge can publish usage, or connect OAuth/claude.ai in Settings."
     }
 
     private var cursorErrorState: some View {
@@ -468,7 +471,8 @@ struct PopoverView: View {
                 Text(usage.clampedPercent.map { "\(Int($0.rounded()))%" } ?? "—")
                     .font(.body.weight(.semibold))
                     .monospacedDigit()
-                    .foregroundStyle(severity == .normal || severity == .unknown ? Color.primary : tint)
+                    .foregroundStyle(
+                        severity == .normal || severity == .unknown ? Color.primary : tint)
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
@@ -591,7 +595,8 @@ struct PopoverView: View {
     private var pollErrorText: String {
         let err = appState.lastError ?? ""
         if err.localizedCaseInsensitiveContains("session expired")
-            || err.localizedCaseInsensitiveContains("session key") {
+            || err.localizedCaseInsensitiveContains("session key")
+        {
             return err
         }
         if err.contains("decode") || err.contains("data couldn't be read") {
@@ -642,7 +647,9 @@ struct PopoverView: View {
         .padding(.vertical, 8)
     }
 
-    private func footerButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+    private func footerButton(_ symbol: String, help: String, action: @escaping () -> Void)
+        -> some View
+    {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.body)
@@ -698,8 +705,8 @@ struct PopoverView: View {
             return "Not yet polled"
         }
         let elapsed = Int(now.timeIntervalSince(polledAt))
-        if elapsed < 5   { return "Just updated" }
-        if elapsed < 60  { return "Updated \(elapsed)s ago" }
+        if elapsed < 5 { return "Just updated" }
+        if elapsed < 60 { return "Updated \(elapsed)s ago" }
         let mins = elapsed / 60
         return "Updated \(mins)m ago"
     }
@@ -718,7 +725,8 @@ struct PopoverView: View {
             || OAuthKeychain.load() != nil
             || OAuthKeychain.loadManual() != nil
             || CursorTokenStore.isStateDBPresent()
-            || Self.claudeMeterDirectoryExists {
+            || Self.claudeMeterDirectoryExists
+        {
             hasCompletedOnboarding = true
         }
     }
@@ -735,7 +743,8 @@ struct PopoverView: View {
     private var errorTitle: String {
         let err = appState.lastError ?? ""
         if err.localizedCaseInsensitiveContains("session expired")
-            || err.localizedCaseInsensitiveContains("session key") {
+            || err.localizedCaseInsensitiveContains("session key")
+        {
             return "Session expired"
         }
         if err.contains("decode") || err.contains("data couldn't be read") {
@@ -747,7 +756,8 @@ struct PopoverView: View {
     private var errorHint: String? {
         let err = appState.lastError ?? ""
         if err.localizedCaseInsensitiveContains("session expired")
-            || err.localizedCaseInsensitiveContains("session key") {
+            || err.localizedCaseInsensitiveContains("session key")
+        {
             return "Update your session key and org ID in Settings → Data."
         }
         if err.contains("decode") {
@@ -771,7 +781,8 @@ extension AppState {
             parserVersion: "preview-1.0",
             createdAt: Date(),
             lastSuccessfulPollAt: Date(),
-            source: SourceInfo(cliPath: "/Users/jewei/.claude/stats-cache.json", command: "stats-cache"),
+            source: SourceInfo(
+                cliPath: "/Users/jewei/.claude/stats-cache.json", command: "stats-cache"),
             session: SessionInfo(activeModel: "claude-sonnet-4-6"),
             limits: LimitInfo(
                 currentSession: LimitWindow(

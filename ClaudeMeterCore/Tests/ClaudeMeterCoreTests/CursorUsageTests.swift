@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import ClaudeMeterCore
 
 @Suite("Cursor usage")
@@ -7,13 +8,13 @@ struct CursorUsageTests {
 
     @Test func decodesAndNormalizesPlanUsage() throws {
         let json = """
-        {
-          "billingCycleStart": "1750000000000",
-          "billingCycleEnd": "1752592200000",
-          "planUsage": { "totalSpend": 1240, "limit": 2000, "totalPercentUsed": 62.0 },
-          "enabled": true
-        }
-        """
+            {
+              "billingCycleStart": "1750000000000",
+              "billingCycleEnd": "1752592200000",
+              "planUsage": { "totalSpend": 1240, "limit": 2000, "totalPercentUsed": 62.0 },
+              "enabled": true
+            }
+            """
         let response = try JSONDecoder().decode(CursorUsageResponse.self, from: Data(json.utf8))
         let now = Date(timeIntervalSince1970: 1_751_000_000)
         let usage = response.usage(planName: "pro", email: "x@y.z", now: now)
@@ -28,8 +29,8 @@ struct CursorUsageTests {
 
     @Test func zeroLimitMeansNoFixedLimit() throws {
         let json = """
-        { "planUsage": { "totalSpend": 500, "limit": 0, "totalPercentUsed": 0 }, "enabled": true }
-        """
+            { "planUsage": { "totalSpend": 500, "limit": 0, "totalPercentUsed": 0 }, "enabled": true }
+            """
         let response = try JSONDecoder().decode(CursorUsageResponse.self, from: Data(json.utf8))
         let usage = response.usage(planName: nil, email: nil, now: Date())
         #expect(usage.limitUsd == nil)
@@ -37,8 +38,12 @@ struct CursorUsageTests {
     }
 
     @Test func parsesDateFromMillisSecondsAndISO() {
-        #expect(CursorUsageResponse.parseDate("1752592200000") == Date(timeIntervalSince1970: 1_752_592_200))
-        #expect(CursorUsageResponse.parseDate("1752592200") == Date(timeIntervalSince1970: 1_752_592_200))
+        #expect(
+            CursorUsageResponse.parseDate("1752592200000")
+                == Date(timeIntervalSince1970: 1_752_592_200))
+        #expect(
+            CursorUsageResponse.parseDate("1752592200")
+                == Date(timeIntervalSince1970: 1_752_592_200))
         #expect(CursorUsageResponse.parseDate("2025-07-15T14:30:00Z") != nil)
         #expect(CursorUsageResponse.parseDate("") == nil)
         #expect(CursorUsageResponse.parseDate(nil) == nil)
@@ -50,7 +55,8 @@ struct CursorUsageTests {
         let exp = CursorTokenStore.expiry(of: token)
         #expect(exp == Date(timeIntervalSince1970: 1_700_003_600))
         #expect(CursorTokenStore.isExpiringSoon(token, buffer: 300, now: now) == false)
-        #expect(CursorTokenStore.isExpiringSoon(token, buffer: 300, now: now.addingTimeInterval(3500)))
+        #expect(
+            CursorTokenStore.isExpiringSoon(token, buffer: 300, now: now.addingTimeInterval(3500)))
     }
 
     @Test func opaqueTokenTreatedAsExpiringSoon() {
@@ -65,8 +71,8 @@ struct CursorUsageTests {
 
     @Test func disabledUsageThrows() throws {
         let json = """
-        { "planUsage": { "totalSpend": 0, "limit": 0, "totalPercentUsed": 0 }, "enabled": false }
-        """
+            { "planUsage": { "totalSpend": 0, "limit": 0, "totalPercentUsed": 0 }, "enabled": false }
+            """
         let response = try JSONDecoder().decode(CursorUsageResponse.self, from: Data(json.utf8))
         #expect(throws: CursorError.usageDisabled) {
             try response.validatedUsage(planName: nil, email: nil, now: Date())
@@ -75,8 +81,8 @@ struct CursorUsageTests {
 
     @Test func refreshResponseDecodesRotatedRefreshToken() throws {
         let json = """
-        { "access_token": "new-access", "refresh_token": "new-refresh" }
-        """
+            { "access_token": "new-access", "refresh_token": "new-refresh" }
+            """
         let response = try JSONDecoder().decode(CursorOAuthResponse.self, from: Data(json.utf8))
         #expect(response.accessToken == "new-access")
         #expect(response.refreshToken == "new-refresh")

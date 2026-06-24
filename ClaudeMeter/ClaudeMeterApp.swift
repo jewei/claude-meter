@@ -1,5 +1,5 @@
-import SwiftUI
 import ClaudeMeterCore
+import SwiftUI
 
 @main
 struct ClaudeMeterApp: App {

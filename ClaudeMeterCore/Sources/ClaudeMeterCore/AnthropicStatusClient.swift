@@ -3,7 +3,7 @@ import Foundation
 /// Severity of an Anthropic service incident, mapped from the Statuspage.io
 /// `status.indicator` field.
 public enum ServiceStatusLevel: String, Codable, Equatable, Sendable {
-    case operational   // "none"
+    case operational  // "none"
     case minor
     case major
     case critical
@@ -49,7 +49,8 @@ public struct AnthropicStatusClient: Sendable {
     public func fetch() async -> ServiceStatus? {
         let request = URLRequest(url: Self.statusURL)
         guard let (data, http) = try? await transport.send(request, retry: .transient),
-              http.statusCode == 200 else {
+            http.statusCode == 200
+        else {
             return nil
         }
         return Self.parse(data)

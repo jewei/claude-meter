@@ -6,8 +6,8 @@ public protocol HTTPTransport: Sendable {
     func send(_ request: URLRequest, retry: HTTPRetryPolicy) async throws -> (Data, HTTPURLResponse)
 }
 
-public extension HTTPTransport {
-    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+extension HTTPTransport {
+    public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         try await send(request, retry: .none)
     }
 }
@@ -63,7 +63,8 @@ public struct HTTPRetryPolicy: Sendable {
     /// Backoff before the next attempt: `Retry-After` when present, else exponential.
     func delay(attempt: Int, retryAfter: String?) -> TimeInterval {
         if let raw = retryAfter?.trimmingCharacters(in: .whitespacesAndNewlines),
-           let seconds = TimeInterval(raw), seconds >= 0 {
+            let seconds = TimeInterval(raw), seconds >= 0
+        {
             return min(seconds, maxDelay)
         }
         guard baseDelay > 0 else { return 0 }
@@ -99,24 +100,33 @@ public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
         )
     }
 
-    public func send(_ request: URLRequest, retry: HTTPRetryPolicy) async throws -> (Data, HTTPURLResponse) {
+    public func send(_ request: URLRequest, retry: HTTPRetryPolicy) async throws -> (
+        Data, HTTPURLResponse
+    ) {
         var attempt = 0
         while true {
             do {
                 let (data, response) = try await session.data(for: request)
-                guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
-                guard retry.shouldRetry(
-                    status: http.statusCode,
-                    attempt: attempt,
-                    method: request.httpMethod ?? "GET"
-                ) else {
+                guard let http = response as? HTTPURLResponse else {
+                    throw URLError(.badServerResponse)
+                }
+                guard
+                    retry.shouldRetry(
+                        status: http.statusCode,
+                        attempt: attempt,
+                        method: request.httpMethod ?? "GET"
+                    )
+                else {
                     return (data, http)
                 }
-                let wait = retry.delay(attempt: attempt, retryAfter: http.value(forHTTPHeaderField: "Retry-After"))
+                let wait = retry.delay(
+                    attempt: attempt, retryAfter: http.value(forHTTPHeaderField: "Retry-After"))
                 if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
                 attempt += 1
-            } catch let error as URLError where Self.isRetryableTransportError(error)
-                && retry.shouldRetryTransport(attempt: attempt, method: request.httpMethod ?? "GET") {
+            } catch let error as URLError
+                where Self.isRetryableTransportError(error)
+                && retry.shouldRetryTransport(attempt: attempt, method: request.httpMethod ?? "GET")
+            {
                 let wait = retry.delay(attempt: attempt, retryAfter: nil)
                 if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
                 attempt += 1
@@ -127,7 +137,7 @@ public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
     private static func isRetryableTransportError(_ error: URLError) -> Bool {
         switch error.code {
         case .timedOut, .networkConnectionLost, .notConnectedToInternet,
-             .cannotConnectToHost, .dnsLookupFailed, .cannotFindHost:
+            .cannotConnectToHost, .dnsLookupFailed, .cannotFindHost:
             return true
         default:
             return false
@@ -145,16 +155,17 @@ final class RedirectGuardDelegate: NSObject, URLSessionTaskDelegate, @unchecked 
         newRequest request: URLRequest,
         completionHandler: @escaping @Sendable (URLRequest?) -> Void
     ) {
-        completionHandler(Self.isAllowed(from: task.originalRequest?.url, to: request.url) ? request : nil)
+        completionHandler(
+            Self.isAllowed(from: task.originalRequest?.url, to: request.url) ? request : nil)
     }
 
     /// Allow only when both URLs are HTTPS and share scheme + host + port.
     static func isAllowed(from origin: URL?, to destination: URL?) -> Bool {
         guard let origin, let destination,
-              origin.scheme?.lowercased() == "https",
-              destination.scheme?.lowercased() == "https",
-              origin.host?.lowercased() == destination.host?.lowercased(),
-              port(origin) == port(destination)
+            origin.scheme?.lowercased() == "https",
+            destination.scheme?.lowercased() == "https",
+            origin.host?.lowercased() == destination.host?.lowercased(),
+            port(origin) == port(destination)
         else { return false }
         return true
     }

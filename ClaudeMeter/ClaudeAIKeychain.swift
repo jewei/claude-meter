@@ -1,6 +1,6 @@
+import ClaudeMeterCore
 import Foundation
 import Security
-import ClaudeMeterCore
 
 /// Stores the claude.ai session key and org ID in the macOS Keychain.
 enum ClaudeAIKeychain {
@@ -28,8 +28,9 @@ enum ClaudeAIKeychain {
 
     static func load() -> Credentials? {
         guard let sk = readItem(account: accountSessionKey),
-              let org = readItem(account: accountOrgId),
-              !sk.isEmpty, !org.isEmpty else { return nil }
+            let org = readItem(account: accountOrgId),
+            !sk.isEmpty, !org.isEmpty
+        else { return nil }
         return Credentials(sessionKey: sk, orgId: org)
     }
 
@@ -46,11 +47,11 @@ enum ClaudeAIKeychain {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
-            kSecAttrAccount: account
+            kSecAttrAccount: account,
         ]
         let attrs: [CFString: Any] = [
             kSecValueData: data,
-            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
         ]
         let status = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
         if status == errSecSuccess { return true }
@@ -69,12 +70,13 @@ enum ClaudeAIKeychain {
             kSecAttrService: service,
             kSecAttrAccount: account,
             kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne
+            kSecMatchLimit: kSecMatchLimitOne,
         ]
         var result: AnyObject?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              let str = String(data: data, encoding: .utf8) else { return nil }
+            let data = result as? Data,
+            let str = String(data: data, encoding: .utf8)
+        else { return nil }
         return str
     }
 
@@ -82,7 +84,7 @@ enum ClaudeAIKeychain {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
-            kSecAttrAccount: account
+            kSecAttrAccount: account,
         ]
         SecItemDelete(query as CFDictionary)
     }

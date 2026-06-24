@@ -57,8 +57,9 @@ public enum NotificationPolicy {
         let nowEpoch = Int(now.timeIntervalSince1970)
         return keys.filter { key in
             guard key.hasPrefix(dedupKeyPrefix),
-                  let epochToken = key.split(separator: ".").last,
-                  let epoch = Int(epochToken) else {
+                let epochToken = key.split(separator: ".").last,
+                let epoch = Int(epochToken)
+            else {
                 return false
             }
             return epoch < nowEpoch
@@ -78,7 +79,8 @@ public enum NotificationPolicy {
         let currentSeverity = thresholds.severity(for: current.percentUsed)
 
         let escalatedToCritical = isCritical(currentSeverity) && !isCritical(previousSeverity)
-        let escalatedToWarning = currentSeverity == .warning
+        let escalatedToWarning =
+            currentSeverity == .warning
             && (previousSeverity == .normal || previousSeverity == .unknown)
 
         guard escalatedToCritical || escalatedToWarning else { return [] }

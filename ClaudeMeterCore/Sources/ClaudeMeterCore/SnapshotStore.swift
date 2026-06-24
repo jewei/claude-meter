@@ -24,7 +24,7 @@ public struct LastErrorRecord: Codable, Equatable, Sendable {
 public struct SnapshotStore: Sendable {
     public let directory: URL
 
-    private var currentURL: URL   { directory.appending(path: "current.json") }
+    private var currentURL: URL { directory.appending(path: "current.json") }
     private var lastErrorURL: URL { directory.appending(path: "last-error.json") }
 
     // MARK: - Factory
@@ -49,9 +49,11 @@ public struct SnapshotStore: Sendable {
     /// container is unavailable — e.g. the app is unsigned or the entitlement
     /// is missing — in which case callers fall back to `applicationSupport()`.
     public static func appGroup(suiteName: String) throws -> SnapshotStore {
-        guard let container = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: suiteName
-        ) else {
+        guard
+            let container = FileManager.default.containerURL(
+                forSecurityApplicationGroupIdentifier: suiteName
+            )
+        else {
             throw CocoaError(.fileNoSuchFile)
         }
         let dir = container.appendingPathComponent(
@@ -63,7 +65,9 @@ public struct SnapshotStore: Sendable {
     }
 
     /// Copies `current.json` from a legacy store when the destination is empty.
-    public static func migrateSnapshotIfNeeded(from legacy: SnapshotStore, to shared: SnapshotStore) throws {
+    public static func migrateSnapshotIfNeeded(from legacy: SnapshotStore, to shared: SnapshotStore)
+        throws
+    {
         guard try shared.readLatest() == nil else { return }
         if let snapshot = try legacy.readLatest() {
             try shared.writeLatest(snapshot)

@@ -1,13 +1,14 @@
 import Foundation
 import Testing
+
 @testable import ClaudeMeterCore
 
 @Suite("AnthropicStatusClient")
 struct AnthropicStatusClientTests {
     @Test func parsesOperationalStatus() throws {
         let json = """
-        {"page":{"id":"x"},"status":{"indicator":"none","description":"All Systems Operational"}}
-        """
+            {"page":{"id":"x"},"status":{"indicator":"none","description":"All Systems Operational"}}
+            """
         let status = try #require(AnthropicStatusClient.parse(json.data(using: .utf8)!))
         #expect(status.level == .operational)
         #expect(!status.level.isIncident)
@@ -15,8 +16,8 @@ struct AnthropicStatusClientTests {
 
     @Test func parsesIncidentStatus() throws {
         let json = """
-        {"status":{"indicator":"major","description":"Elevated errors on the API"}}
-        """
+            {"status":{"indicator":"major","description":"Elevated errors on the API"}}
+            """
         let status = try #require(AnthropicStatusClient.parse(json.data(using: .utf8)!))
         #expect(status.level == .major)
         #expect(status.level.isIncident)

@@ -15,7 +15,9 @@ public enum CursorTokenStore {
     /// macOS path to Cursor's global key/value SQLite store.
     static var stateDBPath: String {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
+            .appendingPathComponent(
+                "Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+            )
             .path
     }
 
@@ -69,16 +71,18 @@ public enum CursorTokenStore {
     public static func expiry(of accessToken: String) -> Date? {
         let parts = accessToken.split(separator: ".")
         guard parts.count >= 2,
-              let payload = base64URLDecode(String(parts[1])),
-              let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
-              let exp = (object["exp"] as? NSNumber)?.doubleValue
+            let payload = base64URLDecode(String(parts[1])),
+            let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
+            let exp = (object["exp"] as? NSNumber)?.doubleValue
         else { return nil }
         return Date(timeIntervalSince1970: exp)
     }
 
     /// True when the token is missing an expiry, already expired, or expires
     /// within `buffer` seconds (default 5 minutes — matches Cursor's own buffer).
-    public static func isExpiringSoon(_ accessToken: String, buffer: TimeInterval = 300, now: Date = Date()) -> Bool {
+    public static func isExpiringSoon(
+        _ accessToken: String, buffer: TimeInterval = 300, now: Date = Date()
+    ) -> Bool {
         guard let exp = expiry(of: accessToken) else { return true }
         return exp.timeIntervalSince(now) < buffer
     }
@@ -107,7 +111,9 @@ public enum CursorTokenStore {
     }
 
     private static func keychainValue(service: String) -> String? {
-        guard let output = run(securityPath, ["find-generic-password", "-s", service, "-w"]) else { return nil }
+        guard let output = run(securityPath, ["find-generic-password", "-s", service, "-w"]) else {
+            return nil
+        }
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : unquoteStoredValue(trimmed)
     }
@@ -124,8 +130,8 @@ public enum CursorTokenStore {
     static func unquoteStoredValue(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2,
-              trimmed.hasPrefix("\""),
-              trimmed.hasSuffix("\"")
+            trimmed.hasPrefix("\""),
+            trimmed.hasSuffix("\"")
         else { return trimmed }
         return String(trimmed.dropFirst().dropLast())
     }

@@ -30,14 +30,16 @@ final class PowerMonitor {
     init() {
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.screensDidSleepNotification] {
-            observers.tokens.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.isDisplayAsleep = true }
-            })
+            observers.tokens.append(
+                center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.isDisplayAsleep = true }
+                })
         }
         for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {
-            observers.tokens.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.handleWake() }
-            })
+            observers.tokens.append(
+                center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.handleWake() }
+                })
         }
     }
 
@@ -45,7 +47,8 @@ final class PowerMonitor {
     /// (the read is cheap and there is no AC/battery notification to observe).
     var isOnBattery: Bool {
         guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
-              let sourceType = IOPSGetProvidingPowerSourceType(snapshot)?.takeUnretainedValue() else {
+            let sourceType = IOPSGetProvidingPowerSourceType(snapshot)?.takeUnretainedValue()
+        else {
             return false
         }
         return (sourceType as String) == kIOPSBatteryPowerValue

@@ -1,5 +1,5 @@
-import SwiftUI
 import ClaudeMeterCore
+import SwiftUI
 
 struct DiagnosticsView: View {
     @EnvironmentObject private var appState: AppState
@@ -27,7 +27,10 @@ struct DiagnosticsView: View {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(diagnosticsText, forType: .string)
                     copied = true
-                    Task { try? await Task.sleep(for: .seconds(2)); copied = false }
+                    Task {
+                        try? await Task.sleep(for: .seconds(2))
+                        copied = false
+                    }
                 }
                 .buttonStyle(.borderless)
 
@@ -55,7 +58,8 @@ struct DiagnosticsView: View {
                 LabeledContent("Parser", value: snap.parserVersion)
             }
             if AppSettings.cursorSourceEnabled {
-                LabeledContent("Cursor", value: appState.cursorUsage != nil ? "Connected" : "Not available")
+                LabeledContent(
+                    "Cursor", value: appState.cursorUsage != nil ? "Connected" : "Not available")
             }
         }
     }
@@ -87,9 +91,12 @@ struct DiagnosticsView: View {
 
     private var snapshotSection: some View {
         Section("Snapshot") {
-            LabeledContent("Schema version", value: appState.snapshot.map { "\($0.schemaVersion)" } ?? "—")
+            LabeledContent(
+                "Schema version", value: appState.snapshot.map { "\($0.schemaVersion)" } ?? "—")
             LabeledContent("Parser version", value: appState.snapshot?.parserVersion ?? "—")
-            LabeledContent("Created", value: appState.snapshot.map { isoFormatter.string(from: $0.createdAt) } ?? "—")
+            LabeledContent(
+                "Created",
+                value: appState.snapshot.map { isoFormatter.string(from: $0.createdAt) } ?? "—")
         }
     }
 
@@ -138,9 +145,11 @@ struct DiagnosticsView: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                Text("Reads the claude.ai session from installed browsers. May prompt for Keychain access. No secrets are shown or copied.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Reads the claude.ai session from installed browsers. May prompt for Keychain access. No secrets are shown or copied."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
     }

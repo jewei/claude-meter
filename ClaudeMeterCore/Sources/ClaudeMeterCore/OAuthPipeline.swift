@@ -44,7 +44,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             return try await fallback.poll(now: now)
         }
 
-        let keychainResult = oauthMode == "manual"
+        let keychainResult =
+            oauthMode == "manual"
             ? OAuthKeychain.loadManualResult()
             : OAuthKeychain.loadResult()
         guard var creds = Self.credentials(from: keychainResult, oauthMode: oauthMode) else {
@@ -59,7 +60,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             creds = refreshed
             OAuthSharedState.setCachedCredentials(refreshed, for: oauthMode)
             if oauthMode == "manual" {
-                OAuthKeychain.saveManual(accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
+                OAuthKeychain.saveManual(
+                    accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
             }
         }
 
@@ -74,10 +76,13 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             }
             OAuthSharedState.setCachedCredentials(refreshed, for: oauthMode)
             if oauthMode == "manual" {
-                OAuthKeychain.saveManual(accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
+                OAuthKeychain.saveManual(
+                    accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
             }
             let refreshedPlan = ClaudePlan.displayName(subscriptionType: refreshed.subscriptionType)
-            if let result = try? await fetchAndBuild(token: refreshed.accessToken, plan: refreshedPlan, now: now) {
+            if let result = try? await fetchAndBuild(
+                token: refreshed.accessToken, plan: refreshedPlan, now: now)
+            {
                 return result
             }
             return try await fallback.poll(now: now)
@@ -93,7 +98,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         oauthMode: String
     ) -> OAuthCredentials? {
         switch result {
-        case let .found(creds): return creds
+        case .found(let creds): return creds
         case .temporarilyUnavailable: return OAuthSharedState.cachedCredentials(for: oauthMode)
         case .missing, .invalid: return nil
         }
@@ -114,7 +119,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     // MARK: - Settings verification
 
-    public static func verify(credentials: OAuthCredentials) async throws -> (sessionPct: Double, weekPct: Double) {
+    public static func verify(credentials: OAuthCredentials) async throws -> (
+        sessionPct: Double, weekPct: Double
+    ) {
         var creds = credentials
         if creds.isExpired {
             creds = try await verifyRefresh(creds)
@@ -133,7 +140,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         return verificationPercentages(from: usage)
     }
 
-    internal static func verificationPercentages(from usage: UsageResponse) -> (sessionPct: Double, weekPct: Double) {
+    internal static func verificationPercentages(from usage: UsageResponse) -> (
+        sessionPct: Double, weekPct: Double
+    ) {
         (
             usage.fiveHour?.utilization ?? 0,
             usage.sevenDay?.utilization ?? 0
@@ -159,10 +168,13 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         let oauthMode = UserDefaults.standard.string(forKey: AppGroupConfig.oauthModeKey) ?? ""
         guard oauthMode == "auto" || oauthMode == "manual" else { return nil }
         guard !OAuthSharedState.isRateLimited(now: now) else { return nil }
-        let keychainResult = oauthMode == "manual"
+        let keychainResult =
+            oauthMode == "manual"
             ? OAuthKeychain.loadManualResult()
             : OAuthKeychain.loadResult()
-        guard var creds = credentials(from: keychainResult, oauthMode: oauthMode) else { return nil }
+        guard var creds = credentials(from: keychainResult, oauthMode: oauthMode) else {
+            return nil
+        }
         if creds.isExpired {
             guard let refreshed = try? await verifyRefresh(creds) else { return nil }
             creds = OAuthCredentials(
@@ -173,13 +185,17 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             )
             OAuthSharedState.setCachedCredentials(creds, for: oauthMode)
             if oauthMode == "manual" {
-                OAuthKeychain.saveManual(accessToken: creds.accessToken, refreshToken: creds.refreshToken)
+                OAuthKeychain.saveManual(
+                    accessToken: creds.accessToken, refreshToken: creds.refreshToken)
             }
         }
-        guard let usage = try? await requestUsage(token: creds.accessToken, now: now) else { return nil }
+        guard let usage = try? await requestUsage(token: creds.accessToken, now: now) else {
+            return nil
+        }
         let opus = usage.sevenDayOpus.flatMap { entry -> LimitWindow? in
             guard let u = entry.utilization else { return nil }
-            return LimitWindow(percentUsed: u, resetsAt: entry.resetsAt.flatMap(parseDate)).resolved(asOf: now)
+            return LimitWindow(percentUsed: u, resetsAt: entry.resetsAt.flatMap(parseDate))
+                .resolved(asOf: now)
         }
         let enrichment = OAuthEnrichment(
             opus: opus,
@@ -194,7 +210,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     /// Shared usage GET. Honors the process-wide 429 backoff used by `poll` and
     /// `fetchEnrichment`.
-    private static func requestUsage(token: String, now: Date = Date()) async throws -> UsageResponse {
+    private static func requestUsage(token: String, now: Date = Date()) async throws
+        -> UsageResponse
+    {
         var request = URLRequest(url: usageURL)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
@@ -215,7 +233,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         return try JSONDecoder().decode(UsageResponse.self, from: data)
     }
 
-    private static func verifyRefresh(_ credentials: OAuthCredentials) async throws -> OAuthCredentials {
+    private static func verifyRefresh(_ credentials: OAuthCredentials) async throws
+        -> OAuthCredentials
+    {
         var request = URLRequest(url: tokenURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -239,7 +259,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     // MARK: - API calls
 
-    private func fetchAndBuild(token: String, plan: String?, now: Date) async throws -> ParseResult {
+    private func fetchAndBuild(token: String, plan: String?, now: Date) async throws -> ParseResult
+    {
         let usage = try await fetchUsage(token: token, now: now)
         let snapshot = buildSnapshot(usage: usage, plan: plan, now: now)
         try? store.writeLatest(snapshot)
@@ -281,8 +302,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     /// Parses a `Retry-After` header (delta-seconds or HTTP-date). Returns the
     /// absolute time to resume, or `nil` when absent/unparseable.
     static func retryAfterDate(from response: HTTPURLResponse, now: Date) -> Date? {
-        guard let raw = (response.value(forHTTPHeaderField: "Retry-After"))?
-            .trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty
+        guard
+            let raw = (response.value(forHTTPHeaderField: "Retry-After"))?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty
         else { return nil }
         if let seconds = TimeInterval(raw), seconds >= 0 {
             return now.addingTimeInterval(seconds)
@@ -318,7 +340,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     // MARK: - Snapshot builder
 
-    private func buildSnapshot(usage: UsageResponse, plan: String?, now: Date) -> ClaudeUsageSnapshot {
+    private func buildSnapshot(usage: UsageResponse, plan: String?, now: Date)
+        -> ClaudeUsageSnapshot
+    {
         let sessionWindow = Self.window(from: usage.fiveHour)
         let weekWindow = Self.window(from: usage.sevenDay)
         let opusWindow = usage.sevenDayOpus.map { Self.window(from: $0) }

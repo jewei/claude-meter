@@ -69,12 +69,12 @@ public enum UsagePace: Sendable, Equatable {
     }
 }
 
-public extension LimitWindow {
+extension LimitWindow {
     /// Fraction (0–100) of the rolling window that has elapsed as of `now`,
     /// derived from `resetsAt` and the window's fixed `duration`. `nil` when the
     /// reset time is unknown — e.g. a window that `resolved(asOf:)` has reset, or
     /// one the source never reported a reset for.
-    func percentTimeElapsed(kind: LimitWindowKind, asOf now: Date) -> Double? {
+    public func percentTimeElapsed(kind: LimitWindowKind, asOf now: Date) -> Double? {
         guard let reset = resetsAt else { return nil }
         let total = kind.duration
         guard total > 0 else { return nil }
@@ -87,26 +87,29 @@ public extension LimitWindow {
     /// Burn rate: consumed quota divided by elapsed window time. `1.0` is exactly
     /// on pace, `2.0` is twice as fast as sustainable. `nil` when pace is unknown
     /// or no time has elapsed yet.
-    func burnRate(kind: LimitWindowKind, asOf now: Date) -> Double? {
+    public func burnRate(kind: LimitWindowKind, asOf now: Date) -> Double? {
         guard let elapsed = percentTimeElapsed(kind: kind, asOf: now), elapsed > 0,
-              let used = clampedPercent else { return nil }
+            let used = clampedPercent
+        else { return nil }
         return used / elapsed
     }
 
     /// Pace classification for this window as of `now`. Call on the
     /// `resolved(asOf:)` window so a just-reset window reads `.unknown` rather
     /// than a stale value.
-    func pace(kind: LimitWindowKind, asOf now: Date) -> UsagePace {
+    public func pace(kind: LimitWindowKind, asOf now: Date) -> UsagePace {
         guard let used = clampedPercent,
-              let elapsed = percentTimeElapsed(kind: kind, asOf: now) else { return .unknown }
+            let elapsed = percentTimeElapsed(kind: kind, asOf: now)
+        else { return .unknown }
         return UsagePace.from(percentUsed: used, percentTimeElapsed: elapsed)
     }
 
     /// One-line insight describing the pace deviation, e.g. "12% ahead of pace"
     /// or "On track". `nil` when pace can't be determined.
-    func paceInsight(kind: LimitWindowKind, asOf now: Date) -> String? {
+    public func paceInsight(kind: LimitWindowKind, asOf now: Date) -> String? {
         guard let used = clampedPercent,
-              let elapsed = percentTimeElapsed(kind: kind, asOf: now) else { return nil }
+            let elapsed = percentTimeElapsed(kind: kind, asOf: now)
+        else { return nil }
         let pace = UsagePace.from(percentUsed: used, percentTimeElapsed: elapsed)
         let delta = Int(abs(used - elapsed).rounded())
         switch pace {

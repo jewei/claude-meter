@@ -1,8 +1,9 @@
-import Testing
 import Foundation
+import Testing
+
 @testable import ClaudeMeterCore
 
-private let fixedDate = Date(timeIntervalSince1970: 1_782_108_000) // 2026-06-22T06:00:00Z
+private let fixedDate = Date(timeIntervalSince1970: 1_782_108_000)  // 2026-06-22T06:00:00Z
 private let klTZ = TimeZone(identifier: "Asia/Kuala_Lumpur")!
 
 private func makeStore() throws -> SnapshotStore {
@@ -12,7 +13,9 @@ private func makeStore() throws -> SnapshotStore {
     return SnapshotStore(directory: dir)
 }
 
-private func makeSnapshot(sessionPercent: Double = 25, weekPercent: Double = 30) -> ClaudeUsageSnapshot {
+private func makeSnapshot(sessionPercent: Double = 25, weekPercent: Double = 30)
+    -> ClaudeUsageSnapshot
+{
     ClaudeUsageSnapshot(
         parserVersion: "0.1.0",
         createdAt: fixedDate,
@@ -179,7 +182,8 @@ struct SnapshotStoreTests {
         try SnapshotStore.migrateSnapshotIfNeeded(from: legacy, to: shared)
 
         let recovered = try #require(try shared.readLatest())
-        #expect(recovered.limits.currentSession.percentUsed == snap.limits.currentSession.percentUsed)
+        #expect(
+            recovered.limits.currentSession.percentUsed == snap.limits.currentSession.percentUsed)
     }
 
     @Test("migrateSnapshotIfNeeded does not overwrite existing shared snapshot")
@@ -199,9 +203,11 @@ struct SnapshotStoreTests {
         let shared = SnapshotStore(directory: sharedDir)
 
         var legacySnap = makeSnapshot()
-        legacySnap.limits.currentSession = LimitWindow(percentUsed: 10, resetsAt: nil, rawResetText: nil)
+        legacySnap.limits.currentSession = LimitWindow(
+            percentUsed: 10, resetsAt: nil, rawResetText: nil)
         var sharedSnap = makeSnapshot()
-        sharedSnap.limits.currentSession = LimitWindow(percentUsed: 99, resetsAt: nil, rawResetText: nil)
+        sharedSnap.limits.currentSession = LimitWindow(
+            percentUsed: 99, resetsAt: nil, rawResetText: nil)
 
         try legacy.writeLatest(legacySnap)
         try shared.writeLatest(sharedSnap)
@@ -222,7 +228,8 @@ struct SnapshotStoreTests {
         try store.writeLatest(snap)
         let recovered = try #require(try store.readLatest())
 
-        let delta = abs(recovered.limits.currentSession.resetsAt!.timeIntervalSince(originalResetsAt))
+        let delta = abs(
+            recovered.limits.currentSession.resetsAt!.timeIntervalSince(originalResetsAt))
         #expect(delta < 1.0)
     }
 }

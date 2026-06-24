@@ -10,7 +10,9 @@ public enum CredentialValidator {
     public static func isValidSessionKey(_ sessionKey: String) -> Bool {
         let trimmed = sessionKey.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return false }
-        guard trimmed.rangeOfCharacter(from: invalidSessionKeyCharacters) == nil else { return false }
+        guard trimmed.rangeOfCharacter(from: invalidSessionKeyCharacters) == nil else {
+            return false
+        }
         return trimmed.hasPrefix("sk-ant-")
     }
 

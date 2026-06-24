@@ -1,8 +1,8 @@
 import AppKit
-import SwiftUI
-import WidgetKit
 import ClaudeMeterCore
 import Sparkle
+import SwiftUI
+import WidgetKit
 
 @MainActor
 final class AppState: ObservableObject {
@@ -69,7 +69,7 @@ final class AppState: ObservableObject {
 
     init() {
         UserDefaults.standard.register(defaults: [
-            AppSettings.statuslineSourceEnabledKey: true,
+            AppSettings.statuslineSourceEnabledKey: true
         ])
         AppGroupConfig.syncDisplaySettings()
         let store = AppState.makeStore()
@@ -188,7 +188,8 @@ final class AppState: ObservableObject {
     }
 
     var isStale: Bool {
-        let cursorStale = AppSettings.cursorSourceEnabled
+        let cursorStale =
+            AppSettings.cursorSourceEnabled
             && cursorUsage != nil
             && AppGroupConfig.isSnapshotStale(lastPollAt: cursorLastPolledAt)
         let claudeStale = claudeIsStale || snapshot?.state.isStale == true
@@ -386,15 +387,17 @@ final class AppState: ObservableObject {
                 try await provider.fetchUsage(now: now)
             }.value
             guard generation == pipelineGeneration,
-                  canPoll,
-                  AppSettings.cursorSourceEnabled else { return }
+                canPoll,
+                AppSettings.cursorSourceEnabled
+            else { return }
             cursorUsage = usage
             cursorError = nil
             cursorLastPolledAt = Date()
         } catch {
             guard generation == pipelineGeneration,
-                  canPoll,
-                  AppSettings.cursorSourceEnabled else { return }
+                canPoll,
+                AppSettings.cursorSourceEnabled
+            else { return }
             switch error {
             case CursorError.notDetected, CursorError.unauthorized, CursorError.forbidden:
                 cursorUsage = nil
@@ -425,9 +428,11 @@ final class AppState: ObservableObject {
         now: Date
     ) async -> OAuthPipeline.OAuthEnrichment? {
         guard AppSettings.oauthSourceEnabled,
-              snap.source.cliPath != "api.anthropic.com" else { return nil }
+            snap.source.cliPath != "api.anthropic.com"
+        else { return nil }
         if let lastOAuthEnrichmentAt,
-           now.timeIntervalSince(lastOAuthEnrichmentAt) < Self.oauthEnrichmentIntervalSeconds {
+            now.timeIntervalSince(lastOAuthEnrichmentAt) < Self.oauthEnrichmentIntervalSeconds
+        {
             return cachedOAuthEnrichment
         }
         lastOAuthEnrichmentAt = now
@@ -438,7 +443,9 @@ final class AppState: ObservableObject {
         return cachedOAuthEnrichment
     }
 
-    private static func apply(_ e: OAuthPipeline.OAuthEnrichment, to snap: inout ClaudeUsageSnapshot) {
+    private static func apply(
+        _ e: OAuthPipeline.OAuthEnrichment, to snap: inout ClaudeUsageSnapshot
+    ) {
         if let opus = e.opus { snap.limits.currentWeekOpus = opus }
         if let extra = e.extraUsage { snap.limits.extraUsage = extra }
         if let plan = e.plan {
@@ -504,10 +511,12 @@ final class AppState: ObservableObject {
             do {
                 try StatuslineBridge.install()
             } catch {
-                let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                try? store.writeLastError(LastErrorRecord(
-                    message: DiagnosticsSanitizer.sanitize(message)
-                ))
+                let message =
+                    (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                try? store.writeLastError(
+                    LastErrorRecord(
+                        message: DiagnosticsSanitizer.sanitize(message)
+                    ))
             }
         }
     }

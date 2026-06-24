@@ -52,7 +52,9 @@ public struct ClaudeAIPipeline: ClaudeMeterPipeline {
             }
 
             let severity = [usage.sessionPercent, usage.weekPercent, usage.weekOpusPercent]
-                .reduce(UsageSeverity.unknown) { UsageSeverity.highest($0, thresholds.severity(for: $1)) }
+                .reduce(UsageSeverity.unknown) {
+                    UsageSeverity.highest($0, thresholds.severity(for: $1))
+                }
 
             let snapshot = ClaudeUsageSnapshot(
                 parserVersion: "claude-ai-api-1.0",

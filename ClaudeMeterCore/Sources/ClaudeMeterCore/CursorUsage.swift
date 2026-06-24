@@ -6,10 +6,10 @@ import Foundation
 /// so this is a single snapshot: percent of the plan limit used, dollar spend,
 /// and the period reset date.
 public struct CursorUsage: Codable, Equatable, Sendable {
-    public var percentUsed: Double?   // 0–100
-    public var spendUsd: Double?      // dollars used this period
-    public var limitUsd: Double?      // plan limit in dollars (nil = no fixed limit)
-    public var periodEnd: Date?       // billing cycle end
+    public var percentUsed: Double?  // 0–100
+    public var spendUsd: Double?  // dollars used this period
+    public var limitUsd: Double?  // plan limit in dollars (nil = no fixed limit)
+    public var periodEnd: Date?  // billing cycle end
     public var planName: String?
     public var email: String?
     public var capturedAt: Date
@@ -59,8 +59,8 @@ struct CursorUsageResponse: Decodable {
     let enabled: Bool?
 
     struct PlanUsage: Decodable {
-        let totalSpend: Int?        // cents
-        let limit: Int?             // cents
+        let totalSpend: Int?  // cents
+        let limit: Int?  // cents
         let totalPercentUsed: Double?
     }
 

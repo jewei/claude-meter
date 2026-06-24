@@ -1,34 +1,34 @@
-import WidgetKit
-import SwiftUI
 import ClaudeMeterCore
+import SwiftUI
+import WidgetKit
 
 // MARK: - Design tokens (local to widget target)
 
-private extension Color {
-    init(widgetHex string: String) {
+extension Color {
+    fileprivate init(widgetHex string: String) {
         var str = string.trimmingCharacters(in: .whitespacesAndNewlines)
         if str.hasPrefix("#") { str.removeFirst() }
         var hex: UInt64 = 0
         Scanner(string: str).scanHexInt64(&hex)
         self.init(
-            red:   Double((hex >> 16) & 0xff) / 255,
-            green: Double((hex >> 8)  & 0xff) / 255,
-            blue:  Double(hex          & 0xff) / 255
+            red: Double((hex >> 16) & 0xff) / 255,
+            green: Double((hex >> 8) & 0xff) / 255,
+            blue: Double(hex & 0xff) / 255
         )
     }
 
-    static let cmNormal     = Color(widgetHex: "4be257")
-    static let cmWarning    = Color(widgetHex: "fdbb2c")
-    static let cmCritical   = Color(widgetHex: "ff5f56")
-    static let cmBackground = Color(widgetHex: "10131b")
+    fileprivate static let cmNormal = Color(widgetHex: "4be257")
+    fileprivate static let cmWarning = Color(widgetHex: "fdbb2c")
+    fileprivate static let cmCritical = Color(widgetHex: "ff5f56")
+    fileprivate static let cmBackground = Color(widgetHex: "10131b")
 }
 
 private func severityColor(for percent: Double?, thresholds: UsageThresholds) -> Color {
     switch thresholds.severity(for: percent) {
-    case .normal:              return .cmNormal
-    case .warning:             return .cmWarning
+    case .normal: return .cmNormal
+    case .warning: return .cmWarning
     case .critical, .overLimit: return .cmCritical
-    case .unknown:             return Color.secondary
+    case .unknown: return Color.secondary
     }
 }
 
@@ -64,7 +64,9 @@ struct ClaudeMeterProvider: TimelineProvider {
         completion(makeEntry(at: Date()))
     }
 
-    func getTimeline(in context: Context, completion: @escaping (Timeline<ClaudeMeterEntry>) -> Void) {
+    func getTimeline(
+        in context: Context, completion: @escaping (Timeline<ClaudeMeterEntry>) -> Void
+    ) {
         let now = Date()
         let entry = makeEntry(at: now)
 
@@ -77,7 +79,8 @@ struct ClaudeMeterProvider: TimelineProvider {
         .filter { $0 > now }
         .min()
 
-        let refreshAt = [nextReset, now.addingTimeInterval(900)]
+        let refreshAt =
+            [nextReset, now.addingTimeInterval(900)]
             .compactMap { $0 }
             .min() ?? now.addingTimeInterval(900)
 
@@ -90,7 +93,8 @@ struct ClaudeMeterProvider: TimelineProvider {
             date: date,
             snapshot: snapshot,
             thresholds: AppGroupConfig.currentThresholds(),
-            isStale: AppGroupConfig.isSnapshotStale(lastPollAt: snapshot?.lastSuccessfulPollAt, now: date)
+            isStale: AppGroupConfig.isSnapshotStale(
+                lastPollAt: snapshot?.lastSuccessfulPollAt, now: date)
         )
     }
 
@@ -126,9 +130,9 @@ struct ClaudeMeterWidgetEntryView: View {
 
     var body: some View {
         switch family {
-        case .systemSmall:  SmallWidgetView(entry: entry)
+        case .systemSmall: SmallWidgetView(entry: entry)
         case .systemMedium: MediumWidgetView(entry: entry)
-        default:            LargeWidgetView(entry: entry)
+        default: LargeWidgetView(entry: entry)
         }
     }
 }
@@ -305,9 +309,12 @@ private struct LargeWidgetView: View {
     private var updatedLabel: some View {
         if let pollAt = entry.snapshot?.lastSuccessfulPollAt {
             let diff = Int(entry.date.timeIntervalSince(pollAt))
-            let text = diff < 5  ? "Just updated"
-                     : diff < 60 ? "Updated \(diff)s ago"
-                     : "Updated \(diff / 60)m ago"
+            let text =
+                diff < 5
+                ? "Just updated"
+                : diff < 60
+                    ? "Updated \(diff)s ago"
+                    : "Updated \(diff / 60)m ago"
             Text(text)
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
@@ -383,8 +390,8 @@ private struct WindowRow: View {
         if diff <= 0 { return "Resetting…" }
         let h = Int(diff / 3600)
         let m = Int(diff.truncatingRemainder(dividingBy: 3600) / 60)
-        if h == 0  { return "Resets ~\(m)m" }
-        if m == 0  { return "Resets ~\(h)h" }
+        if h == 0 { return "Resets ~\(m)m" }
+        if m == 0 { return "Resets ~\(h)h" }
         return "Resets ~\(h)h \(m)m"
     }
 

@@ -1,6 +1,6 @@
-import Foundation
 import CommonCrypto
 import CryptoKit
+import Foundation
 
 /// Imports the `sessionKey` cookie for `claude.ai` directly from a local browser,
 /// so users don't have to copy it out of DevTools.
@@ -26,9 +26,11 @@ public enum BrowserCookieImporter {
         public var errorDescription: String? {
             switch self {
             case .notFound:
-                return "No claude.ai session found in your browsers. Sign in to claude.ai first, or paste the key manually."
+                return
+                    "No claude.ai session found in your browsers. Sign in to claude.ai first, or paste the key manually."
             case .unsupportedEncryption:
-                return "Your browser's cookie is encrypted in a format Claude Meter can't read yet — paste the key manually."
+                return
+                    "Your browser's cookie is encrypted in a format Claude Meter can't read yet — paste the key manually."
             case .decryptionFailed:
                 return "Found a claude.ai cookie but couldn't decrypt it — paste the key manually."
             }
@@ -47,7 +49,8 @@ public enum BrowserCookieImporter {
         var sawUnsupported = false
         for browser in ChromiumBrowser.installed {
             switch importChromium(browser) {
-            case .success(let key): return .success(ImportedCookie(sessionKey: key, browser: browser.displayName))
+            case .success(let key):
+                return .success(ImportedCookie(sessionKey: key, browser: browser.displayName))
             case .failure(.unsupportedEncryption): sawUnsupported = true
             case .failure: break
             }
@@ -72,18 +75,22 @@ public enum BrowserCookieImporter {
                 lines.append("\(browser.displayName): not installed")
                 continue
             }
-            let pw = keychainPassword(service: browser.keychainService, account: browser.keychainAccount)
+            let pw = keychainPassword(
+                service: browser.keychainService, account: browser.keychainAccount)
             var cookieFound = false
             var version = "—"
             var decrypted = false
             for db in chromiumProfiles(in: browser.supportRoot) {
                 guard let hex = chromiumEncryptedSessionKeyHex(dbPath: db.path),
-                      let enc = Data(hexString: hex), enc.count > 3 else { continue }
+                    let enc = Data(hexString: hex), enc.count > 3
+                else { continue }
                 cookieFound = true
                 version = String(decoding: enc.prefix(3), as: UTF8.self)
                 if let pw, case .success = decryptChromium(enc, password: pw) { decrypted = true }
             }
-            lines.append("\(browser.displayName): keychainPW=\(pw != nil) cookie=\(cookieFound) version=\(version) decrypted=\(decrypted)")
+            lines.append(
+                "\(browser.displayName): keychainPW=\(pw != nil) cookie=\(cookieFound) version=\(version) decrypted=\(decrypted)"
+            )
         }
         lines.append("Firefox: sessionKey=\(probeFirefoxSessionKey())")
         lines.append("Safari: sessionKey=\(probeSafariSessionKey())")
@@ -94,20 +101,24 @@ public enum BrowserCookieImporter {
     static func probeFirefoxSessionKey() -> Bool {
         let root = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Firefox/Profiles")
-        guard let profiles = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else {
+        guard
+            let profiles = try? FileManager.default.contentsOfDirectory(
+                at: root, includingPropertiesForKeys: nil)
+        else {
             return false
         }
         let sql = """
-        SELECT 1 FROM moz_cookies
-        WHERE name='sessionKey' AND (host = 'claude.ai' OR host LIKE '%.claude.ai')
-        LIMIT 1;
-        """
+            SELECT 1 FROM moz_cookies
+            WHERE name='sessionKey' AND (host = 'claude.ai' OR host LIKE '%.claude.ai')
+            LIMIT 1;
+            """
         for profile in profiles {
             let db = profile.appendingPathComponent("cookies.sqlite")
             guard FileManager.default.fileExists(atPath: db.path) else { continue }
             if let row = runSQLite(dbPath: db.path, sql: sql)?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
-               row == "1" {
+                row == "1"
+            {
                 return true
             }
         }
@@ -118,13 +129,15 @@ public enum BrowserCookieImporter {
     static func probeSafariSessionKey() -> Bool {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let paths = [
-            home.appendingPathComponent("Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies"),
+            home.appendingPathComponent(
+                "Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies"),
             home.appendingPathComponent("Library/Cookies/Cookies.binarycookies"),
         ]
         for path in paths {
             guard let data = try? Data(contentsOf: path) else { continue }
             if parseBinaryCookies(data).contains(where: {
-                isClaudeAiHost($0.domain) && $0.name == "sessionKey" && isPlausibleSessionKey($0.value)
+                isClaudeAiHost($0.domain) && $0.name == "sessionKey"
+                    && isPlausibleSessionKey($0.value)
             }) {
                 return true
             }
@@ -150,8 +163,10 @@ public enum BrowserCookieImporter {
     /// padding bytes around the real value. Locate the `sk-ant-` token and return a
     /// clean, printable run from there.
     static func extractSessionKey(fromDecrypted data: Data) -> String? {
-        guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .ascii),
-              let range = text.range(of: "sk-ant-") else {
+        guard
+            let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .ascii),
+            let range = text.range(of: "sk-ant-")
+        else {
             // Fall back: scan raw bytes for the ASCII marker, then read printable run.
             return extractFromRawBytes(data)
         }
@@ -166,7 +181,8 @@ public enum BrowserCookieImporter {
         guard let start = firstIndex(of: marker, in: bytes) else { return nil }
         var out: [UInt8] = []
         for b in bytes[start...] {
-            let isToken = (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5A)
+            let isToken =
+                (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5A)
                 || (b >= 0x61 && b <= 0x7A) || b == 0x2D || b == 0x5F
             if isToken { out.append(b) } else { break }
         }
@@ -176,7 +192,8 @@ public enum BrowserCookieImporter {
 
     private static func firstIndex(of needle: [UInt8], in haystack: [UInt8]) -> Int? {
         guard !needle.isEmpty, haystack.count >= needle.count else { return nil }
-        for i in 0...(haystack.count - needle.count) where Array(haystack[i..<i+needle.count]) == needle {
+        for i in 0...(haystack.count - needle.count)
+        where Array(haystack[i..<i + needle.count]) == needle {
             return i
         }
         return nil
@@ -186,16 +203,26 @@ public enum BrowserCookieImporter {
 
     struct ChromiumBrowser {
         let displayName: String
-        let dataDir: String            // relative to ~/Library/Application Support
-        let keychainService: String    // Keychain "<X> Safe Storage"
+        let dataDir: String  // relative to ~/Library/Application Support
+        let keychainService: String  // Keychain "<X> Safe Storage"
         let keychainAccount: String
 
         static let all: [ChromiumBrowser] = [
-            .init(displayName: "Chrome", dataDir: "Google/Chrome", keychainService: "Chrome Safe Storage", keychainAccount: "Chrome"),
-            .init(displayName: "Brave", dataDir: "BraveSoftware/Brave-Browser", keychainService: "Brave Safe Storage", keychainAccount: "Brave"),
-            .init(displayName: "Microsoft Edge", dataDir: "Microsoft Edge", keychainService: "Microsoft Edge Safe Storage", keychainAccount: "Microsoft Edge"),
-            .init(displayName: "Arc", dataDir: "Arc/User Data", keychainService: "Arc Safe Storage", keychainAccount: "Arc"),
-            .init(displayName: "Chromium", dataDir: "Chromium", keychainService: "Chromium Safe Storage", keychainAccount: "Chromium"),
+            .init(
+                displayName: "Chrome", dataDir: "Google/Chrome",
+                keychainService: "Chrome Safe Storage", keychainAccount: "Chrome"),
+            .init(
+                displayName: "Brave", dataDir: "BraveSoftware/Brave-Browser",
+                keychainService: "Brave Safe Storage", keychainAccount: "Brave"),
+            .init(
+                displayName: "Microsoft Edge", dataDir: "Microsoft Edge",
+                keychainService: "Microsoft Edge Safe Storage", keychainAccount: "Microsoft Edge"),
+            .init(
+                displayName: "Arc", dataDir: "Arc/User Data", keychainService: "Arc Safe Storage",
+                keychainAccount: "Arc"),
+            .init(
+                displayName: "Chromium", dataDir: "Chromium",
+                keychainService: "Chromium Safe Storage", keychainAccount: "Chromium"),
         ]
 
         var supportRoot: URL {
@@ -210,7 +237,10 @@ public enum BrowserCookieImporter {
     }
 
     private static func importChromium(_ browser: ChromiumBrowser) -> Result<String, ImportError> {
-        guard let password = keychainPassword(service: browser.keychainService, account: browser.keychainAccount) else {
+        guard
+            let password = keychainPassword(
+                service: browser.keychainService, account: browser.keychainAccount)
+        else {
             return .failure(.notFound)
         }
         // Look across the Default profile and any "Profile N".
@@ -231,7 +261,8 @@ public enum BrowserCookieImporter {
     private static func chromiumProfiles(in root: URL) -> [URL] {
         let fm = FileManager.default
         var dbs: [URL] = []
-        let candidates = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+        let candidates =
+            (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
         for dir in candidates {
             let name = dir.lastPathComponent
             guard name == "Default" || name.hasPrefix("Profile ") else { continue }
@@ -246,11 +277,12 @@ public enum BrowserCookieImporter {
 
     private static func chromiumEncryptedSessionKeyHex(dbPath: String) -> String? {
         let sql = """
-        SELECT hex(encrypted_value) FROM cookies
-        WHERE name='sessionKey' AND (host_key = 'claude.ai' OR host_key LIKE '%.claude.ai')
-        LIMIT 1;
-        """
-        let out = runSQLite(dbPath: dbPath, sql: sql)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            SELECT hex(encrypted_value) FROM cookies
+            WHERE name='sessionKey' AND (host_key = 'claude.ai' OR host_key LIKE '%.claude.ai')
+            LIMIT 1;
+            """
+        let out = runSQLite(dbPath: dbPath, sql: sql)?.trimmingCharacters(
+            in: .whitespacesAndNewlines)
         return (out?.isEmpty == false) ? out : nil
     }
 
@@ -273,7 +305,7 @@ public enum BrowserCookieImporter {
             let key = pbkdf2SHA1(password: password, salt: "saltysalt", rounds: 1003, keyLength: 16)
             let iv = Data(repeating: 0x20, count: 16)
             guard let plain = aesCBCDecrypt(key: key, iv: iv, data: data.dropFirst(3)),
-                  let value = extractSessionKey(fromDecrypted: plain), isPlausibleSessionKey(value)
+                let value = extractSessionKey(fromDecrypted: plain), isPlausibleSessionKey(value)
             else { return .failure(.decryptionFailed) }
             return .success(value)
         }
@@ -285,8 +317,9 @@ public enum BrowserCookieImporter {
             let cipherAndTag = body.dropFirst(12)
             let tag = cipherAndTag.suffix(16)
             let ciphertext = cipherAndTag.dropLast(16)
-            guard let plain = aesGCMDecrypt(key: key, nonce: nonce, ciphertext: ciphertext, tag: tag),
-                  let value = extractSessionKey(fromDecrypted: plain), isPlausibleSessionKey(value)
+            guard
+                let plain = aesGCMDecrypt(key: key, nonce: nonce, ciphertext: ciphertext, tag: tag),
+                let value = extractSessionKey(fromDecrypted: plain), isPlausibleSessionKey(value)
             else { return .failure(.unsupportedEncryption) }
             return .success(value)
         }
@@ -298,20 +331,24 @@ public enum BrowserCookieImporter {
     private static func importFirefox() -> String? {
         let root = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Firefox/Profiles")
-        guard let profiles = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else {
+        guard
+            let profiles = try? FileManager.default.contentsOfDirectory(
+                at: root, includingPropertiesForKeys: nil)
+        else {
             return nil
         }
         let sql = """
-        SELECT value FROM moz_cookies
-        WHERE name='sessionKey' AND (host = 'claude.ai' OR host LIKE '%.claude.ai')
-        LIMIT 1;
-        """
+            SELECT value FROM moz_cookies
+            WHERE name='sessionKey' AND (host = 'claude.ai' OR host LIKE '%.claude.ai')
+            LIMIT 1;
+            """
         for profile in profiles {
             let db = profile.appendingPathComponent("cookies.sqlite")
             guard FileManager.default.fileExists(atPath: db.path) else { continue }
             if let value = runSQLite(dbPath: db.path, sql: sql)?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
-               isPlausibleSessionKey(value) {
+                isPlausibleSessionKey(value)
+            {
                 return value
             }
         }
@@ -323,7 +360,8 @@ public enum BrowserCookieImporter {
     private static func importSafari() -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let paths = [
-            home.appendingPathComponent("Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies"),
+            home.appendingPathComponent(
+                "Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies"),
             home.appendingPathComponent("Library/Cookies/Cookies.binarycookies"),
         ]
         for path in paths {
@@ -336,7 +374,11 @@ public enum BrowserCookieImporter {
         return nil
     }
 
-    struct BinaryCookie: Equatable { let domain: String; let name: String; let value: String }
+    struct BinaryCookie: Equatable {
+        let domain: String
+        let name: String
+        let value: String
+    }
 
     /// Minimal Apple `Cookies.binarycookies` parser (magic `cook`, big-endian page
     /// table, little-endian page/cookie records).
@@ -376,8 +418,9 @@ public enum BrowserCookieImporter {
             let nameOff = Int(leUInt32(page, cookieOffset + 20))
             let valueOff = Int(leUInt32(page, cookieOffset + 28))
             guard let domain = cString(page, cookieOffset + domainOff),
-                  let name = cString(page, cookieOffset + nameOff),
-                  let value = cString(page, cookieOffset + valueOff) else { continue }
+                let name = cString(page, cookieOffset + nameOff),
+                let value = cString(page, cookieOffset + valueOff)
+            else { continue }
             cookies.append(BinaryCookie(domain: domain, name: name, value: value))
         }
         return cookies
@@ -391,10 +434,10 @@ public enum BrowserCookieImporter {
     }
 
     private static func beUInt32(_ b: [UInt8], _ i: Int) -> UInt32 {
-        (UInt32(b[i]) << 24) | (UInt32(b[i+1]) << 16) | (UInt32(b[i+2]) << 8) | UInt32(b[i+3])
+        (UInt32(b[i]) << 24) | (UInt32(b[i + 1]) << 16) | (UInt32(b[i + 2]) << 8) | UInt32(b[i + 3])
     }
     private static func leUInt32(_ b: [UInt8], _ i: Int) -> UInt32 {
-        UInt32(b[i]) | (UInt32(b[i+1]) << 8) | (UInt32(b[i+2]) << 16) | (UInt32(b[i+3]) << 24)
+        UInt32(b[i]) | (UInt32(b[i + 1]) << 8) | (UInt32(b[i + 2]) << 16) | (UInt32(b[i + 3]) << 24)
     }
 
     // MARK: - Crypto primitives
@@ -445,7 +488,8 @@ public enum BrowserCookieImporter {
 
     static func aesGCMDecrypt(key: Data, nonce: Data, ciphertext: Data, tag: Data) -> Data? {
         guard let sealedNonce = try? AES.GCM.Nonce(data: nonce),
-              let box = try? AES.GCM.SealedBox(nonce: sealedNonce, ciphertext: ciphertext, tag: tag) else {
+            let box = try? AES.GCM.SealedBox(nonce: sealedNonce, ciphertext: ciphertext, tag: tag)
+        else {
             return nil
         }
         return try? AES.GCM.open(box, using: SymmetricKey(data: key))
@@ -508,7 +552,9 @@ extension Data {
         bytes.reserveCapacity(chars.count / 2)
         var i = 0
         while i < chars.count {
-            guard let hi = chars[i].hexDigitValue, let lo = chars[i + 1].hexDigitValue else { return nil }
+            guard let hi = chars[i].hexDigitValue, let lo = chars[i + 1].hexDigitValue else {
+                return nil
+            }
             bytes.append(UInt8(hi << 4 | lo))
             i += 2
         }

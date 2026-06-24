@@ -12,13 +12,16 @@ public enum ClaudePlan: String, Sendable {
     public var displayName: String { rawValue }
 
     /// Resolves a display name from any available hint, or `nil` when unrecognized.
-    public static func displayName(subscriptionType: String?, rateLimitTier: String? = nil) -> String? {
+    public static func displayName(subscriptionType: String?, rateLimitTier: String? = nil)
+        -> String?
+    {
         from(subscriptionType) ?? from(rateLimitTier)
     }
 
     private static func from(_ raw: String?) -> String? {
         guard let tier = raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-              !tier.isEmpty else { return nil }
+            !tier.isEmpty
+        else { return nil }
         if tier.contains("max") { return max.rawValue }
         if tier.contains("pro") { return pro.rawValue }
         if tier.contains("team") { return team.rawValue }

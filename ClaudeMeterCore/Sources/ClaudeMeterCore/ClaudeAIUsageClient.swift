@@ -42,13 +42,15 @@ public struct ClaudeAIUsageClient: Sendable {
 
     public func fetchUsage() async throws -> UsageData {
         guard CredentialValidator.isValidOrgId(orgId),
-              let normalizedOrg = CredentialValidator.normalizedOrgId(orgId) else {
+            let normalizedOrg = CredentialValidator.normalizedOrgId(orgId)
+        else {
             throw ClaudeAIError.invalidOrgId
         }
         guard CredentialValidator.isValidSessionKey(sessionKey) else {
             throw ClaudeAIError.invalidSessionKey
         }
-        guard let url = URL(string: "https://claude.ai/api/organizations/\(normalizedOrg)/usage") else {
+        guard let url = URL(string: "https://claude.ai/api/organizations/\(normalizedOrg)/usage")
+        else {
             throw ClaudeAIError.invalidURL
         }
         var request = URLRequest(url: url)
@@ -67,9 +69,10 @@ public struct ClaudeAIUsageClient: Sendable {
 
         let decoded = try JSONDecoder().decode(UsageAPIResponse.self, from: data)
         guard let fiveHour = decoded.fiveHour, let sessionPercent = fiveHour.utilization,
-              let sevenDay = decoded.sevenDay, let weekPercent = sevenDay.utilization,
-              let sessionResets = fiveHour.resetsAt.flatMap(Self.parseDate),
-              let weekResets = sevenDay.resetsAt.flatMap(Self.parseDate) else {
+            let sevenDay = decoded.sevenDay, let weekPercent = sevenDay.utilization,
+            let sessionResets = fiveHour.resetsAt.flatMap(Self.parseDate),
+            let weekResets = sevenDay.resetsAt.flatMap(Self.parseDate)
+        else {
             throw ClaudeAIError.missingFields
         }
 
@@ -135,7 +138,8 @@ public struct ClaudeAIUsageClient: Sendable {
         let decoded = try JSONDecoder().decode([OrganizationResponse].self, from: data)
         return decoded.compactMap { entry in
             guard let uuid = entry.uuid, !uuid.isEmpty else { return nil }
-            return Organization(uuid: uuid, name: entry.name, capabilities: entry.capabilities ?? [])
+            return Organization(
+                uuid: uuid, name: entry.name, capabilities: entry.capabilities ?? [])
         }
     }
 
@@ -175,15 +179,15 @@ public enum ClaudeAIError: Error, LocalizedError, Equatable {
 
     public var errorDescription: String? {
         switch self {
-        case .invalidURL:           return "Invalid API URL"
-        case .invalidOrgId:         return "Invalid organization ID — paste a valid UUID"
-        case .invalidSessionKey:    return "Invalid session key format"
-        case .invalidResponse:      return "Invalid server response"
-        case .httpError(401):       return "Session expired — update your session key in Settings"
-        case .httpError(403):       return "Access denied — check your session key and org ID"
-        case .httpError(let c):     return "HTTP error \(c)"
-        case .missingFields:        return "Unexpected API response format"
-        case .unauthorized:         return "Session expired — update your session key in Settings"
+        case .invalidURL: return "Invalid API URL"
+        case .invalidOrgId: return "Invalid organization ID — paste a valid UUID"
+        case .invalidSessionKey: return "Invalid session key format"
+        case .invalidResponse: return "Invalid server response"
+        case .httpError(401): return "Session expired — update your session key in Settings"
+        case .httpError(403): return "Access denied — check your session key and org ID"
+        case .httpError(let c): return "HTTP error \(c)"
+        case .missingFields: return "Unexpected API response format"
+        case .unauthorized: return "Session expired — update your session key in Settings"
         }
     }
 }

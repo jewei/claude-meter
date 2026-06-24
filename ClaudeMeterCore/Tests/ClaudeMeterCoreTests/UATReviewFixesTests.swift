@@ -1,4 +1,5 @@
 import Testing
+
 @testable import ClaudeMeterCore
 
 @Suite("DiagnosticsSanitizer")
@@ -39,7 +40,8 @@ struct DiagnosticsSanitizerTests {
     }
 
     @Test func redactsLabeledAccessAndRefreshTokens() {
-        let out = DiagnosticsSanitizer.sanitize(#"{"accessToken":"oidc-access","refreshToken":"refresh-secret"}"#)
+        let out = DiagnosticsSanitizer.sanitize(
+            #"{"accessToken":"oidc-access","refreshToken":"refresh-secret"}"#)
         #expect(!out.contains("oidc-access"))
         #expect(!out.contains("refresh-secret"))
         #expect(out.contains(#""accessToken":"[redacted]""#))

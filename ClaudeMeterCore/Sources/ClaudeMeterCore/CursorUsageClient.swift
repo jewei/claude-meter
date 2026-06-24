@@ -10,10 +10,10 @@ public enum CursorError: Error, LocalizedError, Equatable {
 
     public var errorDescription: String? {
         switch self {
-        case .notDetected:    "Cursor not detected — sign in to the Cursor app."
-        case .unauthorized:   "Cursor session expired — open Cursor to refresh it."
-        case .forbidden:      "Cursor denied the request — check your account permissions."
-        case .usageDisabled:  "Cursor usage tracking is disabled for this account."
+        case .notDetected: "Cursor not detected — sign in to the Cursor app."
+        case .unauthorized: "Cursor session expired — open Cursor to refresh it."
+        case .forbidden: "Cursor denied the request — check your account permissions."
+        case .usageDisabled: "Cursor usage tracking is disabled for this account."
         case .invalidResponse: "Cursor returned an unexpected response."
         case .httpError(let code): "Cursor request failed (HTTP \(code))."
         }
@@ -50,7 +50,8 @@ public final class CursorUsageProvider: @unchecked Sendable {
         var token = readCachedAccessToken() ?? creds.accessToken
 
         if CursorTokenStore.isExpiringSoon(token, now: now), let refreshToken,
-           let refreshed = try? await refresh(refreshToken) {
+            let refreshed = try? await refresh(refreshToken)
+        {
             token = refreshed.accessToken
             setCachedTokens(access: refreshed.accessToken, refresh: refreshed.refreshToken)
         }
@@ -62,10 +63,11 @@ public final class CursorUsageProvider: @unchecked Sendable {
                 setCachedTokens(access: nil, refresh: nil)
                 do {
                     return try await fetch(token: creds.accessToken, credentials: creds, now: now)
-                } catch CursorError.unauthorized { }
+                } catch CursorError.unauthorized {}
             }
             guard let refreshToken = readCachedRefreshToken() ?? creds.refreshToken,
-                  let refreshed = try? await refresh(refreshToken) else {
+                let refreshed = try? await refresh(refreshToken)
+            else {
                 setCachedTokens(access: nil, refresh: nil)
                 throw CursorError.unauthorized
             }
@@ -76,14 +78,17 @@ public final class CursorUsageProvider: @unchecked Sendable {
 
     // MARK: - API
 
-    private func fetch(token: String, credentials: CursorCredentials, now: Date) async throws -> CursorUsage {
+    private func fetch(token: String, credentials: CursorCredentials, now: Date) async throws
+        -> CursorUsage
+    {
         let usageData = try await connectPost(path: Self.usagePath, token: token)
         let response = try JSONDecoder().decode(CursorUsageResponse.self, from: usageData)
 
         var planName = credentials.membership
         if planName == nil,
-           let planData = try? await connectPost(path: Self.planInfoPath, token: token),
-           let plan = try? JSONDecoder().decode(CursorPlanInfoResponse.self, from: planData) {
+            let planData = try? await connectPost(path: Self.planInfoPath, token: token),
+            let plan = try? JSONDecoder().decode(CursorPlanInfoResponse.self, from: planData)
+        {
             planName = plan.planInfo?.planName
         }
 

@@ -244,7 +244,8 @@ public struct LimitWindow: Codable, Equatable, Sendable {
     /// reset. Windows with no usage value or no reset time are returned unchanged.
     public func resolved(asOf now: Date) -> LimitWindow {
         guard percentUsed != nil, let reset = resetsAt, reset <= now else { return self }
-        return LimitWindow(percentUsed: 0, resetsAt: nil, rawResetText: nil, rawValueText: rawValueText)
+        return LimitWindow(
+            percentUsed: 0, resetsAt: nil, rawResetText: nil, rawValueText: rawValueText)
     }
 
     public var isOverLimit: Bool { (percentUsed ?? 0) > 100 }
@@ -294,13 +295,19 @@ public struct ModelUsage: Codable, Equatable, Sendable {
     public var displayName: String {
         let lower = name.lowercased()
         let family: String
-        if lower.contains("opus") { family = "Opus" }
-        else if lower.contains("sonnet") { family = "Sonnet" }
-        else if lower.contains("haiku") { family = "Haiku" }
-        else { return name }
+        if lower.contains("opus") {
+            family = "Opus"
+        } else if lower.contains("sonnet") {
+            family = "Sonnet"
+        } else if lower.contains("haiku") {
+            family = "Haiku"
+        } else {
+            return name
+        }
         let separators: Set<Character> = ["-", ".", "_"]
         let tokens: [Substring] = name.split { separators.contains($0) }
-        let versionParts: [String] = tokens
+        let versionParts: [String] =
+            tokens
             .filter { $0.allSatisfy(\.isNumber) && $0.count <= 2 }
             .map(String.init)
         return versionParts.isEmpty ? family : "\(family) \(versionParts.joined(separator: "."))"

@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Usage pace badge on each window card ("On track" / "Running hot" / "Room to
+  spare"), comparing how much you've used against how far through the window you
+  are — a glanceable read on whether you'll make it to the reset.
 - Weekly Opus usage window, shown as its own card and factored into the menu-bar
   severity and notifications. For Max plans this is often the limit you hit first.
 - Pay-as-you-go "Extra usage" overage spend (with a progress bar) is surfaced in
@@ -31,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Background polling is now energy-aware: it pauses entirely while the display or
+  system is asleep (refreshing immediately on wake) and stretches its cadence while
+  on battery, to cut idle power draw when you're away or unplugged.
 - Network requests now go through a shared, redirect-guarded transport that blocks
   off-origin and HTTPS→HTTP redirects (so credentials can't leak), with bounded
   retries on transient failures. Keychain reads distinguish a momentary lock from

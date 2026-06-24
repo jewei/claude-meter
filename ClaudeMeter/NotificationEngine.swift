@@ -156,14 +156,14 @@ actor NotificationEngine {
         return status == .authorized || status == .provisional
     }
 
-    private static nonisolated(unsafe) let shortTimeFormatter: DateFormatter = {
+    private static let shortTimeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.timeStyle = .short
         f.dateStyle = .none
         return f
     }()
 
-    private static nonisolated(unsafe) let shortDateTimeFormatter: DateFormatter = {
+    private static let shortDateTimeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.timeStyle = .short
         f.dateStyle = .short

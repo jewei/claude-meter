@@ -302,6 +302,7 @@ struct PopoverView: View {
                     window: snap.limits.currentSession,
                     now: now,
                     thresholds: usageThresholds,
+                    paceKind: .session,
                     leadingIcon: "ClaudeLogo",
                     leadingIconColor: Self.claudeTint
                 )
@@ -311,6 +312,7 @@ struct PopoverView: View {
                     window: snap.limits.currentWeekAllModels,
                     now: now,
                     thresholds: usageThresholds,
+                    paceKind: .weekly,
                     leadingIcon: "ClaudeLogo",
                     leadingIconColor: Self.claudeTint
                 )
@@ -321,6 +323,7 @@ struct PopoverView: View {
                         window: opus,
                         now: now,
                         thresholds: usageThresholds,
+                        paceKind: .weekly,
                         leadingIcon: "ClaudeLogo",
                         leadingIconColor: Self.claudeTint
                     )

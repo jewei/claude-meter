@@ -43,6 +43,8 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 
 `scheduleRebuildPipeline()` debounces source-toggle rebuilds (300 ms) and does not restart an active poll loop.
 
+**Energy-aware poll loop** — `AppState.startPolling()` is gated by `PowerMonitor` (app target; AppKit `NSWorkspace` sleep/wake + IOKit battery — never in Core). While `isDisplayAsleep` the loop skips polling and re-checks every 300 s (`asleepRecheckSeconds`); `PowerMonitor.onWake` triggers an immediate `refreshNow()` so the number isn't stale a full interval after wake. On battery the 60 s base is ×2 (`batteryPollMultiplier`). `PowerMonitor` is `@MainActor`; its `NSWorkspace` observer tokens live in a plain `ObserverBag` so cleanup runs from a nonisolated `deinit` (a `@MainActor` class can't touch isolated non-`Sendable` state from its own deinit under Swift 6).
+
 ### Networking — `ProviderHTTP.swift`
 
 - **All** provider HTTP goes through `ProviderHTTPClient.shared` (a `HTTPTransport`): one cookie-less ephemeral session (10 s) behind `RedirectGuardDelegate`, which drops any redirect that isn't same-origin HTTPS — credentials (`Bearer`/`Cookie`) must never be replayed off-origin or downgraded. OAuth, claude.ai, and status clients all use it.
@@ -70,6 +72,7 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 
 - **File mtime ≠ data freshness** — an open-but-idle session re-emits its last (stale) snapshot every second, so the file stays fresh while the numbers are hours old. The real freshness signal is `resets_at`.
 - **Expired windows read 0%** — Claude's windows are _rolling_, so once `resets_at` passes the window has reset. `LimitWindow.resolved(asOf:)` encodes it (past reset → `percentUsed: 0`, `resetsAt: nil`; next reset isn't predictable so no countdown). Applied in `StatuslinePipeline.displayWindow`, menu bar, `UsageCardView`, widget, and `NotificationPolicy`. Widget timeline refreshes at `min(nextReset, now+15m)`.
+- **Usage pace** (`UsagePace.swift`) — `LimitWindow` has `percentUsed` + `resetsAt` but **not** the window span, so pace takes a `LimitWindowKind` (`.session` = 5 h, `.weekly` = 7 d). `percentTimeElapsed(kind:asOf:)` = `(span − timeUntilReset)/span`; `pace` classifies used vs. elapsed (±5 pt = on pace). Compute on the **`resolved(asOf:)`** window so a just-reset window reads `.unknown`, not stale. `UsageCardView(paceKind:)` drives the badge; session→`.session`, both weekly cards→`.weekly`.
 - **`lastPolledAt` advances only on successful polls**; derive staleness from `snapshot.lastSuccessfulPollAt` (`staleAfterSeconds`, default 180 s, in `AppGroupConfig`).
 - **Claude vs Cursor staleness** — `isStale` ORs both for menu-bar UX; Claude notifications use `claudeIsStale` only.
 

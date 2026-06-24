@@ -471,8 +471,14 @@ private struct DataSettingsTab: View {
         cursorStatusGeneration += 1
         let generation = cursorStatusGeneration
         cursorStatusTask = Task {
+            // `detect()` reads state.vscdb via a `sqlite3` subprocess; run it off
+            // the main actor so the UI thread doesn't block on a lower-QoS process
+            // (priority inversion). Mirrors the browser-import detach below.
+            let creds = await Task.detached(priority: .userInitiated) {
+                CursorTokenStore.detect()
+            }.value
             let status: String
-            if let creds = CursorTokenStore.detect() {
+            if let creds {
                 let plan = creds.membership.map { " · \($0)" } ?? ""
                 let emailPart = creds.email.map { ": \(Self.maskedEmail($0))" } ?? ""
                 status = "Connected\(emailPart)\(plan)"
@@ -480,7 +486,7 @@ private struct DataSettingsTab: View {
                 status = "Cursor not detected — sign in to the Cursor app."
             }
             guard !Task.isCancelled, generation == cursorStatusGeneration else { return }
-            await MainActor.run { cursorStatus = status }
+            cursorStatus = status
         }
     }
 

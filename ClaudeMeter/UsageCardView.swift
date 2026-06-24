@@ -6,6 +6,9 @@ struct UsageCardView: View {
     let window: LimitWindow
     let now: Date
     var thresholds: UsageThresholds = .default
+    /// The window's rolling span, used to derive consumption pace. `nil` hides
+    /// the pace badge (e.g. for windows whose duration we don't model).
+    var paceKind: LimitWindowKind? = nil
     /// Optional brand glyph (asset name) shown before the title.
     var leadingIcon: String? = nil
     var leadingIconColor: Color = .secondary
@@ -31,7 +34,11 @@ struct UsageCardView: View {
                 percentBadge
             }
             progressBar
-            resetTimeLabel
+            HStack(spacing: 6) {
+                resetTimeLabel
+                Spacer(minLength: 0)
+                paceBadge
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -102,6 +109,39 @@ struct UsageCardView: View {
         }
     }
 
+    // MARK: - Pace badge
+
+    /// The resolved window's consumption pace, when a window span is known and a
+    /// reset time exists. Driven by `resolvedWindow` so a just-reset window reads
+    /// `.unknown` and the badge hides.
+    private var pace: UsagePace {
+        guard let paceKind else { return .unknown }
+        return resolvedWindow.pace(kind: paceKind, asOf: now)
+    }
+
+    @ViewBuilder
+    private var paceBadge: some View {
+        if let paceKind, pace != .unknown {
+            HStack(spacing: 3) {
+                Image(systemName: pace.symbolName)
+                Text(pace.displayName)
+            }
+            .font(.caption.weight(.medium))
+            .foregroundStyle(paceColor)
+            .help(resolvedWindow.paceInsight(kind: paceKind, asOf: now)
+                ?? "Usage relative to time elapsed in this window")
+        }
+    }
+
+    private var paceColor: Color {
+        switch pace {
+        case .ahead: return .orange
+        case .behind: return .green
+        case .onPace: return .secondary
+        case .unknown: return .secondary
+        }
+    }
+
     // MARK: - Helpers
 
     private var severity: UsageSeverity {
@@ -164,6 +204,9 @@ struct UsageCardView: View {
         var parts = ["\(label) usage \(percentText)"]
         if let resetsAt = resolvedWindow.resetsAt {
             parts.append(resetDescription(resetsAt))
+        }
+        if paceKind != nil, pace != .unknown {
+            parts.append(pace.displayName)
         }
         return parts.joined(separator: ", ")
     }

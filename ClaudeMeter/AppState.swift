@@ -34,9 +34,17 @@ final class AppState: ObservableObject {
     private var rebuildDebounceTask: Task<Void, Never>?
     private var pipelineGeneration = 0
     private var refreshPending = false
+    private let powerMonitor = PowerMonitor()
 
     private static let pollIntervalSeconds: TimeInterval = 60
     private static let rebuildDebounceMilliseconds: UInt64 = 300
+    /// How much to stretch the poll cadence while on battery, to cut idle drain
+    /// when unplugged. Restored automatically on the next tick after plugging in.
+    private static let batteryPollMultiplier: Double = 2
+    /// While the display/system is asleep the loop skips polling entirely and
+    /// re-checks at this slow cadence; `PowerMonitor.onWake` provides immediacy,
+    /// so this is only a safety net (e.g. a missed wake notification).
+    private static let asleepRecheckSeconds: TimeInterval = 300
 
     var primarySourceWarning: String? {
         lastPollResult?.warnings.first { $0.field == "claude.ai API" }?.message
@@ -83,6 +91,9 @@ final class AppState: ObservableObject {
             self.lastError = record.message
         }
         delegate.appState = self
+        // Refresh immediately when the machine wakes so the menu-bar number isn't
+        // stale by a whole interval after the user returns.
+        powerMonitor.onWake = { [weak self] in self?.refreshNow() }
         startPolling()
         Task { await notificationEngine.requestAuthorizationIfNeeded() }
     }
@@ -120,8 +131,21 @@ final class AppState: ObservableObject {
             await self?.poll()
             while !Task.isCancelled {
                 guard let self else { break }
-                try? await Task.sleep(for: .seconds(Self.pollIntervalSeconds))
+                // Energy-aware cadence: skip work entirely while the display is
+                // asleep (PowerMonitor.onWake handles the immediate refresh on
+                // wake), and stretch the interval on battery to reduce drain.
+                let interval: TimeInterval
+                if self.powerMonitor.isDisplayAsleep {
+                    interval = Self.asleepRecheckSeconds
+                } else if self.powerMonitor.isOnBattery {
+                    interval = Self.pollIntervalSeconds * Self.batteryPollMultiplier
+                } else {
+                    interval = Self.pollIntervalSeconds
+                }
+                try? await Task.sleep(for: .seconds(interval))
                 guard !Task.isCancelled else { break }
+                // Re-check: the display may have gone to sleep during the wait.
+                guard !self.powerMonitor.isDisplayAsleep else { continue }
                 await self.poll()
             }
         }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Usage: scripts/release.sh [version] [build]
 #   version  e.g. 1.1   (default: reads MARKETING_VERSION from project)
-#   build    e.g. 2     (default: reads CURRENT_PROJECT_VERSION from project)
+#   build    e.g. 2     (default: git commit count — `git rev-list --count HEAD`)
 #
 # Prerequisites:
 #   • Xcode with a valid Developer ID signing identity
@@ -42,7 +42,11 @@ read_build_setting() {
 }
 
 VERSION="${1:-$(read_build_setting MARKETING_VERSION)}"
-BUILD="${2:-$(read_build_setting CURRENT_PROJECT_VERSION)}"
+# Build number defaults to the git commit count — monotonic by construction
+# (the release commit guarantees it grows between releases) and reproducible.
+# Sparkle compares this (CFBundleVersion → sparkle:version) to detect updates,
+# so it must always increase. Pass an explicit arg to override.
+BUILD="${2:-$(git -C "$PROJECT_DIR" rev-list --count HEAD)}"
 
 if [[ -z "$VERSION" || -z "$BUILD" ]]; then
     echo "error: could not read version from project. Pass them as arguments." >&2
@@ -53,6 +57,16 @@ DMG_NAME="$APP_NAME-$VERSION.dmg"
 TAG="v$VERSION"
 
 echo "▶ Releasing $APP_NAME $VERSION (build $BUILD)"
+
+# ── Persist version into the project ──────────────────────────────────────────
+# Write the release version/build back into project.pbxproj so the repo always
+# reflects what shipped (and the no-arg default path stays correct next time).
+# The archive below also passes these on the command line, so the baked
+# Info.plist — and therefore the About tab — can never drift from the release.
+
+PBXPROJ="$PROJECT/project.pbxproj"
+sed -i '' -E "s/(MARKETING_VERSION = )[^;]*;/\1$VERSION;/g" "$PBXPROJ"
+sed -i '' -E "s/(CURRENT_PROJECT_VERSION = )[^;]*;/\1$BUILD;/g" "$PBXPROJ"
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -86,6 +100,8 @@ run_xcodebuild archive \
     -configuration Release \
     -archivePath "$ARCHIVE_PATH" \
     -destination "generic/platform=macOS" \
+    MARKETING_VERSION="$VERSION" \
+    CURRENT_PROJECT_VERSION="$BUILD" \
     ONLY_ACTIVE_ARCH=NO
 
 if [[ ! -d "$ARCHIVE_PATH" ]]; then
@@ -200,8 +216,8 @@ gh release create "$TAG" "$DMG_PATH" \
 # ── Commit & push appcast ─────────────────────────────────────────────────────
 # Done last: the appcast goes live to Sparkle only once the DMG is downloadable.
 
-echo "▶ Committing appcast.xml…"
-git -C "$PROJECT_DIR" add appcast.xml
+echo "▶ Committing version bump + appcast.xml…"
+git -C "$PROJECT_DIR" add appcast.xml ClaudeMeter.xcodeproj/project.pbxproj
 git -C "$PROJECT_DIR" commit -m "Release $TAG"
 git -C "$PROJECT_DIR" push
 

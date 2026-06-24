@@ -24,6 +24,15 @@ KEYCHAIN_PROFILE="notarytool"
 GITHUB_REPO="jewei/claude-meter"
 MIN_MACOS="14.0"
 
+# xcpretty is optional; without it the archive still succeeds.
+run_xcodebuild() {
+    if command -v xcpretty >/dev/null 2>&1; then
+        xcodebuild "$@" | xcpretty --quiet
+    else
+        xcodebuild "$@"
+    fi
+}
+
 # ── Version ───────────────────────────────────────────────────────────────────
 
 read_build_setting() {
@@ -71,14 +80,13 @@ fi
 # ── Archive ───────────────────────────────────────────────────────────────────
 
 echo "▶ Archiving…"
-xcodebuild archive \
+run_xcodebuild archive \
     -project "$PROJECT" \
     -scheme "$SCHEME" \
     -configuration Release \
     -archivePath "$ARCHIVE_PATH" \
     -destination "generic/platform=macOS" \
-    ONLY_ACTIVE_ARCH=NO \
-    | xcpretty --quiet 2>/dev/null
+    ONLY_ACTIVE_ARCH=NO
 
 if [[ ! -d "$ARCHIVE_PATH" ]]; then
     echo "error: archive failed — run with 'set -x' or check Xcode for details." >&2
@@ -103,11 +111,10 @@ cat > "$EXPORT_OPTIONS" <<PLIST
 </plist>
 PLIST
 
-xcodebuild -exportArchive \
+run_xcodebuild -exportArchive \
     -archivePath "$ARCHIVE_PATH" \
     -exportPath "$EXPORT_DIR" \
-    -exportOptionsPlist "$EXPORT_OPTIONS" \
-    | xcpretty --quiet 2>/dev/null
+    -exportOptionsPlist "$EXPORT_OPTIONS"
 
 if [[ ! -d "$APP_PATH" ]]; then
     echo "error: export failed." >&2

@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Multi-account notifications no longer mis-fire when the active account changes
+  between polls, and a "refueled" alert won't trigger from a stale/persisted
+  reading on first launch or the first OAuth Opus enrichment.
 - OAuth refreshed-token cache is now scoped to the selected mode (`auto` vs
   `manual`) and cleared on disconnect, preventing tokens from crossing source
   modes inside one app session.

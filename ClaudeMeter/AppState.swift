@@ -33,6 +33,10 @@ final class AppState: ObservableObject {
     private var rebuildDebounceTask: Task<Void, Never>?
     private var pipelineGeneration = 0
     private var refreshPending = false
+    /// False until the first successful in-session poll. The first poll's
+    /// `previous` is the persisted snapshot, which must not seed notifications
+    /// (e.g. a "refueled" for a window that reset while the app was quit).
+    private var didPollInSession = false
     private var powerMonitor: PowerMonitor?
     private var lastOAuthEnrichmentAt: Date?
     private var cachedOAuthEnrichment: OAuthPipeline.OAuthEnrichment?
@@ -360,9 +364,10 @@ final class AppState: ObservableObject {
                 lastPolledAt = snap.lastSuccessfulPollAt ?? Date()
                 await notificationEngine.process(
                     snapshot: snap,
-                    previous: previous,
+                    previous: didPollInSession ? previous : nil,
                     isStale: claudeIsStale || snap.state.isStale
                 )
+                didPollInSession = true
                 if shouldReloadWidget(previous: previous, current: snap) {
                     WidgetCenter.shared.reloadAllTimelines()
                 }

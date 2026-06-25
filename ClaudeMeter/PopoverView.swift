@@ -196,7 +196,9 @@ struct PopoverView: View {
                 )
             }
         }
-        let singleID = snap.account?.email ?? "claude"
+        // Single-account override key must match how Settings stores it (the
+        // discovery account key), not the OAuth email.
+        let singleID = StatuslineBridge.defaultAccountKey
         return [
             AccountCardModel(
                 id: singleID,

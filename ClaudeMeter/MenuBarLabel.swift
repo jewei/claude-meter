@@ -31,7 +31,7 @@ struct MenuBarLabel: View {
                 .font(.system(size: 12, weight: .bold))
                 .rotationEffect(.degrees(360))
                 .animation(
-                    .linear(duration: 1).repeatForever(autoreverses: false),
+                    reduceMotion ? .default : .linear(duration: 1).repeatForever(autoreverses: false),
                     value: appState.isLoading)
         } else if showsErrorIcon {
             Image(systemName: "bolt.trianglebadge.exclamationmark.fill")
@@ -113,12 +113,18 @@ struct MenuBarLabel: View {
     // MARK: - Energy-left number (nearest limit)
 
     private var leftText: String? {
-        guard appState.isActive else { return nil }
+        // Hide the number when stale so a stale energy % isn't mistaken for fresh
+        // (the gray status dot still shows). Paused hides it too.
+        guard appState.isActive, !appState.isStale else { return nil }
         let now = Date()
         var lefts: [Double] = []
         if let snap = appState.snapshot {
-            let limitSets: [LimitInfo] =
-                (snap.accounts?.isEmpty == false) ? snap.accounts!.map(\.limits) : [snap.limits]
+            let limitSets: [LimitInfo]
+            if let accounts = snap.accounts, !accounts.isEmpty {
+                limitSets = accounts.map(\.limits)
+            } else {
+                limitSets = [snap.limits]
+            }
             for limits in limitSets {
                 let windows = [
                     limits.currentSession, limits.currentWeekAllModels, limits.currentWeekOpus,

@@ -274,16 +274,18 @@ private struct EnergyRow: View {
         }
     }
 
+    private static let weekdayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEE"
+        return f
+    }()
+
     private var resetDetail: String? {
         guard let date = window.resolved(asOf: referenceDate).resetsAt, date > referenceDate else {
             return nil
         }
         let diff = date.timeIntervalSince(referenceDate)
-        if diff >= 24 * 3600 {
-            let f = DateFormatter()
-            f.dateFormat = "EEE"
-            return f.string(from: date)
-        }
+        if diff >= 24 * 3600 { return Self.weekdayFormatter.string(from: date) }
         let h = Int(diff / 3600)
         let m = Int(diff.truncatingRemainder(dividingBy: 3600) / 60)
         if h == 0 { return "\(m)m" }

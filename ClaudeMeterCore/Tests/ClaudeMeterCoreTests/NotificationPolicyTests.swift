@@ -108,6 +108,46 @@ struct NotificationPolicyTests {
         #expect(!triggers.contains { $0.level == "recovered" })
     }
 
+    @Test("Skips all triggers when the active account switched")
+    func activeAccountSwitchSuppressed() {
+        func withActive(_ id: String, session: Double) -> ClaudeUsageSnapshot {
+            var s = snapshot(session: session)
+            s.accounts = [
+                AccountUsage(
+                    id: id, label: id, limits: s.limits, severity: .normal, isActive: true)
+            ]
+            return s
+        }
+        // Account "a" at 30% (normal), then a switch to "b" at 96% (critical):
+        // unrelated windows must not look like a crossing.
+        let previous = withActive("a", session: 30)
+        let current = withActive("b", session: 96)
+        #expect(
+            NotificationPolicy.triggers(snapshot: current, previous: previous, now: fixedNow)
+                .isEmpty)
+    }
+
+    @Test("Skips Opus crossing on first enrichment (previous lacks Opus)")
+    func opusFirstAttachSuppressed() {
+        let previous = snapshot(session: 30)  // no Opus window
+        var current = snapshot(session: 30)
+        current.limits.currentWeekOpus = LimitWindow(percentUsed: 96, resetsAt: resetAt)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: previous, now: fixedNow)
+        #expect(!triggers.contains { $0.scope == "weeklyOpus" })
+    }
+
+    @Test("Fires Opus warning when both snapshots carry Opus and it crosses")
+    func opusCrossingFires() {
+        var previous = snapshot(session: 30)
+        previous.limits.currentWeekOpus = LimitWindow(percentUsed: 70, resetsAt: resetAt)
+        var current = snapshot(session: 30)
+        current.limits.currentWeekOpus = LimitWindow(percentUsed: 85, resetsAt: resetAt)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: previous, now: fixedNow)
+        #expect(triggers.contains { $0.scope == "weeklyOpus" && $0.level == "warning" })
+    }
+
     @Test("Fires warning when reset time is unknown")
     func warningWithoutResetTime() {
         let previous = snapshot(session: 75)

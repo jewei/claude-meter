@@ -15,12 +15,37 @@ public struct JournalReader: Sendable {
     private static let maxFullReadBytes: UInt64 = 8 * 1024 * 1024
     private static let tailReadBytes: UInt64 = 512 * 1024
 
-    public let projectsPath: URL
+    /// One or more `projects/` roots (one per Claude config dir / account).
+    /// Assistant-message counts are additive across accounts, so reads union them.
+    public let projectsPaths: [URL]
+    /// Back-compat: the first configured root.
+    public var projectsPath: URL { projectsPaths.first ?? JournalReader.defaultProjectsPath }
     private let cache: JournalCache
 
-    public init(projectsPath: URL? = nil, cache: JournalCache = .shared) {
-        self.projectsPath = projectsPath ?? JournalReader.defaultProjectsPath
+    /// Multi-root: unions message counts across several config dirs' `projects/`.
+    public init(projectsPaths: [URL], cache: JournalCache = .shared) {
+        let roots = projectsPaths.isEmpty ? [JournalReader.defaultProjectsPath] : projectsPaths
+        self.projectsPaths = JournalReader.dedupe(roots)
         self.cache = cache
+    }
+
+    /// Single-root convenience (defaults to `~/.claude/projects`).
+    public init(projectsPath: URL? = nil, cache: JournalCache = .shared) {
+        self.init(
+            projectsPaths: [projectsPath ?? JournalReader.defaultProjectsPath],
+            cache: cache
+        )
+    }
+
+    /// Dedups roots by resolved path so overlapping entries never double-count.
+    private static func dedupe(_ urls: [URL]) -> [URL] {
+        var seen = Set<String>()
+        var out: [URL] = []
+        for url in urls {
+            let key = url.resolvingSymlinksInPath().standardizedFileURL.path
+            if seen.insert(key).inserted { out.append(url) }
+        }
+        return out
     }
 
     /// Returns a dict of local-date-string → assistant message count for the
@@ -34,15 +59,29 @@ public struct JournalReader: Sendable {
         let cutoff = cal.startOfDay(for: cal.date(byAdding: .day, value: offset, to: now)!)
         let fm = FileManager.default
 
+        var byDay: [String: Int] = [:]
+        for projectsPath in projectsPaths {
+            countRoot(projectsPath, cutoff: cutoff, fm: fm, into: &byDay)
+        }
+        return byDay
+    }
+
+    /// Accumulates one `projects/` root's assistant-message counts. An unreadable
+    /// root returns without touching the accumulator.
+    private func countRoot(
+        _ projectsPath: URL,
+        cutoff: Date,
+        fm: FileManager,
+        into byDay: inout [String: Int]
+    ) {
         guard
             let projectDirs = try? fm.contentsOfDirectory(
                 at: projectsPath,
                 includingPropertiesForKeys: nil,
                 options: [.skipsHiddenFiles]
             )
-        else { return [:] }
+        else { return }
 
-        var byDay: [String: Int] = [:]
         for projectDir in projectDirs {
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: projectDir.path, isDirectory: &isDir),
@@ -82,7 +121,6 @@ public struct JournalReader: Sendable {
                 merge(fileCounts, into: &byDay)
             }
         }
-        return byDay
     }
 
     // MARK: - Private helpers

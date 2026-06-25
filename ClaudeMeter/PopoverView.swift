@@ -63,6 +63,9 @@ struct PopoverView: View {
                     .padding(.vertical, 2)
                     .background(Self.claudeTint.opacity(0.15), in: Capsule())
             }
+            if !appState.otherAccounts.isEmpty, let active = appState.activeAccountLabel {
+                accountChip(active)
+            }
             Spacer()
             Toggle(isOn: activeBinding) {}
                 .toggleStyle(.switch)
@@ -80,6 +83,21 @@ struct PopoverView: View {
             get: { appState.isActive },
             set: { appState.setActive($0) }
         )
+    }
+
+    /// Compact chip naming the active account, shown only when several accounts exist.
+    private func accountChip(_ label: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "person.crop.circle")
+                .font(.caption2)
+            Text(label)
+                .font(.caption.weight(.medium))
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Color.primary.opacity(0.08), in: Capsule())
+        .help("Active account — the menu bar follows your most recently used account")
     }
 
     // MARK: - Main content
@@ -335,6 +353,10 @@ struct PopoverView: View {
                     Divider().padding(.horizontal, 14)
                     extraUsageRow(extra)
                 }
+                if !appState.otherAccounts.isEmpty {
+                    Divider().padding(.horizontal, 14)
+                    otherAccountsSection
+                }
                 if !snap.models.isEmpty {
                     Divider().padding(.horizontal, 14)
                     costBreakdown(snap.models)
@@ -401,6 +423,69 @@ struct PopoverView: View {
             : String(format: "$%.2f", value)
     }
 
+    // MARK: - Other accounts (multiple CLAUDE_CONFIG_DIR accounts)
+
+    private var otherAccountsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "person.2")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                Text("Other accounts")
+                    .font(.body.weight(.semibold))
+                Spacer()
+            }
+            ForEach(appState.otherAccounts) { account in
+                CompactAccountRow(account: account, now: now, thresholds: usageThresholds)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    /// One-line summary of a non-active account: label · 5h % · week %. Other
+    /// accounts carry statusline-only data (no plan/Opus enrichment — that's
+    /// single-slot and decorates the active account only).
+    private struct CompactAccountRow: View {
+        let account: AccountUsage
+        let now: Date
+        let thresholds: UsageThresholds
+
+        var body: some View {
+            let session = account.limits.currentSession.resolved(asOf: now)
+            let week = account.limits.currentWeekAllModels.resolved(asOf: now)
+            return HStack(spacing: 8) {
+                Text(account.label)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                metric("5h", window: session)
+                metric("wk", window: week)
+            }
+        }
+
+        private func metric(_ label: String, window: LimitWindow) -> some View {
+            let severity = thresholds.severity(for: window.percentUsed)
+            let tint: Color = {
+                switch severity {
+                case .warning: return .warningTint
+                case .critical, .overLimit: return .red
+                default: return .secondary
+                }
+            }()
+            return HStack(spacing: 3) {
+                Text(label)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(window.displayPercent ?? "—")
+                    .font(.subheadline.weight(.medium))
+                    .monospacedDigit()
+                    .foregroundStyle(window.percentUsed == nil ? Color.secondary : tint)
+            }
+        }
+    }
+
     // MARK: - Extra usage (pay-as-you-go overage)
 
     private func extraUsageRow(_ extra: ExtraUsage) -> some View {
@@ -455,7 +540,7 @@ struct PopoverView: View {
         let severity = usageThresholds.severity(for: usage.percentUsed)
         let tint: Color = {
             switch severity {
-            case .warning: return .orange
+            case .warning: return .warningTint
             case .critical, .overLimit: return .red
             default: return .accentColor
             }
@@ -527,7 +612,7 @@ struct PopoverView: View {
     }
 
     private func serviceStatusNotice(_ status: ServiceStatus) -> some View {
-        let color: Color = status.level == .critical || status.level == .major ? .red : .orange
+        let color: Color = status.level == .critical || status.level == .major ? .red : .warningTint
         return HStack(spacing: 6) {
             Image(systemName: "exclamationmark.bubble")
             Text("Anthropic: \(status.description)")
@@ -548,7 +633,7 @@ struct PopoverView: View {
                 .lineLimit(3)
         }
         .font(.body)
-        .foregroundStyle(.orange)
+        .foregroundStyle(.warningTint)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -561,7 +646,7 @@ struct PopoverView: View {
                 .lineLimit(3)
         }
         .font(.body)
-        .foregroundStyle(.orange)
+        .foregroundStyle(.warningTint)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -586,7 +671,7 @@ struct PopoverView: View {
                 .lineLimit(3)
         }
         .font(.body)
-        .foregroundStyle(.orange)
+        .foregroundStyle(.warningTint)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)

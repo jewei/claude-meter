@@ -194,4 +194,115 @@ struct StatuslineBridgeTests {
             Issue.record("Expected non-object settings JSON to throw")
         } catch {}
     }
+
+    // MARK: - Account-tagged snippet
+
+    @Test func bridgeSnippetTagsByConfigDir() {
+        // The snippet must derive the account key from CLAUDE_CONFIG_DIR and write
+        // into a per-account subdir — the basis of separating accounts.
+        #expect(StatuslineBridge.bridgeSnippet.contains("CLAUDE_CONFIG_DIR"))
+        #expect(StatuslineBridge.bridgeSnippet.contains("sessions/$A"))
+        // Mirrors ConfigDirDiscovery.accountKey: leading-dot strip + sanitize + fallback.
+        #expect(StatuslineBridge.bridgeSnippet.contains("A=${A#.}"))
+        // LC_ALL=C forces byte-oriented tr → byte-for-byte parity with the ASCII Swift set.
+        #expect(StatuslineBridge.bridgeSnippet.contains(#"LC_ALL=C tr -cd "[:alnum:]._-""#))
+    }
+
+    @Test func strippedOfAnyBridgeMigratesPriorPerSessionSnippet() {
+        // The pre-account per-session snippet is now legacyBridgeSnippets[0]; an
+        // install that stacked it before the new snippet must collapse to the user
+        // command (self-healing migration).
+        let legacyPerSession = StatuslineBridge.legacyBridgeSnippets[0]
+        let cmd = legacyPerSession + " | " + StatuslineBridge.bridgeSnippet + " | user.sh"
+        #expect(StatuslineBridge.strippedOfAnyBridge(from: cmd) == "user.sh")
+    }
+
+    // MARK: - Multi-dir install
+
+    @Test func installConfigDirsTagsEachSettingsAndPreservesUserCommand() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let dirA = base.appendingPathComponent("a", isDirectory: true)
+        let dirB = base.appendingPathComponent("b", isDirectory: true)
+        try fm.createDirectory(at: dirA, withIntermediateDirectories: true)
+        try fm.createDirectory(at: dirB, withIntermediateDirectories: true)
+        // B already has a user statusline command to preserve.
+        try Data(#"{"statusLine":{"type":"command","command":"my.sh"}}"#.utf8)
+            .write(to: dirB.appendingPathComponent("settings.json"))
+        defer { try? fm.removeItem(at: base) }
+
+        try StatuslineBridge.install(configDirs: [dirA, dirB])
+
+        func command(in dir: URL) throws -> String {
+            let data = try Data(contentsOf: dir.appendingPathComponent("settings.json"))
+            let obj = try #require(
+                try JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let statusLine = try #require(obj["statusLine"] as? [String: Any])
+            return try #require(statusLine["command"] as? String)
+        }
+        // Round-trips through JSON byte-exactly (catches snippet escaping bugs).
+        #expect(try command(in: dirA) == StatuslineBridge.bridgeSnippet + " > /dev/null")
+        #expect(try command(in: dirB) == StatuslineBridge.bridgeSnippet + " | my.sh")
+    }
+
+    @Test func installSkipsInvalidSettingsButStillInstallsOthers() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let good = base.appendingPathComponent("good", isDirectory: true)
+        let bad = base.appendingPathComponent("bad", isDirectory: true)
+        try fm.createDirectory(at: good, withIntermediateDirectories: true)
+        try fm.createDirectory(at: bad, withIntermediateDirectories: true)
+        try Data("{ not json".utf8).write(to: bad.appendingPathComponent("settings.json"))
+        defer { try? fm.removeItem(at: base) }
+
+        // The bad dir surfaces an error, but the good dir is still installed.
+        #expect(throws: (any Error).self) {
+            try StatuslineBridge.install(configDirs: [good, bad])
+        }
+        let goodData = try Data(contentsOf: good.appendingPathComponent("settings.json"))
+        let obj = try JSONSerialization.jsonObject(with: goodData) as? [String: Any]
+        let cmd = (obj?["statusLine"] as? [String: Any])?["command"] as? String
+        #expect(cmd == StatuslineBridge.bridgeSnippet + " > /dev/null")
+    }
+
+    // MARK: - Grouped reads (per-account, never blended)
+
+    @Test func readDataGroupedBucketsByAccountWithoutBlending() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let claudeDir = root.appendingPathComponent("claude", isDirectory: true)
+        let workDir = root.appendingPathComponent("claude-work", isDirectory: true)
+        try fm.createDirectory(at: claudeDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: workDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        func write(_ dir: URL, _ name: String, pct: Int, reset: Int) throws {
+            let json =
+                #"{"rate_limits":{"five_hour":{"used_percentage":\#(pct),"resets_at":\#(reset)}}}"#
+            try Data(json.utf8).write(to: dir.appendingPathComponent("\(name).json"))
+        }
+        try write(claudeDir, "s1", pct: 20, reset: 1_900_000_000)
+        try write(workDir, "s2", pct: 80, reset: 1_900_000_500)
+
+        let groups = StatuslineBridge.readDataGrouped(
+            sessionsRoot: root, legacyFile: nil, maxAge: 600)
+        #expect(groups.count == 2)
+        #expect(groups["claude"]?.fiveHour?.usedPercentage == 20)
+        #expect(groups["claude-work"]?.fiveHour?.usedPercentage == 80)
+    }
+
+    @Test func readDataGroupedBucketsLegacyFlatFilesUnderDefault() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        // A flat file directly under the sessions root (the pre-account layout).
+        let json = #"{"rate_limits":{"five_hour":{"used_percentage":42,"resets_at":1900000000}}}"#
+        try Data(json.utf8).write(to: root.appendingPathComponent("oldsession.json"))
+
+        let groups = StatuslineBridge.readDataGrouped(
+            sessionsRoot: root, legacyFile: nil, maxAge: 600)
+        #expect(groups[StatuslineBridge.defaultAccountKey]?.fiveHour?.usedPercentage == 42)
+    }
 }

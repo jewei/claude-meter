@@ -51,3 +51,37 @@ struct LimitWindowResolvedTests {
         #expect(w.resolved(asOf: now).percentUsed == nil)
     }
 }
+
+@Suite("LimitInfo.menuBarDisplayPercent")
+struct LimitInfoMenuBarDisplayTests {
+    private let now = Date(timeIntervalSince1970: 1_782_269_456)
+    private let thresholds = UsageThresholds()  // warning 80, critical 95
+
+    @Test("Calm: shows the session window (not the higher week)") func calmShowsSession() {
+        let limits = LimitInfo(
+            currentSession: LimitWindow(percentUsed: 5),
+            currentWeekAllModels: LimitWindow(percentUsed: 28))
+        #expect(limits.menuBarDisplayPercent(asOf: now, thresholds: thresholds) == "5%")
+    }
+
+    @Test("Elevated week: escalates to the binding window") func elevatedShowsBinding() {
+        let limits = LimitInfo(
+            currentSession: LimitWindow(percentUsed: 5),
+            currentWeekAllModels: LimitWindow(percentUsed: 92))
+        #expect(limits.menuBarDisplayPercent(asOf: now, thresholds: thresholds) == "92%")
+    }
+
+    @Test("Calm with no session value: falls back to binding") func calmNoSession() {
+        let limits = LimitInfo(
+            currentSession: LimitWindow(),
+            currentWeekAllModels: LimitWindow(percentUsed: 28))
+        #expect(limits.menuBarDisplayPercent(asOf: now, thresholds: thresholds) == "28%")
+    }
+
+    @Test("Elevated session itself: shows the session value") func elevatedSession() {
+        let limits = LimitInfo(
+            currentSession: LimitWindow(percentUsed: 85),
+            currentWeekAllModels: LimitWindow(percentUsed: 28))
+        #expect(limits.menuBarDisplayPercent(asOf: now, thresholds: thresholds) == "85%")
+    }
+}

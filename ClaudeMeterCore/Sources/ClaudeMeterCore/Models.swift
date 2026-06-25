@@ -15,6 +15,12 @@ public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
     public var mcp: MCPStatus?
     public var settingSources: String?
     public var state: SnapshotState
+    /// Per-account usage when more than one Claude config dir (`CLAUDE_CONFIG_DIR`)
+    /// is active. The top-level `limits`/`account`/`session`/`state` always mirror
+    /// the *active* account (most-recently-used), so single-account consumers are
+    /// unaffected. `nil` when only one account is observed — keeping `current.json`
+    /// byte-identical to the historical shape.
+    public var accounts: [AccountUsage]?
 
     public init(
         schemaVersion: Int = 1,
@@ -28,7 +34,8 @@ public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
         models: [ModelUsage] = [],
         mcp: MCPStatus? = nil,
         settingSources: String? = nil,
-        state: SnapshotState
+        state: SnapshotState,
+        accounts: [AccountUsage]? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.parserVersion = parserVersion
@@ -42,6 +49,49 @@ public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
         self.mcp = mcp
         self.settingSources = settingSources
         self.state = state
+        self.accounts = accounts
+    }
+}
+
+// MARK: - Per-account usage
+
+/// A single account's rate-limit usage, for the popover's multi-account list.
+///
+/// Flat display value type (no nested snapshot) so it persists cleanly inside the
+/// widget-readable `current.json`. The active account is also mirrored into the
+/// snapshot's top-level fields; the others are statusline-only (no plan/Opus
+/// enrichment, which is single-slot — see `OAuthPipeline`).
+public struct AccountUsage: Codable, Equatable, Sendable, Identifiable {
+    /// Account key (see `ConfigDirDiscovery.accountKey`).
+    public var id: String
+    /// Human-facing label (`default`, `it-oneone`, …).
+    public var label: String
+    public var account: AccountInfo?
+    public var session: SessionInfo?
+    public var limits: LimitInfo
+    public var lastSuccessfulPollAt: Date?
+    public var severity: UsageSeverity
+    /// `true` for the account currently mirrored into the snapshot's top-level fields.
+    public var isActive: Bool
+
+    public init(
+        id: String,
+        label: String,
+        account: AccountInfo? = nil,
+        session: SessionInfo? = nil,
+        limits: LimitInfo,
+        lastSuccessfulPollAt: Date? = nil,
+        severity: UsageSeverity,
+        isActive: Bool
+    ) {
+        self.id = id
+        self.label = label
+        self.account = account
+        self.session = session
+        self.limits = limits
+        self.lastSuccessfulPollAt = lastSuccessfulPollAt
+        self.severity = severity
+        self.isActive = isActive
     }
 }
 
@@ -160,6 +210,26 @@ public struct LimitInfo: Codable, Equatable, Sendable {
             }
         }
         return highest?.displayPercent
+    }
+
+    /// Menu-bar percent: the **Current Session** window while everything is calm
+    /// (so the immediate work budget is glanceable), escalating to the most-
+    /// constrained window once any window reaches the warning band — keeping the
+    /// number consistent with the gauge's severity color. Falls back to the binding
+    /// window when the session window has no value.
+    public func menuBarDisplayPercent(asOf now: Date, thresholds: UsageThresholds) -> String? {
+        let resolved = [currentSession, currentWeekAllModels, currentWeekOpus]
+            .compactMap { $0 }
+            .map { $0.resolved(asOf: now) }
+        let anyElevated = resolved.contains { window in
+            switch thresholds.severity(for: window.percentUsed) {
+            case .warning, .critical, .overLimit: return true
+            case .normal, .unknown: return false
+            }
+        }
+        if anyElevated { return bindingDisplayPercent(asOf: now) }
+        return currentSession.resolved(asOf: now).displayPercent
+            ?? bindingDisplayPercent(asOf: now)
     }
 }
 

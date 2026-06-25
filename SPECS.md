@@ -152,104 +152,67 @@ Connecting a method may turn its toggle on:
 
 ### 2.5 Menu bar label
 
-The menu bar label contains:
+The menu bar label is an **energy bolt + a nearest-limit status dot**:
 
-- SF Symbol icon.
-- Optional current-session percent text from the latest snapshot, or Cursor
-  percent when Cursor is the only source with data.
+- `bolt.fill` glyph.
+- A status dot (top-right) reflecting the **highest severity across all accounts**
+  (`AppState.severity` scans every `snapshot.accounts` entry, not just the active
+  one — rate limits are per-account): green (normal), orange (warning), red
+  (critical, pulsing), gray (stale). Over-limit shows a small "0" badge.
+- A compact **energy-left %** — the nearest limit, i.e. `100 − max percentUsed`
+  across the session / weekly / Opus windows of all accounts (plus Cursor when
+  enabled).
+- Loading: spinning `arrow.clockwise`. Fatal/no-snapshot error:
+  `bolt.trianglebadge.exclamationmark`.
 
-Icon selection:
-
-- Loading: `arrow.clockwise`, animated rotation.
-- Fatal/no snapshot error: `exclamationmark.circle`.
-- Stale: `clock.badge.exclamationmark`.
-- Warning: `gauge.with.dots.needle.67percent`.
-- Critical/over limit: `gauge.with.dots.needle.100percent`.
-- Normal/unknown/default: `gauge.with.dots.needle.33percent`.
-
-Inactive styling:
-
-- Use secondary foreground style.
-- Opacity 50%.
+Reduce Motion disables the critical pulse. Inactive styling: secondary
+foreground, 55% opacity, dot and number hidden.
 
 ### 2.6 Popover
 
-The popover is fixed at 320pt wide and has:
+The popover is **~360pt wide**, cream-surfaced (adaptive light/dark), and uses the
+playful "energy" design system (see DESIGN.md). Everything is framed as **energy
+remaining** ("% left" = `100 − percentUsed`); rings and bars *deplete*. Severity
+and the user thresholds still drive colors — the UI just shows the inverse.
 
-- Header:
-  - title "Claude Meter"
-  - Active/Paused toggle switch
-- Optional update-available notice (tappable, triggers `checkForUpdates()`).
-- Main content.
-- Footer (left to right):
-  - last update text
-  - Settings (gear) button
-  - Refresh button (self-contained spinner)
-  - Quit (power) button
+Anatomy (top to bottom):
 
-**Popover layout (top to bottom):**
+- **Header**: bolt app-icon tile + "Claude Meter" + "Updated …" + a circular
+  refresh button.
+- **Hero card** (combined health): a mascot emoji + a state-driven headline
+  ("You're cruising" / "Pace yourself" / "Almost tapped out" / "Take a breather")
+  and a subline that flags the lowest account. Colored by the active account's
+  energy band.
+- **ACCOUNTS** section: one **activity-ring card per account** (active first).
+  Each card has two concentric depleting rings (outer = weekly, inner = 5-hour),
+  the avatar letter, the account name (user-set display name or config-dir label),
+  an optional plan badge, and `5-hr / week / opus` rows with % left + reset.
+- Extra-usage, last-7-days cost, and Cursor cards follow when present (restyled).
+- **Footer**: a raised "＋ Add account" button + pause/resume, settings, and quit
+  (chunky square buttons).
 
-```
-┌─────────────────────────────────────┐
-│ Claude Meter                  [ ◯ ] │  ← Header: title + active toggle
-├─────────────────────────────────────┤
-│ Current Session                25%  │
-│ ████████████░░░░░░░░░░░             │
-│ Resets in 42m                       │
-├─────────────────────────────────────┤
-│ This Week                      30%  │
-│ ███████████████░░░░░░░░             │
-│ Resets 27 Jun 2026 at 3:00 PM       │
-├─────────────────────────────────────┤
-│ Updated 14s ago        [⚙] [↻] [⏻]  │  ← Footer
-└─────────────────────────────────────┘
-```
+`accountModels` builds the unified `[AccountCardModel]` (uses `snapshot.accounts`
+when present, else a single synthesized card from the top-level snapshot).
 
-Main content states (selected in order by `mainContent`):
-
-1. **Onboarding** (`hasCompletedOnboarding == false`)
-   - Inline welcome screen (see 2.2).
-2. **Paused, with snapshot** (`!isActive`, snapshot present)
-   - Shows the latest usage cards (no extra paused banner).
-3. **Paused, no snapshot** (`!isActive`, no snapshot)
-   - "Paused" + "Turn on the toggle above to start fetching usage data."
-4. **No data methods enabled** (`!hasEnabledDataSource`)
-   - "No data methods enabled"
-   - "Turn on at least one method in Settings → Data."
-   - Open Settings button
-5. **Loading** (no snapshot yet, `isLoading`)
-   - Spinner and "Checking Claude…"
-6. **Usage** (snapshot present)
-   - Current Session card, This Week card
-   - Optional degraded (claude.ai warning / poll error) and stale notices above
-     the cards
-7. **Error** (`lastError != nil`, no snapshot)
-   - Session-expired copy (offers Settings) when session credentials fail.
-   - Parse-error or generic read-error copy otherwise.
-8. **Setup / no data** (fallback)
-   - "No usage data yet"
-   - Direct users to open Claude Code for statusline data or connect OAuth /
-     claude.ai in Settings.
+Main content states (selected in order by `mainContent`): onboarding, paused
+(shows cards if data present), no-sources, loading, usage (with degraded/stale
+notices), error (session-expired offers Settings), and setup/no-data fallback.
+Each non-data state reuses the cream shell with a mascot emoji + line.
 
 ### 2.7 Settings
 
 Settings window:
 
-- SwiftUI `TabView` hosted in the `Settings` scene.
-- Floating window level, because this is an LSUIElement menu bar app
-  (`FloatingWindowAccessor`).
+- Hosted in the `Settings` scene; cream background and the chunky-card design
+  system throughout.
+- A **custom bold tab bar** (icon over a bold label; selected tab in a green pill)
+  replaces the native `TabView` chrome. Window title "Claude Meter — Settings" and
+  floating window level via `SettingsWindowAccessor` (LSUIElement menu bar app).
 - Fixed size: width 560, height 500.
 
-Tabs (in order, with SF Symbols):
-
-1. **Data** — `cylinder.split.1x2`
-2. **Notifications** — `bell`
-3. **Advanced** — `slider.horizontal.3`
-4. **About** — `info.circle`
-
-There is no longer a separate **Display** tab; the severity thresholds moved
-into the **Notifications** tab. The global **Active** toggle is not in Settings
-either — it lives in the popover header (see 2.1 / 2.6).
+Tabs: **Data** (`cylinder.split.1x2`), **Notifications** (`bell`), **Advanced**
+(`slider.horizontal.3`), **About** (`info.circle`). The global **Active** toggle
+is not in Settings — pause/resume lives in the popover footer.
 
 #### Data tab
 
@@ -258,11 +221,16 @@ sources can be enabled for redundancy. Three data-source cards
 (`DataSourceCard`), each with an icon, title, subtitle, and an enable switch.
 Toggling any source calls `rebuildPipeline()`.
 
-1. **Statusline Bridge** — icon `terminal`, primary tint
-   - Key: `statuslineSourceEnabled` (default true).
-   - Subtitle: "Check statusline once per minute."
-   - No extra controls; the bridge installs automatically and idempotently on
-     launch.
+1. **Statusline Bridge** — icon `terminal`, green tint
+   - Key: `statuslineSourceEnabled` (default true). Subtitle: "Checks your
+     statusline once per minute."
+   - Lists discovered accounts as **roomy sub-cards**: an avatar tile, an editable
+     **display name** (`accountNames`), a monospace config-dir path chip, a **plan
+     picker** (`accountPlans`: Free/Pro/Max/Team — OAuth is single-slot so plan is
+     user-set), and a mini on/off toggle (`claude` is never disablable). Plus a
+     chunky "Add config directory…" button and a short `CLAUDE_CONFIG_DIR` helper.
+     Toggle/path changes call `scheduleRebuildPipeline()`; name/plan are read back
+     by the popover each render.
 2. **Claude Code OAuth** — icon `key.fill`, yellow
    - Key: `oauthSourceEnabled` (default true).
    - Subtitle: "Use OAuth credentials from Keychain."
@@ -294,45 +262,41 @@ constants / `AppGroupConfig` values.
 
 #### Notifications tab
 
-Grouped `Form`.
+Chunky-card layout.
 
-- **Enable notifications** toggle (`enableNotifications`, default true) with copy
-  explaining that a notification posts when session or weekly usage crosses the
-  warning or critical threshold, one per threshold per reset window.
-- **Severity Thresholds** section:
-  - "Warning at" — **slider**, range 50–90, step 5, default 80
-    (`warningThresholdPercent`).
-  - "Critical at" — **slider**, range 60–100, step 5, default 95
-    (`criticalThresholdPercent`).
-  - Clamp: if critical ≤ warning, critical is bumped to `min(100, warning + 5)`.
-  - Changes sync to the App Group (`AppGroupConfig.syncDisplaySettings`) and
-    apply immediately to both the meter colors and notifications.
+- **Enable notifications** card (`enableNotifications`, default true) with a helper
+  box: one alert per threshold per reset window.
+- **Severity Thresholds** card with two **color-coded `ColorSlider`s** (orange
+  Warning, red Critical) — each a dot + label + tinted percentage pill + a
+  ring-thumb slider:
+  - Warning: range 50–90, step 5, default 80 (`warningThresholdPercent`).
+  - Critical: range 60–100, step 5, default 95 (`criticalThresholdPercent`).
+  - Clamp: if critical ≤ warning, critical bumps to `min(100, warning + 5)`.
+  - Changes sync to the App Group (`AppGroupConfig.syncDisplaySettings`) and apply
+    to both meter colors and notifications.
 
-(These thresholds drive the meter/progress-bar colors as well as notifications;
-they previously lived on a separate Display tab and used steppers.)
+Thresholds are **% used** (the engine of truth); the popover shows the inverse as
+energy left.
 
 #### Advanced tab
 
-Grouped `Form`.
+Three chunky-card sections:
 
-- **App**: "Launch at login" (`launchAtLogin`), registered/unregistered via
-  `SMAppService.mainApp` and synced from the system status on appear.
-- **Updates**: "Check for updates automatically" (`SUEnableAutomaticChecks`) plus
-  a "Check for updates…" button (Sparkle).
-- **Diagnostics**: "Open Diagnostics…" presents the diagnostics sheet
-  (`DiagnosticsView`).
+- **App** — "Launch at login" (`launchAtLogin`, purple power tile), via
+  `SMAppService.mainApp`, synced from system status on appear.
+- **Updates** — "Check for updates automatically" (`SUEnableAutomaticChecks`, blue
+  tile) with a dynamic status ("Up to date · v&lt;x&gt; ✓" green, or "Update
+  available" amber when `appState.updateAvailable`), a chunky "Check for updates…"
+  button, and "Last checked …" (Sparkle's `SULastCheckTime`).
+- **Diagnostics** — orange waveform tile + an "Open Diagnostics… ›" button
+  presenting `DiagnosticsView`.
 
 #### About tab
 
-Centered identity panel:
-
-- App logo loaded from the asset catalog (`Image("AppLogo")`) rather than
-  `NSApplication.shared.applicationIconImage`, which returns the generic macOS
-  placeholder for LSUIElement apps.
-- "Claude Meter" title and a "VERSION &lt;x&gt;" badge from
-  `CFBundleShortVersionString`.
-- A "GitHub" link to `https://github.com/jewei/claude-meter` and a
-  "© JEWEI MAK" line.
+A centered chunky card: the **green-bolt mark** (drawn in SwiftUI with a green
+glow — the app icon's identity), "Claude Meter" in Fredoka, a green "VERSION
+&lt;x&gt;" pill (`CFBundleShortVersionString`), a fit-width "View on GitHub"
+button, a divider, "© JEWEI MAK", and the trademark disclaimer.
 
 ---
 
@@ -345,6 +309,12 @@ Centered identity panel:
 | Main app  | `ClaudeMeter` app target        | SwiftUI UI, menu bar, settings, keychain wrapper for claude.ai, Sparkle integration, polling orchestration      |
 | Core      | `ClaudeMeterCore` Swift package | Models, snapshot store, pipelines, statusline bridge, OAuth keychain, API clients, parsing, notification policy |
 | Widget    | `ClaudeMeterWidgetExtension`    | WidgetKit views reading latest snapshot from App Group only                                                     |
+
+The app's playful design system lives in `PlayfulTheme.swift` (palette, fonts,
+energy semantics, chunky-3D modifiers) and `PlayfulComponents.swift` (activity
+rings, account ring card, hero, `ColorSlider`). Real **Fredoka + Nunito** are
+bundled under `ClaudeMeter/Fonts/` and registered via `ATSApplicationFontsPath`
+in both the app and widget targets.
 
 ### 3.2 App state
 
@@ -765,9 +735,13 @@ Families:
 
 Design:
 
-- Widget duplicates its `Color(widgetHex:)` helper locally.
-- Do not import app-target design token files into the widget target.
-- Widget uses dark background `#10131b`.
+- Activity-ring look matching the popover (outer = weekly, inner = 5-hour,
+  depleting; energy left) with energy rows. Adaptive cream/dark
+  `containerBackground`.
+- Widget duplicates its design tokens locally (`Color(widgetHex:)`, `WFont`); do
+  not import app-target token files into the widget target.
+- Fredoka/Nunito are bundled into the widget target too (its own
+  `ATSApplicationFontsPath = Fonts`).
 
 ---
 
@@ -792,11 +766,15 @@ Thresholds:
 Trigger rules:
 
 - Process notifications only for non-stale snapshots.
-- Trigger when session or weekly usage crosses warning/critical threshold.
+- Trigger when session or weekly usage crosses the warning/critical threshold; and
+  a **"recovered"** level when a window the user was previously over — by its *raw*
+  reading, so a reset/refill still counts — drops back to normal.
 - One notification per `(scope, level, reset-window)`.
 - If `resetsAt` is nil, the dedup key falls back to the start of the next local
-  day (`fallbackResetAnchor`) so severity escalation still notifies.
+  day (`fallbackResetAnchor`) so escalation still notifies.
 - Critical suppresses warning if critical already fired for same scope/window.
+- Copy uses the energy voice: warning/critical name the energy left ("…is at 9%.
+  Maybe touch grass? 🌱"); recovered is "You're refueled! …back to 100%. 🎉".
 
 Delivery:
 
@@ -858,6 +836,8 @@ Always sanitize before display/copy/logging:
 | Data          | `oauthSourceEnabled`       | Bool   | true            | Source toggle, priority 2                               |
 | Data          | `claudeAISourceEnabled`    | Bool   | true            | Source toggle, priority 3                               |
 | Data          | `oauthMode`                | String | `""`            | `""`, `auto`, or `manual`                               |
+| Data          | `accountPlans`             | Dict   | `{}`            | User-set plan badge per account key (OAuth single-slot) |
+| Data          | `accountNames`             | Dict   | `{}`            | User-set display name per account key                   |
 | Notifications | `warningThresholdPercent`  | Double | 80              | Slider 50–90; synced to App Group; drives meter colors  |
 | Notifications | `criticalThresholdPercent` | Double | 95              | Slider 60–100; synced to App Group; drives meter colors |
 | UI staleness  | `staleAfterSeconds`        | Double | 180             | Supported by `AppGroupConfig`; no Settings control      |

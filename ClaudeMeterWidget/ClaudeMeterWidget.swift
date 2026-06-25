@@ -57,6 +57,30 @@ private func leftText(_ window: LimitWindow, asOf now: Date) -> String {
     return "\(Int(left.rounded()))%"
 }
 
+// MARK: - Typography (Fredoka/Nunito bundled into the widget target too)
+
+private enum WFont {
+    static func display(_ size: CGFloat, _ weight: Font.Weight = .semibold) -> Font {
+        let face: String
+        switch weight {
+        case .bold, .heavy, .black: face = "Fredoka-Bold"
+        case .semibold, .medium: face = "Fredoka-SemiBold"
+        default: face = "Fredoka-Regular"
+        }
+        return .custom(face, fixedSize: size)
+    }
+
+    static func body(_ size: CGFloat, _ weight: Font.Weight = .bold) -> Font {
+        let face: String
+        switch weight {
+        case .heavy, .black: face = "Nunito-ExtraBold"
+        case .bold: face = "Nunito-Bold"
+        default: face = "Nunito-SemiBold"
+        }
+        return .custom(face, fixedSize: size)
+    }
+}
+
 // MARK: - Entry
 
 struct ClaudeMeterEntry: TimelineEntry {
@@ -178,7 +202,7 @@ private struct WidgetRings: View {
             ring(weekFraction, weekColor, diameter: size * (68.0 / 88.0))
             ring(sessionFraction, sessionColor, diameter: size * (48.0 / 88.0))
             Text(centerText)
-                .font(.system(size: size * (20.0 / 88.0), weight: .heavy, design: .rounded))
+                .font(WFont.display(size * (20.0 / 88.0), .heavy))
                 .foregroundStyle(Color.wInk)
                 .monospacedDigit()
                 .minimumScaleFactor(0.6)
@@ -234,15 +258,15 @@ private struct EnergyRow: View {
             RoundedRectangle(cornerRadius: 3, style: .continuous)
                 .fill(color).frame(width: 9, height: 9)
             Text(label)
-                .font(.system(size: 12, weight: .bold))
+                .font(WFont.body(12, .bold))
                 .foregroundStyle(Color.wInk)
             Text(leftText(window, asOf: referenceDate))
-                .font(.system(size: 12, weight: .heavy, design: .rounded))
+                .font(WFont.display(12, .heavy))
                 .foregroundStyle(color)
                 .monospacedDigit()
             if showReset, let detail = resetDetail {
                 Text("· \(detail)")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(WFont.body(11, .semibold))
                     .foregroundStyle(Color.wInkMuted)
                     .monospacedDigit()
             }
@@ -282,7 +306,7 @@ private struct WidgetHeader: View {
             }
             .frame(width: 22, height: 22)
             Text("Claude Meter")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .font(WFont.display(13, .semibold))
                 .foregroundStyle(Color.wInk)
             Spacer()
             if entry.isStale {
@@ -292,7 +316,7 @@ private struct WidgetHeader: View {
             } else if showUpdated, let pollAt = entry.snapshot?.lastSuccessfulPollAt {
                 let diff = Int(entry.date.timeIntervalSince(pollAt))
                 Text(diff < 60 ? "Updated \(max(0, diff))s ago" : "Updated \(diff / 60)m ago")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(WFont.body(10, .semibold))
                     .foregroundStyle(Color.wInkMuted)
             }
         }
@@ -399,7 +423,7 @@ private struct NoDataView: View {
         VStack(spacing: 8) {
             Text("🪫").font(.system(size: compact ? 26 : 32))
             Text("No usage yet")
-                .font(.system(size: compact ? 11 : 13, weight: .semibold, design: .rounded))
+                .font(WFont.display(compact ? 11 : 13, .semibold))
                 .foregroundStyle(Color.wInk)
             if !compact {
                 Text("Open Claude Meter to start polling.")

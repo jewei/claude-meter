@@ -69,12 +69,24 @@ actor NotificationEngine {
         // The whole app speaks "energy left", so notifications do too.
         let left = leftText(window)
         let energy = energyName(for: trigger.scope)
-        let refuel = "\(trigger.scope == "session" ? "refills" : "resets") \(resetDescription(trigger.resetAt))"
         let key = NotificationPolicy.dedupKey(
             scope: trigger.scope,
             level: trigger.level,
             resetAt: trigger.resetAt
         )
+
+        if trigger.level == "recovered" {
+            guard !hasFired(key: key) else { return }
+            let delivered = await post(
+                id: key,
+                title: "You're refueled! 🎉",
+                body: "Your \(energy) is back to \(left). Go get 'em."
+            )
+            if delivered { markFired(key: key) }
+            return
+        }
+
+        let refuel = "\(trigger.scope == "session" ? "refills" : "resets") \(resetDescription(trigger.resetAt))"
 
         if trigger.level == "critical" {
             guard !hasFired(key: key) else { return }

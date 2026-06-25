@@ -78,6 +78,36 @@ struct NotificationPolicyTests {
         #expect(!triggers.contains { $0.level == "warning" })
     }
 
+    @Test("Fires recovered when dropping from warning back to normal")
+    func recoveredFromWarning() {
+        let previous = snapshot(session: 85)
+        let current = snapshot(session: 30)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: previous, now: fixedNow)
+        #expect(triggers.contains { $0.scope == "session" && $0.level == "recovered" })
+    }
+
+    @Test("Fires recovered when a critical window resets and refills")
+    func recoveredOnReset() {
+        let previous = snapshot(session: 96)  // was critical
+        var current = snapshot(session: 40)
+        // Window reset: raw 96% but reset time has passed, so it resolves to 0%.
+        current.limits.currentSession = LimitWindow(
+            percentUsed: 96, resetsAt: fixedNow.addingTimeInterval(-60))
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: previous, now: fixedNow)
+        #expect(triggers.contains { $0.scope == "session" && $0.level == "recovered" })
+    }
+
+    @Test("No recovered when staying normal")
+    func noRecoveredWhenNormal() {
+        let previous = snapshot(session: 40)
+        let current = snapshot(session: 30)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: previous, now: fixedNow)
+        #expect(!triggers.contains { $0.level == "recovered" })
+    }
+
     @Test("Fires warning when reset time is unknown")
     func warningWithoutResetTime() {
         let previous = snapshot(session: 75)

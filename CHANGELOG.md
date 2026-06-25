@@ -11,8 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A complete visual redesign — a playful, energy-themed interface with a
+  combined-health hero, per-account **activity rings** (weekly + 5-hour), and the
+  whole app reframed as "energy remaining". Real Fredoka & Nunito typography and a
+  refreshed green-bolt app icon.
+- Per-account **display name** and **plan badge**, set in Settings → Data, so each
+  account reads how you want (rate limits are per-account).
+- A "refueled" notification when an account that was running low recovers — its
+  window drops back to normal or resets.
+
 ### Changed
 
+- The menu-bar icon is now an energy bolt with a nearest-limit status dot (across
+  all your accounts) plus your energy-left percentage.
+- Settings is fully restyled (Data / Notifications / Advanced / About) with a bold
+  tab bar, color-coded threshold sliders, and roomier multi-account rows.
+- The widget adopts the activity-ring look and adapts to light and dark.
 - Cursor usage requests now use the shared redirect-guarded provider transport,
   matching the credential-leak protections used by Claude sources.
 - OAuth-only enrichment for statusline/claude.ai snapshots is cached and

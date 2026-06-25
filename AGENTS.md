@@ -25,6 +25,14 @@ The App Group entitlement needs a real provisioning profile to _run_;
 - **`JournalReader`** — used by `ClaudeAIPipeline` for cosmetic message-count labels (disk scan runs off-main).
 - **`CostUsageScanner`** — scans `assistant` lines for `message.usage` across **every discovered config dir's `projects/`** (`projectsPaths:`, deduped by resolved path — cost is additive across accounts; one unreadable root `continue`s instead of zeroing the union; the single-path `projectsPath:` init stays as a shim). Dedups streaming chunks by `message.id + requestId` (or line index when ids are absent) taking the **max** per token field (counts are cumulative, summing over-counts), prices per family via `ModelPricing` (`opus`/`haiku`/Sonnet-default substring match — estimates only), and fills `ClaudeUsageSnapshot.models` (last 7 days, one unioned total). Files >8 MB are tail-read (4 MB); `CostUsageResult.isPartialEstimate` surfaces incomplete totals. Per-file cache (`CostUsageCache`) keyed by mtime+size with LRU cap (512); window filtering at read time. `JournalReader` unions roots the same way.
 
+### Playful UI / energy design
+
+- **Design system** lives in `PlayfulTheme.swift` (adaptive cream palette, `PFont` Fredoka/Nunito roles, energy semantics, chunky-3D `ViewModifier`s) and `PlayfulComponents.swift` (`ActivityRingsView`, `AccountRingCard`, `HeroSummary`, `ColorSlider`). `DESIGN.md` is the spec.
+- **Energy framing** — the UI shows **energy remaining** (`percentLeft = 100 − percentUsed`; rings/bars *deplete*), but severity still keys off the existing `UsageThresholds` (% used: warning 80 / critical 95), so the menu-bar dot, ring colors, notifications, and the user's threshold settings all stay consistent. Don't reframe thresholds as "% left" — only the *display* is inverted.
+- **Fonts** — real Fredoka + Nunito ship under `ClaudeMeter/Fonts/` (OFL, static per-weight TTFs), wired as a **folder reference** into both the app and widget Resources phases with `ATSApplicationFontsPath = Fonts`. `PFont` (app) / widget-local `WFont` map a `Font.Weight` to an exact PostScript face (`Fredoka-SemiBold`, `Nunito-ExtraBold`, …) — no fragile variable-font `.weight()`. The **menu bar keeps SF system** (metrics); the **app icon** is a SwiftUI-drawn green bolt (regenerate via the icon-gen approach, all 10 `AppIcon` sizes).
+- **Per-account name + plan** — `AppGroupConfig.accountNames` / `accountPlans` (keyed by account key, e.g. `claude-tech-oneone`) are **user-set** in Settings → Data → Statusline Bridge, because plan/email are OAuth single-slot (one shared Keychain login; no per-dir creds). The popover reads them: `name override ?? friendlyName(label)`, `plan override ?? OAuth plan (active account only)`.
+- **`AppState.severity` scans all accounts** (nearest-limit) for the menu bar, not just the active one. **Settings** uses a custom bold tab bar (not native `TabView`); the window title is set via `SettingsWindowAccessor`.
+
 ### Data-source fallback order
 
 Tier 1 is used while the statusline bridge is fresh; when stale, tiers 2–3 run (rate-limited). Each tier falls through to the next on failure.
@@ -112,11 +120,13 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 
 - **`NotificationEngine` is an actor**; only processes non-stale Claude snapshots; thresholds via `AppGroupConfig.currentThresholds(defaults:)`.
 - **Dedup** is one per `(scope, level, resetsAt-epoch)`; critical suppresses warning. When `resetsAt` is nil, falls back to the start of the next local day. `markFired` only after `UNUserNotificationCenter.add` succeeds. No sound.
+- **Recovered ("refueled")** — a `level: "recovered"` trigger fires when a window the user was previously over (by its **raw** previous severity, so a reset/refill counts) drops back to normal; delivered with the energy voice ("You're refueled! …back to 100%. 🎉"). `NotificationPolicy.evaluate` resolves the *current* window but reads the *raw* previous percent so a reset isn't masked. All copy is energy-left framed.
 
 ## Widget / App Group
 
 - **Sandboxed** — never fall back to `applicationSupport()`; read `SnapshotStore.appGroup()` only and return `nil` gracefully.
-- **Opus weekly** — medium/large widget shows `WEEK (OPUS)` when present; timeline refresh includes `currentWeekOpus.resetsAt`.
+- **Activity-ring look** — depleting rings (outer weekly, inner 5-hour) + energy rows; medium/large add an `opus` row when present; timeline refresh includes `currentWeekOpus.resetsAt`. Adaptive cream/dark `containerBackground`.
+- **Fonts bundled into the widget too** — Fredoka/Nunito via the widget's own `ATSApplicationFontsPath`; widget-local `WFont` mirrors `PFont` (don't import app tokens).
 - **macOS 26 SDK** — `Widget`/`WidgetBundle` live in `SwiftUI`; the bundle file needs `import SwiftUI` even though it uses `WidgetKit` types.
 - **Design tokens aren't shared across targets** — duplicate `Color(hex:)` as `Color(widgetHex:)` in the widget. Intentional.
 

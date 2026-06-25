@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		2B9EF3C1324E496AB3B6E96A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */; };
 		BAFA3278374FD1C9FCC06D7B /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = 79FAFFB9B2AADEDB517FE4EF /* Fonts */; };
+		E200B9041BA1978D42EFF55E /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = 79FAFFB9B2AADEDB517FE4EF /* Fonts */; };
 		328C7D858BAA4A39B59ED745 /* DesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = A33698B9F9BB4AE4BDF69097 /* DesignTokens.swift */; };
 		5B4D714E08E985C8B6585454 /* PlayfulTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8C6B61CE7B7508EC05E5944 /* PlayfulTheme.swift */; };
 		CDD0658EE9F301E3F88CDB39 /* PlayfulComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = C30CB82FB9488E6512B08E66 /* PlayfulComponents.swift */; };
@@ -263,6 +264,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E200B9041BA1978D42EFF55E /* Fonts in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

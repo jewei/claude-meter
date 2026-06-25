@@ -26,22 +26,22 @@ public enum NotificationPolicy {
         [
             evaluate(
                 scope: "session",
-                current: snapshot.limits.currentSession.resolved(asOf: now),
-                previous: previous?.limits.currentSession.resolved(asOf: now),
+                current: snapshot.limits.currentSession,
+                previous: previous?.limits.currentSession,
                 thresholds: thresholds,
                 now: now
             ),
             evaluate(
                 scope: "weekly",
-                current: snapshot.limits.currentWeekAllModels.resolved(asOf: now),
-                previous: previous?.limits.currentWeekAllModels.resolved(asOf: now),
+                current: snapshot.limits.currentWeekAllModels,
+                previous: previous?.limits.currentWeekAllModels,
                 thresholds: thresholds,
                 now: now
             ),
             evaluate(
                 scope: "weeklyOpus",
-                current: (snapshot.limits.currentWeekOpus ?? LimitWindow()).resolved(asOf: now),
-                previous: (previous?.limits.currentWeekOpus ?? LimitWindow()).resolved(asOf: now),
+                current: snapshot.limits.currentWeekOpus ?? LimitWindow(),
+                previous: previous?.limits.currentWeekOpus ?? LimitWindow(),
                 thresholds: thresholds,
                 now: now
             ),
@@ -70,12 +70,15 @@ public enum NotificationPolicy {
 
     private static func evaluate(
         scope: String,
-        current: LimitWindow,
-        previous: LimitWindow?,
+        current rawCurrent: LimitWindow,
+        previous rawPrevious: LimitWindow?,
         thresholds: UsageThresholds,
         now: Date
     ) -> [NotificationTrigger] {
-        let previousSeverity = thresholds.severity(for: previous?.percentUsed)
+        // Rolling windows past their reset read as 0% — resolve for the current
+        // state, but keep the *raw* previous reading for recovery detection.
+        let current = rawCurrent.resolved(asOf: now)
+        let previousSeverity = thresholds.severity(for: rawPrevious?.resolved(asOf: now).percentUsed)
         let currentSeverity = thresholds.severity(for: current.percentUsed)
 
         let escalatedToCritical = isCritical(currentSeverity) && !isCritical(previousSeverity)
@@ -83,25 +86,27 @@ public enum NotificationPolicy {
             currentSeverity == .warning
             && (previousSeverity == .normal || previousSeverity == .unknown)
 
-        guard escalatedToCritical || escalatedToWarning else { return [] }
-
-        let resetAt: Date
-        if let parsed = current.resetsAt {
-            guard parsed > now else { return [] }
-            resetAt = parsed
-        } else {
-            resetAt = fallbackResetAnchor(now: now)
+        if escalatedToCritical || escalatedToWarning {
+            let resetAt: Date
+            if let parsed = current.resetsAt {
+                guard parsed > now else { return [] }
+                resetAt = parsed
+            } else {
+                resetAt = fallbackResetAnchor(now: now)
+            }
+            let level = escalatedToCritical ? "critical" : "warning"
+            return [NotificationTrigger(scope: scope, level: level, resetAt: resetAt)]
         }
 
-        var result: [NotificationTrigger] = []
-
-        if escalatedToCritical {
-            result.append(NotificationTrigger(scope: scope, level: "critical", resetAt: resetAt))
-        } else if escalatedToWarning {
-            result.append(NotificationTrigger(scope: scope, level: "warning", resetAt: resetAt))
+        // Recovery ("refueled"): a window the user was previously over — by its
+        // *raw* reading, so a reset/refill still counts — is back to normal.
+        let rawPreviousSeverity = thresholds.severity(for: rawPrevious?.percentUsed)
+        if currentSeverity == .normal && isElevated(rawPreviousSeverity) {
+            let resetAt = current.resetsAt ?? fallbackResetAnchor(now: now)
+            return [NotificationTrigger(scope: scope, level: "recovered", resetAt: resetAt)]
         }
 
-        return result
+        return []
     }
 
     private static func fallbackResetAnchor(now: Date) -> Date {
@@ -112,5 +117,9 @@ public enum NotificationPolicy {
 
     private static func isCritical(_ severity: UsageSeverity) -> Bool {
         severity == .critical || severity == .overLimit
+    }
+
+    private static func isElevated(_ severity: UsageSeverity) -> Bool {
+        severity == .warning || severity == .critical || severity == .overLimit
     }
 }

@@ -258,23 +258,29 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Highest severity across the user's limits — the menu bar's "nearest-limit"
+    /// signal. Scans **every account's** windows when several are present (rate
+    /// limits are per-account, so any account hitting a wall should color the
+    /// icon), else the top-level/active limits.
     var severity: UsageSeverity {
         let thresholds = Self.currentThresholds()
         let now = Date()
         var result: UsageSeverity = .unknown
         if let snap = snapshot {
-            let session = snap.limits.currentSession.resolved(asOf: now)
-            let week = snap.limits.currentWeekAllModels.resolved(asOf: now)
-            result = UsageSeverity.highest(
-                result,
-                thresholds.severity(for: session.percentUsed)
-            )
-            result = UsageSeverity.highest(
-                result,
-                thresholds.severity(for: week.percentUsed)
-            )
-            if let opus = snap.limits.currentWeekOpus?.resolved(asOf: now) {
-                result = UsageSeverity.highest(result, thresholds.severity(for: opus.percentUsed))
+            let limitSets: [LimitInfo]
+            if let accounts = snap.accounts, !accounts.isEmpty {
+                limitSets = accounts.map(\.limits)
+            } else {
+                limitSets = [snap.limits]
+            }
+            for limits in limitSets {
+                let windows = [
+                    limits.currentSession, limits.currentWeekAllModels, limits.currentWeekOpus,
+                ].compactMap { $0 }
+                for window in windows {
+                    result = UsageSeverity.highest(
+                        result, thresholds.severity(for: window.resolved(asOf: now).percentUsed))
+                }
             }
         }
         if AppSettings.cursorSourceEnabled, let cursor = cursorUsage {

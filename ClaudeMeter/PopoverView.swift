@@ -19,26 +19,19 @@ struct PopoverView: View {
 
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
-    /// Claude "clay" brand color used to tint the Claude glyph.
-    private static let claudeTint = Color(hex: "D97757")
-
     var body: some View {
         VStack(spacing: 0) {
             headerBar
-            Divider()
             if appState.updateAvailable {
                 updateAvailableNotice
-                Divider()
             }
             if let status = appState.serviceStatus, status.level.isIncident {
                 serviceStatusNotice(status)
-                Divider()
             }
             mainContent
-            Divider()
             footerBar
         }
-        .background(.regularMaterial)
+        .background(Color.pfPopover)
         .onReceive(ticker) { now = $0 }
         .onAppear {
             skipOnboardingForExistingUsers()
@@ -51,53 +44,32 @@ struct PopoverView: View {
     // MARK: - Header
 
     private var headerBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 9) {
+            RaisedTile(fill: .pfEnergyFull, size: 30, radius: 9) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.white)
+            }
             Text("Claude Meter")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.primary)
-            if let plan = appState.snapshot?.account?.plan {
-                Text(plan)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Self.claudeTint)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Self.claudeTint.opacity(0.15), in: Capsule())
+                .font(PFont.display(18, .semibold))
+                .foregroundStyle(Color.pfInk)
+            Spacer(minLength: 6)
+            if !needsOnboarding {
+                Text(updatedText)
+                    .font(PFont.body(11, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+                    .monospacedDigit()
+                HeaderRefreshButton(
+                    isLoading: appState.isLoading,
+                    isEnabled: appState.isActive && appState.hasEnabledDataSource
+                ) {
+                    appState.refreshNow()
+                }
             }
-            if !appState.otherAccounts.isEmpty, let active = appState.activeAccountLabel {
-                accountChip(active)
-            }
-            Spacer()
-            Toggle(isOn: activeBinding) {}
-                .toggleStyle(.switch)
-                .labelsHidden()
-                .help(
-                    appState.isActive
-                        ? "Active — fetching usage data" : "Paused — not fetching usage data")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-
-    private var activeBinding: Binding<Bool> {
-        Binding(
-            get: { appState.isActive },
-            set: { appState.setActive($0) }
-        )
-    }
-
-    /// Compact chip naming the active account, shown only when several accounts exist.
-    private func accountChip(_ label: String) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: "person.crop.circle")
-                .font(.caption2)
-            Text(label)
-                .font(.caption.weight(.medium))
-        }
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(Color.primary.opacity(0.08), in: Capsule())
-        .help("Active account — the menu bar follows your most recently used account")
+        .padding(.horizontal, 15)
+        .padding(.top, 14)
+        .padding(.bottom, 8)
     }
 
     // MARK: - Main content
@@ -115,11 +87,7 @@ struct PopoverView: View {
         if needsOnboarding {
             onboardingContent
         } else if !appState.isActive {
-            if hasAnyData {
-                dataState
-            } else {
-                inactiveState
-            }
+            if hasAnyData { dataState } else { inactiveState }
         } else if !appState.hasEnabledDataSource {
             noSourcesState
         } else if !hasAnyData && appState.isLoading {
@@ -135,394 +103,151 @@ struct PopoverView: View {
         }
     }
 
-    private var onboardingContent: some View {
-        VStack(spacing: 16) {
-            Spacer(minLength: 8)
-
-            // Asset catalog image, not `applicationIconImage` (which returns the
-            // generic macOS placeholder for LSUIElement apps).
-            Image("AppLogo")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 56, height: 56)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-            VStack(spacing: 4) {
-                HStack(spacing: 0) {
-                    Text("Welcome to ")
-                        .foregroundStyle(Color(hex: "a8b4c8"))
-                    Text("Claude Meter")
-                        .foregroundStyle(Color(hex: "f0a878"))
-                }
-                .font(.title3.weight(.bold))
-            }
-
-            Text("Click the settings button below to configure your data sources and get started.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 8)
-
-            Spacer(minLength: 8)
-
-            Image(systemName: "chevron.down")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Color(hex: "f0a878"))
-                .padding(.bottom, 4)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 24)
-    }
-
-    private var inactiveState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "pause.circle")
-                .font(.system(size: 28))
-                .foregroundStyle(.secondary)
-            Text("Paused")
-                .font(.system(size: 13, weight: .medium))
-            Text("Turn on the toggle above to start fetching usage data.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
-        .padding(.horizontal, 16)
-    }
-
-    private var noSourcesState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "switch.2")
-                .font(.system(size: 28))
-                .foregroundStyle(.secondary)
-            Text("No data methods enabled")
-                .font(.system(size: 13, weight: .medium))
-            Text("Turn on at least one method in Settings → Data.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("Open Settings") { openSettingsAndCompleteOnboarding() }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
-        .padding(.horizontal, 16)
-    }
-
-    private var loadingState: some View {
-        VStack(spacing: 10) {
-            ProgressView().scaleEffect(0.8)
-            Text(loadingMessage)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 32)
-    }
-
-    private var loadingMessage: String {
-        if AppSettings.hasClaudeSource && cursorSourceEnabled { return "Checking usage…" }
-        if cursorSourceEnabled && !AppSettings.hasClaudeSource { return "Checking Cursor…" }
-        return "Checking Claude…"
-    }
-
-    private var setupState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "doc.text.magnifyingglass")
-                .font(.system(size: 28))
-                .foregroundStyle(.secondary)
-            Text("No usage data yet")
-                .font(.system(size: 13, weight: .medium))
-            Text(setupMessage)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
-        .padding(.horizontal, 16)
-    }
-
-    private var setupMessage: String {
-        if cursorSourceEnabled && !AppSettings.hasClaudeSource {
-            return "Sign in to the Cursor app so Claude Meter can read your billing usage."
-        }
-        if AppSettings.hasClaudeSource && cursorSourceEnabled {
-            return "Open Claude Code or sign in to Cursor, or connect OAuth/claude.ai in Settings."
-        }
-        return
-            "Open Claude Code so the statusline bridge can publish usage, or connect OAuth/claude.ai in Settings."
-    }
-
-    private var cursorErrorState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "exclamationmark.circle")
-                .font(.system(size: 28))
-                .foregroundStyle(.red)
-            Text("Could not read Cursor usage")
-                .font(.system(size: 13, weight: .medium))
-            if let err = appState.cursorError {
-                Text(err)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-            Button("Open Settings") { openSettingsAndCompleteOnboarding() }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
-        .padding(.horizontal, 16)
-    }
-
-    private var errorState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "exclamationmark.circle")
-                .font(.system(size: 28))
-                .foregroundStyle(.red)
-            Text(errorTitle)
-                .font(.system(size: 13, weight: .medium))
-            if let hint = errorHint {
-                Text(hint)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-            if shouldOfferSettings {
-                Button("Open Settings") { openSettingsAndCompleteOnboarding() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
-        .padding(.horizontal, 16)
-    }
+    // MARK: - Data state
 
     @ViewBuilder
     private var dataState: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 12) {
             if let snap = appState.snapshot {
-                if let apiWarning = appState.primarySourceWarning {
-                    apiDegradedNotice(apiWarning)
-                    Divider()
-                } else if appState.lastError != nil {
-                    pollErrorNotice
-                    Divider()
-                }
-                if appState.isStale {
-                    staleNotice
-                    Divider()
-                }
-                UsageCardView(
-                    label: "Current Session",
-                    window: snap.limits.currentSession,
-                    now: now,
-                    thresholds: usageThresholds,
-                    paceKind: .session,
-                    leadingIcon: "ClaudeLogo",
-                    leadingIconColor: Self.claudeTint
-                )
-                Divider().padding(.horizontal, 14)
-                UsageCardView(
-                    label: "This Week",
-                    window: snap.limits.currentWeekAllModels,
-                    now: now,
-                    thresholds: usageThresholds,
-                    paceKind: .weekly,
-                    leadingIcon: "ClaudeLogo",
-                    leadingIconColor: Self.claudeTint
-                )
-                if let opus = snap.limits.currentWeekOpus {
-                    Divider().padding(.horizontal, 14)
-                    UsageCardView(
-                        label: "This Week (Opus)",
-                        window: opus,
-                        now: now,
-                        thresholds: usageThresholds,
-                        paceKind: .weekly,
-                        leadingIcon: "ClaudeLogo",
-                        leadingIconColor: Self.claudeTint
-                    )
-                }
+                claudeNotices(snap)
+                let models = accountModels(snap)
+                HeroView(
+                    summary: HeroSummary.make(
+                        models: models, thresholds: usageThresholds, now: now))
+                accountsSection(models)
                 if let extra = snap.limits.extraUsage, extra.hasSpend {
-                    Divider().padding(.horizontal, 14)
-                    extraUsageRow(extra)
-                }
-                if !appState.otherAccounts.isEmpty {
-                    Divider().padding(.horizontal, 14)
-                    otherAccountsSection
+                    extraUsageCard(extra)
                 }
                 if !snap.models.isEmpty {
-                    Divider().padding(.horizontal, 14)
-                    costBreakdown(snap.models)
+                    costCard(snap.models)
                 }
             }
             if hasCursor, let cursor = appState.cursorUsage {
-                if appState.snapshot != nil { Divider().padding(.horizontal, 14) }
-                if appState.cursorError != nil {
-                    cursorPollErrorNotice
-                    Divider()
-                } else if appState.cursorIsStale {
-                    cursorStaleNotice
-                    Divider()
-                }
+                cursorNotices()
                 cursorCard(cursor)
             }
         }
+        .padding(.horizontal, 15)
+        .padding(.top, 2)
+        .padding(.bottom, 12)
     }
 
-    // MARK: - Cost breakdown (local log scan, last 7 days)
+    @ViewBuilder
+    private func claudeNotices(_ snap: ClaudeUsageSnapshot) -> some View {
+        if let apiWarning = appState.primarySourceWarning {
+            noticeBanner(apiWarning, systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
+        } else if appState.lastError != nil {
+            noticeBanner(pollErrorText, systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
+        }
+        if appState.isStale {
+            noticeBanner("Data may be stale", systemImage: "clock.fill", tint: .pfInkMuted)
+        }
+    }
 
-    private func costBreakdown(_ models: [ModelUsage]) -> some View {
-        // Total reflects all models; the per-row list hides sub-cent/no-cost noise
-        // (e.g. synthetic helper models) to keep the breakdown legible.
-        let total = models.reduce(0.0) { $0 + ($1.costUsd ?? 0) }
-        let rows = models.filter { ($0.costUsd ?? 0) >= 0.005 }.prefix(4)
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 7) {
-                Image(systemName: "chart.bar")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                Text("Last 7 days")
-                    .font(.body.weight(.semibold))
-                if appState.costScanPartial {
-                    Text("partial")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                }
+    @ViewBuilder
+    private func cursorNotices() -> some View {
+        if appState.cursorError != nil {
+            noticeBanner(
+                appState.cursorError ?? "Cursor refresh failed — showing last known data",
+                systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
+        } else if appState.cursorIsStale {
+            noticeBanner("Cursor data may be outdated", systemImage: "clock.fill", tint: .pfInkMuted)
+        }
+    }
+
+    // MARK: - Accounts
+
+    private func accountsSection(_ models: [AccountCardModel]) -> some View {
+        VStack(spacing: 10) {
+            HStack {
+                Text("ACCOUNTS")
+                    .font(PFont.body(11, .heavy))
+                    .tracking(0.9)
+                    .foregroundStyle(Color.pfSectionLabel)
                 Spacer()
-                Text(Self.usd(total))
-                    .font(.body.weight(.semibold))
-                    .monospacedDigit()
+                RingLegend()
             }
-            ForEach(rows, id: \.name) { model in
-                HStack {
-                    Text(model.displayName)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(Self.usd(model.costUsd ?? 0))
-                        .font(.subheadline)
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
+            .padding(.horizontal, 2)
+            ForEach(models) { model in
+                AccountRingCard(model: model, now: now, thresholds: usageThresholds)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
     }
 
-    private static func usd(_ value: Double) -> String {
-        value < 0.01 && value > 0
-            ? "<$0.01"
-            : String(format: "$%.2f", value)
+    /// Builds the unified per-account list: `snapshot.accounts` when present
+    /// (active first), else a single card synthesized from the top-level snapshot.
+    /// Plan/email/Opus come from OAuth and exist only for the active account.
+    private func accountModels(_ snap: ClaudeUsageSnapshot) -> [AccountCardModel] {
+        if let accounts = snap.accounts, !accounts.isEmpty {
+            let sorted = accounts.sorted { lhs, rhs in
+                if lhs.isActive != rhs.isActive { return lhs.isActive }
+                return lhs.label.localizedCaseInsensitiveCompare(rhs.label) == .orderedAscending
+            }
+            return sorted.map { acc in
+                AccountCardModel(
+                    id: acc.id,
+                    label: AppGroupConfig.accountName(forKey: acc.id) ?? friendlyName(acc.label),
+                    plan: AppGroupConfig.accountPlan(forKey: acc.id)
+                        ?? (acc.isActive ? snap.account?.plan : acc.account?.plan),
+                    subtitle: acc.isActive ? snap.account?.email : acc.account?.email,
+                    session: acc.limits.currentSession,
+                    week: acc.limits.currentWeekAllModels,
+                    opus: acc.isActive ? snap.limits.currentWeekOpus : acc.limits.currentWeekOpus
+                )
+            }
+        }
+        let singleID = snap.account?.email ?? "claude"
+        return [
+            AccountCardModel(
+                id: singleID,
+                label: AppGroupConfig.accountName(forKey: singleID) ?? "Claude",
+                plan: AppGroupConfig.accountPlan(forKey: singleID) ?? snap.account?.plan,
+                subtitle: snap.account?.email,
+                session: snap.limits.currentSession,
+                week: snap.limits.currentWeekAllModels,
+                opus: snap.limits.currentWeekOpus
+            )
+        ]
     }
 
-    // MARK: - Other accounts (multiple CLAUDE_CONFIG_DIR accounts)
-
-    private var otherAccountsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 7) {
-                Image(systemName: "person.2")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                Text("Other accounts")
-                    .font(.body.weight(.semibold))
-                Spacer()
-            }
-            ForEach(appState.otherAccounts) { account in
-                CompactAccountRow(account: account, now: now, thresholds: usageThresholds)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-
-    /// One-line summary of a non-active account: label · 5h % · week %. Other
-    /// accounts carry statusline-only data (no plan/Opus enrichment — that's
-    /// single-slot and decorates the active account only).
-    private struct CompactAccountRow: View {
-        let account: AccountUsage
-        let now: Date
-        let thresholds: UsageThresholds
-
-        var body: some View {
-            let session = account.limits.currentSession.resolved(asOf: now)
-            let week = account.limits.currentWeekAllModels.resolved(asOf: now)
-            return HStack(spacing: 8) {
-                Text(account.label)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                metric("5h", window: session)
-                metric("wk", window: week)
-            }
-        }
-
-        private func metric(_ label: String, window: LimitWindow) -> some View {
-            let severity = thresholds.severity(for: window.percentUsed)
-            let tint: Color = {
-                switch severity {
-                case .warning: return .warningTint
-                case .critical, .overLimit: return .red
-                default: return .secondary
-                }
-            }()
-            return HStack(spacing: 3) {
-                Text(label)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Text(window.displayPercent ?? "—")
-                    .font(.subheadline.weight(.medium))
-                    .monospacedDigit()
-                    .foregroundStyle(window.percentUsed == nil ? Color.secondary : tint)
-            }
-        }
+    /// "it-oneone" → "It Oneone", "default" → "Default".
+    private func friendlyName(_ raw: String) -> String {
+        let spaced = raw.replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+        return spaced.split(separator: " ")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
     }
 
     // MARK: - Extra usage (pay-as-you-go overage)
 
-    private func extraUsageRow(_ extra: ExtraUsage) -> some View {
+    private func extraUsageCard(_ extra: ExtraUsage) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
-                Image(systemName: "creditcard")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
+                Text("💳").font(.system(size: 13))
                 Text("Extra usage")
-                    .font(.body.weight(.semibold))
+                    .font(PFont.display(14, .semibold))
+                    .foregroundStyle(Color.pfInk)
                 if !extra.isEnabled {
                     Text("paused")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Color.primary.opacity(0.1), in: Capsule())
+                        .font(PFont.body(10, .bold))
+                        .foregroundStyle(Color.pfInkMuted)
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(Capsule().fill(Color.pfTrack))
                 }
                 Spacer()
                 Text(extraUsageText(extra))
-                    .font(.body.weight(.semibold))
+                    .font(PFont.display(14, .bold))
+                    .foregroundStyle(Color.pfInk)
                     .monospacedDigit()
-                    .foregroundStyle(.primary)
             }
             if let pct = extra.percentUsed {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Color.primary.opacity(0.12))
-                        Capsule().fill(Color.accentColor)
-                            .frame(width: max(0, geo.size.width * min(1, pct / 100)))
-                    }
-                }
-                .frame(height: 5)
+                capsuleBar(fraction: min(1, pct / 100), color: .pfEnergyFull)
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.vertical, 13)
+        .chunkyCard()
     }
 
     private func extraUsageText(_ extra: ExtraUsage) -> String {
@@ -534,45 +259,77 @@ struct PopoverView: View {
         return used
     }
 
-    // MARK: - Cursor card
+    // MARK: - Cost breakdown (local log scan, last 7 days)
 
-    private func cursorCard(_ usage: CursorUsage) -> some View {
-        let severity = usageThresholds.severity(for: usage.percentUsed)
-        let tint: Color = {
-            switch severity {
-            case .warning: return .warningTint
-            case .critical, .overLimit: return .red
-            default: return .accentColor
-            }
-        }()
+    private func costCard(_ models: [ModelUsage]) -> some View {
+        let total = models.reduce(0.0) { $0 + ($1.costUsd ?? 0) }
+        let rows = models.filter { ($0.costUsd ?? 0) >= 0.005 }.prefix(4)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
-                Image("CursorLogo")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 15, height: 15)
-                Text("Cursor").font(.body.weight(.semibold))
-                Spacer()
-                Text(usage.clampedPercent.map { "\(Int($0.rounded()))%" } ?? "—")
-                    .font(.body.weight(.semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(
-                        severity == .normal || severity == .unknown ? Color.primary : tint)
-            }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.primary.opacity(0.12))
-                    Capsule().fill(tint)
-                        .frame(width: max(0, geo.size.width * ((usage.clampedPercent ?? 0) / 100)))
+                Text("💸").font(.system(size: 13))
+                Text("Last 7 days")
+                    .font(PFont.display(14, .semibold))
+                    .foregroundStyle(Color.pfInk)
+                if appState.costScanPartial {
+                    Text("partial")
+                        .font(PFont.body(10, .semibold))
+                        .foregroundStyle(Color.pfInkMuted)
                 }
+                Spacer()
+                Text(Self.usd(total))
+                    .font(PFont.display(14, .bold))
+                    .foregroundStyle(Color.pfInk)
+                    .monospacedDigit()
             }
-            .frame(height: 5)
-            if let subtitle = cursorSubtitle(usage) {
-                Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
+            ForEach(rows, id: \.name) { model in
+                HStack {
+                    Text(model.displayName)
+                        .font(PFont.body(12, .semibold))
+                        .foregroundStyle(Color.pfInkMuted)
+                    Spacer()
+                    Text(Self.usd(model.costUsd ?? 0))
+                        .font(PFont.body(12, .semibold))
+                        .foregroundStyle(Color.pfInkMuted)
+                        .monospacedDigit()
+                }
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.vertical, 13)
+        .chunkyCard()
+    }
+
+    private static func usd(_ value: Double) -> String {
+        value < 0.01 && value > 0 ? "<$0.01" : String(format: "$%.2f", value)
+    }
+
+    // MARK: - Cursor card (spend-based — shows % used, fills up)
+
+    private func cursorCard(_ usage: CursorUsage) -> some View {
+        let band = EnergyBand(severity: usageThresholds.severity(for: usage.percentUsed))
+        let tint: Color = band == .full ? .pfEnergyFull : band.color
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image("CursorLogo").resizable().scaledToFit().frame(width: 15, height: 15)
+                Text("Cursor")
+                    .font(PFont.display(14, .semibold))
+                    .foregroundStyle(Color.pfInk)
+                Spacer()
+                Text(usage.clampedPercent.map { "\(Int($0.rounded()))%" } ?? "—")
+                    .font(PFont.display(14, .bold))
+                    .foregroundStyle(band == .full ? Color.pfInk : tint)
+                    .monospacedDigit()
+            }
+            capsuleBar(fraction: (usage.clampedPercent ?? 0) / 100, color: tint)
+            if let subtitle = cursorSubtitle(usage) {
+                Text(subtitle)
+                    .font(PFont.body(11, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .chunkyCard()
     }
 
     private func cursorSubtitle(_ usage: CursorUsage) -> String? {
@@ -591,90 +348,151 @@ struct PopoverView: View {
         return f
     }()
 
+    /// Simple depleting/filling capsule bar with an inner top gloss.
+    private func capsuleBar(fraction: Double, color: Color) -> some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.pfTrack)
+                Capsule()
+                    .fill(color)
+                    .frame(width: max(0, geo.size.width * min(1, max(0, fraction))))
+                    .overlay(alignment: .top) {
+                        Capsule().fill(Color.white.opacity(0.4))
+                            .frame(height: 2).padding(.horizontal, 3).padding(.top, 2)
+                    }
+            }
+        }
+        .frame(height: 12)
+    }
+
+    // MARK: - Non-data states
+
+    private func statusState(
+        emoji: String, title: String, message: String,
+        primaryTitle: String? = nil, primary: (() -> Void)? = nil
+    ) -> some View {
+        VStack(spacing: 12) {
+            Text(emoji).font(.system(size: 40))
+            Text(title)
+                .font(PFont.display(16, .semibold))
+                .foregroundStyle(Color.pfInk)
+            Text(message)
+                .font(PFont.body(12, .semibold))
+                .foregroundStyle(Color.pfInkMuted)
+                .multilineTextAlignment(.center)
+            if let primaryTitle, let primary {
+                Button(primaryTitle, action: primary)
+                    .buttonStyle(RaisedButtonStyle())
+                    .fixedSize()
+                    .padding(.top, 2)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
+        .padding(.horizontal, 22)
+    }
+
+    private var onboardingContent: some View {
+        statusState(
+            emoji: "🚀",
+            title: "Welcome to Claude Meter",
+            message: "Connect a data source to start your engines.",
+            primaryTitle: "Get started →",
+            primary: openSettingsAndCompleteOnboarding)
+    }
+
+    private var inactiveState: some View {
+        statusState(
+            emoji: "😴", title: "Paused",
+            message: "Hit play below to refuel the gauge.")
+    }
+
+    private var noSourcesState: some View {
+        statusState(
+            emoji: "🔌", title: "No data methods on",
+            message: "Turn on at least one method in Settings → Data.",
+            primaryTitle: "Open Settings", primary: openSettingsAndCompleteOnboarding)
+    }
+
+    private var loadingState: some View {
+        VStack(spacing: 12) {
+            ProgressView().scaleEffect(0.9)
+            Text(loadingMessage)
+                .font(PFont.body(13, .semibold))
+                .foregroundStyle(Color.pfInkMuted)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 34)
+    }
+
+    private var loadingMessage: String {
+        if AppSettings.hasClaudeSource && cursorSourceEnabled { return "Checking your tanks…" }
+        if cursorSourceEnabled && !AppSettings.hasClaudeSource { return "Checking Cursor…" }
+        return "Checking your tanks…"
+    }
+
+    private var setupState: some View {
+        statusState(emoji: "🪫", title: "No usage yet", message: setupMessage)
+    }
+
+    private var setupMessage: String {
+        if cursorSourceEnabled && !AppSettings.hasClaudeSource {
+            return "Sign in to the Cursor app so Claude Meter can read your billing usage."
+        }
+        if AppSettings.hasClaudeSource && cursorSourceEnabled {
+            return "Open Claude Code or sign in to Cursor, or connect OAuth/claude.ai in Settings."
+        }
+        return
+            "Open Claude Code so the statusline bridge can publish usage, or connect OAuth/claude.ai in Settings."
+    }
+
+    private var cursorErrorState: some View {
+        statusState(
+            emoji: "⚠️", title: "Couldn't read Cursor",
+            message: appState.cursorError ?? "Open Cursor and try again.",
+            primaryTitle: "Open Settings", primary: openSettingsAndCompleteOnboarding)
+    }
+
+    private var errorState: some View {
+        statusState(
+            emoji: "⚠️", title: errorTitle, message: errorHint ?? "Check Diagnostics for details.",
+            primaryTitle: shouldOfferSettings ? "Open Settings" : nil,
+            primary: shouldOfferSettings ? { openSettingsAndCompleteOnboarding() } : nil)
+    }
+
     // MARK: - Notices
+
+    private func noticeBanner(_ text: String, systemImage: String, tint: Color) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: systemImage).font(.system(size: 12, weight: .bold))
+            Text(text).font(PFont.body(11, .semibold)).lineLimit(3)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(tint.opacity(0.13)))
+    }
 
     private var updateAvailableNotice: some View {
         Button {
             appState.checkForUpdates()
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.down.circle")
-                Text("Update available — click to install")
-                Spacer()
-            }
-            .font(.body)
-            .foregroundStyle(.primary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            noticeBanner(
+                "Update available — click to install", systemImage: "arrow.down.circle.fill",
+                tint: .pfEnergyFull)
         }
         .buttonStyle(.plain)
+        .padding(.horizontal, 15)
+        .padding(.bottom, 2)
     }
 
     private func serviceStatusNotice(_ status: ServiceStatus) -> some View {
-        let color: Color = status.level == .critical || status.level == .major ? .red : .warningTint
-        return HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.bubble")
-            Text("Anthropic: \(status.description)")
-                .lineLimit(2)
-            Spacer()
-        }
-        .font(.body)
-        .foregroundStyle(color)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
-
-    private var pollErrorNotice: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle")
-            Text(pollErrorText)
-                .lineLimit(3)
-        }
-        .font(.body)
-        .foregroundStyle(.warningTint)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
-
-    private var cursorPollErrorNotice: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle")
-            Text(appState.cursorError ?? "Cursor refresh failed — showing last known data")
-                .lineLimit(3)
-        }
-        .font(.body)
-        .foregroundStyle(.warningTint)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
-
-    private var cursorStaleNotice: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "clock")
-            Text("Cursor data may be outdated")
-        }
-        .font(.body)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
-
-    private func apiDegradedNotice(_ message: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle")
-            Text(message)
-                .lineLimit(3)
-        }
-        .font(.body)
-        .foregroundStyle(.warningTint)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        let tint: Color = status.level == .critical || status.level == .major ? .pfEnergyEmpty : .pfEnergyLow
+        return noticeBanner(
+            "Anthropic: \(status.description)", systemImage: "exclamationmark.bubble.fill", tint: tint)
+            .padding(.horizontal, 15)
+            .padding(.bottom, 2)
     }
 
     private var pollErrorText: String {
@@ -690,65 +508,59 @@ struct PopoverView: View {
         return "Refresh failed — showing last known data"
     }
 
-    private var staleNotice: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "clock")
-            Text("Data may be outdated")
-        }
-        .font(.body)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
-
     // MARK: - Footer
 
     private var footerBar: some View {
-        HStack(spacing: 10) {
-            if !needsOnboarding {
-                Text(updatedText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            Spacer()
-            footerButton("gearshape", help: "Settings") {
-                openSettingsAndCompleteOnboarding()
-            }
-            if !needsOnboarding {
-                RefreshButton(
-                    isLoading: appState.isLoading,
-                    isEnabled: appState.isActive && appState.hasEnabledDataSource
+        HStack(spacing: 9) {
+            if needsOnboarding {
+                Spacer()
+                squareButton("gearshape.fill", help: "Settings") {
+                    openSettingsAndCompleteOnboarding()
+                }
+            } else {
+                Button {
+                    openSettingsAndCompleteOnboarding()
+                } label: {
+                    Label("Add account", systemImage: "plus")
+                }
+                .buttonStyle(RaisedButtonStyle())
+
+                squareButton(
+                    appState.isActive ? "pause.fill" : "play.fill",
+                    help: appState.isActive ? "Pause fetching" : "Resume fetching",
+                    tint: appState.isActive ? .pfInkMuted : .pfEnergyFull
                 ) {
-                    appState.refreshNow()
+                    appState.setActive(!appState.isActive)
+                }
+                squareButton("gearshape.fill", help: "Settings") {
+                    openSettingsAndCompleteOnboarding()
+                }
+                squareButton("power", help: "Quit Claude Meter") {
+                    NSApplication.shared.terminate(nil)
                 }
             }
-            footerButton("power", help: "Quit Claude Meter") {
-                NSApplication.shared.terminate(nil)
-            }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 15)
+        .padding(.top, 4)
+        .padding(.bottom, 14)
     }
 
-    private func footerButton(_ symbol: String, help: String, action: @escaping () -> Void)
-        -> some View
-    {
+    private func squareButton(
+        _ symbol: String, help: String, tint: Color = .pfInkMuted, action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.body)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(tint)
+                .frame(width: 40, height: 40)
         }
         .buttonStyle(.plain)
+        .chunkyCard(radius: 12)
         .help(help)
     }
 
-    /// Self-contained refresh control. The spinner is driven by `TimelineView(.animation)`
-    /// rather than a `.repeatForever` animation so the forever-repeating transaction can't
-    /// leak into the footer's per-second relayout (the "Updated Ns ago" counter), which made
-    /// the icon drift out of its slot. The fixed frame keeps the layout slot stable while spinning.
-    private struct RefreshButton: View {
+    /// Round refresh button in the header; spins while loading.
+    private struct HeaderRefreshButton: View {
         let isLoading: Bool
         let isEnabled: Bool
         let action: () -> Void
@@ -764,7 +576,9 @@ struct PopoverView: View {
                         icon
                     }
                 }
-                .frame(width: 16, height: 16)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(Color.pfCard))
+                .overlay(Circle().strokeBorder(Color.pfPopoverBorder, lineWidth: 2))
             }
             .buttonStyle(.plain)
             .help("Refresh")
@@ -773,12 +587,11 @@ struct PopoverView: View {
 
         private var icon: some View {
             Image(systemName: "arrow.clockwise")
-                .font(.body)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Color.pfInkMuted)
         }
 
         private static func angle(at date: Date) -> Double {
-            // One full revolution per second, continuous.
             date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1) * 360
         }
     }
@@ -868,30 +681,78 @@ extension AppState {
             lastSuccessfulPollAt: Date(),
             source: SourceInfo(
                 cliPath: "/Users/jewei/.claude/stats-cache.json", command: "stats-cache"),
+            account: AccountInfo(email: "you@oneone.com", plan: "Max"),
             session: SessionInfo(activeModel: "claude-sonnet-4-6"),
             limits: LimitInfo(
                 currentSession: LimitWindow(
-                    percentUsed: 25,
-                    resetsAt: Calendar.current.startOfDay(for: Date().addingTimeInterval(86400)),
+                    percentUsed: 22,
+                    resetsAt: Date().addingTimeInterval(3 * 3600 + 12 * 60),
                     rawValueText: "245 msgs"
                 ),
                 currentWeekAllModels: LimitWindow(
-                    percentUsed: 82,
-                    resetsAt: Calendar.current.startOfDay(for: Date().addingTimeInterval(86400)),
+                    percentUsed: 36,
+                    resetsAt: Calendar.current.startOfDay(for: Date().addingTimeInterval(3 * 86400)),
                     rawValueText: "1482 msgs"
                 )
             ),
-            state: SnapshotState(status: .ok, severity: .warning)
+            state: SnapshotState(status: .ok, severity: .normal)
         )
         let store = SnapshotStore(directory: FileManager.default.temporaryDirectory)
         try? store.writeLatest(snap)
         let pipeline = CachedSnapshotPipeline(store: store)
         return AppState(pipeline: pipeline, initialSnapshot: snap)
     }
+
+    /// Three-account sample mirroring the design mock (Work / Personal / buildbot).
+    /// Percentages are stored as % *used*; the UI shows the inverse as energy left.
+    static var previewMulti: AppState {
+        func win(used: Double, hoursToReset: Double) -> LimitWindow {
+            LimitWindow(percentUsed: used, resetsAt: Date().addingTimeInterval(hoursToReset * 3600))
+        }
+        let work = AccountUsage(
+            id: "it-oneone", label: "it-oneone",
+            account: AccountInfo(email: "you@oneone.com", plan: "Max"),
+            limits: LimitInfo(
+                currentSession: win(used: 18, hoursToReset: 3.2),
+                currentWeekAllModels: win(used: 30, hoursToReset: 72),
+                currentWeekOpus: win(used: 42, hoursToReset: 72)),
+            severity: .normal, isActive: true)
+        let personal = AccountUsage(
+            id: "personal", label: "personal",
+            account: AccountInfo(plan: "Pro"),
+            limits: LimitInfo(
+                currentSession: win(used: 84, hoursToReset: 1.8),
+                currentWeekAllModels: win(used: 24, hoursToReset: 96)),
+            severity: .warning, isActive: false)
+        let buildbot = AccountUsage(
+            id: "buildbot", label: "buildbot",
+            account: AccountInfo(plan: "Free"),
+            limits: LimitInfo(
+                currentSession: win(used: 97, hoursToReset: 1.1),
+                currentWeekAllModels: win(used: 86, hoursToReset: 120)),
+            severity: .critical, isActive: false)
+        let snap = ClaudeUsageSnapshot(
+            parserVersion: "preview-multi",
+            createdAt: Date(), lastSuccessfulPollAt: Date(),
+            source: SourceInfo(cliPath: "statusline", command: "statusline"),
+            account: AccountInfo(email: "you@oneone.com", plan: "Max"),
+            limits: work.limits,
+            state: SnapshotState(status: .ok, severity: .normal),
+            accounts: [work, personal, buildbot])
+        let store = SnapshotStore(directory: FileManager.default.temporaryDirectory)
+        try? store.writeLatest(snap)
+        return AppState(pipeline: CachedSnapshotPipeline(store: store), initialSnapshot: snap)
+    }
 }
 
-#Preview {
+#Preview("Single account") {
     PopoverView()
         .environmentObject(AppState.preview)
-        .frame(width: 320)
+        .frame(width: 360)
+}
+
+#Preview("Multi-account") {
+    PopoverView()
+        .environmentObject(AppState.previewMulti)
+        .frame(width: 360)
 }

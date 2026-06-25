@@ -61,19 +61,15 @@ actor NotificationEngine {
 
     private func deliver(trigger: NotificationTrigger, snapshot: ClaudeUsageSnapshot) async {
         let window: LimitWindow
-        let label: String
         switch trigger.scope {
-        case "session":
-            window = snapshot.limits.currentSession
-            label = "Session"
-        case "weeklyOpus":
-            window = snapshot.limits.currentWeekOpus ?? LimitWindow()
-            label = "Weekly (Opus)"
-        default:
-            window = snapshot.limits.currentWeekAllModels
-            label = "Weekly (all models)"
+        case "session": window = snapshot.limits.currentSession
+        case "weeklyOpus": window = snapshot.limits.currentWeekOpus ?? LimitWindow()
+        default: window = snapshot.limits.currentWeekAllModels
         }
-        let pct = window.displayPercent ?? "—"
+        // The whole app speaks "energy left", so notifications do too.
+        let left = leftText(window)
+        let energy = energyName(for: trigger.scope)
+        let refuel = "\(trigger.scope == "session" ? "refills" : "resets") \(resetDescription(trigger.resetAt))"
         let key = NotificationPolicy.dedupKey(
             scope: trigger.scope,
             level: trigger.level,
@@ -84,8 +80,8 @@ actor NotificationEngine {
             guard !hasFired(key: key) else { return }
             let delivered = await post(
                 id: key,
-                title: "\(label) limit nearly reached — \(pct)",
-                body: "Resets \(resetDescription(trigger.resetAt))."
+                title: "Almost tapped out 🪫",
+                body: "Your \(energy) is at \(left) — \(refuel). Easy now."
             )
             if delivered { markFired(key: key) }
         } else if trigger.level == "warning" {
@@ -97,10 +93,24 @@ actor NotificationEngine {
             guard !hasFired(key: key), !hasFired(key: criticalKey) else { return }
             let delivered = await post(
                 id: key,
-                title: "\(label) usage high — \(pct)",
-                body: "Resets \(resetDescription(trigger.resetAt))."
+                title: "Running low ⚡",
+                body: "Your \(energy) is at \(left) — \(refuel). Maybe touch grass? 🌱"
             )
             if delivered { markFired(key: key) }
+        }
+    }
+
+    /// Energy-left ("9%") for a window, the inverse of usage.
+    private func leftText(_ window: LimitWindow) -> String {
+        guard let left = window.percentLeft(asOf: Date()) else { return "—" }
+        return "\(Int(left.rounded()))%"
+    }
+
+    private func energyName(for scope: String) -> String {
+        switch scope {
+        case "session": return "5-hour energy"
+        case "weeklyOpus": return "weekly Opus fuel"
+        default: return "weekly fuel"
         }
     }
 

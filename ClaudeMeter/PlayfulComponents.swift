@@ -1,0 +1,430 @@
+import ClaudeMeterCore
+import SwiftUI
+
+// MARK: - Activity rings
+//
+// Two concentric *depleting* rings: outer = weekly (r34), inner = 5-hour (r24),
+// 8pt round-cap stroke, starting at the top. The arc length is energy REMAINING
+// (`percentLeft`), so a full ring = a full tank. Center holds the avatar letter.
+
+struct ActivityRingsView: View {
+    var weeklyFraction: Double  // 0…1 energy left (outer)
+    var weeklyColor: Color
+    var sessionFraction: Double  // 0…1 energy left (inner)
+    var sessionColor: Color
+    var letter: String
+    var size: CGFloat = 88
+
+    var body: some View {
+        ZStack {
+            DepletingRing(
+                fraction: weeklyFraction, color: weeklyColor,
+                diameter: size * (68.0 / 88.0), lineWidth: size * (8.0 / 88.0))
+            DepletingRing(
+                fraction: sessionFraction, color: sessionColor,
+                diameter: size * (48.0 / 88.0), lineWidth: size * (8.0 / 88.0))
+            Text(letter)
+                .font(PFont.display(size * (19.0 / 88.0), .bold))
+                .foregroundStyle(Color.pfInk)
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct DepletingRing: View {
+    var fraction: Double
+    var color: Color
+    var diameter: CGFloat
+    var lineWidth: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(Color.pfTrack, lineWidth: lineWidth)
+            Circle()
+                .trim(from: 0, to: min(1, max(0, fraction)))
+                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .animation(.easeOut(duration: 0.5), value: fraction)
+        }
+        .frame(width: diameter, height: diameter)
+    }
+}
+
+/// The little 9×9 rounded-square status pip used in the metric rows.
+struct EnergyDot: View {
+    var color: Color
+    var body: some View {
+        RoundedRectangle(cornerRadius: 3, style: .continuous)
+            .fill(color)
+            .frame(width: 9, height: 9)
+    }
+}
+
+/// Chunky, color-coded threshold slider: thick track + a big white ring-thumb.
+/// Built by hand because the native `Slider` can't do the ringed thumb.
+struct ColorSlider: View {
+    @Binding var value: Double
+    var range: ClosedRange<Double>
+    var step: Double = 1
+    var color: Color
+
+    private let thumb: CGFloat = 26
+    private let track: CGFloat = 6
+
+    var body: some View {
+        GeometryReader { geo in
+            let span = max(1, geo.size.width - thumb)
+            let frac = (value - range.lowerBound) / (range.upperBound - range.lowerBound)
+            let x = CGFloat(min(1, max(0, frac))) * span
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.pfTrack).frame(height: track)
+                Capsule().fill(color).frame(width: x + thumb / 2, height: track)
+                Circle()
+                    .fill(Color.pfCard)
+                    .overlay(Circle().strokeBorder(color, lineWidth: 4))
+                    .frame(width: thumb, height: thumb)
+                    .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+                    .offset(x: x)
+            }
+            .frame(height: thumb)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { g in
+                        let f = min(1, max(0, (g.location.x - thumb / 2) / span))
+                        let raw =
+                            range.lowerBound + Double(f) * (range.upperBound - range.lowerBound)
+                        let stepped = (raw / step).rounded() * step
+                        value = min(range.upperBound, max(range.lowerBound, stepped))
+                    }
+            )
+        }
+        .frame(height: thumb)
+    }
+}
+
+/// Legend for the ACCOUNTS section header (rings variant).
+struct RingLegend: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 4) {
+                Circle().strokeBorder(Color.pfInkMuted, lineWidth: 2.5).frame(width: 9, height: 9)
+                Text("weekly").font(PFont.body(10, .bold)).foregroundStyle(Color.pfInkMuted)
+            }
+            HStack(spacing: 4) {
+                Circle().fill(Color.pfInkMuted).frame(width: 9, height: 9)
+                Text("5-hour").font(PFont.body(10, .bold)).foregroundStyle(Color.pfInkMuted)
+            }
+        }
+    }
+}
+
+// MARK: - Per-account card model
+//
+// Unified shape the popover builds from either `snapshot.accounts` (multi) or the
+// top-level snapshot (single). Email/plan/opus are present only for the active
+// OAuth account; the card degrades gracefully when they're nil.
+
+struct AccountCardModel: Identifiable {
+    var id: String
+    var label: String
+    var plan: String?
+    var subtitle: String?  // email, else nil
+    var session: LimitWindow
+    var week: LimitWindow
+    var opus: LimitWindow?
+
+    var avatarLetter: String {
+        let trimmed = label.drop(while: { !$0.isLetter && !$0.isNumber })
+        return String(trimmed.first ?? Character("C")).uppercased()
+    }
+
+    var avatarColor: Color { avatarColorForID(id) }
+
+    func band(_ thresholds: UsageThresholds, _ now: Date) -> EnergyBand {
+        var b = session.energyBand(thresholds: thresholds, asOf: now)
+        b = EnergyBand.worse(b, week.energyBand(thresholds: thresholds, asOf: now))
+        if let opus { b = EnergyBand.worse(b, opus.energyBand(thresholds: thresholds, asOf: now)) }
+        return b
+    }
+
+    func minLeft(_ now: Date) -> Double {
+        [session.percentLeft(asOf: now), week.percentLeft(asOf: now), opus?.percentLeft(asOf: now)]
+            .compactMap { $0 }.min() ?? 100
+    }
+
+    /// Soonest upcoming refill/reset across this account's windows.
+    func soonestReset(_ now: Date) -> Date? {
+        [session.resolved(asOf: now).resetsAt,
+         week.resolved(asOf: now).resetsAt,
+         opus?.resolved(asOf: now).resetsAt]
+            .compactMap { $0 }.filter { $0 > now }.min()
+    }
+}
+
+private let pfAvatarPalette: [Color] = [
+    Color(hex: "25B6F0"), Color(hex: "C77DFF"), Color(hex: "FF9D0A"),
+    Color(hex: "4FC51C"), Color(hex: "FF7AA8"), Color(hex: "2DD4BF"),
+    Color(hex: "7C83FF"), Color(hex: "F4B400"),
+]
+
+/// Stable, fun avatar color derived from the account id (djb2).
+func avatarColorForID(_ id: String) -> Color {
+    var h = 5381
+    for b in id.utf8 { h = (h &* 33) &+ Int(b) }
+    let n = pfAvatarPalette.count
+    return pfAvatarPalette[((h % n) + n) % n]
+}
+
+// MARK: - Account ring card
+
+struct AccountRingCard: View {
+    let model: AccountCardModel
+    let now: Date
+    var thresholds: UsageThresholds = .default
+
+    var body: some View {
+        let sBand = model.session.energyBand(thresholds: thresholds, asOf: now)
+        let wBand = model.week.energyBand(thresholds: thresholds, asOf: now)
+        HStack(spacing: 14) {
+            ActivityRingsView(
+                weeklyFraction: fraction(model.week),
+                weeklyColor: wBand.color,
+                sessionFraction: fraction(model.session),
+                sessionColor: sBand.color,
+                letter: model.avatarLetter
+            )
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text(model.label)
+                        .font(PFont.display(15, .semibold))
+                        .foregroundStyle(Color.pfInk)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    if let plan = model.plan { PlanBadge(plan: plan) }
+                }
+                if let subtitle = model.subtitle {
+                    Text(subtitle)
+                        .font(PFont.body(11, .bold))
+                        .foregroundStyle(Color.pfInkMuted)
+                        .lineLimit(1)
+                }
+                metricRow("5-hr", window: model.session, band: sBand, kind: .session)
+                metricRow("week", window: model.week, band: wBand, kind: .weekly)
+                if let opus = model.opus {
+                    let oBand = opus.energyBand(thresholds: thresholds, asOf: now)
+                    metricRow("opus", window: opus, band: oBand, kind: .weekly)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .chunkyCard()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private func fraction(_ window: LimitWindow) -> Double {
+        (window.percentLeft(asOf: now) ?? 0) / 100
+    }
+
+    @ViewBuilder
+    private func metricRow(
+        _ label: String, window: LimitWindow, band: EnergyBand, kind: LimitWindowKind
+    ) -> some View {
+        HStack(spacing: 6) {
+            EnergyDot(color: band.color)
+            Text(label)
+                .font(PFont.body(11, .bold))
+                .foregroundStyle(Color.pfInk)
+            Text(window.leftPercentText(asOf: now) ?? "—")
+                .font(PFont.display(11, .heavy))
+                .foregroundStyle(window.percentLeft(asOf: now) == nil ? Color.pfInkMuted : band.color)
+                .monospacedDigit()
+            if let detail = resetDetail(window, kind: kind) {
+                Text("· \(detail)")
+                    .font(PFont.body(11, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+                    .monospacedDigit()
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func resetDetail(_ window: LimitWindow, kind: LimitWindowKind) -> String? {
+        guard let resetsAt = window.resolved(asOf: now).resetsAt, resetsAt > now else { return nil }
+        switch kind {
+        case .session: return shortDuration(until: resetsAt, from: now)
+        case .weekly: return shortWeekday(resetsAt)
+        }
+    }
+
+    private var accessibilityText: String {
+        let s = model.session.leftPercentText(asOf: now) ?? "unknown"
+        let w = model.week.leftPercentText(asOf: now) ?? "unknown"
+        return "\(model.label): 5-hour \(s) left, weekly \(w) left"
+    }
+}
+
+// MARK: - Hero (combined health)
+
+/// The hero reflects the *active* account's vibe (the one you're using), with a
+/// subtitle that flags the lowest other account. The menu-bar dot, by contrast,
+/// mirrors the nearest-limit account across all of them.
+struct HeroSummary {
+    var emoji: String
+    var title: String
+    var subtitle: String
+    var bg: Color
+    var border: Color
+    var ink: Color
+    var sub: Color
+
+    static func make(models: [AccountCardModel], thresholds: UsageThresholds, now: Date)
+        -> HeroSummary
+    {
+        let active = models.first
+        let band = active?.band(thresholds, now) ?? .unknown
+        let palette = paletteFor(band)
+        let (emoji, title) = headlineFor(band)
+        let subtitle = subtitleFor(models: models, thresholds: thresholds, now: now)
+        return HeroSummary(
+            emoji: emoji, title: title, subtitle: subtitle,
+            bg: palette.bg, border: palette.border, ink: palette.ink, sub: palette.sub)
+    }
+
+    private static func headlineFor(_ band: EnergyBand) -> (String, String) {
+        switch band {
+        case .full: return ("🚀", "You're cruising")
+        case .low: return ("⛽️", "Pace yourself")
+        case .empty: return ("🪫", "Almost tapped out")
+        case .tappedOut: return ("🥵", "Take a breather")
+        case .unknown: return ("🛰️", "Warming up")
+        }
+    }
+
+    private static func subtitleFor(
+        models: [AccountCardModel], thresholds: UsageThresholds, now: Date
+    ) -> String {
+        guard let active = models.first else { return "No usage yet — fire up Claude Code." }
+
+        // Single account → speak to its own most-constrained window.
+        if models.count == 1 {
+            let band = active.band(thresholds, now)
+            let when = active.soonestReset(now).map { describeReset($0, now: now) }
+            switch band {
+            case .full: return when.map { "Plenty in the tank · refills \($0)" } ?? "Plenty in the tank 🎉"
+            case .low: return when.map { "Getting low · refills \($0)" } ?? "Getting low"
+            case .empty, .tappedOut: return when.map { "Almost dry · refills \($0)" } ?? "Almost dry"
+            case .unknown: return "Warming up…"
+            }
+        }
+
+        // Multi account → count fresh + flag the lowest non-full account.
+        let fresh = models.filter { $0.band(thresholds, now) == .full }.count
+        let lowest = models
+            .filter { $0.band(thresholds, now) != .full && $0.band(thresholds, now) != .unknown }
+            .min(by: { $0.minLeft(now) < $1.minLeft(now) })
+        if let low = lowest {
+            let word = low.band(thresholds, now) == .low ? "low" : "nearly dry"
+            let refill = low.soonestReset(now)
+                .map { " (\(shortDuration(until: $0, from: now) ?? "soon"))" } ?? ""
+            if fresh == 0 { return "\(low.label) is \(word)\(refill)" }
+            let freshWord = fresh == 1 ? "1 fresh" : "\(fresh) fresh"
+            return "\(freshWord) · \(low.label) \(word)\(refill)"
+        }
+        return "All \(models.count) accounts fresh 🎉"
+    }
+
+    private struct Palette {
+        var bg: Color
+        var border: Color
+        var ink: Color
+        var sub: Color
+    }
+
+    private static func paletteFor(_ band: EnergyBand) -> Palette {
+        switch band {
+        case .full, .unknown:
+            return Palette(
+                bg: .pfHeroFullBG, border: .pfHeroFullBorder, ink: .pfHeroFullInk, sub: .pfHeroFullSub)
+        case .low:
+            return Palette(
+                bg: .pfHeroLowBG, border: .pfHeroLowBorder, ink: .pfHeroLowInk, sub: .pfHeroLowSub)
+        case .empty, .tappedOut:
+            return Palette(
+                bg: .pfHeroEmptyBG, border: .pfHeroEmptyBorder, ink: .pfHeroEmptyInk,
+                sub: .pfHeroEmptySub)
+        }
+    }
+}
+
+struct HeroView: View {
+    let summary: HeroSummary
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(summary.emoji)
+                .font(.system(size: 24))
+                .frame(width: 46, height: 46)
+                .background(Circle().fill(Color.pfCard))
+                .overlay(Circle().strokeBorder(summary.border, lineWidth: 2))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(summary.title)
+                    .font(PFont.display(18, .semibold))
+                    .foregroundStyle(summary.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Text(summary.subtitle)
+                    .font(PFont.body(12, .bold))
+                    .foregroundStyle(summary.sub)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .background(
+            ZStack {
+                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.pfCardLip)
+                    .offset(y: 3)
+                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(summary.bg)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(summary.border, lineWidth: 2)
+            }
+        )
+        .animation(.easeInOut(duration: 0.3), value: summary.bg)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(summary.title). \(summary.subtitle)")
+    }
+}
+
+// MARK: - Shared formatters (created per call — DateFormatter isn't Sendable)
+
+func shortDuration(until date: Date, from now: Date) -> String? {
+    guard date > now else { return nil }
+    let f = DateComponentsFormatter()
+    f.unitsStyle = .abbreviated
+    f.allowedUnits = [.hour, .minute]
+    f.maximumUnitCount = 2
+    f.zeroFormattingBehavior = .dropAll
+    return f.string(from: date.timeIntervalSince(now))
+}
+
+func shortWeekday(_ date: Date) -> String {
+    let f = DateFormatter()
+    f.dateFormat = "EEE"
+    return f.string(from: date)
+}
+
+/// "in 3h 12m" for near terms, "Mon 9:00" for distant ones.
+func describeReset(_ date: Date, now: Date) -> String {
+    let interval = date.timeIntervalSince(now)
+    if interval >= 24 * 3600 {
+        let f = DateFormatter()
+        f.dateFormat = "EEE H:mm"
+        return f.string(from: date)
+    }
+    return "in \(shortDuration(until: date, from: now) ?? "soon")"
+}

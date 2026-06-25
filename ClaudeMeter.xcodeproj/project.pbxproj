@@ -8,7 +8,10 @@
 
 /* Begin PBXBuildFile section */
 		2B9EF3C1324E496AB3B6E96A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */; };
+		BAFA3278374FD1C9FCC06D7B /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = 79FAFFB9B2AADEDB517FE4EF /* Fonts */; };
 		328C7D858BAA4A39B59ED745 /* DesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = A33698B9F9BB4AE4BDF69097 /* DesignTokens.swift */; };
+		5B4D714E08E985C8B6585454 /* PlayfulTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8C6B61CE7B7508EC05E5944 /* PlayfulTheme.swift */; };
+		CDD0658EE9F301E3F88CDB39 /* PlayfulComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = C30CB82FB9488E6512B08E66 /* PlayfulComponents.swift */; };
 		4D61D7AB7BDE4E48BA084D4F /* NotificationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 698B8E0E53F145B783C464F9 /* NotificationEngine.swift */; };
 		53F33AD45698499A81E9BD5D /* MenuBarLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D39F041AC0894892922A9F90 /* MenuBarLabel.swift */; };
 		60B15B0A00A24EE9A3EED2B1 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07DBE9DE99AE4570ABDAA767 /* SettingsView.swift */; };
@@ -65,6 +68,8 @@
 		803E43377A64429FBFAFB75C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		9A2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ClaudeMeterWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A33698B9F9BB4AE4BDF69097 /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
+		E8C6B61CE7B7508EC05E5944 /* PlayfulTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayfulTheme.swift; sourceTree = "<group>"; };
+		C30CB82FB9488E6512B08E66 /* PlayfulComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayfulComponents.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718293A4B5D /* AppUpdater.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdater.swift; sourceTree = "<group>"; };
 		AA2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeMeterWidgetBundle.swift; sourceTree = "<group>"; };
 		AB2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeMeterWidget.swift; sourceTree = "<group>"; };
@@ -75,6 +80,7 @@
 		AE2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		B5D38012F5D5476997394541 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
 		CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		79FAFFB9B2AADEDB517FE4EF /* Fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Fonts; sourceTree = "<group>"; };
 		D39F041AC0894892922A9F90 /* MenuBarLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarLabel.swift; sourceTree = "<group>"; };
 		H87A3B4C5D6E7F8A9B0C1D2E /* ClaudeAIKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeAIKeychain.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -110,6 +116,8 @@
 				A1B2C3D4E5F60718293A4B5D /* AppUpdater.swift */,
 				C2D3E4F5A6B7C8D9E0F1A2B3 /* PowerMonitor.swift */,
 				A33698B9F9BB4AE4BDF69097 /* DesignTokens.swift */,
+				E8C6B61CE7B7508EC05E5944 /* PlayfulTheme.swift */,
+				C30CB82FB9488E6512B08E66 /* PlayfulComponents.swift */,
 				D39F041AC0894892922A9F90 /* MenuBarLabel.swift */,
 				3715D40A5AE0421A91C5BED0 /* PopoverView.swift */,
 				270C84D9D514496BA99A010A /* UsageCardView.swift */,
@@ -118,6 +126,7 @@
 				B5D38012F5D5476997394541 /* DiagnosticsView.swift */,
 				H87A3B4C5D6E7F8A9B0C1D2E /* ClaudeAIKeychain.swift */,
 				CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */,
+				79FAFFB9B2AADEDB517FE4EF /* Fonts */,
 				803E43377A64429FBFAFB75C /* Info.plist */,
 				0749BAC0888B4145ADF40C11 /* ClaudeMeter.entitlements */,
 			);
@@ -246,6 +255,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				2B9EF3C1324E496AB3B6E96A /* Assets.xcassets in Resources */,
+				BAFA3278374FD1C9FCC06D7B /* Fonts in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -277,6 +287,8 @@
 				A1B2C3D4E5F60718293A4B5C /* AppUpdater.swift in Sources */,
 				C1D2E3F4A5B6C7D8E9F0A1B2 /* PowerMonitor.swift in Sources */,
 				328C7D858BAA4A39B59ED745 /* DesignTokens.swift in Sources */,
+				5B4D714E08E985C8B6585454 /* PlayfulTheme.swift in Sources */,
+				CDD0658EE9F301E3F88CDB39 /* PlayfulComponents.swift in Sources */,
 				53F33AD45698499A81E9BD5D /* MenuBarLabel.swift in Sources */,
 				86A371C31B9048C1BF2F59F8 /* PopoverView.swift in Sources */,
 				6D0A86762E7646A0B0D33439 /* UsageCardView.swift in Sources */,

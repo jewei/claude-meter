@@ -137,6 +137,14 @@ public enum ConfigDirDiscovery {
         return configs
     }
 
+    /// True when `dir` plausibly holds a Claude config (has `settings.json` or
+    /// `projects/`) — used to validate a user-added custom config dir in Settings.
+    public static func isPlausibleConfigDir(_ dir: URL, fileManager fm: FileManager = .default)
+        -> Bool
+    {
+        isDirectory(dir, fm: fm) && looksLikeConfigDir(dir, fm: fm)
+    }
+
     // MARK: - Helpers
 
     private static func isDirectory(_ url: URL, fm: FileManager) -> Bool {

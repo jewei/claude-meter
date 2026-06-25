@@ -760,6 +760,7 @@ private struct ConfigDirAccountsSection: View {
     @State private var accounts: [AccountConfig] = []
     @State private var disabledKeys: Set<String> = []
     @State private var configuredDirs: [String] = []
+    @State private var addError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -776,6 +777,13 @@ private struct ConfigDirAccountsSection: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+
+            if let addError {
+                Text(addError)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Text(
                 "Each account run via CLAUDE_CONFIG_DIR keeps its own rate limit. The menu bar follows your most recently used account; the others appear in the popover. (OAuth/claude.ai enrich the active account only.)"
@@ -840,6 +848,12 @@ private struct ConfigDirAccountsSection: View {
         panel.prompt = "Add"
         panel.message = "Choose a Claude config directory (one containing settings.json or projects/)."
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard ConfigDirDiscovery.isPlausibleConfigDir(url) else {
+            addError =
+                "That folder doesn't look like a Claude config dir (no settings.json or projects/)."
+            return
+        }
+        addError = nil
         var dirs = AppGroupConfig.configuredConfigDirs
         if !dirs.contains(url.path) {
             dirs.append(url.path)

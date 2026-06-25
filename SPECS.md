@@ -499,24 +499,39 @@ Severity:
 
 Pipeline: `StatuslinePipeline`.
 
-Source files (one per Claude Code session):
+Multiple accounts (`CLAUDE_CONFIG_DIR`):
 
-- `~/.claude-meter/sessions/<session_id>.json`
-- `~/.claude-meter/statusline.json` — legacy single file, still read during the
-  migration window and aged out by the freshness filter.
+- Users may run several Claude accounts, each with its own config dir
+  (`~/.claude`, `~/.claude-work`, …). Rate limits are **per account**, so the
+  meter keeps them separate and never blends them.
+- `ConfigDirDiscovery` discovers config dirs (`~/.claude*` holding `settings.json`
+  or `projects/`, plus user-added paths, minus disabled ones; `~/.claude` always
+  included) and derives a canonical **account key** kept byte-identical to the
+  bridge snippet.
+
+Source files (one per session, per account):
+
+- `~/.claude-meter/sessions/<accountKey>/<session_id>.json`
+- Legacy `~/.claude-meter/sessions/<session_id>.json` (flat) and
+  `~/.claude-meter/statusline.json` (single file) are still read during the
+  migration window, bucketed under the default `claude` account, and age out by
+  the freshness filter.
 
 Bridge install:
 
 - Installed only when polling is allowed and statusline source is enabled.
-- `StatuslineBridge.install()` is idempotent and self-healing.
-- It edits `~/.claude/settings.json`.
+- `StatuslineBridge.install(configDirs:)` installs into **each discovered config
+  dir's** `settings.json`; idempotent and self-healing. A dir with invalid-JSON
+  settings is skipped (its error surfaced after) without blocking the others.
 - It rebuilds `statusLine.command` to exactly `<current snippet> | <user command>`:
-  - It first strips **every** known bridge snippet (current + `legacyBridgeSnippets`)
-    via `strippedOfAnyBridge`, which loops to collapse accumulated duplicates and
-    migrate old single-file installs.
-  - The snippet extracts the payload's `session_id` (via `sed` on the compact
-    JSON) and atomically writes stdin to `sessions/<session_id>.json`
-    (`default.json` when the id is empty/missing).
+  - It first strips **every** known bridge snippet (current + `legacyBridgeSnippets`,
+    which includes the pre-account snippet) via `strippedOfAnyBridge`, which loops
+    to collapse accumulated duplicates and migrate old installs.
+  - The snippet derives the **account key** from `$CLAUDE_CONFIG_DIR` (basename,
+    leading dot stripped, sanitized with `LC_ALL=C tr` for byte-parity with the
+    Swift key), extracts the payload's `session_id` (via `sed` on the compact
+    JSON), and atomically writes stdin to `sessions/<accountKey>/<session_id>.json`
+    (`default.json` when the id is empty/missing, `claude` when the key is empty).
   - Pipe order matters: the bridge must capture stdin before the user's command,
     and it `printf`s stdin through unchanged so the user's statusline still
     renders.
@@ -533,10 +548,15 @@ Freshness and merge:
 - A payload is fresh when its file was modified within 60 seconds (so an
   idle-but-closed session's file ages out; an idle-but-open session keeps a
   fresh file but stale numbers — see below).
-- `StatuslineBridge.readData(maxAge:)` reads **every** fresh session file and
-  `mergePayloads` picks the freshest reading per window: latest `resets_at` for
-  the five-hour and weekly windows (most recent `resets_at` observation). This prevents the meter flipping between
-  concurrent sessions' snapshots.
+- `StatuslineBridge.readDataGrouped(maxAge:)` buckets **every** fresh session file
+  by account and runs `mergePayloads` **within each account only** (never across):
+  it picks the freshest reading per window — latest `resets_at` for the five-hour
+  and weekly windows. This prevents the meter flipping between a single account's
+  concurrent sessions while keeping accounts independent.
+- `StatuslinePipeline` mirrors the **active account** (the one whose activity
+  signature — cost/usage fields that move only on real API calls — changed most
+  recently; seeded from the last snapshot on rebuild) into the snapshot's
+  top-level fields, and lists the rest in `ClaudeUsageSnapshot.accounts`.
 - Fresh statusline data is accepted only when it includes at least one rate-limit
   window: `five_hour` or `seven_day`.
 - If fresh and accepted, no lower-priority source is called.

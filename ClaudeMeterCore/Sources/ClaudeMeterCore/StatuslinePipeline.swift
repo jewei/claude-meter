@@ -22,6 +22,11 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     /// only move on a real API call) plus the poll time it last *changed*. Drives
     /// active-account selection (see `selectActive`). Guarded by `stateQueue`.
     private var accountActivity: [String: AccountActivity] = [:]
+    /// Previously-selected active account, used to break exact activity-time ties
+    /// (cold start / pipeline rebuild, where every account is freshly seeded to
+    /// `now`). Seeded from the last persisted snapshot so a relaunch keeps showing
+    /// the account that was active, not a key/recency winner. Guarded by `stateQueue`.
+    private var _lastActiveKey: String?
 
     private let stalenessThreshold: TimeInterval = 60
     private let fallbackCooldown: TimeInterval = 60
@@ -36,6 +41,10 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
         self.store = store
         self.thresholds = thresholds
         self.disabledAccountKeys = disabledAccountKeys
+        // Seed the active account from the last snapshot so a relaunch/rebuild keeps
+        // the right account instead of momentarily resetting to a key/recency winner.
+        self._lastActiveKey =
+            (try? store.readLatest())?.accounts?.first(where: { $0.isActive })?.id
     }
 
     public func poll(now: Date) async throws -> ParseResult {
@@ -266,6 +275,7 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     static func selectActive(
         groups: [String: StatuslineBridge.StatuslinePayload],
         prior: [String: AccountActivity],
+        sticky: String?,
         now: Date
     ) -> (key: String, activity: [String: AccountActivity]) {
         var activity: [String: AccountActivity] = [:]
@@ -283,18 +293,20 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
         guard var best = keys.first else {
             return (StatuslineBridge.defaultAccountKey, activity)
         }
-        for key in keys.dropFirst() {
-            let here = activity[key]!.lastActiveAt
-            let there = activity[best]!.lastActiveAt
-            if here > there {
-                best = key
-            } else if here == there,
-                StatuslineBridge.payloadRecency(groups[key]!)
-                    > StatuslineBridge.payloadRecency(groups[best]!)
-            {
-                best = key
-            }
+        // Highest last-active time; exact ties broken by the previously-active
+        // (sticky) account, then window-reset recency, then key order.
+        func isBetter(_ candidate: String, than current: String) -> Bool {
+            let a = activity[candidate]!.lastActiveAt
+            let b = activity[current]!.lastActiveAt
+            if a != b { return a > b }
+            if candidate == sticky && current != sticky { return true }
+            if current == sticky && candidate != sticky { return false }
+            let ra = StatuslineBridge.payloadRecency(groups[candidate]!)
+            let rb = StatuslineBridge.payloadRecency(groups[current]!)
+            if ra != rb { return ra > rb }
+            return candidate < current
         }
+        for key in keys.dropFirst() where isBetter(key, than: best) { best = key }
         return (best, activity)
     }
 
@@ -315,8 +327,9 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     ) -> String {
         stateQueue.sync {
             let (key, activity) = Self.selectActive(
-                groups: groups, prior: accountActivity, now: now)
+                groups: groups, prior: accountActivity, sticky: _lastActiveKey, now: now)
             accountActivity = activity
+            _lastActiveKey = key
             return key
         }
     }

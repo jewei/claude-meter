@@ -36,10 +36,9 @@ final class AppState: ObservableObject {
     private var powerMonitor: PowerMonitor?
     private var lastOAuthEnrichmentAt: Date?
     private var cachedOAuthEnrichment: OAuthPipeline.OAuthEnrichment?
-    /// Discovered Claude config dirs (one per account). Refreshed off-main by
-    /// `installStatuslineBridgeIfNeeded()`; drives per-dir bridge install and the
-    /// unioned cost scan. Empty until the first discovery completes.
-    private var configAccounts: [AccountConfig] = []
+    /// In-flight statusline-bridge install task; cancelled and replaced on each
+    /// refresh so rapid source/account toggles don't pile up or race.
+    private var configRefreshTask: Task<Void, Never>?
 
     private static let pollIntervalSeconds: TimeInterval = 60
     private static let oauthEnrichmentIntervalSeconds: TimeInterval = 300
@@ -121,6 +120,7 @@ final class AppState: ObservableObject {
     deinit {
         pollTask?.cancel()
         rebuildDebounceTask?.cancel()
+        configRefreshTask?.cancel()
     }
 
     func startPolling() {
@@ -129,7 +129,7 @@ final class AppState: ObservableObject {
             pollTask = nil
             return
         }
-        refreshConfigAccounts()
+        installStatuslineBridgeIfNeeded()
         pollTask = Task { [weak self] in
             await self?.poll()
             while !Task.isCancelled {
@@ -236,7 +236,7 @@ final class AppState: ObservableObject {
         cachedOAuthEnrichment = nil
         hasEnabledDataSource = AppSettings.hasEnabledDataSource
         pipeline = AppState.makePipeline(store: store)
-        refreshConfigAccounts()
+        installStatuslineBridgeIfNeeded()
         if canPoll && pollTask == nil {
             startPolling()
         } else if !canPoll {
@@ -289,7 +289,7 @@ final class AppState: ObservableObject {
 
     private func poll() async {
         guard canPoll else { return }
-        refreshConfigAccounts()
+        installStatuslineBridgeIfNeeded()
         let generation = pipelineGeneration
         guard !isLoading else {
             refreshPending = true
@@ -338,14 +338,8 @@ final class AppState: ObservableObject {
             let previous = snapshot
             if var snap = result.snapshot {
                 // Enrich with per-model token/cost usage scanned from local logs.
-                // Independent of which tier produced the rate-limit snapshot. Cost
-                // is additive across accounts, so union every discovered config dir.
-                let projectsPaths =
-                    configAccounts.isEmpty
-                    ? [JournalReader.defaultProjectsPath]
-                    : configAccounts.map(\.projectsPath)
-                let costResult = await Self.scanCostModels(
-                    projectsPaths: projectsPaths, now: now)
+                // Independent of which tier produced the rate-limit snapshot.
+                let costResult = await Self.scanCostModels(now: now)
                 if !costResult.models.isEmpty { snap.models = costResult.models }
                 costScanPartial = costResult.isPartialEstimate
                 // Opus weekly, extra-usage spend, and plan live only in the OAuth
@@ -460,10 +454,18 @@ final class AppState: ObservableObject {
     }
 
     /// Scans local Claude Code transcripts for per-model token/cost usage (last 7
-    /// days). Disk work runs off-main; only the result returns to the actor.
-    private static func scanCostModels(projectsPaths: [URL], now: Date) async -> CostUsageResult {
+    /// days), unioned across every discovered config dir (cost is additive).
+    /// Discovery happens here, off-main, rather than reusing a cached list — so the
+    /// union is correct from the very first poll, independent of the statusline source.
+    private static func scanCostModels(now: Date) async -> CostUsageResult {
         await Task.detached(priority: .utility) {
-            CostUsageScanner(projectsPaths: projectsPaths).scan(daysBack: 7, now: now)
+            let accounts = ConfigDirDiscovery.discover(
+                configuredDirs: AppGroupConfig.configuredConfigDirs,
+                disabledKeys: Set(AppGroupConfig.disabledAccountKeys))
+            let paths =
+                accounts.isEmpty
+                ? [JournalReader.defaultProjectsPath] : accounts.map(\.projectsPath)
+            return CostUsageScanner(projectsPaths: paths).scan(daysBack: 7, now: now)
         }.value
     }
 
@@ -513,33 +515,28 @@ final class AppState: ObservableObject {
         isActive && AppSettings.hasEnabledDataSource
     }
 
-    /// Discovers config dirs (always — so the cost-scan union stays correct even
-    /// when the statusline source is off) and, when statusline is enabled, installs
-    /// the bridge into each. Disk work runs off-main; only the resulting (Sendable)
-    /// account list returns to the actor for publication.
-    private func refreshConfigAccounts() {
+    /// Installs the statusline bridge into every discovered config dir (off-main,
+    /// idempotent + self-healing). Coalesces rapid re-invocations (source/account
+    /// toggles) by cancelling the prior in-flight task. Cost-scan discovery is
+    /// independent (see `scanCostModels`), so this is gated on the statusline source.
+    private func installStatuslineBridgeIfNeeded() {
+        guard AppSettings.statuslineSourceEnabled else { return }
         let store = store
-        let installBridge = AppSettings.statuslineSourceEnabled
         let configuredDirs = AppGroupConfig.configuredConfigDirs
         let disabledKeys = Set(AppGroupConfig.disabledAccountKeys)
-        Task { [weak self] in
-            let accounts = await Task.detached(priority: .utility) { () -> [AccountConfig] in
-                let accounts = ConfigDirDiscovery.discover(
-                    configuredDirs: configuredDirs, disabledKeys: disabledKeys)
-                if installBridge {
-                    do {
-                        try StatuslineBridge.install(configDirs: accounts.map(\.configDir))
-                    } catch {
-                        let message =
-                            (error as? LocalizedError)?.errorDescription
-                            ?? error.localizedDescription
-                        try? store.writeLastError(
-                            LastErrorRecord(message: DiagnosticsSanitizer.sanitize(message)))
-                    }
-                }
-                return accounts
-            }.value
-            self?.configAccounts = accounts
+        configRefreshTask?.cancel()
+        configRefreshTask = Task.detached(priority: .utility) {
+            let accounts = ConfigDirDiscovery.discover(
+                configuredDirs: configuredDirs, disabledKeys: disabledKeys)
+            guard !Task.isCancelled else { return }
+            do {
+                try StatuslineBridge.install(configDirs: accounts.map(\.configDir))
+            } catch {
+                let message =
+                    (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                try? store.writeLastError(
+                    LastErrorRecord(message: DiagnosticsSanitizer.sanitize(message)))
+            }
         }
     }
 }

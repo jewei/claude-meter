@@ -330,15 +330,6 @@ public enum StatuslineBridge: Sendable {
         return merged
     }
 
-    /// Back-compat shim: the merged payload for the most-recently-active account.
-    public static func readData(maxAge: TimeInterval = 300) throws -> StatuslinePayload? {
-        let groups = readDataGrouped(maxAge: maxAge)
-        guard !groups.isEmpty else { return nil }
-        let activeKey =
-            groups.keys.sorted().max { payloadRecency(groups[$0]!) < payloadRecency(groups[$1]!) }
-        return activeKey.flatMap { groups[$0] }
-    }
-
     /// Recency proxy for an account's merged payload: the latest window reset we've
     /// observed (five-hour preferred, then weekly), falling back to capture time.
     /// Each real use pushes the five-hour window's reset forward, so this tracks

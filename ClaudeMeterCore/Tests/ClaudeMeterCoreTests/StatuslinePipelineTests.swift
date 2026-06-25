@@ -97,7 +97,8 @@ struct StatuslinePipelineSelectActiveTests {
             "claude-it": payload(cost: 1.0, reset: 1000),
             "claude-tech": payload(cost: 5.0, reset: 2000),
         ]
-        let (first, a1) = StatuslinePipeline.selectActive(groups: g1, prior: [:], now: t1)
+        let (first, a1) = StatuslinePipeline.selectActive(
+            groups: g1, prior: [:], sticky: nil, now: t1)
         #expect(first == "claude-tech")  // seed: tie on activity → later reset wins
 
         // it-oneone is prompted (cost rises); tech sits idle (unchanged).
@@ -105,7 +106,8 @@ struct StatuslinePipelineSelectActiveTests {
             "claude-it": payload(cost: 1.5, reset: 1000),
             "claude-tech": payload(cost: 5.0, reset: 2000),
         ]
-        let (second, _) = StatuslinePipeline.selectActive(groups: g2, prior: a1, now: t2)
+        let (second, _) = StatuslinePipeline.selectActive(
+            groups: g2, prior: a1, sticky: nil, now: t2)
         #expect(second == "claude-it")
     }
 
@@ -117,8 +119,23 @@ struct StatuslinePipelineSelectActiveTests {
             "claude-it": payload(cost: 1.0, reset: 1000),
             "claude-tech": payload(cost: 5.0, reset: 2000),
         ]
-        let (first, a1) = StatuslinePipeline.selectActive(groups: g, prior: [:], now: t1)
-        let (second, _) = StatuslinePipeline.selectActive(groups: g, prior: a1, now: t2)
+        let (first, a1) = StatuslinePipeline.selectActive(
+            groups: g, prior: [:], sticky: nil, now: t1)
+        let (second, _) = StatuslinePipeline.selectActive(
+            groups: g, prior: a1, sticky: nil, now: t2)
         #expect(first == second)
+    }
+
+    @Test func stickyBreaksColdStartTie() {
+        // Cold start / rebuild: both accounts freshly seeded (tie). The sticky key
+        // (seeded from the last snapshot's active account) wins, even though the
+        // other has a later window-reset that would otherwise take the tie-break.
+        let g = [
+            "claude-it": payload(cost: 1.0, reset: 1000),
+            "claude-tech": payload(cost: 5.0, reset: 2000),
+        ]
+        let (active, _) = StatuslinePipeline.selectActive(
+            groups: g, prior: [:], sticky: "claude-it", now: Date(timeIntervalSince1970: 100))
+        #expect(active == "claude-it")
     }
 }

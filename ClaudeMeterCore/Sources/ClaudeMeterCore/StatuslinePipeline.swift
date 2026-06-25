@@ -11,8 +11,17 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     private let fallback: any ClaudeMeterPipeline
     private let store: SnapshotStore
     private let thresholds: UsageThresholds
+    /// Account keys the user has disabled. Dropped from the read path so a disabled
+    /// account neither shows in the popover nor wins active selection (the default
+    /// `claude` account is never droppable). Injected at construction; a Settings
+    /// toggle rebuilds the pipeline with a fresh set.
+    private let disabledAccountKeys: Set<String>
     private let stateQueue = DispatchQueue(label: "com.jewei.claudemeter.statusline-pipeline.state")
     private var lastFallbackPollAt: Date? = nil
+    /// Per-account activity tracker: a payload "signature" (cost/usage fields that
+    /// only move on a real API call) plus the poll time it last *changed*. Drives
+    /// active-account selection (see `selectActive`). Guarded by `stateQueue`.
+    private var accountActivity: [String: AccountActivity] = [:]
 
     private let stalenessThreshold: TimeInterval = 60
     private let fallbackCooldown: TimeInterval = 60
@@ -20,27 +29,33 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     public init(
         fallback: any ClaudeMeterPipeline,
         store: SnapshotStore,
-        thresholds: UsageThresholds = .default
+        thresholds: UsageThresholds = .default,
+        disabledAccountKeys: Set<String> = []
     ) {
         self.fallback = fallback
         self.store = store
         self.thresholds = thresholds
+        self.disabledAccountKeys = disabledAccountKeys
     }
 
     public func poll(now: Date) async throws -> ParseResult {
-        // Primary: use statusline bridge if data is fresh and contains rate limits.
-        if StatuslineBridge.isDataFresh(maxAge: stalenessThreshold),
-            let payload = try? StatuslineBridge.readData(maxAge: stalenessThreshold),
-            payload.fiveHour != nil || payload.sevenDay != nil
-        {
-            let snapshot = buildSnapshot(from: payload, now: now)
+        // Primary: use the statusline bridge while any account is fresh. Group by
+        // account so separate rate-limit buckets are never blended; the snapshot's
+        // top-level fields mirror the most-recently-active account.
+        let groups = Self.eligibleGroups(
+            StatuslineBridge.readDataGrouped(maxAge: stalenessThreshold),
+            disabled: disabledAccountKeys
+        )
+        if !groups.isEmpty {
+            let snapshot = buildSnapshot(from: groups, now: now)
             try? store.writeLatest(snapshot)
             try? store.clearLastError()
+            let freshest = groups.values.map(\.capturedAt).max() ?? now
             return ParseResult(
                 snapshot: snapshot,
                 warnings: [],
                 errors: [],
-                rawHash: String(payload.capturedAt.timeIntervalSince1970),
+                rawHash: String(freshest.timeIntervalSince1970),
                 parserVersion: "statusline-1.0"
             )
         }
@@ -113,8 +128,88 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
             .resolved(asOf: now)
     }
 
+    /// Keeps only accounts the bridge actually surfaces: those with a window, and
+    /// not user-disabled (the default `claude` account is never droppable). Pure,
+    /// so the disabled-account behavior is unit-testable.
+    static func eligibleGroups(
+        _ groups: [String: StatuslineBridge.StatuslinePayload],
+        disabled: Set<String>
+    ) -> [String: StatuslineBridge.StatuslinePayload] {
+        groups.filter { $0.value.fiveHour != nil || $0.value.sevenDay != nil }
+            .filter {
+                $0.key == StatuslineBridge.defaultAccountKey || !disabled.contains($0.key)
+            }
+    }
+
+    /// Builds the snapshot for one poll: top-level fields mirror the active account,
+    /// and `accounts` carries the per-account list when more than one is observed.
+    private func buildSnapshot(
+        from groups: [String: StatuslineBridge.StatuslinePayload], now: Date
+    ) -> ClaudeUsageSnapshot {
+        let activeKey = activeAccountKey(in: groups, now: now)
+        let activePayload = groups[activeKey] ?? groups.values.first!
+        var snapshot = buildSnapshot(from: activePayload, now: now)
+
+        // Only surface the per-account list when more than one account is active —
+        // single-account snapshots stay byte-identical to the historical shape.
+        if groups.count > 1 {
+            snapshot.accounts =
+                groups
+                .sorted {
+                    let ra = StatuslineBridge.payloadRecency($0.value)
+                    let rb = StatuslineBridge.payloadRecency($1.value)
+                    if ra != rb { return ra > rb }
+                    return $0.key < $1.key
+                }
+                .map { key, payload in
+                    makeAccountUsage(
+                        key: key, payload: payload, isActive: key == activeKey, now: now)
+                }
+        }
+        return snapshot
+    }
+
     private func buildSnapshot(from payload: StatuslineBridge.StatuslinePayload, now: Date)
         -> ClaudeUsageSnapshot
+    {
+        let fields = accountFields(from: payload, now: now)
+        return ClaudeUsageSnapshot(
+            parserVersion: "statusline-1.0",
+            createdAt: now,
+            lastSuccessfulPollAt: payload.capturedAt,
+            source: SourceInfo(
+                cliPath: "statusline-bridge",
+                cliVersion: payload.cliVersion,
+                command: "~/.claude/settings.json statusLine"
+            ),
+            session: fields.session,
+            limits: fields.limits,
+            state: SnapshotState(status: .ok, severity: fields.severity)
+        )
+    }
+
+    private func makeAccountUsage(
+        key: String,
+        payload: StatuslineBridge.StatuslinePayload,
+        isActive: Bool,
+        now: Date
+    ) -> AccountUsage {
+        let fields = accountFields(from: payload, now: now)
+        return AccountUsage(
+            id: key,
+            label: ConfigDirDiscovery.label(forKey: key),
+            session: fields.session,
+            limits: fields.limits,
+            lastSuccessfulPollAt: payload.capturedAt,
+            severity: fields.severity,
+            isActive: isActive
+        )
+    }
+
+    /// Maps one window-bearing payload to the display limits/session/severity shared
+    /// by both the top-level snapshot and the per-account list.
+    private func accountFields(from payload: StatuslineBridge.StatuslinePayload, now: Date)
+        -> (limits: LimitInfo, session: SessionInfo?, severity: UsageSeverity)
     {
         let sessionWindow = Self.displayWindow(for: payload.fiveHour, now: now)
         let weekWindow = Self.displayWindow(for: payload.sevenDay, now: now)
@@ -140,22 +235,89 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
             )
         }()
 
-        return ClaudeUsageSnapshot(
-            parserVersion: "statusline-1.0",
-            createdAt: now,
-            lastSuccessfulPollAt: payload.capturedAt,
-            source: SourceInfo(
-                cliPath: "statusline-bridge",
-                cliVersion: payload.cliVersion,
-                command: "~/.claude/settings.json statusLine"
-            ),
-            session: sessionInfo,
-            limits: LimitInfo(
+        return (
+            LimitInfo(
                 currentSession: sessionWindow,
                 currentWeekAllModels: weekWindow,
                 currentWeekOpus: opusWindow
             ),
-            state: SnapshotState(status: .ok, severity: severity)
+            sessionInfo,
+            severity
         )
+    }
+
+    /// Per-account activity record: the activity signature and the poll time it last changed.
+    struct AccountActivity: Equatable, Sendable {
+        var signature: String
+        var lastActiveAt: Date
+    }
+
+    /// Selects the most-recently-*active* account and returns the updated activity map.
+    ///
+    /// Why not file mtime or `resets_at`? The bridge rewrites *every* session file
+    /// once a second (`refreshInterval: 1`), so an open-but-idle terminal looks just
+    /// as "fresh" as the one you're prompting; and Claude's five-hour `resets_at`
+    /// marks when each account's window *started*, not recent use — so an idle
+    /// account whose window started later would wrongly win. Instead we diff each
+    /// account's activity signature (cost / API duration / usage — fields that only
+    /// move on a real API call) across polls: the account whose signature changed
+    /// most recently is active; idle accounts keep their last-active time frozen.
+    /// Ties (and first sight) fall back to window-reset recency, then key order.
+    static func selectActive(
+        groups: [String: StatuslineBridge.StatuslinePayload],
+        prior: [String: AccountActivity],
+        now: Date
+    ) -> (key: String, activity: [String: AccountActivity]) {
+        var activity: [String: AccountActivity] = [:]
+        for (key, payload) in groups {
+            let signature = activitySignature(payload)
+            if let previous = prior[key], previous.signature == signature {
+                activity[key] = AccountActivity(
+                    signature: signature, lastActiveAt: previous.lastActiveAt)
+            } else {
+                activity[key] = AccountActivity(signature: signature, lastActiveAt: now)
+            }
+        }
+
+        let keys = groups.keys.sorted()  // deterministic base order for full ties
+        guard var best = keys.first else {
+            return (StatuslineBridge.defaultAccountKey, activity)
+        }
+        for key in keys.dropFirst() {
+            let here = activity[key]!.lastActiveAt
+            let there = activity[best]!.lastActiveAt
+            if here > there {
+                best = key
+            } else if here == there,
+                StatuslineBridge.payloadRecency(groups[key]!)
+                    > StatuslineBridge.payloadRecency(groups[best]!)
+            {
+                best = key
+            }
+        }
+        return (best, activity)
+    }
+
+    /// Fields that tick on real API activity; stable while a session is idle (even
+    /// as its file is rewritten every second). Any change marks the account active.
+    static func activitySignature(_ p: StatuslineBridge.StatuslinePayload) -> String {
+        let cost: String = p.totalCostUsd.map { "\($0)" } ?? "-"
+        let api: String = p.totalApiDurationMs.map { "\($0)" } ?? "-"
+        let five: String = (p.fiveHour?.usedPercentage).map { "\($0)" } ?? "-"
+        let seven: String = (p.sevenDay?.usedPercentage).map { "\($0)" } ?? "-"
+        let added: String = p.codeLinesAdded.map { "\($0)" } ?? "-"
+        let removed: String = p.codeLinesRemoved.map { "\($0)" } ?? "-"
+        return [cost, api, five, seven, added, removed].joined(separator: "|")
+    }
+
+    private func activeAccountKey(
+        in groups: [String: StatuslineBridge.StatuslinePayload], now: Date
+    ) -> String {
+        stateQueue.sync {
+            let (key, activity) = Self.selectActive(
+                groups: groups, prior: accountActivity, now: now)
+            accountActivity = activity
+            return key
+        }
     }
 }

@@ -9,7 +9,11 @@ import Foundation
 /// field per unique message rather than summing chunks (summing over-counts badly).
 public struct CostUsageScanner: Sendable {
 
-    public let projectsPath: URL
+    /// One or more `projects/` roots (one per Claude config dir / account). Costs
+    /// are additive across accounts, so the scan unions them.
+    public let projectsPaths: [URL]
+    /// Back-compat: the first configured root.
+    public var projectsPath: URL { projectsPaths.first ?? JournalReader.defaultProjectsPath }
     private let pricing: ModelPricing
     private let cache: CostUsageCache
 
@@ -18,14 +22,41 @@ public struct CostUsageScanner: Sendable {
     private static let maxFullReadBytes: UInt64 = 8 * 1024 * 1024
     private static let tailReadBytes: UInt64 = 4 * 1024 * 1024
 
+    /// Multi-root: unions usage across several config dirs' `projects/` folders.
+    public init(
+        projectsPaths: [URL],
+        pricing: ModelPricing = .current,
+        cache: CostUsageCache = .shared
+    ) {
+        let roots = projectsPaths.isEmpty ? [JournalReader.defaultProjectsPath] : projectsPaths
+        self.projectsPaths = CostUsageScanner.dedupe(roots)
+        self.pricing = pricing
+        self.cache = cache
+    }
+
+    /// Single-root convenience (defaults to `~/.claude/projects`).
     public init(
         projectsPath: URL? = nil,
         pricing: ModelPricing = .current,
         cache: CostUsageCache = .shared
     ) {
-        self.projectsPath = projectsPath ?? JournalReader.defaultProjectsPath
-        self.pricing = pricing
-        self.cache = cache
+        self.init(
+            projectsPaths: [projectsPath ?? JournalReader.defaultProjectsPath],
+            pricing: pricing,
+            cache: cache
+        )
+    }
+
+    /// Dedups roots by resolved path so overlapping discovery + custom entries
+    /// (or symlinks) never double-count cost.
+    private static func dedupe(_ urls: [URL]) -> [URL] {
+        var seen = Set<String>()
+        var out: [URL] = []
+        for url in urls {
+            let key = url.resolvingSymlinksInPath().standardizedFileURL.path
+            if seen.insert(key).inserted { out.append(url) }
+        }
+        return out
     }
 
     /// Aggregated per-model usage/cost over the window.
@@ -35,17 +66,34 @@ public struct CostUsageScanner: Sendable {
         let cutoff = cal.startOfDay(for: cal.date(byAdding: .day, value: offset, to: now)!)
         let fm = FileManager.default
 
+        // Sum tokens per (day, model) across every configured `projects/` root, then
+        // collapse to per-model. Costs are additive across accounts; a single
+        // unreadable root is skipped rather than zeroing the union.
+        var byDayModel: [DayModelKey: TokenTotals] = [:]
+        var isPartial = false
+        for projectsPath in projectsPaths {
+            scanRoot(projectsPath, cutoff: cutoff, fm: fm, into: &byDayModel, isPartial: &isPartial)
+        }
+
+        return aggregate(byDayModel, isPartial: isPartial)
+    }
+
+    /// Accumulates one `projects/` root into the running totals. An unreadable root
+    /// returns without touching the accumulators.
+    private func scanRoot(
+        _ projectsPath: URL,
+        cutoff: Date,
+        fm: FileManager,
+        into byDayModel: inout [DayModelKey: TokenTotals],
+        isPartial: inout Bool
+    ) {
         guard
             let projectDirs = try? fm.contentsOfDirectory(
                 at: projectsPath,
                 includingPropertiesForKeys: nil,
                 options: [.skipsHiddenFiles]
             )
-        else { return .empty }
-
-        // Sum tokens per (day, model) across all files, then collapse to per-model.
-        var byDayModel: [DayModelKey: TokenTotals] = [:]
-        var isPartial = false
+        else { return }
 
         for projectDir in projectDirs {
             var isDir: ObjCBool = false
@@ -85,8 +133,6 @@ public struct CostUsageScanner: Sendable {
                 }
             }
         }
-
-        return aggregate(byDayModel, isPartial: isPartial)
     }
 
     private struct ParseResult {

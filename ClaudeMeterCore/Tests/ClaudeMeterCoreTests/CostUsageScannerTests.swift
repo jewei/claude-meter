@@ -132,4 +132,38 @@ struct CostUsageScannerTests {
         let result = scanner.scan(daysBack: 7, now: now)
         #expect(result.isEmpty)
     }
+
+    @Test func unionsMultipleProjectRootsAndIgnoresUnreadableRoot() throws {
+        let now = Date()
+        let ts = iso(now)
+        let fm = FileManager.default
+
+        func makeRoot(input: Int) throws -> URL {
+            let root = fm.temporaryDirectory.appendingPathComponent(
+                UUID().uuidString, isDirectory: true)
+            let project = root.appendingPathComponent("p", isDirectory: true)
+            try fm.createDirectory(at: project, withIntermediateDirectories: true)
+            let line = assistantLine(
+                id: UUID().uuidString, requestId: "r", model: "claude-opus-4-8",
+                input: input, output: 0, ts: ts)
+            try Data(line.utf8).write(to: project.appendingPathComponent("s.jsonl"))
+            return root
+        }
+
+        let rootA = try makeRoot(input: 1_000_000)
+        let rootB = try makeRoot(input: 1_000_000)
+        let missing = fm.temporaryDirectory.appendingPathComponent("missing-" + UUID().uuidString)
+        defer {
+            try? fm.removeItem(at: rootA)
+            try? fm.removeItem(at: rootB)
+        }
+
+        // Two readable roots + one missing root: the missing root must not zero the
+        // union (it `continue`s rather than `return .empty`).
+        let scanner = CostUsageScanner(
+            projectsPaths: [rootA, missing, rootB], cache: CostUsageCache())
+        let result = scanner.scan(daysBack: 7, now: now)
+        let opus = try #require(result.models.first { $0.name == "claude-opus-4-8" })
+        #expect(opus.inputTokens == 2_000_000)  // summed across both readable roots
+    }
 }

@@ -9,8 +9,34 @@ public enum AppGroupConfig {
     public static let staleAfterSecondsKey = "staleAfterSeconds"
     public static let oauthModeKey = "oauthMode"
 
+    /// Extra Claude config dirs (`CLAUDE_CONFIG_DIR` accounts) the user added by
+    /// hand in Settings, as absolute paths. Auto-discovered dirs are not listed here.
+    public static let configuredConfigDirsKey = "configuredConfigDirs"
+    /// Account keys (see `ConfigDirDiscovery.accountKey`) the user has switched off;
+    /// the bridge skips installing into them and the popover hides them. The default
+    /// `claude` account is never disablable.
+    public static let disabledAccountKeysKey = "disabledAccountKeys"
+
     public static var sharedDefaults: UserDefaults? {
         UserDefaults(suiteName: suiteName)
+    }
+
+    /// User-added custom Claude config directories (absolute paths).
+    public static var configuredConfigDirs: [String] {
+        get { UserDefaults.standard.stringArray(forKey: configuredConfigDirsKey) ?? [] }
+        set {
+            UserDefaults.standard.set(newValue, forKey: configuredConfigDirsKey)
+            sharedDefaults?.set(newValue, forKey: configuredConfigDirsKey)
+        }
+    }
+
+    /// Account keys the user has disabled.
+    public static var disabledAccountKeys: [String] {
+        get { UserDefaults.standard.stringArray(forKey: disabledAccountKeysKey) ?? [] }
+        set {
+            UserDefaults.standard.set(newValue, forKey: disabledAccountKeysKey)
+            sharedDefaults?.set(newValue, forKey: disabledAccountKeysKey)
+        }
     }
 
     /// Copies display-related settings from the standard suite into the App Group suite.
@@ -20,6 +46,8 @@ public enum AppGroupConfig {
             warningThresholdKey,
             criticalThresholdKey,
             staleAfterSecondsKey,
+            configuredConfigDirsKey,
+            disabledAccountKeysKey,
         ] {
             if let value = source.object(forKey: key) {
                 shared.set(value, forKey: key)

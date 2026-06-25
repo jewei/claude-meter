@@ -411,7 +411,11 @@ private struct DataSettingsTab: View {
                     title: "Statusline Bridge",
                     subtitle: "Check statusline once per minute.",
                     isEnabled: $statuslineSourceEnabled
-                ) {}
+                ) {
+                    if statuslineSourceEnabled {
+                        ConfigDirAccountsSection(appState: appState)
+                    }
+                }
 
                 DataSourceCard(
                     icon: "key.fill",
@@ -742,6 +746,107 @@ private struct DataSettingsTab: View {
 
     private func rebuild() {
         appState.rebuildPipeline()
+    }
+}
+
+// MARK: - Config-dir accounts (multiple CLAUDE_CONFIG_DIR accounts)
+
+/// Lists discovered Claude config dirs (one per account), letting the user disable
+/// non-default ones and add custom paths. Rate limits are per-account, so the meter
+/// keeps them separate; the menu bar follows the most recently used account.
+private struct ConfigDirAccountsSection: View {
+    let appState: AppState
+
+    @State private var accounts: [AccountConfig] = []
+    @State private var disabledKeys: Set<String> = []
+    @State private var configuredDirs: [String] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Hide the list while there's only the default account and nothing custom.
+            if accounts.count > 1 || !configuredDirs.isEmpty {
+                ForEach(accounts) { account in
+                    accountRow(account)
+                }
+            }
+            Button {
+                addCustomDir()
+            } label: {
+                Label("Add config directory…", systemImage: "folder.badge.plus")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Text(
+                "Each account run via CLAUDE_CONFIG_DIR keeps its own rate limit. The menu bar follows your most recently used account; the others appear in the popover. (OAuth/claude.ai enrich the active account only.)"
+            )
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .onAppear { reload() }
+    }
+
+    private func accountRow(_ account: AccountConfig) -> some View {
+        let isDefault = account.id == StatuslineBridge.defaultAccountKey
+        return HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(account.label)
+                    .font(.caption.weight(.medium))
+                Text(account.configDir.path)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 8)
+            Toggle("", isOn: enabledBinding(for: account.id))
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .controlSize(.mini)
+                .disabled(isDefault)
+                .help(isDefault ? "The default account is always tracked" : "Track this account")
+        }
+    }
+
+    private func enabledBinding(for key: String) -> Binding<Bool> {
+        Binding(
+            get: { !disabledKeys.contains(key) },
+            set: { enabled in
+                if enabled { disabledKeys.remove(key) } else { disabledKeys.insert(key) }
+                AppGroupConfig.disabledAccountKeys = Array(disabledKeys)
+                appState.scheduleRebuildPipeline()
+            }
+        )
+    }
+
+    private func reload() {
+        disabledKeys = Set(AppGroupConfig.disabledAccountKeys)
+        configuredDirs = AppGroupConfig.configuredConfigDirs
+        let configured = configuredDirs
+        Task.detached(priority: .userInitiated) {
+            // Pass no disabled filter so disabled accounts still appear (and can be
+            // re-enabled) in the list.
+            let found = ConfigDirDiscovery.discover(configuredDirs: configured, disabledKeys: [])
+            await MainActor.run { self.accounts = found }
+        }
+    }
+
+    private func addCustomDir() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Add"
+        panel.message = "Choose a Claude config directory (one containing settings.json or projects/)."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        var dirs = AppGroupConfig.configuredConfigDirs
+        if !dirs.contains(url.path) {
+            dirs.append(url.path)
+            AppGroupConfig.configuredConfigDirs = dirs
+            appState.scheduleRebuildPipeline()
+        }
+        reload()
     }
 }
 

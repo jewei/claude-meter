@@ -69,7 +69,7 @@ struct UsageCardView: View {
         case .warning:
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.caption)
-                .foregroundStyle(.orange)
+                .foregroundStyle(.warningTint)
         case .critical, .overLimit:
             Image(systemName: "exclamationmark.octagon.fill")
                 .font(.caption)
@@ -136,7 +136,7 @@ struct UsageCardView: View {
 
     private var paceColor: Color {
         switch pace {
-        case .ahead: return .orange
+        case .ahead: return .warningTint
         case .behind: return .green
         case .onPace: return .secondary
         case .unknown: return .secondary
@@ -152,7 +152,7 @@ struct UsageCardView: View {
     private var percentColor: Color {
         switch severity {
         case .normal: return .primary
-        case .warning: return .orange
+        case .warning: return .warningTint
         case .critical, .overLimit: return .red
         case .unknown: return .secondary
         }
@@ -161,7 +161,7 @@ struct UsageCardView: View {
     private var progressFillColor: Color {
         switch severity {
         case .normal: return .accentColor
-        case .warning: return .orange
+        case .warning: return .warningTint
         case .critical, .overLimit: return .red
         case .unknown: return Color.primary.opacity(0.25)
         }

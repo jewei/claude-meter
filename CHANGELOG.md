@@ -48,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Disabling an account now clears any menu-bar pin to it (and the Appearance
   picker no longer lists disabled accounts); a lone non-default config dir shows
   its custom display name and plan badge in the popover.
+- The menu-bar percentage and status dot are now Claude-only — Cursor usage no
+  longer leaks into the menu bar (it kept its own popover card) and the menu bar
+  honors the "Menu bar follows" account setting.
 - OAuth refreshed-token cache is now scoped to the selected mode (`auto` vs
   `manual`) and cleared on disconnect, preventing tokens from crossing source
   modes inside one app session.

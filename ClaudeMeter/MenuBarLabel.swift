@@ -101,15 +101,8 @@ struct MenuBarLabel: View {
     }
 
     private var showsErrorIcon: Bool {
-        if appState.lastError != nil && appState.snapshot == nil { return true }
-        if AppSettings.cursorSourceEnabled,
-            appState.cursorError != nil,
-            appState.cursorUsage == nil,
-            appState.snapshot == nil
-        {
-            return true
-        }
-        return false
+        // Claude only — a Cursor error surfaces in the popover, not the menu bar.
+        appState.lastError != nil && appState.snapshot == nil
     }
 
     // MARK: - Energy-left number (nearest limit)
@@ -127,9 +120,9 @@ struct MenuBarLabel: View {
             ].compactMap { $0 }
             lefts.append(contentsOf: windows.compactMap { $0.percentLeft(asOf: now) })
         }
-        if AppSettings.cursorSourceEnabled, let cursor = appState.cursorUsage?.clampedPercent {
-            lefts.append(100 - cursor)
-        }
+        // Cursor is intentionally excluded — the menu bar reflects Claude only, and
+        // honors "Menu bar follows" (pinned account vs. nearest Claude limit). Cursor
+        // has its own popover card.
         guard let minLeft = lefts.min() else { return nil }
         // "Used" mode shows the max usage (= the nearest limit, inverted).
         let value = progressionMode == "used" ? 100 - minLeft : minLeft

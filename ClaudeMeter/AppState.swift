@@ -276,6 +276,8 @@ final class AppState: ObservableObject {
     }
 
     /// Highest severity across the menu-bar limit sets — the "nearest-limit" signal.
+    /// **Claude only**: Cursor is a separate source with its own popover card and is
+    /// never folded into the menu bar (it would otherwise dominate the dot/number).
     var severity: UsageSeverity {
         let thresholds = Self.currentThresholds()
         let now = Date()
@@ -288,9 +290,6 @@ final class AppState: ObservableObject {
                 result = UsageSeverity.highest(
                     result, thresholds.severity(for: window.resolved(asOf: now).percentUsed))
             }
-        }
-        if AppSettings.cursorSourceEnabled, let cursor = cursorUsage {
-            result = UsageSeverity.highest(result, thresholds.severity(for: cursor.percentUsed))
         }
         return result
     }

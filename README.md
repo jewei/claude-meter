@@ -5,7 +5,7 @@ session and weekly limits as playful, color-coded **energy rings**, across every
 account, with optional notifications.
 
 <p align="center">
-  <img src="assets/claude-meter-screenshot.png" alt="Claude Meter screenshot showing Claude and Cursor usage cards" width="420">
+  <img src="assets/claude-meter-screenshot.png" alt="Claude Meter screenshot showing Claude and Cursor usage cards" width="600">
 </p>
 
 ## Features

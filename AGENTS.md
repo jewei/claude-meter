@@ -115,7 +115,7 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 - **Token read-only** — `CursorTokenStore` reads `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` (batched `sqlite3 -readonly`, 10 s timeout) with Keychain fallback (`cursor-access-token` / `cursor-refresh-token`). Never writes back.
 - **API** — unofficial Connect-RPC on `api2.cursor.sh` (`GetCurrentPeriodUsage`); may break without notice. `totalPercentUsed` is authoritative over raw spend/limit.
 - **Refresh** — in-memory only for the app session; rotated refresh tokens are cached in `CursorUsageProvider`. Open Cursor if refresh fails.
-- **UX** — `cursorError` surfaces in popover/settings/diagnostics; menu bar severity includes Cursor when enabled. Not in widget/notifications yet.
+- **UX** — `cursorError` surfaces in popover/settings/diagnostics. The **menu bar is Claude-only** — Cursor has its own popover card but is never folded into the menu-bar dot/number/error (it would otherwise dominate the nearest-limit signal). Not in widget/notifications yet.
 
 ## Notifications
 

@@ -108,23 +108,41 @@ struct NotificationPolicyTests {
         #expect(!triggers.contains { $0.level == "recovered" })
     }
 
-    @Test("Skips all triggers when the active account switched")
-    func activeAccountSwitchSuppressed() {
-        func withActive(_ id: String, session: Double) -> ClaudeUsageSnapshot {
-            var s = snapshot(session: session)
-            s.accounts = [
-                AccountUsage(
-                    id: id, label: id, limits: s.limits, severity: .normal, isActive: true)
-            ]
-            return s
-        }
-        // Account "a" at 30% (normal), then a switch to "b" at 96% (critical):
-        // unrelated windows must not look like a crossing.
-        let previous = withActive("a", session: 30)
-        let current = withActive("b", session: 96)
+    /// A two-account snapshot whose top-level mirrors the `active` account.
+    private func multiSnap(active: String, aSession: Double, bSession: Double)
+        -> ClaudeUsageSnapshot
+    {
+        let a = LimitInfo(currentSession: window(percent: aSession))
+        let b = LimitInfo(currentSession: window(percent: bSession))
+        var s = snapshot(session: 0)
+        s.limits = active == "a" ? a : b
+        s.accounts = [
+            AccountUsage(id: "a", label: "a", limits: a, severity: .normal, isActive: active == "a"),
+            AccountUsage(id: "b", label: "b", limits: b, severity: .normal, isActive: active == "b"),
+        ]
+        return s
+    }
+
+    @Test("Active-account switch diffs the same account, not the top-level")
+    func activeSwitchDiffsPerAccount() {
+        // A active@30 + B idle@85, then switch to B active@85 (B unchanged) + A idle@30.
+        // The switch must not register a 30→85 crossing on the top-level window.
+        let previous = multiSnap(active: "a", aSession: 30, bSession: 85)
+        let current = multiSnap(active: "b", aSession: 30, bSession: 85)
         #expect(
             NotificationPolicy.triggers(snapshot: current, previous: previous, now: fixedNow)
                 .isEmpty)
+    }
+
+    @Test("Switching to an already-critical, never-seen account surfaces it once")
+    func switchToNewCriticalFires() {
+        // Single-account history (no `accounts`), then a multi-account poll whose
+        // active account "b" is critical and has no prior baseline → fire once.
+        let previous = snapshot(session: 30)
+        let current = multiSnap(active: "b", aSession: 30, bSession: 96)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: previous, now: fixedNow)
+        #expect(triggers.contains { $0.scope == "session" && $0.level == "critical" })
     }
 
     @Test("Skips Opus crossing on first enrichment (previous lacks Opus)")

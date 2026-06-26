@@ -899,7 +899,18 @@ private struct ConfigDirAccountsSection: View {
         Binding(
             get: { !disabledKeys.contains(key) },
             set: { enabled in
-                if enabled { disabledKeys.remove(key) } else { disabledKeys.insert(key) }
+                if enabled {
+                    disabledKeys.remove(key)
+                } else {
+                    disabledKeys.insert(key)
+                    // A disabled account is no longer tracked, so a menu-bar pin to it
+                    // would silently fall back to nearest-limit. Clear the pin so the
+                    // Appearance picker label matches the menu bar's behavior.
+                    if AppGroupConfig.menuBarAccount == key {
+                        UserDefaults.standard.removeObject(forKey: AppGroupConfig.menuBarAccountKey)
+                        AppGroupConfig.syncDisplaySettings()
+                    }
+                }
                 AppGroupConfig.disabledAccountKeys = Array(disabledKeys)
                 appState.scheduleRebuildPipeline()
             }
@@ -1151,8 +1162,11 @@ private struct AppearanceSettingsTab: View {
 
     private func reloadAccounts() {
         let configured = AppGroupConfig.configuredConfigDirs
+        // Exclude disabled accounts — they aren't tracked, so they can't be pinned.
+        let disabled = Set(AppGroupConfig.disabledAccountKeys)
         Task.detached(priority: .userInitiated) {
-            let found = ConfigDirDiscovery.discover(configuredDirs: configured, disabledKeys: [])
+            let found = ConfigDirDiscovery.discover(
+                configuredDirs: configured, disabledKeys: disabled)
             await MainActor.run { self.accounts = found }
         }
     }

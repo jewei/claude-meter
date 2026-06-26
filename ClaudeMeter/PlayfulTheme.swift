@@ -130,12 +130,8 @@ enum EnergyBand {
 }
 
 extension LimitWindow {
-    /// Energy remaining (0–100) — the inverse of usage. A just-reset rolling
-    /// window reads 100 (it refilled), via `resolved(asOf:)`.
-    func percentLeft(asOf now: Date) -> Double? {
-        guard let used = resolved(asOf: now).percentUsed else { return nil }
-        return 100 - min(100, max(0, used))
-    }
+    // `percentLeft(asOf:)` now lives in ClaudeMeterCore (Models.swift) so the
+    // notification engine doesn't depend on this UI layer.
 
     func energyBand(thresholds: UsageThresholds, asOf now: Date) -> EnergyBand {
         EnergyBand(severity: thresholds.severity(for: resolved(asOf: now).percentUsed))

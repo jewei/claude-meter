@@ -40,9 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Multi-account notifications no longer mis-fire when the active account changes
-  between polls, and a "refueled" alert won't trigger from a stale/persisted
-  reading on first launch or the first OAuth Opus enrichment.
+- Multi-account notifications now diff each account against its _own_ previous
+  reading, so an active-account switch never fabricates a false threshold crossing
+  nor skips a real one (switching to an already-critical account surfaces it once).
+  A "refueled" alert still won't trigger from a stale/persisted reading on first
+  launch or the first OAuth Opus enrichment.
+- Disabling an account now clears any menu-bar pin to it (and the Appearance
+  picker no longer lists disabled accounts); a lone non-default config dir shows
+  its custom display name and plan badge in the popover.
 - OAuth refreshed-token cache is now scoped to the selected mode (`auto` vs
   `manual`) and cleared on disconnect, preventing tokens from crossing source
   modes inside one app session.

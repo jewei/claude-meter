@@ -64,8 +64,8 @@ struct MenuBarLabel: View {
                 dot(.pfEnergyLow)
             case .normal:
                 dot(.pfEnergyFull)
-            case .unknown, .overLimit:
-                dot(Color.secondary)
+            default:
+                dot(Color.secondary)  // .unknown (.overLimit is handled above)
             }
         }
     }

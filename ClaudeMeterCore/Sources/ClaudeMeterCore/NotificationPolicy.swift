@@ -23,29 +23,33 @@ public enum NotificationPolicy {
         thresholds: UsageThresholds = .default,
         now: Date = Date()
     ) -> [NotificationTrigger] {
-        // The top-level limits mirror the *active* account, so don't diff across an
-        // active-account switch — previous and current would be unrelated windows.
-        if let previous {
-            let prevActive = previous.accounts?.first(where: { $0.isActive })?.id
-            let curActive = snapshot.accounts?.first(where: { $0.isActive })?.id
-            if prevActive != curActive { return [] }
+        // Top-level limits mirror the *active* account, so diff against THAT account's
+        // own previous entry (matched by id) — an active-account switch otherwise
+        // compares two unrelated accounts. When the active account wasn't observed
+        // last poll (new account, or a switch out of single-account history) there's
+        // no baseline, so its current state is surfaced once. Single-account snapshots
+        // (no `accounts`) never switch, so the top-level previous is the same account.
+        let prevLimits: LimitInfo?
+        if let activeId = snapshot.accounts?.first(where: { $0.isActive })?.id {
+            prevLimits = previous?.accounts?.first(where: { $0.id == activeId })?.limits
+        } else {
+            prevLimits = previous?.limits
         }
 
         var out: [NotificationTrigger] = []
         out += evaluate(
             scope: "session",
             current: snapshot.limits.currentSession,
-            previous: previous?.limits.currentSession,
+            previous: prevLimits?.currentSession,
             thresholds: thresholds, now: now)
         out += evaluate(
             scope: "weekly",
             current: snapshot.limits.currentWeekAllModels,
-            previous: previous?.limits.currentWeekAllModels,
+            previous: prevLimits?.currentWeekAllModels,
             thresholds: thresholds, now: now)
         // Only diff Opus when *both* snapshots carry it — otherwise the first OAuth
         // enrichment (previous nil, current already 85%+) looks like a fresh crossing.
-        if let curOpus = snapshot.limits.currentWeekOpus,
-            let prevOpus = previous?.limits.currentWeekOpus
+        if let curOpus = snapshot.limits.currentWeekOpus, let prevOpus = prevLimits?.currentWeekOpus
         {
             out += evaluate(
                 scope: "weeklyOpus", current: curOpus, previous: prevOpus,
@@ -105,7 +109,10 @@ public enum NotificationPolicy {
         }
 
         // Recovery ("refueled"): a window the user was previously over — by its
-        // *raw* reading, so a reset/refill still counts — is back to normal.
+        // *raw* reading, so a reset/refill still counts — is back to normal. Usage is
+        // monotonic within a window, so in practice the only way down is a reset; we
+        // don't special-case "gradual" drops. A stray low reading would yield at most
+        // one "refueled" (de-duped per reset window), which is harmless.
         let rawPreviousSeverity = thresholds.severity(for: rawPrevious?.percentUsed)
         if currentSeverity == .normal && isElevated(rawPreviousSeverity) {
             // Anchor the dedup key on the window the user recovered *from* (its raw

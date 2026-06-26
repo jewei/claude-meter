@@ -320,6 +320,14 @@ public struct LimitWindow: Codable, Equatable, Sendable {
 
     public var isOverLimit: Bool { (percentUsed ?? 0) > 100 }
 
+    /// Energy remaining (0–100) — the inverse of usage. A rolling window past its
+    /// reset reads 100 (it refilled), via `resolved(asOf:)`. Lives in Core so the
+    /// notification engine doesn't depend on the UI layer for it.
+    public func percentLeft(asOf now: Date) -> Double? {
+        guard let used = resolved(asOf: now).percentUsed else { return nil }
+        return 100 - min(100, max(0, used))
+    }
+
     /// UI-friendly percent string, e.g. `25%`, `84.5%`, `100%+`.
     public var displayPercent: String? {
         guard percentUsed != nil else { return nil }

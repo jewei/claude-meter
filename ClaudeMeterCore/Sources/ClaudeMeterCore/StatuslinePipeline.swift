@@ -159,8 +159,10 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
         let activePayload = groups[activeKey] ?? groups.values.first!
         var snapshot = buildSnapshot(from: activePayload, now: now)
 
-        // Only surface the per-account list when more than one account is active —
-        // single-account snapshots stay byte-identical to the historical shape.
+        // Surface the per-account list when more than one account is active. A lone
+        // *non-default* account is also surfaced (single element) so the UI can key
+        // user name/plan overrides by its account key; a lone default `claude`
+        // account stays byte-identical to the historical shape (`accounts == nil`).
         if groups.count > 1 {
             snapshot.accounts =
                 groups
@@ -174,6 +176,10 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
                     makeAccountUsage(
                         key: key, payload: payload, isActive: key == activeKey, now: now)
                 }
+        } else if activeKey != StatuslineBridge.defaultAccountKey {
+            snapshot.accounts = [
+                makeAccountUsage(key: activeKey, payload: activePayload, isActive: true, now: now)
+            ]
         }
         return snapshot
     }

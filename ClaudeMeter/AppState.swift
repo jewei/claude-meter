@@ -33,6 +33,10 @@ final class AppState: ObservableObject {
     private var rebuildDebounceTask: Task<Void, Never>?
     private var pipelineGeneration = 0
     private var refreshPending = false
+    /// False until the first successful in-session poll. The first poll's
+    /// `previous` is the persisted snapshot, which must not seed notifications
+    /// (e.g. a "refueled" for a window that reset while the app was quit).
+    private var didPollInSession = false
     private var powerMonitor: PowerMonitor?
     private var lastOAuthEnrichmentAt: Date?
     private var cachedOAuthEnrichment: OAuthPipeline.OAuthEnrichment?
@@ -258,23 +262,31 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Limit sets the menu bar considers: the **pinned account** when the user set
+    /// one (`AppGroupConfig.menuBarAccount`), else **every account** (nearest-limit,
+    /// since rate limits are per-account). Cursor is added separately by callers.
+    var menuBarLimitSets: [LimitInfo] {
+        guard let snap = snapshot else { return [] }
+        guard let accounts = snap.accounts, !accounts.isEmpty else { return [snap.limits] }
+        let pinned = AppGroupConfig.menuBarAccount
+        if pinned != "", pinned != "nearest", let acc = accounts.first(where: { $0.id == pinned }) {
+            return [acc.limits]
+        }
+        return accounts.map(\.limits)
+    }
+
+    /// Highest severity across the menu-bar limit sets — the "nearest-limit" signal.
     var severity: UsageSeverity {
         let thresholds = Self.currentThresholds()
         let now = Date()
         var result: UsageSeverity = .unknown
-        if let snap = snapshot {
-            let session = snap.limits.currentSession.resolved(asOf: now)
-            let week = snap.limits.currentWeekAllModels.resolved(asOf: now)
-            result = UsageSeverity.highest(
-                result,
-                thresholds.severity(for: session.percentUsed)
-            )
-            result = UsageSeverity.highest(
-                result,
-                thresholds.severity(for: week.percentUsed)
-            )
-            if let opus = snap.limits.currentWeekOpus?.resolved(asOf: now) {
-                result = UsageSeverity.highest(result, thresholds.severity(for: opus.percentUsed))
+        for limits in menuBarLimitSets {
+            let windows = [
+                limits.currentSession, limits.currentWeekAllModels, limits.currentWeekOpus,
+            ].compactMap { $0 }
+            for window in windows {
+                result = UsageSeverity.highest(
+                    result, thresholds.severity(for: window.resolved(asOf: now).percentUsed))
             }
         }
         if AppSettings.cursorSourceEnabled, let cursor = cursorUsage {
@@ -354,9 +366,10 @@ final class AppState: ObservableObject {
                 lastPolledAt = snap.lastSuccessfulPollAt ?? Date()
                 await notificationEngine.process(
                     snapshot: snap,
-                    previous: previous,
+                    previous: didPollInSession ? previous : nil,
                     isStale: claudeIsStale || snap.state.isStale
                 )
+                didPollInSession = true
                 if shouldReloadWidget(previous: previous, current: snap) {
                     WidgetCenter.shared.reloadAllTimelines()
                 }

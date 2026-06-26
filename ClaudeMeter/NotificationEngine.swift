@@ -44,48 +44,59 @@ actor NotificationEngine {
     ) async {
         guard !isStale, isEnabled(), await isAuthorized() else { return }
 
+        let now = Date()
         pruneExpiredKeys()
         let thresholds = AppGroupConfig.currentThresholds(defaults: defaults)
         let pending = NotificationPolicy.triggers(
             snapshot: snapshot,
             previous: previous,
-            thresholds: thresholds
+            thresholds: thresholds,
+            now: now
         )
 
         for trigger in pending {
-            await deliver(trigger: trigger, snapshot: snapshot)
+            await deliver(trigger: trigger, snapshot: snapshot, now: now)
         }
     }
 
     // MARK: - Delivery
 
-    private func deliver(trigger: NotificationTrigger, snapshot: ClaudeUsageSnapshot) async {
+    private func deliver(trigger: NotificationTrigger, snapshot: ClaudeUsageSnapshot, now: Date) async
+    {
         let window: LimitWindow
-        let label: String
         switch trigger.scope {
-        case "session":
-            window = snapshot.limits.currentSession
-            label = "Session"
-        case "weeklyOpus":
-            window = snapshot.limits.currentWeekOpus ?? LimitWindow()
-            label = "Weekly (Opus)"
-        default:
-            window = snapshot.limits.currentWeekAllModels
-            label = "Weekly (all models)"
+        case "session": window = snapshot.limits.currentSession
+        case "weeklyOpus": window = snapshot.limits.currentWeekOpus ?? LimitWindow()
+        default: window = snapshot.limits.currentWeekAllModels
         }
-        let pct = window.displayPercent ?? "—"
+        // The whole app speaks "energy left", so notifications do too.
+        let left = leftText(window, now: now)
+        let energy = energyName(for: trigger.scope)
         let key = NotificationPolicy.dedupKey(
             scope: trigger.scope,
             level: trigger.level,
             resetAt: trigger.resetAt
         )
 
+        if trigger.level == "recovered" {
+            guard !hasFired(key: key) else { return }
+            let delivered = await post(
+                id: key,
+                title: "You're refueled! 🎉",
+                body: "Your \(energy) is back to \(left). Go get 'em."
+            )
+            if delivered { markFired(key: key) }
+            return
+        }
+
+        let refuel = "\(trigger.scope == "session" ? "refills" : "resets") \(resetDescription(trigger.resetAt))"
+
         if trigger.level == "critical" {
             guard !hasFired(key: key) else { return }
             let delivered = await post(
                 id: key,
-                title: "\(label) limit nearly reached — \(pct)",
-                body: "Resets \(resetDescription(trigger.resetAt))."
+                title: "Almost tapped out 🪫",
+                body: "Your \(energy) is at \(left) — \(refuel). Easy now."
             )
             if delivered { markFired(key: key) }
         } else if trigger.level == "warning" {
@@ -97,10 +108,24 @@ actor NotificationEngine {
             guard !hasFired(key: key), !hasFired(key: criticalKey) else { return }
             let delivered = await post(
                 id: key,
-                title: "\(label) usage high — \(pct)",
-                body: "Resets \(resetDescription(trigger.resetAt))."
+                title: "Running low ⚡",
+                body: "Your \(energy) is at \(left) — \(refuel). Maybe touch grass? 🌱"
             )
             if delivered { markFired(key: key) }
+        }
+    }
+
+    /// Energy-left ("9%") for a window, the inverse of usage.
+    private func leftText(_ window: LimitWindow, now: Date) -> String {
+        guard let left = window.percentLeft(asOf: now) else { return "—" }
+        return "\(Int(left.rounded()))%"
+    }
+
+    private func energyName(for scope: String) -> String {
+        switch scope {
+        case "session": return "5-hour energy"
+        case "weeklyOpus": return "weekly Opus fuel"
+        default: return "weekly fuel"
         }
     }
 

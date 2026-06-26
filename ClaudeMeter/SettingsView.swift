@@ -2,39 +2,86 @@ import AppKit
 import ClaudeMeterCore
 import ServiceManagement
 import SwiftUI
+import WidgetKit
 
 // MARK: - Root
 
 struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
+    @State private var selection = 0
+
+    private static let tabs: [(icon: String, title: String)] = [
+        ("cylinder.split.1x2", "Data"),
+        ("paintpalette.fill", "Appearance"),
+        ("bell", "Notifications"),
+        ("slider.horizontal.3", "Advanced"),
+        ("info.circle", "About"),
+    ]
 
     var body: some View {
-        TabView {
-            DataSettingsTab(appState: appState)
-                .tabItem { Label("Data", systemImage: "cylinder.split.1x2") }
-            NotificationsSettingsTab()
-                .tabItem { Label("Notifications", systemImage: "bell") }
-            AdvancedSettingsTab(appState: appState)
-                .tabItem { Label("Advanced", systemImage: "slider.horizontal.3") }
-            AboutSettingsTab()
-                .tabItem { Label("About", systemImage: "info.circle") }
+        VStack(spacing: 0) {
+            tabBar
+            Divider().overlay(Color.pfPopoverBorder)
+            Group {
+                switch selection {
+                case 0: DataSettingsTab(appState: appState)
+                case 1: AppearanceSettingsTab(appState: appState)
+                case 2: NotificationsSettingsTab()
+                case 3: AdvancedSettingsTab(appState: appState)
+                default: AboutSettingsTab()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 560, height: 500)
-        .background(FloatingWindowAccessor())
+        .frame(width: 560, height: 640)
+        .background(Color.pfPopover)
+        .background(SettingsWindowAccessor())
+    }
+
+    private var tabBar: some View {
+        HStack(spacing: 6) {
+            Spacer(minLength: 0)
+            ForEach(Array(Self.tabs.enumerated()), id: \.offset) { index, tab in
+                tabButton(index, tab.icon, tab.title)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 12)
+    }
+
+    private func tabButton(_ index: Int, _ icon: String, _ title: String) -> some View {
+        let selected = selection == index
+        return Button { selection = index } label: {
+            VStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 16, weight: .semibold))
+                Text(title).font(PFont.body(12, .heavy))
+            }
+            .foregroundStyle(selected ? Color.pfHeroFullInk : Color.pfInkMuted)
+            .frame(width: 96)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(selected ? Color.pfHeroFullBG : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 
-// MARK: - Window level shim
+// MARK: - Window shim (floating level + title)
 
-private struct FloatingWindowAccessor: NSViewRepresentable {
+private struct SettingsWindowAccessor: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async {
             view.window?.level = .floating
+            view.window?.title = "Claude Meter — Settings"
         }
         return view
     }
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { nsView.window?.title = "Claude Meter — Settings" }
+    }
 }
 
 // MARK: - Shared card chrome
@@ -45,26 +92,25 @@ private struct DataSourceCard<Content: View>: View {
     let title: String
     let subtitle: String
     @Binding var isEnabled: Bool
+    var contentLeading: CGFloat = 48
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                RaisedTile(fill: iconColor, size: 40, radius: 11) {
                     Image(systemName: icon)
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(iconColor)
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(.white)
                 }
-                .frame(width: 36, height: 36)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.body.weight(.semibold))
+                        .font(PFont.display(16, .semibold))
+                        .foregroundStyle(Color.pfInk)
                     Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(PFont.body(12, .semibold))
+                        .foregroundStyle(Color.pfInkMuted)
                 }
 
                 Spacer(minLength: 8)
@@ -75,17 +121,10 @@ private struct DataSourceCard<Content: View>: View {
             }
 
             content()
-                .padding(.leading, 48)
+                .padding(.leading, contentLeading)
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.35))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08))
-        )
+        .padding(16)
+        .chunkyCard(radius: 18)
     }
 }
 
@@ -396,21 +435,23 @@ private struct DataSettingsTab: View {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Data Sources")
-                        .font(.title2.weight(.semibold))
+                        .font(PFont.display(26, .bold))
+                        .foregroundStyle(Color.pfInk)
                     Text(
-                        "Configure how Claude Meter collects your usage data. You can enable multiple sources for redundancy."
+                        "Configure how Claude Meter collects your usage data. Enable multiple sources for redundancy."
                     )
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(PFont.body(13, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
                     .fixedSize(horizontal: false, vertical: true)
                 }
 
                 DataSourceCard(
                     icon: "terminal",
-                    iconColor: .primary,
+                    iconColor: Color(hex: "4FC51C"),
                     title: "Statusline Bridge",
-                    subtitle: "Check statusline once per minute.",
-                    isEnabled: $statuslineSourceEnabled
+                    subtitle: "Checks your statusline once per minute.",
+                    isEnabled: $statuslineSourceEnabled,
+                    contentLeading: 0
                 ) {
                     if statuslineSourceEnabled {
                         ConfigDirAccountsSection(appState: appState)
@@ -419,7 +460,7 @@ private struct DataSettingsTab: View {
 
                 DataSourceCard(
                     icon: "key.fill",
-                    iconColor: .yellow,
+                    iconColor: Color(hex: "F4B400"),
                     title: "Claude Code OAuth",
                     subtitle: "Use OAuth credentials from Keychain.",
                     isEnabled: $oauthSourceEnabled
@@ -429,7 +470,7 @@ private struct DataSettingsTab: View {
 
                 DataSourceCard(
                     icon: "globe",
-                    iconColor: .blue,
+                    iconColor: Color(hex: "25B6F0"),
                     title: "Claude.ai Session",
                     subtitle: "Use web session usage API.",
                     isEnabled: $claudeAISourceEnabled
@@ -439,7 +480,7 @@ private struct DataSettingsTab: View {
 
                 DataSourceCard(
                     icon: "cursorarrow.rays",
-                    iconColor: .teal,
+                    iconColor: Color(hex: "2DD4BF"),
                     title: "Cursor",
                     subtitle: "Read Cursor billing-period usage (unofficial API; may break).",
                     isEnabled: $cursorSourceEnabled
@@ -761,53 +802,88 @@ private struct ConfigDirAccountsSection: View {
     @State private var disabledKeys: Set<String> = []
     @State private var configuredDirs: [String] = []
     @State private var addError: String?
+    @State private var plans: [String: String] = [:]
+    @State private var names: [String: String] = [:]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             // Hide the list while there's only the default account and nothing custom.
             if accounts.count > 1 || !configuredDirs.isEmpty {
                 ForEach(accounts) { account in
                     accountRow(account)
                 }
             }
+
             Button {
                 addCustomDir()
             } label: {
-                Label("Add config directory…", systemImage: "folder.badge.plus")
+                HStack(spacing: 7) {
+                    Image(systemName: "folder.badge.plus").font(.system(size: 13, weight: .bold))
+                    Text("Add config directory…").font(PFont.display(13, .semibold))
+                }
+                .foregroundStyle(Color.pfInk)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .chunkyCard(radius: 12)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.plain)
 
             if let addError {
                 Text(addError)
-                    .font(.caption2)
+                    .font(PFont.body(11, .semibold))
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             Text(
-                "Each account run via CLAUDE_CONFIG_DIR keeps its own rate limit. The menu bar follows your most recently used account; the others appear in the popover. (OAuth/claude.ai enrich the active account only.)"
+                "Each account runs via its own `CLAUDE_CONFIG_DIR`, so every login keeps a separate rate limit. The menu bar follows your most recently used account — the rest live in the popover."
             )
-            .font(.caption2)
-            .foregroundStyle(.secondary)
+            .font(PFont.body(12, .semibold))
+            .foregroundStyle(Color.pfInkMuted)
             .fixedSize(horizontal: false, vertical: true)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.pfPopover))
         }
+        .padding(.top, 2)
         .onAppear { reload() }
     }
 
     private func accountRow(_ account: AccountConfig) -> some View {
         let isDefault = account.id == StatuslineBridge.defaultAccountKey
-        return HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(account.label)
-                    .font(.caption.weight(.medium))
-                Text(account.configDir.path)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+        let display = (names[account.id]?.isEmpty == false) ? names[account.id]! : friendlyName(account.label)
+        let letter = String(
+            display.drop(while: { !$0.isLetter && !$0.isNumber }).first ?? Character("C")
+        ).uppercased()
+        return HStack(spacing: 12) {
+            RaisedTile(fill: avatarColorForID(account.id), size: 40, radius: 11) {
+                Text(letter)
+                    .font(PFont.display(17, .bold))
+                    .foregroundStyle(.white)
+            }
+            VStack(alignment: .leading, spacing: 5) {
+                TextField(friendlyName(account.label), text: nameBinding(for: account.id))
+                    .textFieldStyle(.plain)
+                    .font(PFont.display(15, .semibold))
+                    .foregroundStyle(Color.pfInk)
+                    .help("Display name shown in the popover")
+                HStack(spacing: 4) {
+                    Image(systemName: "folder").font(.system(size: 9, weight: .semibold))
+                    Text(account.configDir.path)
+                        .font(.system(size: 11, design: .monospaced))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .foregroundStyle(Color.pfInkMuted)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.pfTrack.opacity(0.7)))
             }
             Spacer(minLength: 8)
+            planMenu(for: account.id)
             Toggle("", isOn: enabledBinding(for: account.id))
                 .toggleStyle(.switch)
                 .labelsHidden()
@@ -815,22 +891,92 @@ private struct ConfigDirAccountsSection: View {
                 .disabled(isDefault)
                 .help(isDefault ? "The default account is always tracked" : "Track this account")
         }
+        .padding(12)
+        .chunkyCard(fill: .pfPopover, radius: 16)
     }
 
     private func enabledBinding(for key: String) -> Binding<Bool> {
         Binding(
             get: { !disabledKeys.contains(key) },
             set: { enabled in
-                if enabled { disabledKeys.remove(key) } else { disabledKeys.insert(key) }
+                if enabled {
+                    disabledKeys.remove(key)
+                } else {
+                    disabledKeys.insert(key)
+                    // A disabled account is no longer tracked, so a menu-bar pin to it
+                    // would silently fall back to nearest-limit. Clear the pin so the
+                    // Appearance picker label matches the menu bar's behavior.
+                    if AppGroupConfig.menuBarAccount == key {
+                        UserDefaults.standard.removeObject(forKey: AppGroupConfig.menuBarAccountKey)
+                        AppGroupConfig.syncDisplaySettings()
+                    }
+                }
                 AppGroupConfig.disabledAccountKeys = Array(disabledKeys)
                 appState.scheduleRebuildPipeline()
             }
         )
     }
 
+    /// Plan is OAuth-only and single-slot, so the user tags each account's badge
+    /// by hand here; the popover reads it back per render.
+    private func planMenu(for key: String) -> some View {
+        Menu {
+            Button("No badge") { setPlan(key, nil) }
+            Divider()
+            ForEach(["Free", "Pro", "Max", "Team"], id: \.self) { plan in
+                Button(plan) { setPlan(key, plan) }
+            }
+        } label: {
+            if let plan = plans[key], !plan.isEmpty {
+                PlanBadge(plan: plan)
+            } else {
+                HStack(spacing: 2) {
+                    Text("Set plan")
+                    Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
+                }
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    private func setPlan(_ key: String, _ plan: String?) {
+        if let plan, !plan.isEmpty {
+            plans[key] = plan
+        } else {
+            plans.removeValue(forKey: key)
+        }
+        AppGroupConfig.accountPlans = plans
+    }
+
+    /// Editable display name; blank clears the override (falls back to the default).
+    private func nameBinding(for key: String) -> Binding<String> {
+        Binding(
+            get: { names[key] ?? "" },
+            set: { newValue in
+                if newValue.isEmpty { names.removeValue(forKey: key) } else { names[key] = newValue }
+                AppGroupConfig.accountNames = names
+            }
+        )
+    }
+
+    /// Mirrors the popover's default label derivation ("it-oneone" → "It Oneone").
+    private func friendlyName(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .split(separator: " ")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
+
     private func reload() {
         disabledKeys = Set(AppGroupConfig.disabledAccountKeys)
         configuredDirs = AppGroupConfig.configuredConfigDirs
+        plans = AppGroupConfig.accountPlans
+        names = AppGroupConfig.accountNames
         let configured = configuredDirs
         Task.detached(priority: .userInitiated) {
             // Pass no disabled filter so disabled accounts still appear (and can be
@@ -864,7 +1010,186 @@ private struct ConfigDirAccountsSection: View {
     }
 }
 
+// MARK: - Appearance tab
+
+private struct AppearanceSettingsTab: View {
+    let appState: AppState
+
+    @AppStorage(AppGroupConfig.cardStyleKey) private var cardStyle = "rings"
+    @AppStorage(AppGroupConfig.progressionModeKey) private var progressionMode = "left"
+    @AppStorage(AppGroupConfig.menuBarAccountKey) private var menuBarAccount = ""
+
+    @State private var accounts: [AccountConfig] = []
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Appearance")
+                    .font(PFont.display(26, .bold))
+                    .foregroundStyle(Color.pfInk)
+                    .padding(.horizontal, 4)
+
+                settingCard(
+                    icon: "chart.bar.xaxis", color: Color(hex: "C77DFF"),
+                    title: "Account cards", subtitle: "How each account's usage is drawn."
+                ) {
+                    segmented($cardStyle, [("rings", "Rings"), ("bars", "Energy bars")])
+                }
+
+                settingCard(
+                    icon: "arrow.left.arrow.right", color: Color(hex: "25B6F0"),
+                    title: "Show", subtitle: "Energy remaining, or usage so far."
+                ) {
+                    segmented($progressionMode, [("left", "Energy left"), ("used", "Usage")])
+                }
+
+                settingCard(
+                    icon: "menubar.rectangle", color: Color(hex: "FF9D0A"),
+                    title: "Menu bar follows",
+                    subtitle: "Which account the menu-bar percentage tracks."
+                ) {
+                    menuBarPicker
+                }
+            }
+            .padding(20)
+        }
+        .onAppear { reloadAccounts() }
+        .onChange(of: cardStyle) { _, _ in AppGroupConfig.syncDisplaySettings() }
+        .onChange(of: progressionMode) { _, _ in
+            AppGroupConfig.syncDisplaySettings()
+            WidgetCenter.shared.reloadAllTimelines()
+        }
+        .onChange(of: menuBarAccount) { _, _ in AppGroupConfig.syncDisplaySettings() }
+    }
+
+    @ViewBuilder
+    private func settingCard<Control: View>(
+        icon: String, color: Color, title: String, subtitle: String,
+        @ViewBuilder control: () -> Control
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                RaisedTile(fill: color, size: 40, radius: 11) {
+                    Image(systemName: icon).font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(PFont.display(16, .semibold)).foregroundStyle(Color.pfInk)
+                    Text(subtitle).font(PFont.body(12, .semibold)).foregroundStyle(Color.pfInkMuted)
+                }
+                Spacer(minLength: 8)
+            }
+            control()
+        }
+        .padding(16)
+        .chunkyCard(radius: 18)
+    }
+
+    private func segmented(_ selection: Binding<String>, _ options: [(String, String)]) -> some View
+    {
+        HStack(spacing: 8) {
+            ForEach(options, id: \.0) { value, label in
+                let selected = selection.wrappedValue == value
+                Button { selection.wrappedValue = value } label: {
+                    Text(label)
+                        .font(PFont.display(13, .semibold))
+                        .foregroundStyle(selected ? Color.pfHeroFullInk : Color.pfInkMuted)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(selected ? Color.pfHeroFullBG : Color.pfPopover)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .strokeBorder(
+                                            selected ? Color.pfHeroFullBorder : Color.pfCardBorder,
+                                            lineWidth: 1.5))
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var menuBarPicker: some View {
+        Menu {
+            Button("Nearest limit") { menuBarAccount = "" }
+            if !accounts.isEmpty {
+                Divider()
+                ForEach(accounts) { account in
+                    Button(displayName(account)) { menuBarAccount = account.id }
+                }
+            }
+        } label: {
+            HStack {
+                Text(currentMenuBarLabel)
+                    .font(PFont.display(14, .semibold)).foregroundStyle(Color.pfInk)
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 11, weight: .bold)).foregroundStyle(Color.pfInkMuted)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.pfPopover)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color.pfCardBorder, lineWidth: 1.5))
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+    }
+
+    private var currentMenuBarLabel: String {
+        if menuBarAccount.isEmpty || menuBarAccount == "nearest" { return "Nearest limit" }
+        if let acc = accounts.first(where: { $0.id == menuBarAccount }) { return displayName(acc) }
+        return "Nearest limit"
+    }
+
+    private func displayName(_ account: AccountConfig) -> String {
+        AppGroupConfig.accountName(forKey: account.id) ?? friendlyName(account.label)
+    }
+
+    private func friendlyName(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .split(separator: " ")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
+
+    private func reloadAccounts() {
+        let configured = AppGroupConfig.configuredConfigDirs
+        // Exclude disabled accounts — they aren't tracked, so they can't be pinned.
+        let disabled = Set(AppGroupConfig.disabledAccountKeys)
+        Task.detached(priority: .userInitiated) {
+            let found = ConfigDirDiscovery.discover(
+                configuredDirs: configured, disabledKeys: disabled)
+            await MainActor.run { self.accounts = found }
+        }
+    }
+}
+
 // MARK: - Notifications tab
+
+/// Shared tinted helper box used in the Settings cards. Accepts markdown
+/// (e.g. `` `CLAUDE_CONFIG_DIR` `` renders monospace).
+private struct SettingsHelperBox: View {
+    let text: LocalizedStringKey
+    init(_ text: LocalizedStringKey) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(PFont.body(12, .semibold))
+            .foregroundStyle(Color.pfInkMuted)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.pfPopover))
+    }
+}
 
 private struct NotificationsSettingsTab: View {
     @AppStorage("enableNotifications") private var enableNotifications = true
@@ -872,44 +1197,43 @@ private struct NotificationsSettingsTab: View {
     @AppStorage("criticalThresholdPercent") private var criticalThresholdPercent = 95.0
 
     var body: some View {
-        Form {
-            Section {
-                Toggle("Enable notifications", isOn: $enableNotifications)
-                Text(
-                    "Posts a notification when session or weekly usage crosses the warning or critical threshold. One notification per threshold per reset window."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                DataSourceCard(
+                    icon: "bell.fill",
+                    iconColor: Color(hex: "4FC51C"),
+                    title: "Enable notifications",
+                    subtitle: "Get a heads-up before you hit a wall.",
+                    isEnabled: $enableNotifications,
+                    contentLeading: 0
+                ) {
+                    SettingsHelperBox(
+                        "Posts a notification when session or weekly usage crosses the warning or critical threshold — one alert per threshold, per reset window."
+                    )
+                }
 
-            Section("Severity Thresholds") {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Warning at")
-                        Spacer()
-                        Text("\(Int(warningThresholdPercent))%")
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
-                    Slider(value: $warningThresholdPercent, in: 50...90, step: 5)
+                Text("Severity Thresholds")
+                    .font(PFont.display(26, .bold))
+                    .foregroundStyle(Color.pfInk)
+                    .padding(.horizontal, 4)
+
+                VStack(alignment: .leading, spacing: 16) {
+                    thresholdRow(
+                        label: "Warning at", color: .pfEnergyLow,
+                        value: $warningThresholdPercent, range: 50...90)
+                    Divider().overlay(Color.pfCardBorder)
+                    thresholdRow(
+                        label: "Critical at", color: .pfEnergyEmpty,
+                        value: $criticalThresholdPercent, range: 60...100)
+                    SettingsHelperBox(
+                        "Threshold changes apply immediately — to both the menu bar display and your notifications."
+                    )
                 }
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Critical at")
-                        Spacer()
-                        Text("\(Int(criticalThresholdPercent))%")
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
-                    Slider(value: $criticalThresholdPercent, in: 60...100, step: 5)
-                }
-                Text("Threshold changes apply immediately to display and notifications.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .padding(16)
+                .chunkyCard(radius: 18)
             }
+            .padding(20)
         }
-        .formStyle(.grouped)
-        .padding()
         .onAppear { AppGroupConfig.syncDisplaySettings() }
         .onChange(of: warningThresholdPercent) { _, newWarning in
             if criticalThresholdPercent <= newWarning {
@@ -922,6 +1246,26 @@ private struct NotificationsSettingsTab: View {
                 criticalThresholdPercent = min(100, warningThresholdPercent + 5)
             }
             AppGroupConfig.syncDisplaySettings()
+        }
+    }
+
+    private func thresholdRow(
+        label: String, color: Color, value: Binding<Double>, range: ClosedRange<Double>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 9) {
+                Circle().fill(color).frame(width: 12, height: 12)
+                Text(label).font(PFont.display(16, .semibold)).foregroundStyle(Color.pfInk)
+                Spacer()
+                Text("\(Int(value.wrappedValue))%")
+                    .font(PFont.display(14, .bold))
+                    .foregroundStyle(color)
+                    .monospacedDigit()
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(color.opacity(0.16)))
+            }
+            ColorSlider(value: value, range: range, step: 5, color: color)
         }
     }
 }
@@ -937,32 +1281,123 @@ private struct AdvancedSettingsTab: View {
     @State private var showingDiagnostics = false
 
     var body: some View {
-        Form {
-            Section("App") {
-                Toggle("Launch at login", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { _, newValue in applyLaunchAtLogin(newValue) }
-                    .onAppear { syncLaunchAtLoginFromSystem() }
-            }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                sectionHeading("App")
+                HStack(spacing: 12) {
+                    RaisedTile(fill: Color(hex: "C77DFF"), size: 40, radius: 11) {
+                        Image(systemName: "power").font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                    cardText("Launch at login", "Start Claude Meter when you log in.")
+                    Spacer(minLength: 8)
+                    Toggle("", isOn: $launchAtLogin).toggleStyle(.switch).labelsHidden()
+                }
+                .padding(16).chunkyCard(radius: 18)
 
-            Section("Updates") {
-                Toggle("Check for updates automatically", isOn: $automaticallyCheckForUpdates)
-                Button("Check for updates…") { appState.checkForUpdates() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-            }
+                sectionHeading("Updates")
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 12) {
+                        RaisedTile(fill: Color(hex: "25B6F0"), size: 40, radius: 11) {
+                            Image(systemName: "arrow.clockwise").font(.system(size: 17, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Check for updates automatically")
+                                .font(PFont.display(16, .semibold)).foregroundStyle(Color.pfInk)
+                            Text(updateStatus).font(PFont.body(12, .bold))
+                                .foregroundStyle(updateStatusColor)
+                        }
+                        Spacer(minLength: 8)
+                        Toggle("", isOn: $automaticallyCheckForUpdates).toggleStyle(.switch)
+                            .labelsHidden()
+                    }
+                    Divider().overlay(Color.pfCardBorder)
+                    HStack(spacing: 12) {
+                        Button { appState.checkForUpdates() } label: {
+                            HStack(spacing: 7) {
+                                Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .bold))
+                                Text("Check for updates…").font(PFont.display(13, .semibold))
+                            }
+                            .foregroundStyle(Color.pfInk).padding(.horizontal, 14).padding(.vertical, 9)
+                            .chunkyCard(radius: 12)
+                        }
+                        .buttonStyle(.plain)
+                        if let last = lastCheckedText {
+                            Text(last).font(PFont.body(12, .semibold)).foregroundStyle(Color.pfInkMuted)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+                .padding(16).chunkyCard(radius: 18)
 
-            Section("Diagnostics") {
-                Button("Open Diagnostics…") { showingDiagnostics = true }
-                    .buttonStyle(.borderless)
+                sectionHeading("Diagnostics")
+                HStack(spacing: 12) {
+                    RaisedTile(fill: Color(hex: "FF9D0A"), size: 40, radius: 11) {
+                        Image(systemName: "waveform.path.ecg").font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                    cardText("Diagnostics", "Inspect logs, data sources & raw limits.")
+                    Spacer(minLength: 8)
+                    Button { showingDiagnostics = true } label: {
+                        HStack(spacing: 6) {
+                            Text("Open Diagnostics…").font(PFont.display(13, .semibold))
+                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
+                        }
+                        .foregroundStyle(Color.pfInk).padding(.horizontal, 14).padding(.vertical, 9)
+                        .chunkyCard(radius: 12)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(16).chunkyCard(radius: 18)
             }
+            .padding(20)
         }
-        .formStyle(.grouped)
-        .padding()
+        .onAppear { syncLaunchAtLoginFromSystem() }
+        .onChange(of: launchAtLogin) { _, newValue in applyLaunchAtLogin(newValue) }
         .sheet(isPresented: $showingDiagnostics) {
             DiagnosticsView()
                 .environmentObject(appState)
                 .frame(minWidth: 480, minHeight: 380)
         }
+    }
+
+    private func sectionHeading(_ text: String) -> some View {
+        Text(text)
+            .font(PFont.display(22, .bold))
+            .foregroundStyle(Color.pfInk)
+            .padding(.horizontal, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func cardText(_ title: String, _ subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(PFont.display(16, .semibold)).foregroundStyle(Color.pfInk)
+            Text(subtitle).font(PFont.body(12, .semibold)).foregroundStyle(Color.pfInkMuted)
+        }
+    }
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+    }
+
+    private var updateStatus: String {
+        appState.updateAvailable ? "Update available — click to install" : "Up to date · v\(appVersion) ✓"
+    }
+
+    private var updateStatusColor: Color {
+        appState.updateAvailable ? .pfEnergyLow : .pfHeroFullInk
+    }
+
+    /// Sparkle persists the last automatic-check time; show it when available.
+    private var lastCheckedText: String? {
+        guard let date = UserDefaults.standard.object(forKey: "SULastCheckTime") as? Date
+        else { return nil }
+        let elapsed = Int(Date().timeIntervalSince(date))
+        if elapsed < 60 { return "Last checked just now" }
+        if elapsed < 3600 { return "Last checked \(elapsed / 60)m ago" }
+        if elapsed < 86400 { return "Last checked \(elapsed / 3600)h ago" }
+        return "Last checked \(elapsed / 86400)d ago"
     }
 
     private func applyLaunchAtLogin(_ enabled: Bool) {
@@ -991,83 +1426,73 @@ private struct AboutSettingsTab: View {
     private let githubURL = URL(string: "https://github.com/jewei/claude-meter")!
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer()
-
-            VStack(spacing: 18) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .fill(Color.primary.opacity(0.06))
-                        .frame(width: 168, height: 168)
-                        .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
-
-                    // Load the artwork directly from the asset catalog rather than
-                    // `NSApplication.shared.applicationIconImage`, which returns the
-                    // generic macOS placeholder for LSUIElement (agent) apps.
-                    Image("AppLogo")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 96, height: 96)
-                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                }
-
-                Text("Claude Meter")
-                    .font(.system(size: 28, weight: .bold))
-
-                Text("VERSION \(appVersion.uppercased())")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .tracking(1.2)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule()
-                            .fill(Color.primary.opacity(0.08))
-                    )
-
-                VStack(spacing: 14) {
-                    Link(destination: githubURL) {
-                        HStack(spacing: 8) {
-                            Image("GitHubMark")
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 16, height: 16)
-                            Text("GitHub")
-                                .font(.body.weight(.medium))
-                        }
-                        .padding(.horizontal, 22)
-                        .padding(.vertical, 10)
-                        .background(
-                            Capsule()
-                                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.65))
-                        )
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(Color.primary.opacity(0.1))
-                        )
-                    }
-                    .buttonStyle(.plain)
-
-                    Text("© JEWEI MAK")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.tertiary)
-                        .tracking(1)
-                }
-                .padding(.top, 4)
-
-                Text(
-                    "An independent community project. Not affiliated with or endorsed by Anthropic. \"Claude\" is a trademark of Anthropic."
-                )
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 40)
-                .padding(.top, 8)
+        VStack(spacing: 18) {
+            // Green bolt mark with a soft green glow — the app's playful identity.
+            RaisedTile(fill: .pfEnergyFull, size: 104, radius: 26) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 54, weight: .black))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color(hex: "FFE38A"), Color(hex: "FF9D0A")],
+                            startPoint: .top, endPoint: .bottom))
             }
+            .shadow(color: Color.pfEnergyFull.opacity(0.5), radius: 18, y: 6)
+            .padding(.top, 4)
 
-            Spacer()
+            Text("Claude Meter")
+                .font(PFont.display(28, .bold))
+                .foregroundStyle(Color.pfInk)
+
+            Text("VERSION \(appVersion.uppercased())")
+                .font(PFont.body(11, .heavy))
+                .tracking(1.2)
+                .foregroundStyle(Color.pfHeroFullInk)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(Color.pfHeroFullBG))
+
+            Link(destination: githubURL) {
+                HStack(spacing: 10) {
+                    Image("GitHubMark")
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 20, height: 20)
+                    Text("View on GitHub")
+                        .font(PFont.display(15, .semibold))
+                }
+                .foregroundStyle(Color.pfInk)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 13)
+                .chunkyCard(radius: 16)
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 2)
+
+            Rectangle()
+                .fill(Color.pfCardBorder)
+                .frame(height: 1)
+                .padding(.horizontal, 2)
+                .padding(.vertical, 4)
+
+            Text("© JEWEI MAK")
+                .font(PFont.body(12, .heavy))
+                .tracking(1.0)
+                .foregroundStyle(Color.pfInkMuted)
+
+            Text(
+                "An independent community project. Not affiliated with or endorsed by Anthropic. \u{201C}Claude\u{201D} is a trademark of Anthropic."
+            )
+            .font(PFont.body(12, .semibold))
+            .foregroundStyle(Color.pfInkMuted.opacity(0.85))
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 10)
         }
+        .padding(28)
+        .frame(maxWidth: 470)
+        .chunkyCard(radius: 22)
+        .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

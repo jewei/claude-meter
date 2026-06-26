@@ -1,8 +1,9 @@
+import AppKit
 import ClaudeMeterCore
 import SwiftUI
 import WidgetKit
 
-// MARK: - Design tokens (local to widget target)
+// MARK: - Design tokens (local to widget target — intentionally not shared)
 
 extension Color {
     fileprivate init(widgetHex string: String) {
@@ -17,18 +18,76 @@ extension Color {
         )
     }
 
-    fileprivate static let cmNormal = Color(widgetHex: "4be257")
-    fileprivate static let cmWarning = Color(widgetHex: "fdbb2c")
-    fileprivate static let cmCritical = Color(widgetHex: "ff5f56")
-    fileprivate static let cmBackground = Color(widgetHex: "10131b")
+    /// Appearance-adaptive widget color (light vs. dark).
+    fileprivate init(widgetLight l: String, dark d: String) {
+        self.init(
+            nsColor: NSColor(name: nil) { appearance in
+                let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                return NSColor(Color(widgetHex: isDark ? d : l))
+            })
+    }
+
+    fileprivate static let wPopover = Color(widgetLight: "FBF9F2", dark: "201E18")
+    fileprivate static let wCard = Color(widgetLight: "FFFFFF", dark: "2A2820")
+    fileprivate static let wCardBorder = Color(widgetLight: "EFEAD9", dark: "3D3A30")
+    fileprivate static let wTrack = Color(widgetLight: "ECE9DD", dark: "3A372E")
+    fileprivate static let wInk = Color(widgetLight: "3A382F", dark: "ECE8DC")
+    fileprivate static let wInkMuted = Color(widgetLight: "908C7E", dark: "9A9588")
+    fileprivate static let wFull = Color(widgetLight: "4FC51C", dark: "62D62C")
+    fileprivate static let wLow = Color(widgetLight: "FF9D0A", dark: "FFAE33")
+    fileprivate static let wEmpty = Color(widgetLight: "FF5A5A", dark: "FF6B6B")
 }
 
-private func severityColor(for percent: Double?, thresholds: UsageThresholds) -> Color {
-    switch thresholds.severity(for: percent) {
-    case .normal: return .cmNormal
-    case .warning: return .cmWarning
-    case .critical, .overLimit: return .cmCritical
-    case .unknown: return Color.secondary
+private func energyColor(percentUsed: Double?, thresholds: UsageThresholds) -> Color {
+    switch thresholds.severity(for: percentUsed) {
+    case .normal: return .wFull
+    case .warning: return .wLow
+    case .critical, .overLimit: return .wEmpty
+    case .unknown: return Color.wInkMuted.opacity(0.5)
+    }
+}
+
+private func percentLeft(_ window: LimitWindow, asOf now: Date) -> Double? {
+    guard let used = window.resolved(asOf: now).percentUsed else { return nil }
+    return 100 - min(100, max(0, used))
+}
+
+private func leftText(_ window: LimitWindow, asOf now: Date) -> String {
+    guard let left = percentLeft(window, asOf: now) else { return "—" }
+    return "\(Int(left.rounded()))%"
+}
+
+private func displayFraction(_ window: LimitWindow, usage: Bool, asOf now: Date) -> Double {
+    guard let used = window.resolved(asOf: now).percentUsed else { return 0 }
+    let clamped = min(100, max(0, used))
+    return (usage ? clamped : 100 - clamped) / 100
+}
+
+private func displayText(_ window: LimitWindow, usage: Bool, asOf now: Date) -> String {
+    usage ? (window.resolved(asOf: now).displayPercent ?? "—") : leftText(window, asOf: now)
+}
+
+// MARK: - Typography (Fredoka/Nunito bundled into the widget target too)
+
+private enum WFont {
+    static func display(_ size: CGFloat, _ weight: Font.Weight = .semibold) -> Font {
+        let face: String
+        switch weight {
+        case .bold, .heavy, .black: face = "Fredoka-Bold"
+        case .semibold, .medium: face = "Fredoka-SemiBold"
+        default: face = "Fredoka-Regular"
+        }
+        return .custom(face, fixedSize: size)
+    }
+
+    static func body(_ size: CGFloat, _ weight: Font.Weight = .bold) -> Font {
+        let face: String
+        switch weight {
+        case .heavy, .black: face = "Nunito-ExtraBold"
+        case .bold: face = "Nunito-Bold"
+        default: face = "Nunito-SemiBold"
+        }
+        return .custom(face, fixedSize: size)
     }
 }
 
@@ -115,10 +174,10 @@ struct ClaudeMeterWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: ClaudeMeterProvider()) { entry in
             ClaudeMeterWidgetEntryView(entry: entry)
-                .containerBackground(Color.cmBackground, for: .widget)
+                .containerBackground(Color.wPopover, for: .widget)
         }
         .configurationDisplayName("Claude Meter")
-        .description("Monitor Claude API usage limits.")
+        .description("Your Claude energy at a glance.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
@@ -138,291 +197,268 @@ struct ClaudeMeterWidgetEntryView: View {
     }
 }
 
-// MARK: - Small widget
+// MARK: - Activity rings (local copy)
+
+private struct WidgetRings: View {
+    var weekFraction: Double
+    var weekColor: Color
+    var sessionFraction: Double
+    var sessionColor: Color
+    var centerText: String
+    var size: CGFloat
+
+    var body: some View {
+        ZStack {
+            ring(weekFraction, weekColor, diameter: size * (68.0 / 88.0))
+            ring(sessionFraction, sessionColor, diameter: size * (48.0 / 88.0))
+            Text(centerText)
+                .font(WFont.display(size * (20.0 / 88.0), .heavy))
+                .foregroundStyle(Color.wInk)
+                .monospacedDigit()
+                .minimumScaleFactor(0.6)
+        }
+        .frame(width: size, height: size)
+    }
+
+    private func ring(_ fraction: Double, _ color: Color, diameter: CGFloat) -> some View {
+        ZStack {
+            Circle().stroke(Color.wTrack, lineWidth: size * (8.0 / 88.0))
+            Circle()
+                .trim(from: 0, to: min(1, max(0, fraction)))
+                .stroke(
+                    color,
+                    style: StrokeStyle(lineWidth: size * (8.0 / 88.0), lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: diameter, height: diameter)
+    }
+}
+
+private func ringsBlock(_ snap: ClaudeUsageSnapshot, _ entry: ClaudeMeterEntry, size: CGFloat)
+    -> WidgetRings
+{
+    let now = entry.date
+    let usage = AppGroupConfig.progressionMode() == "used"
+    let session = snap.limits.currentSession
+    let week = snap.limits.currentWeekAllModels
+    let lefts = [percentLeft(session, asOf: now), percentLeft(week, asOf: now)].compactMap { $0 }
+    let center: String
+    if let minLeft = lefts.min() {
+        center = "\(Int((usage ? 100 - minLeft : minLeft).rounded()))"
+    } else {
+        center = "—"
+    }
+    return WidgetRings(
+        weekFraction: displayFraction(week, usage: usage, asOf: now),
+        weekColor: energyColor(percentUsed: week.resolved(asOf: now).percentUsed, thresholds: entry.thresholds),
+        sessionFraction: displayFraction(session, usage: usage, asOf: now),
+        sessionColor: energyColor(percentUsed: session.resolved(asOf: now).percentUsed, thresholds: entry.thresholds),
+        centerText: center,
+        size: size)
+}
+
+// MARK: - Energy rows
+
+private struct EnergyRow: View {
+    let label: String
+    let window: LimitWindow
+    let thresholds: UsageThresholds
+    let referenceDate: Date
+    var showReset = true
+
+    private var usage: Bool { AppGroupConfig.progressionMode() == "used" }
+
+    var body: some View {
+        let color = energyColor(
+            percentUsed: window.resolved(asOf: referenceDate).percentUsed, thresholds: thresholds)
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(color).frame(width: 9, height: 9)
+            Text(label)
+                .font(WFont.body(12, .bold))
+                .foregroundStyle(Color.wInk)
+            Text(displayText(window, usage: usage, asOf: referenceDate))
+                .font(WFont.display(12, .heavy))
+                .foregroundStyle(color)
+                .monospacedDigit()
+            if showReset, let detail = resetDetail {
+                Text("· \(detail)")
+                    .font(WFont.body(11, .semibold))
+                    .foregroundStyle(Color.wInkMuted)
+                    .monospacedDigit()
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private static let weekdayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEE"
+        return f
+    }()
+
+    private var resetDetail: String? {
+        guard let date = window.resolved(asOf: referenceDate).resetsAt, date > referenceDate else {
+            return nil
+        }
+        let diff = date.timeIntervalSince(referenceDate)
+        if diff >= 24 * 3600 { return Self.weekdayFormatter.string(from: date) }
+        let h = Int(diff / 3600)
+        let m = Int(diff.truncatingRemainder(dividingBy: 3600) / 60)
+        if h == 0 { return "\(m)m" }
+        if m == 0 { return "\(h)h" }
+        return "\(h)h \(m)m"
+    }
+}
+
+private struct WidgetHeader: View {
+    let entry: ClaudeMeterEntry
+    var showUpdated = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.wFull)
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 22, height: 22)
+            Text("Claude Meter")
+                .font(WFont.display(13, .semibold))
+                .foregroundStyle(Color.wInk)
+            Spacer()
+            if entry.isStale {
+                Image(systemName: "clock.badge.exclamationmark")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.wLow)
+            } else if showUpdated, let pollAt = entry.snapshot?.lastSuccessfulPollAt {
+                let diff = Int(entry.date.timeIntervalSince(pollAt))
+                Text(diff < 60 ? "Updated \(max(0, diff))s ago" : "Updated \(diff / 60)m ago")
+                    .font(WFont.body(10, .semibold))
+                    .foregroundStyle(Color.wInkMuted)
+            }
+        }
+    }
+}
+
+// MARK: - Small
 
 private struct SmallWidgetView: View {
     let entry: ClaudeMeterEntry
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Claude Meter")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if entry.isStale {
-                    staleBadge
+        if let snap = entry.snapshot {
+            VStack(spacing: 8) {
+                ringsBlock(snap, entry, size: 78)
+                VStack(spacing: 3) {
+                    EnergyRow(
+                        label: "5-hr", window: snap.limits.currentSession,
+                        thresholds: entry.thresholds, referenceDate: entry.date, showReset: false)
+                    EnergyRow(
+                        label: "week", window: snap.limits.currentWeekAllModels,
+                        thresholds: entry.thresholds, referenceDate: entry.date, showReset: false)
                 }
             }
-
-            if let snap = entry.snapshot {
-                WindowRow(
-                    label: "SESSION",
-                    window: snap.limits.currentSession,
-                    thresholds: entry.thresholds,
-                    referenceDate: entry.date
-                )
-                WindowRow(
-                    label: "WEEK",
-                    window: snap.limits.currentWeekAllModels,
-                    thresholds: entry.thresholds,
-                    referenceDate: entry.date
-                )
-            } else {
-                noDataView
-            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            NoDataView(compact: true)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    private var noDataView: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "gauge.with.dots.needle.33percent")
-                .font(.system(size: 22))
-                .foregroundStyle(.secondary)
-            Text("No data")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-// MARK: - Medium widget
+// MARK: - Medium
 
 private struct MediumWidgetView: View {
     let entry: ClaudeMeterEntry
 
     var body: some View {
         if let snap = entry.snapshot {
-            VStack(spacing: 10) {
-                if entry.isStale {
-                    staleBanner
-                }
-                WindowRow(
-                    label: "SESSION",
-                    window: snap.limits.currentSession,
-                    thresholds: entry.thresholds,
-                    referenceDate: entry.date
-                )
-                Divider().opacity(0.2)
-                WindowRow(
-                    label: "WEEK (ALL MODELS)",
-                    window: snap.limits.currentWeekAllModels,
-                    thresholds: entry.thresholds,
-                    referenceDate: entry.date
-                )
-                if let opus = snap.limits.currentWeekOpus {
-                    Divider().opacity(0.2)
-                    WindowRow(
-                        label: "WEEK (OPUS)",
-                        window: opus,
-                        thresholds: entry.thresholds,
-                        referenceDate: entry.date
-                    )
+            HStack(spacing: 16) {
+                ringsBlock(snap, entry, size: 96)
+                VStack(alignment: .leading, spacing: 7) {
+                    WidgetHeader(entry: entry)
+                    EnergyRow(
+                        label: "5-hr", window: snap.limits.currentSession,
+                        thresholds: entry.thresholds, referenceDate: entry.date)
+                    EnergyRow(
+                        label: "week", window: snap.limits.currentWeekAllModels,
+                        thresholds: entry.thresholds, referenceDate: entry.date)
+                    if let opus = snap.limits.currentWeekOpus {
+                        EnergyRow(
+                            label: "opus", window: opus, thresholds: entry.thresholds,
+                            referenceDate: entry.date)
+                    }
                 }
             }
-            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            noDataView
+            NoDataView(compact: false)
         }
-    }
-
-    private var noDataView: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "gauge.with.dots.needle.33percent")
-                .font(.system(size: 28))
-                .foregroundStyle(.secondary)
-            Text("No data — open Claude Meter to start polling.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-// MARK: - Large widget
+// MARK: - Large
 
 private struct LargeWidgetView: View {
     let entry: ClaudeMeterEntry
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("Claude Meter")
-                    .font(.system(size: 13, weight: .semibold))
-                Spacer()
-                if entry.isStale {
-                    staleBadge
+        if let snap = entry.snapshot {
+            VStack(alignment: .leading, spacing: 16) {
+                WidgetHeader(entry: entry, showUpdated: true)
+                HStack(spacing: 18) {
+                    ringsBlock(snap, entry, size: 120)
+                    VStack(alignment: .leading, spacing: 10) {
+                        EnergyRow(
+                            label: "5-hr", window: snap.limits.currentSession,
+                            thresholds: entry.thresholds, referenceDate: entry.date)
+                        EnergyRow(
+                            label: "week", window: snap.limits.currentWeekAllModels,
+                            thresholds: entry.thresholds, referenceDate: entry.date)
+                        if let opus = snap.limits.currentWeekOpus {
+                            EnergyRow(
+                                label: "opus", window: opus, thresholds: entry.thresholds,
+                                referenceDate: entry.date)
+                        }
+                    }
+                    Spacer(minLength: 0)
                 }
-                updatedLabel
+                Spacer(minLength: 0)
             }
-
-            if let snap = entry.snapshot {
-                WindowRow(
-                    label: "SESSION",
-                    window: snap.limits.currentSession,
-                    thresholds: entry.thresholds,
-                    referenceDate: entry.date
-                )
-                Divider().opacity(0.2)
-                WindowRow(
-                    label: "WEEK (ALL MODELS)",
-                    window: snap.limits.currentWeekAllModels,
-                    thresholds: entry.thresholds,
-                    referenceDate: entry.date
-                )
-                if let opus = snap.limits.currentWeekOpus {
-                    Divider().opacity(0.2)
-                    WindowRow(
-                        label: "WEEK (OPUS)",
-                        window: opus,
-                        thresholds: entry.thresholds,
-                        referenceDate: entry.date
-                    )
-                }
-
-            } else {
-                Spacer()
-                VStack(spacing: 8) {
-                    Image(systemName: "gauge.with.dots.needle.33percent")
-                        .font(.system(size: 32))
-                        .foregroundStyle(.secondary)
-                    Text("No data available")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Text("Open Claude Meter to start polling.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                }
-                .frame(maxWidth: .infinity)
-                Spacer()
-            }
-        }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    @ViewBuilder
-    private var updatedLabel: some View {
-        if let pollAt = entry.snapshot?.lastSuccessfulPollAt {
-            let diff = Int(entry.date.timeIntervalSince(pollAt))
-            let text =
-                diff < 5
-                ? "Just updated"
-                : diff < 60
-                    ? "Updated \(diff)s ago"
-                    : "Updated \(diff / 60)m ago"
-            Text(text)
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else {
+            NoDataView(compact: false)
         }
     }
 }
 
-// MARK: - Stale indicators
+// MARK: - No data
 
-private var staleBadge: some View {
-    Image(systemName: "clock.badge.exclamationmark")
-        .font(.system(size: 10))
-        .foregroundStyle(Color.cmWarning)
-        .accessibilityLabel("Data may be outdated")
-}
-
-private var staleBanner: some View {
-    HStack(spacing: 4) {
-        Image(systemName: "clock")
-            .font(.system(size: 9))
-        Text("Data may be outdated")
-            .font(.system(size: 10))
-    }
-    .foregroundStyle(Color.cmWarning)
-    .frame(maxWidth: .infinity, alignment: .leading)
-}
-
-// MARK: - Shared window row
-
-private struct WindowRow: View {
-    let label: String
-    let window: LimitWindow
-    let thresholds: UsageThresholds
-    let referenceDate: Date
-
-    /// Rolling windows past their reset read as 0% (see `LimitWindow.resolved`).
-    private var resolvedWindow: LimitWindow { window.resolved(asOf: referenceDate) }
-
-    private var fraction: Double {
-        (resolvedWindow.clampedPercent ?? 0) / 100
-    }
-
-    private var color: Color {
-        severityColor(for: resolvedWindow.percentUsed, thresholds: thresholds)
-    }
+private struct NoDataView: View {
+    var compact: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(label)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(resolvedWindow.displayPercent ?? "—")
-                    .font(.system(size: 14, weight: .bold, design: .monospaced))
-                    .foregroundStyle(color)
-            }
-            WidgetProgressBar(value: fraction, color: color)
-                .frame(height: 5)
-            Text(resetText)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityText)
-    }
-
-    private var resetText: String {
-        guard let date = resolvedWindow.resetsAt else {
-            return resolvedWindow.rawResetText.map { "Resets \($0)" } ?? "—"
-        }
-        let diff = date.timeIntervalSince(referenceDate)
-        if diff <= 0 { return "Resetting…" }
-        let h = Int(diff / 3600)
-        let m = Int(diff.truncatingRemainder(dividingBy: 3600) / 60)
-        if h == 0 { return "Resets ~\(m)m" }
-        if m == 0 { return "Resets ~\(h)h" }
-        return "Resets ~\(h)h \(m)m"
-    }
-
-    private var accessibilityText: String {
-        "\(label) usage \(resolvedWindow.displayPercent ?? "unknown"), \(resetText)"
-    }
-}
-
-// MARK: - Progress bar
-
-private struct WidgetProgressBar: View {
-    let value: Double
-    let color: Color
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.12))
-                Capsule()
-                    .fill(color)
-                    .frame(width: geo.size.width * min(max(value, 0), 1))
+        VStack(spacing: 8) {
+            Text("🪫").font(.system(size: compact ? 26 : 32))
+            Text("No usage yet")
+                .font(WFont.display(compact ? 11 : 13, .semibold))
+                .foregroundStyle(Color.wInk)
+            if !compact {
+                Text("Open Claude Meter to start polling.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.wInkMuted)
+                    .multilineTextAlignment(.center)
             }
         }
-        .accessibilityHidden(true)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
 // MARK: - Preview
 
-#Preview(as: .systemSmall) {
+#Preview(as: .systemMedium) {
     ClaudeMeterWidget()
 } timeline: {
     ClaudeMeterEntry(
@@ -434,17 +470,13 @@ private struct WidgetProgressBar: View {
             source: SourceInfo(cliPath: "/opt/homebrew/bin/claude", command: "claude status"),
             limits: LimitInfo(
                 currentSession: LimitWindow(
-                    percentUsed: 25,
-                    resetsAt: Date().addingTimeInterval(2700),
-                    rawResetText: "2:50pm"
-                ),
+                    percentUsed: 22, resetsAt: Date().addingTimeInterval(2700)),
                 currentWeekAllModels: LimitWindow(
-                    percentUsed: 82,
-                    resetsAt: Date().addingTimeInterval(5 * 86400),
-                    rawResetText: "Jun 27 at 3pm"
-                )
+                    percentUsed: 36, resetsAt: Date().addingTimeInterval(5 * 86400)),
+                currentWeekOpus: LimitWindow(
+                    percentUsed: 58, resetsAt: Date().addingTimeInterval(5 * 86400))
             ),
-            state: SnapshotState(status: .ok, severity: .warning)
+            state: SnapshotState(status: .ok, severity: .normal)
         )
     )
 }

@@ -78,6 +78,94 @@ struct NotificationPolicyTests {
         #expect(!triggers.contains { $0.level == "warning" })
     }
 
+    @Test("Fires recovered when dropping from warning back to normal")
+    func recoveredFromWarning() {
+        let previous = snapshot(session: 85)
+        let current = snapshot(session: 30)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: previous, now: fixedNow)
+        #expect(triggers.contains { $0.scope == "session" && $0.level == "recovered" })
+    }
+
+    @Test("Fires recovered when a critical window resets and refills")
+    func recoveredOnReset() {
+        let previous = snapshot(session: 96)  // was critical
+        var current = snapshot(session: 40)
+        // Window reset: raw 96% but reset time has passed, so it resolves to 0%.
+        current.limits.currentSession = LimitWindow(
+            percentUsed: 96, resetsAt: fixedNow.addingTimeInterval(-60))
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: previous, now: fixedNow)
+        #expect(triggers.contains { $0.scope == "session" && $0.level == "recovered" })
+    }
+
+    @Test("No recovered when staying normal")
+    func noRecoveredWhenNormal() {
+        let previous = snapshot(session: 40)
+        let current = snapshot(session: 30)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: previous, now: fixedNow)
+        #expect(!triggers.contains { $0.level == "recovered" })
+    }
+
+    /// A two-account snapshot whose top-level mirrors the `active` account.
+    private func multiSnap(active: String, aSession: Double, bSession: Double)
+        -> ClaudeUsageSnapshot
+    {
+        let a = LimitInfo(currentSession: window(percent: aSession))
+        let b = LimitInfo(currentSession: window(percent: bSession))
+        var s = snapshot(session: 0)
+        s.limits = active == "a" ? a : b
+        s.accounts = [
+            AccountUsage(id: "a", label: "a", limits: a, severity: .normal, isActive: active == "a"),
+            AccountUsage(id: "b", label: "b", limits: b, severity: .normal, isActive: active == "b"),
+        ]
+        return s
+    }
+
+    @Test("Active-account switch diffs the same account, not the top-level")
+    func activeSwitchDiffsPerAccount() {
+        // A active@30 + B idle@85, then switch to B active@85 (B unchanged) + A idle@30.
+        // The switch must not register a 30→85 crossing on the top-level window.
+        let previous = multiSnap(active: "a", aSession: 30, bSession: 85)
+        let current = multiSnap(active: "b", aSession: 30, bSession: 85)
+        #expect(
+            NotificationPolicy.triggers(snapshot: current, previous: previous, now: fixedNow)
+                .isEmpty)
+    }
+
+    @Test("Switching to an already-critical, never-seen account surfaces it once")
+    func switchToNewCriticalFires() {
+        // Single-account history (no `accounts`), then a multi-account poll whose
+        // active account "b" is critical and has no prior baseline → fire once.
+        let previous = snapshot(session: 30)
+        let current = multiSnap(active: "b", aSession: 30, bSession: 96)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: previous, now: fixedNow)
+        #expect(triggers.contains { $0.scope == "session" && $0.level == "critical" })
+    }
+
+    @Test("Skips Opus crossing on first enrichment (previous lacks Opus)")
+    func opusFirstAttachSuppressed() {
+        let previous = snapshot(session: 30)  // no Opus window
+        var current = snapshot(session: 30)
+        current.limits.currentWeekOpus = LimitWindow(percentUsed: 96, resetsAt: resetAt)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: previous, now: fixedNow)
+        #expect(!triggers.contains { $0.scope == "weeklyOpus" })
+    }
+
+    @Test("Fires Opus warning when both snapshots carry Opus and it crosses")
+    func opusCrossingFires() {
+        var previous = snapshot(session: 30)
+        previous.limits.currentWeekOpus = LimitWindow(percentUsed: 70, resetsAt: resetAt)
+        var current = snapshot(session: 30)
+        current.limits.currentWeekOpus = LimitWindow(percentUsed: 85, resetsAt: resetAt)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: previous, now: fixedNow)
+        #expect(triggers.contains { $0.scope == "weeklyOpus" && $0.level == "warning" })
+    }
+
     @Test("Fires warning when reset time is unknown")
     func warningWithoutResetTime() {
         let previous = snapshot(session: 75)

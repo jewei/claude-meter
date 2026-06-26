@@ -61,6 +61,31 @@ struct EnergyDot: View {
     }
 }
 
+/// A chunky horizontal energy bar (fills or depletes depending on the fraction
+/// passed) with an inner top gloss.
+struct EnergyBar: View {
+    var fraction: Double
+    var color: Color
+    var height: CGFloat = 14
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.pfTrack)
+                Capsule()
+                    .fill(color)
+                    .frame(width: max(0, geo.size.width * min(1, max(0, fraction))))
+                    .overlay(alignment: .top) {
+                        Capsule().fill(Color.white.opacity(0.45))
+                            .frame(height: 2).padding(.horizontal, 3).padding(.top, 2)
+                    }
+            }
+        }
+        .frame(height: height)
+        .animation(.easeOut(duration: 0.5), value: fraction)
+    }
+}
+
 /// Chunky, color-coded threshold slider: thick track + a big white ring-thumb.
 /// Built by hand because the native `Slider` can't do the ringed thumb.
 struct ColorSlider: View {
@@ -183,6 +208,8 @@ struct AccountRingCard: View {
     let model: AccountCardModel
     let now: Date
     var thresholds: UsageThresholds = .default
+    /// `true` shows usage (rings fill); `false` shows energy left (rings deplete).
+    var usage: Bool = false
 
     var body: some View {
         let sBand = model.session.energyBand(thresholds: thresholds, asOf: now)
@@ -226,7 +253,7 @@ struct AccountRingCard: View {
     }
 
     private func fraction(_ window: LimitWindow) -> Double {
-        (window.percentLeft(asOf: now) ?? 0) / 100
+        window.displayFraction(usage: usage, asOf: now)
     }
 
     @ViewBuilder
@@ -238,7 +265,7 @@ struct AccountRingCard: View {
             Text(label)
                 .font(PFont.body(11, .bold))
                 .foregroundStyle(Color.pfInk)
-            Text(window.leftPercentText(asOf: now) ?? "—")
+            Text(window.displayText(usage: usage, asOf: now) ?? "—")
                 .font(PFont.display(11, .heavy))
                 .foregroundStyle(window.percentLeft(asOf: now) == nil ? Color.pfInkMuted : band.color)
                 .monospacedDigit()
@@ -264,6 +291,85 @@ struct AccountRingCard: View {
         let s = model.session.leftPercentText(asOf: now) ?? "unknown"
         let w = model.week.leftPercentText(asOf: now) ?? "unknown"
         return "\(model.label): 5-hour \(s) left, weekly \(w) left"
+    }
+}
+
+// MARK: - Account bar card (energy-bar variant)
+
+struct AccountBarCard: View {
+    let model: AccountCardModel
+    let now: Date
+    var thresholds: UsageThresholds = .default
+    var usage: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                RaisedTile(fill: model.avatarColor, size: 38, radius: 11) {
+                    Text(model.avatarLetter).font(PFont.display(17, .bold)).foregroundStyle(.white)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(model.label)
+                        .font(PFont.display(15, .semibold)).foregroundStyle(Color.pfInk).lineLimit(1)
+                    if let subtitle = model.subtitle {
+                        Text(subtitle)
+                            .font(PFont.body(11, .bold)).foregroundStyle(Color.pfInkMuted).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 4)
+                if let plan = model.plan { PlanBadge(plan: plan) }
+            }
+            barSection("5-Hour Energy", icon: "⚡️", window: model.session, kind: .session)
+            barSection("Weekly Fuel", icon: "📅", window: model.week, kind: .weekly)
+            if let opus = model.opus {
+                barSection("Weekly Opus", icon: "🧠", window: opus, kind: .weekly)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .chunkyCard()
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private func barSection(
+        _ label: String, icon: String, window: LimitWindow, kind: LimitWindowKind
+    ) -> some View {
+        let band = window.energyBand(thresholds: thresholds, asOf: now)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 7) {
+                Text(icon).font(.system(size: 13))
+                Text(label).font(PFont.body(13, .bold)).foregroundStyle(Color.pfInk)
+                Spacer(minLength: 4)
+                Text(window.displayText(usage: usage, asOf: now) ?? "—")
+                    .font(PFont.display(14, .bold)).foregroundStyle(band.color).monospacedDigit()
+                Text(usage ? "used" : "left")
+                    .font(PFont.body(12, .bold)).foregroundStyle(Color.pfInkMuted)
+            }
+            EnergyBar(fraction: window.displayFraction(usage: usage, asOf: now), color: band.color)
+            HStack {
+                Text(energyPhrase(left: window.percentLeft(asOf: now) ?? 0, kind: kind))
+                    .font(PFont.body(11, .bold)).foregroundStyle(band.color)
+                Spacer(minLength: 4)
+                if let reset = resetText(window, kind: kind) {
+                    Text(reset)
+                        .font(PFont.body(11, .semibold)).foregroundStyle(Color.pfInkMuted)
+                        .monospacedDigit()
+                }
+            }
+        }
+    }
+
+    private func resetText(_ window: LimitWindow, kind: LimitWindowKind) -> String? {
+        guard let date = window.resolved(asOf: now).resetsAt, date > now else { return nil }
+        switch kind {
+        case .session:
+            return shortDuration(until: date, from: now).map { "Refills in \($0)" }
+        case .weekly:
+            let f = DateFormatter()
+            f.dateFormat = "EEE H:mm"
+            return "Resets \(f.string(from: date))"
+        }
     }
 }
 

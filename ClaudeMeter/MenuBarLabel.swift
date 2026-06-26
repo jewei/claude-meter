@@ -8,6 +8,8 @@ import SwiftUI
 struct MenuBarLabel: View {
     @ObservedObject var appState: AppState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(AppGroupConfig.progressionModeKey) private var progressionMode = "left"
+    @AppStorage(AppGroupConfig.menuBarAccountKey) private var menuBarAccountPin = ""
 
     var body: some View {
         HStack(spacing: 4) {
@@ -116,26 +118,21 @@ struct MenuBarLabel: View {
         // Hide the number when stale so a stale energy % isn't mistaken for fresh
         // (the gray status dot still shows). Paused hides it too.
         guard appState.isActive, !appState.isStale else { return nil }
+        _ = menuBarAccountPin  // re-render the label when the pinned account changes
         let now = Date()
         var lefts: [Double] = []
-        if let snap = appState.snapshot {
-            let limitSets: [LimitInfo]
-            if let accounts = snap.accounts, !accounts.isEmpty {
-                limitSets = accounts.map(\.limits)
-            } else {
-                limitSets = [snap.limits]
-            }
-            for limits in limitSets {
-                let windows = [
-                    limits.currentSession, limits.currentWeekAllModels, limits.currentWeekOpus,
-                ].compactMap { $0 }
-                lefts.append(contentsOf: windows.compactMap { $0.percentLeft(asOf: now) })
-            }
+        for limits in appState.menuBarLimitSets {
+            let windows = [
+                limits.currentSession, limits.currentWeekAllModels, limits.currentWeekOpus,
+            ].compactMap { $0 }
+            lefts.append(contentsOf: windows.compactMap { $0.percentLeft(asOf: now) })
         }
         if AppSettings.cursorSourceEnabled, let cursor = appState.cursorUsage?.clampedPercent {
             lefts.append(100 - cursor)
         }
         guard let minLeft = lefts.min() else { return nil }
-        return "\(Int(minLeft.rounded()))%"
+        // "Used" mode shows the max usage (= the nearest limit, inverted).
+        let value = progressionMode == "used" ? 100 - minLeft : minLeft
+        return "\(Int(value.rounded()))%"
     }
 }

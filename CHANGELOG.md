@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Appearance settings (new Settings tab): pick **activity rings or energy bars**
+  for the account cards, switch between showing **energy remaining or usage**, and
+  **pin the menu-bar percentage to a specific account** (or the nearest limit).
 - A complete visual redesign — a playful, energy-themed interface with a
   combined-health hero, per-account **activity rings** (weekly + 5-hour), and the
   whole app reframed as "energy remaining". Real Fredoka & Nunito typography and a

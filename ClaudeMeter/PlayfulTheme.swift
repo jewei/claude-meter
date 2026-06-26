@@ -148,6 +148,18 @@ extension LimitWindow {
         if rounded.truncatingRemainder(dividingBy: 1) == 0 { return "\(Int(rounded))%" }
         return String(format: "%.1f%%", rounded)
     }
+
+    /// Ring/bar fill fraction for the chosen progression: usage *fills*, energy-left *depletes*.
+    func displayFraction(usage: Bool, asOf now: Date) -> Double {
+        guard let used = resolved(asOf: now).percentUsed else { return 0 }
+        let clamped = min(100, max(0, used))
+        return (usage ? clamped : 100 - clamped) / 100
+    }
+
+    /// The number to show for the chosen progression ("% used" or "% left").
+    func displayText(usage: Bool, asOf now: Date) -> String? {
+        usage ? resolved(asOf: now).displayPercent : leftPercentText(asOf: now)
+    }
 }
 
 /// Flavor phrase for a per-window energy level. Finer-grained than the color

@@ -7,11 +7,16 @@ struct PopoverView: View {
     @Environment(\.openSettings) private var openSettings
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage(AppSettings.cursorSourceEnabledKey) private var cursorSourceEnabled = false
+    @AppStorage(AppGroupConfig.cardStyleKey) private var cardStyle = "rings"
+    @AppStorage(AppGroupConfig.progressionModeKey) private var progressionMode = "left"
     @State private var now = Date()
 
     private var usageThresholds: UsageThresholds {
         AppState.currentThresholds()
     }
+
+    /// `true` when the user chose to display usage instead of energy-left.
+    private var usage: Bool { progressionMode == "used" }
 
     private var needsOnboarding: Bool {
         !hasCompletedOnboarding
@@ -165,11 +170,17 @@ struct PopoverView: View {
                     .tracking(0.9)
                     .foregroundStyle(Color.pfSectionLabel)
                 Spacer()
-                RingLegend()
+                if cardStyle != "bars" { RingLegend() }
             }
             .padding(.horizontal, 2)
             ForEach(models) { model in
-                AccountRingCard(model: model, now: now, thresholds: usageThresholds)
+                if cardStyle == "bars" {
+                    AccountBarCard(
+                        model: model, now: now, thresholds: usageThresholds, usage: usage)
+                } else {
+                    AccountRingCard(
+                        model: model, now: now, thresholds: usageThresholds, usage: usage)
+                }
             }
         }
     }

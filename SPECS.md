@@ -210,9 +210,10 @@ Settings window:
   floating window level via `SettingsWindowAccessor` (LSUIElement menu bar app).
 - Fixed size: width 560, height 500.
 
-Tabs: **Data** (`cylinder.split.1x2`), **Notifications** (`bell`), **Advanced**
-(`slider.horizontal.3`), **About** (`info.circle`). The global **Active** toggle
-is not in Settings — pause/resume lives in the popover footer.
+Tabs: **Data** (`cylinder.split.1x2`), **Appearance** (`paintpalette.fill`),
+**Notifications** (`bell`), **Advanced** (`slider.horizontal.3`), **About**
+(`info.circle`). Window is 560×640. The global **Active** toggle is not in
+Settings — pause/resume lives in the popover footer.
 
 #### Data tab
 
@@ -259,6 +260,19 @@ Toggling any source calls `rebuildPipeline()`.
 
 No poll-interval or staleness sliders appear in Settings; those are internal
 constants / `AppGroupConfig` values.
+
+#### Appearance tab
+
+Three chunky-card controls (all synced to the App Group; the widget reloads on a
+progression change):
+
+- **Account cards** — `cardStyle`: "rings" (default activity rings) or "bars"
+  (Frame-A energy bars). Popover only; the widget stays rings.
+- **Show** — `progressionMode`: "left" (energy remaining, default; rings/bars
+  *deplete*, number is % left) or "used" (fills; number is % used). Applies to the
+  popover, menu bar, and widget.
+- **Menu bar follows** — `menuBarAccount`: "Nearest limit" (default) or a specific
+  account, pinning the menu-bar % + dot to it (`AppState.menuBarLimitSets`).
 
 #### Notifications tab
 
@@ -838,6 +852,9 @@ Always sanitize before display/copy/logging:
 | Data          | `oauthMode`                | String | `""`            | `""`, `auto`, or `manual`                               |
 | Data          | `accountPlans`             | Dict   | `{}`            | User-set plan badge per account key (OAuth single-slot) |
 | Data          | `accountNames`             | Dict   | `{}`            | User-set display name per account key                   |
+| Appearance    | `cardStyle`                | String | `rings`         | Popover card style: `rings` or `bars`                   |
+| Appearance    | `progressionMode`          | String | `left`          | `left` (energy remaining) or `used`                     |
+| Appearance    | `menuBarAccount`           | String | `""`            | Menu-bar pin: `""`/`nearest`, or an account key         |
 | Notifications | `warningThresholdPercent`  | Double | 80              | Slider 50–90; synced to App Group; drives meter colors  |
 | Notifications | `criticalThresholdPercent` | Double | 95              | Slider 60–100; synced to App Group; drives meter colors |
 | UI staleness  | `staleAfterSeconds`        | Double | 180             | Supported by `AppGroupConfig`; no Settings control      |

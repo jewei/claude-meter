@@ -57,6 +57,16 @@ private func leftText(_ window: LimitWindow, asOf now: Date) -> String {
     return "\(Int(left.rounded()))%"
 }
 
+private func displayFraction(_ window: LimitWindow, usage: Bool, asOf now: Date) -> Double {
+    guard let used = window.resolved(asOf: now).percentUsed else { return 0 }
+    let clamped = min(100, max(0, used))
+    return (usage ? clamped : 100 - clamped) / 100
+}
+
+private func displayText(_ window: LimitWindow, usage: Bool, asOf now: Date) -> String {
+    usage ? (window.resolved(asOf: now).displayPercent ?? "—") : leftText(window, asOf: now)
+}
+
 // MARK: - Typography (Fredoka/Nunito bundled into the widget target too)
 
 private enum WFont {
@@ -229,16 +239,22 @@ private func ringsBlock(_ snap: ClaudeUsageSnapshot, _ entry: ClaudeMeterEntry, 
     -> WidgetRings
 {
     let now = entry.date
+    let usage = AppGroupConfig.progressionMode() == "used"
     let session = snap.limits.currentSession
     let week = snap.limits.currentWeekAllModels
-    let nearest = [percentLeft(session, asOf: now), percentLeft(week, asOf: now)]
-        .compactMap { $0 }.min()
+    let lefts = [percentLeft(session, asOf: now), percentLeft(week, asOf: now)].compactMap { $0 }
+    let center: String
+    if let minLeft = lefts.min() {
+        center = "\(Int((usage ? 100 - minLeft : minLeft).rounded()))"
+    } else {
+        center = "—"
+    }
     return WidgetRings(
-        weekFraction: (percentLeft(week, asOf: now) ?? 0) / 100,
+        weekFraction: displayFraction(week, usage: usage, asOf: now),
         weekColor: energyColor(percentUsed: week.resolved(asOf: now).percentUsed, thresholds: entry.thresholds),
-        sessionFraction: (percentLeft(session, asOf: now) ?? 0) / 100,
+        sessionFraction: displayFraction(session, usage: usage, asOf: now),
         sessionColor: energyColor(percentUsed: session.resolved(asOf: now).percentUsed, thresholds: entry.thresholds),
-        centerText: nearest.map { "\(Int($0.rounded()))" } ?? "—",
+        centerText: center,
         size: size)
 }
 
@@ -251,6 +267,8 @@ private struct EnergyRow: View {
     let referenceDate: Date
     var showReset = true
 
+    private var usage: Bool { AppGroupConfig.progressionMode() == "used" }
+
     var body: some View {
         let color = energyColor(
             percentUsed: window.resolved(asOf: referenceDate).percentUsed, thresholds: thresholds)
@@ -260,7 +278,7 @@ private struct EnergyRow: View {
             Text(label)
                 .font(WFont.body(12, .bold))
                 .foregroundStyle(Color.wInk)
-            Text(leftText(window, asOf: referenceDate))
+            Text(displayText(window, usage: usage, asOf: referenceDate))
                 .font(WFont.display(12, .heavy))
                 .foregroundStyle(color)
                 .monospacedDigit()

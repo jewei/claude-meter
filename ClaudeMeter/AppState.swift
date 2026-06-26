@@ -262,29 +262,31 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Highest severity across the user's limits — the menu bar's "nearest-limit"
-    /// signal. Scans **every account's** windows when several are present (rate
-    /// limits are per-account, so any account hitting a wall should color the
-    /// icon), else the top-level/active limits.
+    /// Limit sets the menu bar considers: the **pinned account** when the user set
+    /// one (`AppGroupConfig.menuBarAccount`), else **every account** (nearest-limit,
+    /// since rate limits are per-account). Cursor is added separately by callers.
+    var menuBarLimitSets: [LimitInfo] {
+        guard let snap = snapshot else { return [] }
+        guard let accounts = snap.accounts, !accounts.isEmpty else { return [snap.limits] }
+        let pinned = AppGroupConfig.menuBarAccount
+        if pinned != "", pinned != "nearest", let acc = accounts.first(where: { $0.id == pinned }) {
+            return [acc.limits]
+        }
+        return accounts.map(\.limits)
+    }
+
+    /// Highest severity across the menu-bar limit sets — the "nearest-limit" signal.
     var severity: UsageSeverity {
         let thresholds = Self.currentThresholds()
         let now = Date()
         var result: UsageSeverity = .unknown
-        if let snap = snapshot {
-            let limitSets: [LimitInfo]
-            if let accounts = snap.accounts, !accounts.isEmpty {
-                limitSets = accounts.map(\.limits)
-            } else {
-                limitSets = [snap.limits]
-            }
-            for limits in limitSets {
-                let windows = [
-                    limits.currentSession, limits.currentWeekAllModels, limits.currentWeekOpus,
-                ].compactMap { $0 }
-                for window in windows {
-                    result = UsageSeverity.highest(
-                        result, thresholds.severity(for: window.resolved(asOf: now).percentUsed))
-                }
+        for limits in menuBarLimitSets {
+            let windows = [
+                limits.currentSession, limits.currentWeekAllModels, limits.currentWeekOpus,
+            ].compactMap { $0 }
+            for window in windows {
+                result = UsageSeverity.highest(
+                    result, thresholds.severity(for: window.resolved(asOf: now).percentUsed))
             }
         }
         if AppSettings.cursorSourceEnabled, let cursor = cursorUsage {

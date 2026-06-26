@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0] - 2026-06-26
+
 ### Added
 
 - Appearance settings (new Settings tab): pick **activity rings or energy bars**
@@ -164,7 +166,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v1.3...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.0...HEAD
+[2.0]: https://github.com/jewei/claude-meter/compare/v1.3...v2.0
 [1.3]: https://github.com/jewei/claude-meter/compare/v1.2...v1.3
 [1.2]: https://github.com/jewei/claude-meter/compare/v1.1...v1.2
 [1.1]: https://github.com/jewei/claude-meter/compare/v1.0...v1.1

@@ -37,6 +37,9 @@ struct PopoverView: View {
                 if let status = appState.serviceStatus, status.level.isIncident {
                     serviceStatusNotice(status)
                 }
+                if appState.attention.needsAttention {
+                    attentionBanner
+                }
                 mainContent
             }
             footerBar
@@ -646,6 +649,42 @@ struct PopoverView: View {
             return "Refresh failed — could not parse usage data"
         }
         return "Refresh failed — showing last known data"
+    }
+
+    // MARK: - Attention
+
+    /// Lists the Claude Code sessions currently waiting on the user. Shown while
+    /// the popover is open; `AppState` clears the bolt on close.
+    private var attentionBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(appState.attention.waiting) { session in
+                HStack(spacing: 8) {
+                    Image(
+                        systemName: session.kind == .notification
+                            ? "bell.badge.fill" : "bolt.fill"
+                    )
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.warningTint)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(session.kind == .notification ? "Claude needs you" : "Claude finished")
+                            .font(PFont.body(12, .semibold))
+                            .foregroundStyle(Color.pfInk)
+                        Text(attentionDetail(session))
+                            .font(PFont.body(11, .regular))
+                            .foregroundStyle(Color.pfInkMuted)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private func attentionDetail(_ session: WaitingSession) -> String {
+        let project = session.projectName ?? "session"
+        let name = AppGroupConfig.accountNames[session.accountKey] ?? session.accountKey
+        return "\(project) · \(name)"
     }
 
     // MARK: - Footer

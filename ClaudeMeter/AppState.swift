@@ -30,6 +30,10 @@ final class AppState: ObservableObject {
     /// opens it from the cost card. `nil` until first requested.
     @Published var activityHeatmap: ActivityHeatmap? = nil
     @Published var activityHeatmapLoading = false
+    /// Which Claude Code sessions currently need the user (drives the menu-bar
+    /// attention bolt + the popover's waiting list). Always reflects true state;
+    /// notification delivery is gated separately.
+    @Published var attention: AttentionState = .none
     private let cursorProvider = CursorUsageProvider()
 
     var pipeline: any ClaudeMeterPipeline
@@ -50,6 +54,14 @@ final class AppState: ObservableObject {
     /// In-flight statusline-bridge install task; cancelled and replaced on each
     /// refresh so rapid source/account toggles don't pile up or race.
     private var configRefreshTask: Task<Void, Never>?
+    /// Periodic drain of Claude Code attention markers (see `HookBridge`).
+    private var attentionTask: Task<Void, Never>?
+    /// In-flight attention-hook install task (mirrors `configRefreshTask`).
+    private var attentionHookTask: Task<Void, Never>?
+    /// NSWorkspace observer that clears attention when a terminal gains focus.
+    /// Held in a plain bag so cleanup runs from the bag's nonisolated deinit (a
+    /// `@MainActor` class can't touch isolated non-Sendable state in its own deinit).
+    private let frontmostObservers = WorkspaceObserverBag()
 
     private static let pollIntervalSeconds: TimeInterval = 60
     private static let oauthEnrichmentIntervalSeconds: TimeInterval = 300
@@ -61,6 +73,12 @@ final class AppState: ObservableObject {
     /// re-checks at this slow cadence; `PowerMonitor.onWake` provides immediacy,
     /// so this is only a safety net (e.g. a missed wake notification).
     private static let asleepRecheckSeconds: TimeInterval = 300
+    /// How often to drain attention markers — low-latency "your turn" without the
+    /// complexity of a file watcher; cheap (a stat of a usually-empty dir).
+    private static let attentionDrainSeconds: TimeInterval = 2
+    /// Attention auto-expires after this long unattended (stuck-bolt guard, since
+    /// v1 can't observe the next turn starting).
+    private static let attentionExpirySeconds: TimeInterval = 600
 
     var primarySourceWarning: String? {
         lastPollResult?.warnings.first { $0.field == "claude.ai API" }?.message
@@ -113,6 +131,7 @@ final class AppState: ObservableObject {
         monitor.onWake = { [weak self] in self?.refreshNow() }
         self.powerMonitor = monitor
         startPolling()
+        setupFrontmostObserver()
         Task { await notificationEngine.requestAuthorizationIfNeeded() }
     }
 
@@ -132,6 +151,8 @@ final class AppState: ObservableObject {
         pollTask?.cancel()
         rebuildDebounceTask?.cancel()
         configRefreshTask?.cancel()
+        attentionTask?.cancel()
+        attentionHookTask?.cancel()
     }
 
     func startPolling() {
@@ -141,6 +162,8 @@ final class AppState: ObservableObject {
             return
         }
         installStatuslineBridgeIfNeeded()
+        installAttentionHooksIfNeeded()
+        startAttentionWatcher()
         pollTask = Task { [weak self] in
             await self?.poll()
             while !Task.isCancelled {
@@ -168,6 +191,18 @@ final class AppState: ObservableObject {
     func stopPolling() {
         pollTask?.cancel()
         pollTask = nil
+        attentionTask?.cancel()
+        attentionTask = nil
+    }
+
+    /// Called by Settings when an attention toggle flips: reconcile the installed
+    /// hooks, (re)start or stop the watcher, and clear the bolt if disabled.
+    func attentionSettingsChanged() {
+        installAttentionHooksIfNeeded()
+        startAttentionWatcher()
+        if !AppSettings.attentionEnabled, attention.needsAttention {
+            attention = attention.cleared()
+        }
     }
 
     func checkForUpdates() {
@@ -190,6 +225,9 @@ final class AppState: ObservableObject {
 
     func popoverDidClose() {
         isPopoverOpen = false
+        // Closing the popover is acknowledgement — clear the bolt (the popover
+        // showed the waiting list while open).
+        if attention.needsAttention { attention = attention.cleared() }
     }
 
     var claudeIsStale: Bool {
@@ -609,6 +647,107 @@ final class AppState: ObservableObject {
             }
         }
     }
+
+    // MARK: - Attention (Claude Code hooks)
+
+    /// Terminal/editor bundle IDs that count as "you're already looking at it" for
+    /// notification suppression.
+    static let terminalBundleIDs: Set<String> = [
+        "com.apple.Terminal", "com.googlecode.iterm2", "com.mitchellh.ghostty",
+        "com.github.wez.wezterm", "dev.warp.Warp-Stable", "net.kovidgoyal.kitty",
+        "org.alacritty", "io.alacritty", "co.zeit.hyper", "com.microsoft.VSCode",
+        "com.todesktop.230313mzl4w4u92",  // Cursor
+    ]
+
+    static func frontmostIsTerminal() -> Bool {
+        guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else {
+            return false
+        }
+        return terminalBundleIDs.contains(id)
+    }
+
+    /// Clears the bolt when a terminal becomes frontmost — focusing the terminal is
+    /// acknowledgement that you're dealing with Claude.
+    private func setupFrontmostObserver() {
+        let token = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.attention.needsAttention, Self.frontmostIsTerminal() else {
+                    return
+                }
+                self.attention = self.attention.cleared()
+            }
+        }
+        frontmostObservers.tokens.append(token)
+    }
+
+    /// Reconciles attention hooks across all config dirs to the enabled event set
+    /// (installs enabled events, removes disabled). Mirrors the statusline install.
+    private func installAttentionHooksIfNeeded() {
+        let events = AppSettings.enabledAttentionEvents
+        let configuredDirs = AppGroupConfig.configuredConfigDirs
+        let disabledKeys = Set(AppGroupConfig.disabledAccountKeys)
+        attentionHookTask?.cancel()
+        attentionHookTask = Task.detached(priority: .utility) {
+            let accounts = ConfigDirDiscovery.discover(
+                configuredDirs: configuredDirs, disabledKeys: disabledKeys)
+            guard !Task.isCancelled else { return }
+            try? HookBridge.install(configDirs: accounts.map(\.configDir), events: events)
+        }
+    }
+
+    /// Drains attention markers every few seconds while active + awake + enabled.
+    private func startAttentionWatcher() {
+        attentionTask?.cancel()
+        guard isActive, AppSettings.attentionEnabled else {
+            attentionTask = nil
+            return
+        }
+        attentionTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { break }
+                if self.powerMonitor?.isDisplayAsleep != true {
+                    await self.drainAttention()
+                }
+                try? await Task.sleep(for: .seconds(Self.attentionDrainSeconds))
+            }
+        }
+    }
+
+    private func drainAttention() async {
+        let now = Date()
+        let events = await Task.detached(priority: .utility) {
+            SessionEventStore.drain(now: now)
+        }.value
+
+        // The bolt always reflects true state: prune expired, then fold in new events.
+        var state = attention.pruned(now: now, expiry: Self.attentionExpirySeconds)
+        if !events.isEmpty { state = state.applying(events, now: now) }
+        if state != attention { attention = state }
+
+        guard !events.isEmpty else { return }
+        // Notifications are gated independently of the bolt.
+        guard !(AppSettings.attentionSuppressWhenTerminalFocused && Self.frontmostIsTerminal())
+        else { return }
+        let names = AppGroupConfig.accountNames
+        for event in events where AppSettings.enabledAttentionEvents.contains(event.kind.rawValue) {
+            let account = names[event.accountKey] ?? event.accountKey
+            await notificationEngine.postAttention(event: event, accountLabel: account)
+        }
+    }
+}
+
+/// Holds `NSWorkspace` observer tokens and removes them on dealloc. A plain class
+/// (not `@MainActor`) so its `deinit` can run cleanup; tokens are only appended
+/// during setup on the main actor.
+private final class WorkspaceObserverBag {
+    var tokens: [NSObjectProtocol] = []
+
+    deinit {
+        let center = NSWorkspace.shared.notificationCenter
+        for token in tokens { center.removeObserver(token) }
+    }
 }
 
 enum AppSettings {
@@ -644,6 +783,41 @@ enum AppSettings {
         get { UserDefaults.standard.bool(forKey: cursorSourceEnabledKey) }
         set { UserDefaults.standard.set(newValue, forKey: cursorSourceEnabledKey) }
     }
+
+    // MARK: - Attention (Claude Code hooks)
+
+    static let attentionStopEnabledKey = "attentionStopEnabled"
+    static let attentionNotificationEnabledKey = "attentionNotificationEnabled"
+    static let attentionSuppressWhenTerminalFocusedKey = "attentionSuppressWhenTerminalFocused"
+
+    /// Notify / flag when Claude finishes a turn. Opt-in (installs a `Stop` hook).
+    static var attentionStopEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: attentionStopEnabledKey) }
+        set { UserDefaults.standard.set(newValue, forKey: attentionStopEnabledKey) }
+    }
+
+    /// Notify / flag when Claude needs permission or goes idle. Opt-in (`Notification` hook).
+    static var attentionNotificationEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: attentionNotificationEnabledKey) }
+        set { UserDefaults.standard.set(newValue, forKey: attentionNotificationEnabledKey) }
+    }
+
+    /// Suppress *notifications* (not the menu-bar bolt) while a terminal is frontmost.
+    /// Defaults on — you don't need a ping for the window you're already looking at.
+    static var attentionSuppressWhenTerminalFocused: Bool {
+        get { boolDefaultingTrue(forKey: attentionSuppressWhenTerminalFocusedKey) }
+        set { UserDefaults.standard.set(newValue, forKey: attentionSuppressWhenTerminalFocusedKey) }
+    }
+
+    /// The hook events the user enabled — drives `HookBridge` install + the watcher.
+    static var enabledAttentionEvents: Set<String> {
+        var events = Set<String>()
+        if attentionStopEnabled { events.insert("Stop") }
+        if attentionNotificationEnabled { events.insert("Notification") }
+        return events
+    }
+
+    static var attentionEnabled: Bool { !enabledAttentionEvents.isEmpty }
 
     static var hasClaudeSource: Bool {
         statuslineSourceEnabled || oauthSourceEnabled || claudeAISourceEnabled

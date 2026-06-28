@@ -35,6 +35,30 @@ actor NotificationEngine {
         )
     }
 
+    /// Posts a "Claude needs you" notification for an attention event. Caller has
+    /// already applied focus-suppression; this only gates on the master toggle +
+    /// authorization. Each event is consumed once, so no extra dedup is needed.
+    func postAttention(event: SessionEvent, accountLabel: String) async {
+        guard isEnabled(), await isAuthorized() else { return }
+        let project = event.projectName ?? "a session"
+        let title: String
+        let body: String
+        switch event.kind {
+        case .stop:
+            title = "Claude finished ✅"
+            body = "\(project) · \(accountLabel) — your turn"
+        case .notification:
+            title = "Claude needs you"
+            let detail = (event.message?.isEmpty == false) ? event.message! : "Waiting for input"
+            body = "\(detail) · \(project)"
+        case .other:
+            return
+        }
+        let id =
+            "com.claudemeter.attention.\(event.accountKey).\(event.sessionId ?? "?").\(event.kind.rawValue).\(Int(event.capturedAt.timeIntervalSince1970))"
+        _ = await post(id: id, title: title, body: body)
+    }
+
     // MARK: - Processing
 
     func process(

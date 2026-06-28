@@ -26,7 +26,7 @@ struct SettingsView: View {
                 switch selection {
                 case 0: DataSettingsTab(appState: appState)
                 case 1: AppearanceSettingsTab(appState: appState)
-                case 2: NotificationsSettingsTab()
+                case 2: NotificationsSettingsTab(appState: appState)
                 case 3: AdvancedSettingsTab(appState: appState)
                 default: AboutSettingsTab()
                 }
@@ -1204,9 +1204,14 @@ private struct SettingsHelperBox: View {
 }
 
 private struct NotificationsSettingsTab: View {
+    let appState: AppState
     @AppStorage("enableNotifications") private var enableNotifications = true
     @AppStorage("warningThresholdPercent") private var warningThresholdPercent = 80.0
     @AppStorage("criticalThresholdPercent") private var criticalThresholdPercent = 95.0
+    @AppStorage(AppSettings.attentionStopEnabledKey) private var attentionStop = false
+    @AppStorage(AppSettings.attentionNotificationEnabledKey) private var attentionNotification = false
+    @AppStorage(AppSettings.attentionSuppressWhenTerminalFocusedKey)
+    private var attentionSuppress = true
 
     var body: some View {
         ScrollView {
@@ -1223,6 +1228,35 @@ private struct NotificationsSettingsTab: View {
                         "Posts a notification when session or weekly usage crosses the warning or critical threshold — one alert per threshold, per reset window."
                     )
                 }
+
+                Text("Claude Attention")
+                    .font(PFont.display(26, .bold))
+                    .foregroundStyle(Color.pfInk)
+                    .padding(.horizontal, 4)
+
+                VStack(alignment: .leading, spacing: 14) {
+                    attentionRow(
+                        "Notify when Claude finishes a turn",
+                        "Pings you and lights the menu-bar bolt when a session is done and waiting.",
+                        $attentionStop)
+                    Divider().overlay(Color.pfCardBorder)
+                    attentionRow(
+                        "Notify when Claude needs permission",
+                        "Covers permission prompts and idle waits.",
+                        $attentionNotification)
+                    Divider().overlay(Color.pfCardBorder)
+                    attentionRow(
+                        "Stay quiet when a terminal is focused",
+                        "Skip the notification for a window you're already looking at (the bolt still shows).",
+                        $attentionSuppress)
+                    SettingsHelperBox(
+                        "Installs lightweight Stop / Notification hooks into each Claude Code account; turning these off removes them."
+                    )
+                }
+                .padding(16)
+                .chunkyCard(radius: 18)
+                .onChange(of: attentionStop) { _, _ in appState.attentionSettingsChanged() }
+                .onChange(of: attentionNotification) { _, _ in appState.attentionSettingsChanged() }
 
                 Text("Severity Thresholds")
                     .font(PFont.display(26, .bold))
@@ -1258,6 +1292,19 @@ private struct NotificationsSettingsTab: View {
                 criticalThresholdPercent = min(100, warningThresholdPercent + 5)
             }
             AppGroupConfig.syncDisplaySettings()
+        }
+    }
+
+    private func attentionRow(_ title: String, _ subtitle: String, _ isOn: Binding<Bool>)
+        -> some View
+    {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(PFont.display(15, .semibold)).foregroundStyle(Color.pfInk)
+                Text(subtitle).font(PFont.body(12, .regular)).foregroundStyle(Color.pfInkMuted)
+            }
+            Spacer(minLength: 8)
+            Toggle("", isOn: isOn).toggleStyle(.switch).labelsHidden()
         }
     }
 

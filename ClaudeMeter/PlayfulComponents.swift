@@ -283,7 +283,7 @@ struct AccountRingCard: View {
         guard let resetsAt = window.resolved(asOf: now).resetsAt, resetsAt > now else { return nil }
         switch kind {
         case .session: return shortDuration(until: resetsAt, from: now)
-        case .weekly: return shortWeekday(resetsAt)
+        case .weekly: return shortResetDate(resetsAt)
         }
     }
 
@@ -366,9 +366,7 @@ struct AccountBarCard: View {
         case .session:
             return shortDuration(until: date, from: now).map { "Refills in \($0)" }
         case .weekly:
-            let f = DateFormatter()
-            f.dateFormat = "EEE H:mm"
-            return "Resets \(f.string(from: date))"
+            return "Resets \(shortResetDate(date))"
         }
     }
 }
@@ -518,9 +516,10 @@ func shortDuration(until date: Date, from now: Date) -> String? {
     return f.string(from: date.timeIntervalSince(now))
 }
 
-func shortWeekday(_ date: Date) -> String {
+/// "29 Jun" — the calendar date a rolling window resets on (clearer than a bare weekday).
+func shortResetDate(_ date: Date) -> String {
     let f = DateFormatter()
-    f.dateFormat = "EEE"
+    f.dateFormat = "d MMM"
     return f.string(from: date)
 }
 
@@ -533,4 +532,65 @@ func describeReset(_ date: Date, now: Date) -> String {
         return f.string(from: date)
     }
     return "in \(shortDuration(until: date, from: now) ?? "soon")"
+}
+
+// MARK: - Activity heatmap grid (GitHub-style punchcard)
+
+/// A 7×24 grid (Mon–Sun rows × hour-of-day columns) shaded by message volume,
+/// relative to the busiest cell. Cells stretch to fill the popover width.
+struct ActivityHeatmapGrid: View {
+    let map: ActivityHeatmap
+
+    private static let weekdayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    private static let labelWidth: CGFloat = 22
+    private static let cellSpacing: CGFloat = 2
+    private static let cellHeight: CGFloat = 12
+
+    var body: some View {
+        let peak = max(map.peak, 1)
+        VStack(spacing: Self.cellSpacing) {
+            ForEach(0..<7, id: \.self) { day in
+                HStack(spacing: Self.cellSpacing) {
+                    Text(Self.weekdayLabels[day])
+                        .font(PFont.body(9, .bold))
+                        .foregroundStyle(Color.pfInkMuted)
+                        .frame(width: Self.labelWidth, alignment: .leading)
+                    ForEach(0..<24, id: \.self) { hour in
+                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                            .fill(Self.color(for: map.counts[day][hour], peak: peak))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: Self.cellHeight)
+                    }
+                }
+            }
+            // Hour axis: label every 6 hours.
+            HStack(spacing: Self.cellSpacing) {
+                Spacer().frame(width: Self.labelWidth)
+                ForEach(0..<24, id: \.self) { hour in
+                    Text(hour % 6 == 0 ? "\(hour)" : "")
+                        .font(PFont.body(8, .semibold))
+                        .foregroundStyle(Color.pfInkMuted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    /// Shade for an absolute count, bucketed into 5 levels relative to `peak`.
+    static func color(for count: Int, peak: Int) -> Color {
+        guard count > 0 else { return color(forLevel: 0) }
+        let frac = Double(count) / Double(max(peak, 1))
+        let level = frac >= 0.75 ? 4 : frac >= 0.5 ? 3 : frac >= 0.25 ? 2 : 1
+        return color(forLevel: level)
+    }
+
+    static func color(forLevel level: Int) -> Color {
+        switch level {
+        case 0: return Color.pfTrack
+        case 1: return Color.pfEnergyFull.opacity(0.28)
+        case 2: return Color.pfEnergyFull.opacity(0.5)
+        case 3: return Color.pfEnergyFull.opacity(0.75)
+        default: return Color.pfEnergyFull
+        }
+    }
 }

@@ -23,6 +23,10 @@ final class AppState: ObservableObject {
     @Published var cursorError: String? = nil
     @Published var cursorLastPolledAt: Date? = nil
     @Published var costScanPartial = false
+    /// Activity heatmap (7×24 message counts), scanned on demand when the user
+    /// opens it from the cost card. `nil` until first requested.
+    @Published var activityHeatmap: ActivityHeatmap? = nil
+    @Published var activityHeatmapLoading = false
     private let cursorProvider = CursorUsageProvider()
 
     var pipeline: any ClaudeMeterPipeline
@@ -275,6 +279,19 @@ final class AppState: ObservableObject {
         return accounts.map(\.limits)
     }
 
+    /// The single account the menu bar speaks for when showing a specific window
+    /// (5h / 7d / both): the pinned account if set, else the active account (the
+    /// snapshot's top-level mirror). Nil with no snapshot.
+    var menuBarActiveLimits: LimitInfo? {
+        guard let snap = snapshot else { return nil }
+        let pinned = AppGroupConfig.menuBarAccount
+        if pinned != "", pinned != "nearest",
+            let acc = snap.accounts?.first(where: { $0.id == pinned }) {
+            return acc.limits
+        }
+        return snap.limits
+    }
+
     /// Highest severity across the menu-bar limit sets — the "nearest-limit" signal.
     /// **Claude only**: Cursor is a separate source with its own popover card and is
     /// never folded into the menu bar (it would otherwise dominate the dot/number).
@@ -479,6 +496,27 @@ final class AppState: ObservableObject {
                 ? [JournalReader.defaultProjectsPath] : accounts.map(\.projectsPath)
             return CostUsageScanner(projectsPaths: paths).scan(daysBack: 7, now: now)
         }.value
+    }
+
+    /// Scans local transcripts for the 7×24 activity heatmap (off-main). Called
+    /// when the user opens the heatmap; refreshes the existing result in place.
+    func loadActivityHeatmap() {
+        guard !activityHeatmapLoading else { return }
+        activityHeatmapLoading = true
+        let now = Date()
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                let accounts = ConfigDirDiscovery.discover(
+                    configuredDirs: AppGroupConfig.configuredConfigDirs,
+                    disabledKeys: Set(AppGroupConfig.disabledAccountKeys))
+                let paths =
+                    accounts.isEmpty
+                    ? [JournalReader.defaultProjectsPath] : accounts.map(\.projectsPath)
+                return ActivityScanner(projectsPaths: paths).scan(daysBack: 30, now: now)
+            }.value
+            activityHeatmap = result
+            activityHeatmapLoading = false
+        }
     }
 
     private func shouldReloadWidget(

@@ -81,6 +81,7 @@ public enum AppGroupConfig {
     public static let cardStyleKey = "cardStyle"  // "rings" | "bars" (popover only)
     public static let progressionModeKey = "progressionMode"  // "left" | "used"
     public static let menuBarAccountKey = "menuBarAccount"  // "" / "nearest" | account key
+    public static let menuBarWindowKey = "menuBarWindow"  // "nearest" | "5h" | "7d" | "both"
 
     /// Popover card style: "rings" (default) or "bars". Shared-first so the widget can read it.
     public static func cardStyle(from defaults: UserDefaults = .standard) -> String {
@@ -98,6 +99,14 @@ public enum AppGroupConfig {
         UserDefaults.standard.string(forKey: menuBarAccountKey) ?? ""
     }
 
+    /// Which window the menu-bar number reflects: "nearest" (default — lowest
+    /// energy-left across all windows/accounts), "5h", "7d", or "both" (5h · 7d for
+    /// the active/pinned account). Empty/unknown → "nearest".
+    public static var menuBarWindow: String {
+        let value = UserDefaults.standard.string(forKey: menuBarWindowKey) ?? ""
+        return ["5h", "7d", "both"].contains(value) ? value : "nearest"
+    }
+
     /// Copies display-related settings from the standard suite into the App Group suite.
     public static func syncDisplaySettings(from source: UserDefaults = .standard) {
         guard let shared = sharedDefaults else { return }
@@ -112,6 +121,7 @@ public enum AppGroupConfig {
             cardStyleKey,
             progressionModeKey,
             menuBarAccountKey,
+            menuBarWindowKey,
         ] {
             if let value = source.object(forKey: key) {
                 shared.set(value, forKey: key)

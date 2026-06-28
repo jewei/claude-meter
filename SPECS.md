@@ -188,8 +188,13 @@ Anatomy (top to bottom):
   the avatar letter, the account name (user-set display name or config-dir label),
   an optional plan badge, and `5-hr / week / opus` rows with % left + reset.
 - Extra-usage, last-7-days cost, and Cursor cards follow when present (restyled).
-- **Footer**: a raised "＋ Add account" button + pause/resume, settings, and quit
-  (chunky square buttons).
+  The **last-7-days cost card is tappable** — it flips the popover body to an
+  **activity heatmap** (a GitHub-style 7×24 punchcard, Mon–Sun × hour-of-day,
+  shaded by message volume) with a **Back** button. The heatmap is scanned on
+  demand from local transcripts (`ActivityScanner`, last 30 days, local time).
+- **Footer**: the Claude Code version (`snapshot.source.cliVersion`, when present)
+  as a link to the changelog on the left, then pause/resume, settings, and quit
+  (chunky square buttons) on the right. Add-account lives in Settings (the gear).
 
 `accountModels` builds the unified `[AccountCardModel]` (uses `snapshot.accounts`
 when present, else a single synthesized card from the top-level snapshot).
@@ -263,7 +268,7 @@ constants / `AppGroupConfig` values.
 
 #### Appearance tab
 
-Three chunky-card controls (all synced to the App Group; the widget reloads on a
+Four chunky-card controls (all synced to the App Group; the widget reloads on a
 progression change):
 
 - **Account cards** — `cardStyle`: "rings" (default activity rings) or "bars"
@@ -273,6 +278,13 @@ progression change):
   popover, menu bar, and widget.
 - **Menu bar follows** — `menuBarAccount`: "Nearest limit" (default) or a specific
   account, pinning the menu-bar % + dot to it (`AppState.menuBarLimitSets`).
+- **Menu bar shows** — `menuBarWindow`: which window the menu-bar number reflects —
+  `nearest` (default; lowest energy-left across all windows/accounts), `5h`, `7d`,
+  or `both` (`99% 5h · 73% 7d`). For `5h`/`7d`/`both` the value comes from the
+  active (or pinned) account via `AppState.menuBarActiveLimits`, with a suffix
+  label; `nearest` keeps the unsuffixed nearest-limit behavior. The status dot
+  color still keys off severity across *all* windows, so a single-window number
+  can legitimately differ from the dot.
 
 #### Notifications tab
 
@@ -855,6 +867,7 @@ Always sanitize before display/copy/logging:
 | Appearance    | `cardStyle`                | String | `rings`         | Popover card style: `rings` or `bars`                   |
 | Appearance    | `progressionMode`          | String | `left`          | `left` (energy remaining) or `used`                     |
 | Appearance    | `menuBarAccount`           | String | `""`            | Menu-bar pin: `""`/`nearest`, or an account key         |
+| Appearance    | `menuBarWindow`            | String | `nearest`       | Menu-bar number window: `nearest`/`5h`/`7d`/`both`      |
 | Notifications | `warningThresholdPercent`  | Double | 80              | Slider 50–90; synced to App Group; drives meter colors  |
 | Notifications | `criticalThresholdPercent` | Double | 95              | Slider 60–100; synced to App Group; drives meter colors |
 | UI staleness  | `staleAfterSeconds`        | Double | 180             | Supported by `AppGroupConfig`; no Settings control      |

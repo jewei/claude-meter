@@ -189,12 +189,15 @@ padding 15, vertical gap 12. Scrolls when accounts overflow (~max height 560).
 │ │ ((W))  Work                     [MAX 20×]  │ │  Ring card (active)
 │ │        you@oneone.com                      │ │
 │ │        ▪ 5-hr 78% · 3h 12m                 │ │
-│ │        ▪ week 64% · Mon                    │ │
+│ │        ▪ week 64% · 29 Jun                 │ │
 │ └──────────────────────────────────────────┘ │
 │ ┌──────────────────────────────────────────┐ │  Ring card (other account)
 │ │ ((A))  Personal …                          │ │
 │ └──────────────────────────────────────────┘ │
-│ [  ＋  Add account            ]   ( ⚙ )        │  Footer
+│ ┌──────────────────────────────────────────┐ │  Cost card (tap → heatmap)
+│ │ 💸 Last 7 days              $75.68      ›  │ │
+│ └──────────────────────────────────────────┘ │
+│ Claude Code v2.1.0 ↗     (⏸) ( ⚙ ) (⏻)        │  Footer
 └──────────────────────────────────────────────┘
 ```
 
@@ -238,11 +241,19 @@ Same card; replaces rings with two stacked rows, each: icon (⚡/📅) + label +
 depleting capsule bar (band color, inner top gloss), and a phrase/reset row. Document but ship rings
 as default; a future setting can switch.
 
+### Cost card → activity heatmap
+The "Last 7 days" cost card is **tappable** (chevron affordance): it flips the popover body to a
+GitHub-style **activity punchcard** — 7 rows (Mon–Sun) × 24 columns (hour of day), each cell a
+rounded square shaded in 5 `energy-full` intensity levels by message volume relative to the busiest
+hour (empty = `track`). Weekday labels at left, a 6-hour axis below, and a "Less → More" legend. A
+**Back** button returns to the main view. Data is scanned on demand from local transcripts (last 30
+days, local time); shows "Scanning…" / "No activity" placeholders.
+
 ### Footer
-- Primary "＋ Add account" raised button (`energy-full`), opens the add-account flow / Settings →
-  Statusline Bridge card.
-- 46×46 white chunky settings button (⚙) opens Settings.
-- "Updated …" + quit can live in Settings/overflow; keep footer to the two game buttons.
+- The **Claude Code version** (e.g. "Claude Code v2.1.0 ↗") on the left, linking to the changelog;
+  hidden when unavailable. (The old "＋ Add account" button was removed — adding an account lives in
+  Settings, reached via the gear.)
+- Chunky square buttons on the right: pause/resume, settings (⚙), and quit (⏻).
 
 ---
 
@@ -262,8 +273,11 @@ prompt. Bolt glyph + a colored status dot (top-right), severity from the same en
 | Error       | bolt.trianglebadge.exclamationmark | —       |
 
 Retain a compact "{percentLeft}% left" text after the glyph for glanceability (design omits it; it's
-trivial to hide via a setting). Pause = dimmed glyph, no dot/number. Reduce Motion disables the
-pulse. Colors render in the menu bar (SwiftUI MenuBarExtra label is not force-templated).
+trivial to hide via a setting). The **"Menu bar shows"** setting picks which window the number
+reflects — nearest limit (default, unsuffixed), `5h`, `7d`, or `both` (`99% 5h · 73% 7d`); the dot
+color always tracks severity across all windows, so a single-window number can differ from the dot.
+Pause = dimmed glyph, no dot/number. Reduce Motion disables the pulse. Colors render in the menu bar
+(SwiftUI MenuBarExtra label is not force-templated).
 
 ---
 

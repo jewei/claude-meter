@@ -10,6 +10,7 @@ struct PopoverView: View {
     @AppStorage(AppGroupConfig.cardStyleKey) private var cardStyle = "rings"
     @AppStorage(AppGroupConfig.progressionModeKey) private var progressionMode = "left"
     @State private var now = Date()
+    @State private var showHeatmap = false
 
     private var usageThresholds: UsageThresholds {
         AppState.currentThresholds()
@@ -27,13 +28,17 @@ struct PopoverView: View {
     var body: some View {
         VStack(spacing: 0) {
             headerBar
-            if appState.updateAvailable {
-                updateAvailableNotice
+            if showHeatmap {
+                heatmapBody
+            } else {
+                if appState.updateAvailable {
+                    updateAvailableNotice
+                }
+                if let status = appState.serviceStatus, status.level.isIncident {
+                    serviceStatusNotice(status)
+                }
+                mainContent
             }
-            if let status = appState.serviceStatus, status.level.isIncident {
-                serviceStatusNotice(status)
-            }
-            mainContent
             footerBar
         }
         .background(Color.pfPopover)
@@ -44,6 +49,10 @@ struct PopoverView: View {
                 appState.setActive(false)
             }
         }
+        // The popover view is retained across dismissals (MenuBarExtra `.window`),
+        // so reset to the main view on close — otherwise reopening lands on the
+        // heatmap and skips onboarding/error/loading branches.
+        .onDisappear { showHeatmap = false }
     }
 
     // MARK: - Header
@@ -125,6 +134,8 @@ struct PopoverView: View {
                 }
                 if !snap.models.isEmpty {
                     costCard(snap.models)
+                } else {
+                    activityEntryCard
                 }
             }
             if hasCursor, let cursor = appState.cursorUsage {
@@ -274,46 +285,162 @@ struct PopoverView: View {
 
     // MARK: - Cost breakdown (local log scan, last 7 days)
 
+    /// Opens the activity heatmap and kicks off (or refreshes) its scan.
+    private func openHeatmap() {
+        appState.loadActivityHeatmap()
+        withAnimation(.easeInOut(duration: 0.2)) { showHeatmap = true }
+    }
+
+    /// Heatmap entry when there's no 7-day cost data (OAuth-only week, pricing
+    /// miss, idle week) — so activity is still reachable whenever transcripts exist.
+    private var activityEntryCard: some View {
+        Button(action: openHeatmap) {
+            HStack(spacing: 7) {
+                Text("🗓️").font(.system(size: 13))
+                Text("Activity")
+                    .font(PFont.display(14, .semibold))
+                    .foregroundStyle(Color.pfInk)
+                Spacer()
+                Text("When you work")
+                    .font(PFont.body(12, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.pfInkMuted)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 13)
+            .chunkyCard()
+        }
+        .buttonStyle(.plain)
+        .help("View activity heatmap")
+    }
+
     private func costCard(_ models: [ModelUsage]) -> some View {
         let total = models.reduce(0.0) { $0 + ($1.costUsd ?? 0) }
         let rows = models.filter { ($0.costUsd ?? 0) >= 0.005 }.prefix(4)
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 7) {
-                Text("💸").font(.system(size: 13))
-                Text("Last 7 days")
-                    .font(PFont.display(14, .semibold))
-                    .foregroundStyle(Color.pfInk)
-                if appState.costScanPartial {
-                    Text("partial")
-                        .font(PFont.body(10, .semibold))
-                        .foregroundStyle(Color.pfInkMuted)
-                }
-                Spacer()
-                Text(Self.usd(total))
-                    .font(PFont.display(14, .bold))
-                    .foregroundStyle(Color.pfInk)
-                    .monospacedDigit()
-            }
-            ForEach(rows, id: \.name) { model in
-                HStack {
-                    Text(model.displayName)
-                        .font(PFont.body(12, .semibold))
-                        .foregroundStyle(Color.pfInkMuted)
+        return Button(action: openHeatmap) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 7) {
+                    Text("💸").font(.system(size: 13))
+                    Text("Last 7 days")
+                        .font(PFont.display(14, .semibold))
+                        .foregroundStyle(Color.pfInk)
+                    if appState.costScanPartial {
+                        Text("partial")
+                            .font(PFont.body(10, .semibold))
+                            .foregroundStyle(Color.pfInkMuted)
+                    }
                     Spacer()
-                    Text(Self.usd(model.costUsd ?? 0))
-                        .font(PFont.body(12, .semibold))
-                        .foregroundStyle(Color.pfInkMuted)
+                    Text(Self.usd(total))
+                        .font(PFont.display(14, .bold))
+                        .foregroundStyle(Color.pfInk)
                         .monospacedDigit()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.pfInkMuted)
                 }
+                ForEach(rows, id: \.name) { model in
+                    HStack {
+                        Text(model.displayName)
+                            .font(PFont.body(12, .semibold))
+                            .foregroundStyle(Color.pfInkMuted)
+                        Spacer()
+                        Text(Self.usd(model.costUsd ?? 0))
+                            .font(PFont.body(12, .semibold))
+                            .foregroundStyle(Color.pfInkMuted)
+                            .monospacedDigit()
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 13)
+            .chunkyCard()
+        }
+        .buttonStyle(.plain)
+        .help("View activity heatmap")
+    }
+
+    private static func usd(_ value: Double) -> String {
+        value < 0.01 && value > 0 ? "<$0.01" : String(format: "$%.2f", value)
+    }
+
+    // MARK: - Activity heatmap (cost card flips to this)
+
+    private var heatmapBody: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { showHeatmap = false }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left").font(.system(size: 11, weight: .bold))
+                        Text("Back").font(PFont.display(13, .semibold))
+                    }
+                    .foregroundStyle(Color.pfInk)
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                Text("🗓️").font(.system(size: 13))
+                Text("Activity")
+                    .font(PFont.display(15, .semibold))
+                    .foregroundStyle(Color.pfInk)
+            }
+            heatmapCard
+        }
+        .padding(.horizontal, 15)
+        .padding(.top, 2)
+        .padding(.bottom, 12)
+    }
+
+    @ViewBuilder
+    private var heatmapCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let map = appState.activityHeatmap, !map.isEmpty {
+                Text(heatmapSubtitle(map))
+                    .font(PFont.body(11, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+                ActivityHeatmapGrid(map: map)
+                heatmapLegend
+            } else if appState.activityHeatmapLoading {
+                heatmapPlaceholder("Scanning your activity…")
+            } else {
+                heatmapPlaceholder("No activity in the last 30 days")
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
         .chunkyCard()
     }
 
-    private static func usd(_ value: Double) -> String {
-        value < 0.01 && value > 0 ? "<$0.01" : String(format: "$%.2f", value)
+    private func heatmapPlaceholder(_ text: String) -> some View {
+        Text(text)
+            .font(PFont.body(12, .semibold))
+            .foregroundStyle(Color.pfInkMuted)
+            .frame(maxWidth: .infinity, minHeight: 120, alignment: .center)
+    }
+
+    private func heatmapSubtitle(_ map: ActivityHeatmap) -> String {
+        var parts = ["\(map.total) messages · last 30 days"]
+        if map.daysCovered > 0, map.daysCovered < 30 {
+            parts = ["\(map.total) messages · \(map.daysCovered) active days"]
+        }
+        if map.isPartial { parts.append("partial") }
+        return parts.joined(separator: " · ")
+    }
+
+    private var heatmapLegend: some View {
+        HStack(spacing: 5) {
+            Text("Less").font(PFont.body(10, .semibold)).foregroundStyle(Color.pfInkMuted)
+            ForEach(0..<5, id: \.self) { level in
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(ActivityHeatmapGrid.color(forLevel: level))
+                    .frame(width: 11, height: 11)
+            }
+            Text("More").font(PFont.body(10, .semibold)).foregroundStyle(Color.pfInkMuted)
+            Spacer()
+        }
     }
 
     // MARK: - Cursor card (spend-based — shows % used, fills up)
@@ -531,12 +658,10 @@ struct PopoverView: View {
                     openSettingsAndCompleteOnboarding()
                 }
             } else {
-                Button {
-                    openSettingsAndCompleteOnboarding()
-                } label: {
-                    Label("Add account", systemImage: "plus")
+                if let version = appState.snapshot?.source.cliVersion {
+                    versionLink(version)
                 }
-                .buttonStyle(RaisedButtonStyle())
+                Spacer(minLength: 6)
 
                 squareButton(
                     appState.isActive ? "pause.fill" : "play.fill",
@@ -556,6 +681,27 @@ struct PopoverView: View {
         .padding(.horizontal, 15)
         .padding(.top, 4)
         .padding(.bottom, 14)
+    }
+
+    /// Claude Code version (from the statusline payload), linking to the changelog.
+    private func versionLink(_ version: String) -> some View {
+        Button {
+            if let url = URL(
+                string: "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md")
+            {
+                NSWorkspace.shared.open(url)
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text("Claude Code v\(version)")
+                    .font(PFont.body(11, .semibold))
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 8, weight: .bold))
+            }
+            .foregroundStyle(Color.pfInkMuted)
+        }
+        .buttonStyle(.plain)
+        .help("View Claude Code changelog")
     }
 
     private func squareButton(

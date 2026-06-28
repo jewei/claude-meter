@@ -1018,6 +1018,7 @@ private struct AppearanceSettingsTab: View {
     @AppStorage(AppGroupConfig.cardStyleKey) private var cardStyle = "rings"
     @AppStorage(AppGroupConfig.progressionModeKey) private var progressionMode = "left"
     @AppStorage(AppGroupConfig.menuBarAccountKey) private var menuBarAccount = ""
+    @AppStorage(AppGroupConfig.menuBarWindowKey) private var menuBarWindow = "nearest"
 
     @State private var accounts: [AccountConfig] = []
 
@@ -1050,6 +1051,16 @@ private struct AppearanceSettingsTab: View {
                 ) {
                     menuBarPicker
                 }
+
+                settingCard(
+                    icon: "gauge.with.dots.needle.bottom.50percent", color: Color(hex: "4FC51C"),
+                    title: "Menu bar shows",
+                    subtitle: "Which window the percentage reflects."
+                ) {
+                    segmented(
+                        $menuBarWindow,
+                        [("nearest", "Nearest"), ("5h", "5h"), ("7d", "7d"), ("both", "Both")])
+                }
             }
             .padding(20)
         }
@@ -1060,6 +1071,7 @@ private struct AppearanceSettingsTab: View {
             WidgetCenter.shared.reloadAllTimelines()
         }
         .onChange(of: menuBarAccount) { _, _ in AppGroupConfig.syncDisplaySettings() }
+        .onChange(of: menuBarWindow) { _, _ in AppGroupConfig.syncDisplaySettings() }
     }
 
     @ViewBuilder

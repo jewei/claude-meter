@@ -11,6 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- An **activity heatmap** — tap the "Last 7 days" cost card to flip the popover to
+  a GitHub-style punchcard showing when you actually work (day of week × hour of
+  day, shaded by message volume), scanned from your local transcripts. Tap **Back**
+  to return.
+- A **"Menu bar shows"** setting (Appearance) to choose which window the menu-bar
+  percentage reflects: nearest limit (default), the 5-hour window, the weekly
+  window, or **both** side by side (e.g. `99% 5h · 73% 7d`).
+- The **Claude Code version** now appears in the popover footer and links to the
+  changelog.
+
+### Changed
+
+- Account cards show the weekly reset as a **calendar date** (e.g. "29 Jun")
+  instead of a bare weekday.
+- Removed the footer "Add account" button (adding an account already lives in
+  Settings, reachable via the gear) to free up space.
+
 ## [2.0] - 2026-06-26
 
 ### Added

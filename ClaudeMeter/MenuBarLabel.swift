@@ -10,6 +10,7 @@ struct MenuBarLabel: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(AppGroupConfig.progressionModeKey) private var progressionMode = "left"
     @AppStorage(AppGroupConfig.menuBarAccountKey) private var menuBarAccountPin = ""
+    @AppStorage(AppGroupConfig.menuBarWindowKey) private var menuBarWindow = "nearest"
 
     var body: some View {
         HStack(spacing: 4) {
@@ -113,6 +114,37 @@ struct MenuBarLabel: View {
         guard appState.isActive, !appState.isStale else { return nil }
         _ = menuBarAccountPin  // re-render the label when the pinned account changes
         let now = Date()
+        // Cursor is intentionally excluded — the menu bar reflects Claude only, and
+        // honors "Menu bar follows" (pinned account vs. nearest Claude limit). Cursor
+        // has its own popover card.
+        switch menuBarWindow {
+        case "5h":
+            return part(appState.menuBarActiveLimits?.currentSession, suffix: "5h", now: now)
+        case "7d":
+            return part(appState.menuBarActiveLimits?.currentWeekAllModels, suffix: "7d", now: now)
+        case "both":
+            let limits = appState.menuBarActiveLimits
+            let parts = [
+                part(limits?.currentSession, suffix: "5h", now: now),
+                part(limits?.currentWeekAllModels, suffix: "7d", now: now),
+            ].compactMap { $0 }
+            return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        default:
+            return nearestText(now: now)
+        }
+    }
+
+    /// "99% 5h" for one window (energy-left, or usage when in "used" mode), or nil
+    /// when the window has no value.
+    private func part(_ window: LimitWindow?, suffix: String, now: Date) -> String? {
+        guard let left = window?.percentLeft(asOf: now) else { return nil }
+        let value = progressionMode == "used" ? 100 - left : left
+        return "\(Int(value.rounded()))% \(suffix)"
+    }
+
+    /// Lowest energy-left across every window of every menu-bar account — the
+    /// nearest limit. No window suffix (it may come from any window/account).
+    private func nearestText(now: Date) -> String? {
         var lefts: [Double] = []
         for limits in appState.menuBarLimitSets {
             let windows = [
@@ -120,9 +152,6 @@ struct MenuBarLabel: View {
             ].compactMap { $0 }
             lefts.append(contentsOf: windows.compactMap { $0.percentLeft(asOf: now) })
         }
-        // Cursor is intentionally excluded — the menu bar reflects Claude only, and
-        // honors "Menu bar follows" (pinned account vs. nearest Claude limit). Cursor
-        // has its own popover card.
         guard let minLeft = lefts.min() else { return nil }
         // "Used" mode shows the max usage (= the nearest limit, inverted).
         let value = progressionMode == "used" ? 100 - minLeft : minLeft

@@ -127,7 +127,19 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         oauthMode: String
     ) -> OAuthCredentials? {
         switch result {
-        case .found(let creds): return creds
+        case .found(let creds):
+            // Prefer a non-expired in-memory credential over an expired Keychain one.
+            // After an (in-memory-only) auto refresh the Keychain still holds the old
+            // refresh token, which Anthropic may have rotated/invalidated — using it
+            // would fail and terminally gate. The cache carries the live token. When
+            // Claude Code refreshes the Keychain itself, that entry is non-expired and
+            // still wins.
+            if creds.isExpired,
+                let cached = OAuthSharedState.cachedCredentials(for: oauthMode), !cached.isExpired
+            {
+                return cached
+            }
+            return creds
         case .temporarilyUnavailable: return OAuthSharedState.cachedCredentials(for: oauthMode)
         case .missing, .invalid: return nil
         }

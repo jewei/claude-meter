@@ -138,6 +138,29 @@ struct OAuthPipelineTests {
         let resolved = OAuthPipeline.credentials(from: .found(source), oauthMode: "manual")
         #expect(resolved?.accessToken == "source-access")
     }
+
+    @Test func freshCacheBeatsExpiredKeychain() {
+        OAuthPipeline.clearCachedCredentials()
+        defer { OAuthPipeline.clearCachedCredentials() }
+
+        let expiredKeychain = OAuthCredentials(
+            accessToken: "old", refreshToken: "R_A", expiresAt: .distantPast)
+        let freshCache = OAuthCredentials(
+            accessToken: "new", refreshToken: "R_B", expiresAt: .distantFuture)
+        OAuthPipeline.setCachedCredentialsForTesting(freshCache, oauthMode: "auto")
+
+        // Expired Keychain + fresh cache → use the cache (carries the live token).
+        #expect(
+            OAuthPipeline.credentials(from: .found(expiredKeychain), oauthMode: "auto")?
+                .refreshToken == "R_B")
+
+        // A non-expired Keychain entry (Claude Code refreshed it) still wins.
+        let freshKeychain = OAuthCredentials(
+            accessToken: "cc", refreshToken: "R_C", expiresAt: .distantFuture)
+        #expect(
+            OAuthPipeline.credentials(from: .found(freshKeychain), oauthMode: "auto")?
+                .refreshToken == "R_C")
+    }
 }
 
 // Serialized: the gate is process-wide static state, so parallel cases would race.

@@ -684,8 +684,10 @@ struct PopoverView: View {
     }
 
     /// Claude Code version (from the statusline payload), linking to the changelog.
+    /// Turns amber when a newer version is published, otherwise stays muted.
     private func versionLink(_ version: String) -> some View {
-        Button {
+        let outdated = claudeCodeUpdateAvailable(current: version)
+        return Button {
             if let url = URL(
                 string: "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md")
             {
@@ -695,13 +697,30 @@ struct PopoverView: View {
             HStack(spacing: 4) {
                 Text("Claude Code v\(version)")
                     .font(PFont.body(11, .semibold))
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: 8, weight: .bold))
+                // Glyph changes too, so "outdated" isn't signalled by color alone
+                // (colorblind / VoiceOver users get the cue without the amber).
+                Image(systemName: outdated ? "arrow.up.circle.fill" : "arrow.up.right")
+                    .font(.system(size: outdated ? 9 : 8, weight: .bold))
             }
-            .foregroundStyle(Color.pfInkMuted)
+            .foregroundStyle(outdated ? Color.warningTint : Color.pfInkMuted)
         }
         .buttonStyle(.plain)
-        .help("View Claude Code changelog")
+        .help(
+            outdated
+                ? "Update available\(appState.latestClaudeCodeVersion.map { " · v\($0)" } ?? "") — view changelog"
+                : "View Claude Code changelog")
+        .accessibilityLabel(
+            outdated
+                ? "Claude Code v\(version), update available\(appState.latestClaudeCodeVersion.map { ", latest v\($0)" } ?? "")"
+                : "Claude Code v\(version)")
+        .accessibilityHint("Opens the Claude Code changelog")
+    }
+
+    /// Whether the running Claude Code (`current`) is behind the latest published
+    /// version. False while the latest version is still unknown.
+    private func claudeCodeUpdateAvailable(current: String) -> Bool {
+        guard let latest = appState.latestClaudeCodeVersion else { return false }
+        return ClaudeCodeVersionCheck.isOutdated(current: current, latest: latest)
     }
 
     private func squareButton(

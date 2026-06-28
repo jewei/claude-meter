@@ -39,6 +39,7 @@ struct UsageCardView: View {
                 Spacer(minLength: 0)
                 paceBadge
             }
+            forecastLine
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -121,17 +122,59 @@ struct UsageCardView: View {
 
     @ViewBuilder
     private var paceBadge: some View {
-        if let paceKind, pace != .unknown {
+        // Hidden when the forecast line is showing — the concrete run-out forecast
+        // supersedes the relative pace badge, so the card never stacks two amber
+        // "burning hot" signals saying the same thing.
+        if paceKind != nil, pace != .unknown, runsOutLine == nil {
             HStack(spacing: 3) {
                 Image(systemName: pace.symbolName)
                 Text(pace.displayName)
             }
             .font(.caption.weight(.medium))
             .foregroundStyle(paceColor)
-            .help(
-                resolvedWindow.paceInsight(kind: paceKind, asOf: now)
-                    ?? "Usage relative to time elapsed in this window")
+            .help(paceInsightText)
         }
+    }
+
+    private var paceInsightText: String {
+        guard let paceKind else { return "" }
+        return resolvedWindow.paceInsight(kind: paceKind, asOf: now)
+            ?? "Usage relative to time elapsed in this window"
+    }
+
+    // MARK: - Forecast line
+
+    /// A glanceable run-out warning, shown only when the window is genuinely burning
+    /// *ahead* of pace AND projected to empty before it resets — the actionable case
+    /// the reset countdown and pace badge don't quantify. When shown it replaces the
+    /// pace badge (see `paceBadge`), so it never contradicts an "On track" badge.
+    @ViewBuilder
+    private var forecastLine: some View {
+        if let runsOutLine {
+            HStack(spacing: 4) {
+                Image(systemName: "hourglass")
+                Text(runsOutLine)
+            }
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.warningTint)
+        }
+    }
+
+    private var runsOutLine: String? {
+        guard let paceKind, pace == .ahead,
+            case .runsOut(let seconds) = resolvedWindow.runsOutEstimate(kind: paceKind, asOf: now)
+        else { return nil }
+        if seconds < 60 { return "Empty in under a minute" }
+        return "Empty in ~\(formattedRunsOut(seconds, kind: paceKind)) at this rate"
+    }
+
+    /// Run-out duration with units suited to the window: a weekly window can be days
+    /// out (day/hour), a session is hours/minutes — so a 2-day projection reads
+    /// "2d 4h", not "52h".
+    private func formattedRunsOut(_ seconds: TimeInterval, kind: LimitWindowKind) -> String {
+        let formatter = kind == .weekly ? Self.dayHourFormatter : Self.durationFormatter
+        let text = formatter.string(from: seconds) ?? ""
+        return text.isEmpty ? "under a minute" : text
     }
 
     private var paceColor: Color {
@@ -185,6 +228,15 @@ struct UsageCardView: View {
         return "Resets in \(relative)"
     }
 
+    private static let dayHourFormatter: DateComponentsFormatter = {
+        let f = DateComponentsFormatter()
+        f.unitsStyle = .abbreviated
+        f.allowedUnits = [.day, .hour]
+        f.maximumUnitCount = 2
+        f.zeroFormattingBehavior = .dropAll
+        return f
+    }()
+
     private static let durationFormatter: DateComponentsFormatter = {
         let f = DateComponentsFormatter()
         f.unitsStyle = .abbreviated
@@ -206,7 +258,9 @@ struct UsageCardView: View {
         if let resetsAt = resolvedWindow.resetsAt {
             parts.append(resetDescription(resetsAt))
         }
-        if paceKind != nil, pace != .unknown {
+        if let runsOutLine {
+            parts.append(runsOutLine)
+        } else if paceKind != nil, pace != .unknown {
             parts.append(pace.displayName)
         }
         return parts.joined(separator: ", ")

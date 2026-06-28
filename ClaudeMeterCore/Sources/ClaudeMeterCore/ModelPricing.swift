@@ -10,7 +10,7 @@ import Foundation
 public struct ModelPricing: Sendable {
 
     /// Rate card for one model family, USD per million tokens.
-    public struct Rate: Sendable, Equatable {
+    public struct Rate: Sendable, Equatable, Codable {
         public let input: Double
         public let output: Double
         public let cacheRead: Double
@@ -27,11 +27,22 @@ public struct ModelPricing: Sendable {
     private let opus: Rate
     private let sonnet: Rate
     private let haiku: Rate
+    /// Optional per-exact-model-id rate catalog (normalized lowercased ids), e.g.
+    /// fetched live from models.dev. Takes precedence over family matching; the
+    /// family rates remain the offline fallback. See `ModelsDevPricing`.
+    private let catalog: [String: Rate]?
 
-    public init(opus: Rate, sonnet: Rate, haiku: Rate) {
+    public init(opus: Rate, sonnet: Rate, haiku: Rate, catalog: [String: Rate]? = nil) {
         self.opus = opus
         self.sonnet = sonnet
         self.haiku = haiku
+        self.catalog = catalog
+    }
+
+    /// Returns a copy carrying a per-model-id catalog (keeping the family rates as
+    /// the fallback). Used to layer live models.dev pricing onto `.current`.
+    public func withCatalog(_ catalog: [String: Rate]?) -> ModelPricing {
+        ModelPricing(opus: opus, sonnet: sonnet, haiku: haiku, catalog: catalog)
     }
 
     /// Current Anthropic list pricing (per MTok). Cache-write uses the 5-minute rate.
@@ -41,12 +52,31 @@ public struct ModelPricing: Sendable {
         haiku: Rate(input: 1, output: 5, cacheRead: 0.10, cacheWrite: 1.25)
     )
 
-    /// Resolves the rate card for a model id by family substring.
+    /// Resolves the rate card for a model id: an exact (or dated-prefix) catalog
+    /// hit wins; otherwise fall back to family substring matching.
     public func rate(forModel model: String) -> Rate {
         let lower = model.lowercased()
+        if let catalog, let hit = Self.catalogRate(for: lower, in: catalog) { return hit }
         if lower.contains("opus") { return opus }
         if lower.contains("haiku") { return haiku }
         return sonnet
+    }
+
+    /// Looks up `id` in a per-model-id catalog. Tries an exact match first, then
+    /// the longest catalog key that is a prefix of `id` — so a dated transcript id
+    /// (`claude-opus-4-5-20251101`) still resolves to the base entry
+    /// (`claude-opus-4-5`).
+    static func catalogRate(for id: String, in catalog: [String: Rate]) -> Rate? {
+        if let exact = catalog[id] { return exact }
+        var best: (key: String, rate: Rate)?
+        for (key, rate) in catalog where !key.isEmpty && id.hasPrefix(key) {
+            // Only accept a prefix that ends on a hyphen boundary, so `claude-opus-4`
+            // can't match `claude-opus-40`; Anthropic ids are hyphen-delimited.
+            let after = id.index(id.startIndex, offsetBy: key.count)
+            guard after == id.endIndex || id[after] == "-" else { continue }
+            if best == nil || key.count > best!.key.count { best = (key, rate) }
+        }
+        return best?.rate
     }
 
     /// Estimated USD cost for one model's token totals.

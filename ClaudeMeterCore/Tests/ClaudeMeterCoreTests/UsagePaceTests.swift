@@ -77,3 +77,45 @@ struct LimitWindowPaceTests {
         #expect(onPace.paceInsight(kind: .session, asOf: now) == "On track")
     }
 }
+
+@Suite("RunsOutEstimate forecast")
+struct RunsOutEstimateTests {
+    private let now = Date(timeIntervalSince1970: 1_782_269_456)
+    // 5-hour session window in seconds.
+    private let span: TimeInterval = 5 * 3600
+
+    @Test("Exactly on pace lasts until reset") func onPaceLasts() {
+        // 50% used, half the window elapsed (reset 2.5h out) → reaches 100% right
+        // at reset, so it refills first.
+        let w = LimitWindow(percentUsed: 50, resetsAt: now.addingTimeInterval(span / 2))
+        #expect(w.runsOutEstimate(kind: .session, asOf: now) == .lastsUntilReset)
+    }
+
+    @Test("Burning hot projects a run-out before reset") func runsOutEarly() {
+        // 80% used at 50% elapsed → rate 1.6, 20% left needs 12.5% more elapsed =
+        // 0.125 * 5h = 2250s.
+        let w = LimitWindow(percentUsed: 80, resetsAt: now.addingTimeInterval(span / 2))
+        guard case .runsOut(let seconds) = w.runsOutEstimate(kind: .session, asOf: now) else {
+            Issue.record("expected runsOut")
+            return
+        }
+        #expect(abs(seconds - 2250) < 1)
+    }
+
+    @Test("Early-window burst does not extrapolate") func earlyWindowGuard() {
+        // Only 4% elapsed (reset 4.8h out) but 50% used — below the 8% guard, so we
+        // refuse to project "dry in minutes".
+        let w = LimitWindow(percentUsed: 50, resetsAt: now.addingTimeInterval(span * 0.96))
+        #expect(w.runsOutEstimate(kind: .session, asOf: now) == .lastsUntilReset)
+    }
+
+    @Test("Fully consumed is depleted") func depleted() {
+        let w = LimitWindow(percentUsed: 100, resetsAt: now.addingTimeInterval(span / 2))
+        #expect(w.runsOutEstimate(kind: .session, asOf: now) == .depleted)
+    }
+
+    @Test("No reset time is unknown") func noReset() {
+        let w = LimitWindow(percentUsed: 50, resetsAt: nil)
+        #expect(w.runsOutEstimate(kind: .session, asOf: now) == .unknown)
+    }
+}

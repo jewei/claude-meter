@@ -487,14 +487,19 @@ final class AppState: ObservableObject {
     /// Discovery happens here, off-main, rather than reusing a cached list — so the
     /// union is correct from the very first poll, independent of the statusline source.
     private static func scanCostModels(now: Date) async -> CostUsageResult {
-        await Task.detached(priority: .utility) {
+        // Live per-model prices from models.dev (24 h disk cache, static family
+        // rates as the offline fallback), fetched off the scan thread.
+        let catalog = await ModelsDevPricing.loadCatalog(now: now)
+        return await Task.detached(priority: .utility) {
             let accounts = ConfigDirDiscovery.discover(
                 configuredDirs: AppGroupConfig.configuredConfigDirs,
                 disabledKeys: Set(AppGroupConfig.disabledAccountKeys))
             let paths =
                 accounts.isEmpty
                 ? [JournalReader.defaultProjectsPath] : accounts.map(\.projectsPath)
-            return CostUsageScanner(projectsPaths: paths).scan(daysBack: 7, now: now)
+            let pricing = ModelPricing.current.withCatalog(catalog)
+            return CostUsageScanner(projectsPaths: paths, pricing: pricing).scan(
+                daysBack: 7, now: now)
         }.value
     }
 

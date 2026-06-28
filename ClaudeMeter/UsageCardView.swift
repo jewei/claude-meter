@@ -39,6 +39,7 @@ struct UsageCardView: View {
                 Spacer(minLength: 0)
                 paceBadge
             }
+            forecastLine
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -154,6 +155,31 @@ struct UsageCardView: View {
         case .depleted, .unknown:
             return nil
         }
+    }
+
+    // MARK: - Forecast line
+
+    /// A glanceable run-out warning, shown only when the current burn rate projects
+    /// exhaustion before the window resets — the actionable case the reset countdown
+    /// and pace badge don't quantify.
+    @ViewBuilder
+    private var forecastLine: some View {
+        if let runsOutLine {
+            HStack(spacing: 4) {
+                Image(systemName: "hourglass")
+                Text(runsOutLine)
+            }
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.warningTint)
+        }
+    }
+
+    private var runsOutLine: String? {
+        guard let paceKind,
+            case .runsOut(let seconds) = resolvedWindow.runsOutEstimate(kind: paceKind, asOf: now)
+        else { return nil }
+        let rel = Self.durationFormatter.string(from: seconds) ?? "soon"
+        return "Runs out in \(rel) at this rate"
     }
 
     private var paceColor: Color {

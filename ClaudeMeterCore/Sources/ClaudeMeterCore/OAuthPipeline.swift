@@ -52,6 +52,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             return try await fallback.poll(now: now)
         }
 
+        var didRefresh = false
         if creds.isExpired {
             guard OAuthRefreshGate.shouldAttempt(refreshToken: creds.refreshToken, now: now) else {
                 return try await fallback.poll(now: now)
@@ -69,6 +70,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 return try await fallback.poll(now: now)
             }
             OAuthRefreshGate.recordSuccess()
+            didRefresh = true
             creds = refreshed
             OAuthSharedState.setCachedCredentials(refreshed, for: oauthMode)
             if oauthMode == "manual" {
@@ -81,7 +83,10 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         do {
             return try await fetchAndBuild(token: creds.accessToken, plan: plan, now: now)
         } catch OAuthError.unauthorized {
-            // Token rejected despite appearing valid — attempt one refresh.
+            // Token rejected despite appearing valid — attempt one refresh, unless we
+            // already refreshed this poll (a freshly-refreshed token that still 401s
+            // won't be fixed by an immediate second refresh).
+            guard !didRefresh else { return try await fallback.poll(now: now) }
             guard OAuthRefreshGate.shouldAttempt(refreshToken: creds.refreshToken, now: now) else {
                 return try await fallback.poll(now: now)
             }

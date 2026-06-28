@@ -69,7 +69,11 @@ public struct ModelPricing: Sendable {
     static func catalogRate(for id: String, in catalog: [String: Rate]) -> Rate? {
         if let exact = catalog[id] { return exact }
         var best: (key: String, rate: Rate)?
-        for (key, rate) in catalog where id.hasPrefix(key) {
+        for (key, rate) in catalog where !key.isEmpty && id.hasPrefix(key) {
+            // Only accept a prefix that ends on a hyphen boundary, so `claude-opus-4`
+            // can't match `claude-opus-40`; Anthropic ids are hyphen-delimited.
+            let after = id.index(id.startIndex, offsetBy: key.count)
+            guard after == id.endIndex || id[after] == "-" else { continue }
             if best == nil || key.count > best!.key.count { best = (key, rate) }
         }
         return best?.rate

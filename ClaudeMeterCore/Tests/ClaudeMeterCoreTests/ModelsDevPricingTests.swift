@@ -21,6 +21,15 @@ struct ModelPricingCatalogTests {
         #expect(pricing.rate(forModel: "claude-sonnet-4-5").input == 3)
     }
 
+    @Test("Prefix must end on a hyphen boundary") func prefixBoundary() {
+        let r = ModelPricing.Rate(input: 9, output: 9, cacheRead: 0, cacheWrite: 0)
+        let pricing = ModelPricing.current.withCatalog(["claude-opus-4": r])
+        // Boundary hit (next char is '-') → catalog rate.
+        #expect(pricing.rate(forModel: "claude-opus-4-5").input == 9)
+        // No boundary ("...-40") → must NOT match; falls back to opus family (15).
+        #expect(pricing.rate(forModel: "claude-opus-40").input == 15)
+    }
+
     @Test("Longest matching prefix wins") func longestPrefix() {
         let four = ModelPricing.Rate(input: 9, output: 9, cacheRead: 0, cacheWrite: 0)
         let fourFive = ModelPricing.Rate(input: 5, output: 5, cacheRead: 0, cacheWrite: 0)

@@ -731,9 +731,13 @@ final class AppState: ObservableObject {
         guard !(AppSettings.attentionSuppressWhenTerminalFocused && Self.frontmostIsTerminal())
         else { return }
         let names = AppGroupConfig.accountNames
+        let engine = notificationEngine
         for event in events where AppSettings.enabledAttentionEvents.contains(event.kind.rawValue) {
             let account = names[event.accountKey] ?? event.accountKey
-            await notificationEngine.postAttention(event: event, accountLabel: account)
+            // Fire-and-forget: a slow/wedged notification call (e.g. an unregistered
+            // UNUserNotificationCenter) must never stall the drain loop or the bolt.
+            // Delivery is best-effort.
+            Task { await engine.postAttention(event: event, accountLabel: account) }
         }
     }
 }

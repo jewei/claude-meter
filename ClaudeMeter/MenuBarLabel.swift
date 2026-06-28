@@ -52,20 +52,14 @@ struct MenuBarLabel: View {
     /// attention — a channel distinct from the quota dot, so the two never collide.
     @ViewBuilder
     private var boltIcon: some View {
-        let bolt = Image(systemName: "bolt.fill").font(.system(size: 13, weight: .bold))
-        if appState.isActive, appState.attention.needsAttention {
-            if reduceMotion {
-                bolt.foregroundStyle(.warningTint)
-            } else {
-                TimelineView(.animation) { context in
-                    let t = context.date.timeIntervalSinceReferenceDate
-                    let phase = (sin(t * 2 * .pi / 1.6) + 1) / 2  // 0…1 over 1.6s
-                    bolt.foregroundStyle(.warningTint).opacity(0.6 + 0.4 * phase)
-                }
-            }
-        } else {
-            bolt.foregroundStyle(appState.isActive ? .primary : .secondary)
-        }
+        let attention = appState.isActive && appState.attention.needsAttention
+        Image(systemName: "bolt.fill")
+            .font(.system(size: 13, weight: .bold))
+            .foregroundStyle(attention ? Color.warningTint : (appState.isActive ? .primary : .secondary))
+            // SF Symbols' built-in pulse (CoreAnimation-driven) rather than a
+            // TimelineView — the latter re-runs the body every frame on the main
+            // actor and starves the concurrency executor (wedged the watcher loop).
+            .symbolEffect(.pulse, options: .repeating, isActive: attention && !reduceMotion)
     }
 
     @ViewBuilder

@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1] - 2026-06-28
+
 ### Added
 
 - An **activity heatmap** — tap the "Last 7 days" cost card to flip the popover to
@@ -185,7 +187,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.0...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.1...HEAD
+[2.1]: https://github.com/jewei/claude-meter/compare/v2.0...v2.1
 [2.0]: https://github.com/jewei/claude-meter/compare/v1.3...v2.0
 [1.3]: https://github.com/jewei/claude-meter/compare/v1.2...v1.3
 [1.2]: https://github.com/jewei/claude-meter/compare/v1.1...v1.2

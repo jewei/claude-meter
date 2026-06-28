@@ -684,8 +684,10 @@ struct PopoverView: View {
     }
 
     /// Claude Code version (from the statusline payload), linking to the changelog.
+    /// Turns amber when a newer version is published, otherwise stays muted.
     private func versionLink(_ version: String) -> some View {
-        Button {
+        let outdated = claudeCodeUpdateAvailable(current: version)
+        return Button {
             if let url = URL(
                 string: "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md")
             {
@@ -698,10 +700,20 @@ struct PopoverView: View {
                 Image(systemName: "arrow.up.right")
                     .font(.system(size: 8, weight: .bold))
             }
-            .foregroundStyle(Color.pfInkMuted)
+            .foregroundStyle(outdated ? Color.warningTint : Color.pfInkMuted)
         }
         .buttonStyle(.plain)
-        .help("View Claude Code changelog")
+        .help(
+            outdated
+                ? "Update available\(appState.latestClaudeCodeVersion.map { " · v\($0)" } ?? "") — view changelog"
+                : "View Claude Code changelog")
+    }
+
+    /// Whether the running Claude Code (`current`) is behind the latest published
+    /// version. False while the latest version is still unknown.
+    private func claudeCodeUpdateAvailable(current: String) -> Bool {
+        guard let latest = appState.latestClaudeCodeVersion else { return false }
+        return ClaudeCodeVersionCheck.isOutdated(current: current, latest: latest)
     }
 
     private func squareButton(

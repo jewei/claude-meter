@@ -121,16 +121,38 @@ struct UsageCardView: View {
 
     @ViewBuilder
     private var paceBadge: some View {
-        if let paceKind, pace != .unknown {
+        if paceKind != nil, pace != .unknown {
             HStack(spacing: 3) {
                 Image(systemName: pace.symbolName)
                 Text(pace.displayName)
             }
             .font(.caption.weight(.medium))
             .foregroundStyle(paceColor)
-            .help(
-                resolvedWindow.paceInsight(kind: paceKind, asOf: now)
-                    ?? "Usage relative to time elapsed in this window")
+            .help(paceHelp)
+        }
+    }
+
+    /// Tooltip text: the pace deviation plus a forward run-out projection.
+    private var paceHelp: String {
+        guard let paceKind else { return "" }
+        let insight =
+            resolvedWindow.paceInsight(kind: paceKind, asOf: now)
+            ?? "Usage relative to time elapsed in this window"
+        if let runsOutText { return "\(insight) · \(runsOutText)" }
+        return insight
+    }
+
+    /// Forward "runs out in ~Xh / lasts until reset" projection, when computable.
+    private var runsOutText: String? {
+        guard let paceKind else { return nil }
+        switch resolvedWindow.runsOutEstimate(kind: paceKind, asOf: now) {
+        case .runsOut(let seconds):
+            let rel = Self.durationFormatter.string(from: seconds) ?? "soon"
+            return "at this rate, runs out in \(rel)"
+        case .lastsUntilReset:
+            return "at this rate, lasts until reset"
+        case .depleted, .unknown:
+            return nil
         }
     }
 
@@ -208,6 +230,7 @@ struct UsageCardView: View {
         }
         if paceKind != nil, pace != .unknown {
             parts.append(pace.displayName)
+            if let runsOutText { parts.append(runsOutText) }
         }
         return parts.joined(separator: ", ")
     }

@@ -3,7 +3,9 @@ import Testing
 
 @testable import ClaudeMeterCore
 
-@Suite("OAuthPipeline")
+// Serialized: several cases mutate process-wide `OAuthSharedState` (the cached-
+// credentials map), so running them in parallel races on shared global state.
+@Suite("OAuthPipeline", .serialized)
 struct OAuthPipelineTests {
     @Test func decodesUsageResponseWithExtraFields() throws {
         let json = """
@@ -135,5 +137,47 @@ struct OAuthPipelineTests {
         OAuthPipeline.setCachedCredentialsForTesting(cached, oauthMode: "manual")
         let resolved = OAuthPipeline.credentials(from: .found(source), oauthMode: "manual")
         #expect(resolved?.accessToken == "source-access")
+    }
+}
+
+// Serialized: the gate is process-wide static state, so parallel cases would race.
+@Suite("OAuthRefreshGate", .serialized)
+struct OAuthRefreshGateTests {
+    private let now = Date(timeIntervalSince1970: 1_782_269_456)
+
+    @Test("invalid_grant body is terminal, other failures are not") func classify() throws {
+        let dead = try #require(#"{"error":"invalid_grant"}"#.data(using: .utf8))
+        #expect(OAuthPipeline.isInvalidGrant(data: dead, status: 400))
+        #expect(OAuthPipeline.isInvalidGrant(data: dead, status: 401))
+        // Only auth-class statuses count.
+        #expect(!OAuthPipeline.isInvalidGrant(data: dead, status: 500))
+        let other = try #require(#"{"error":"server_error"}"#.data(using: .utf8))
+        #expect(!OAuthPipeline.isInvalidGrant(data: other, status: 400))
+        #expect(!OAuthPipeline.isInvalidGrant(data: Data(), status: 400))
+    }
+
+    @Test("Terminal blocks the dead token but reopens for a new one") func terminal() {
+        OAuthRefreshGate.resetForTesting()
+        defer { OAuthRefreshGate.resetForTesting() }
+        #expect(OAuthRefreshGate.shouldAttempt(refreshToken: "dead", now: now))
+        OAuthRefreshGate.recordTerminal(refreshToken: "dead")
+        #expect(!OAuthRefreshGate.shouldAttempt(refreshToken: "dead", now: now))
+        // Re-auth yields a different refresh token → gate reopens automatically.
+        #expect(OAuthRefreshGate.shouldAttempt(refreshToken: "fresh", now: now))
+    }
+
+    @Test("Transient backs off then expires; success clears it") func transient() {
+        OAuthRefreshGate.resetForTesting()
+        defer { OAuthRefreshGate.resetForTesting() }
+        OAuthRefreshGate.recordTransient(now: now)
+        #expect(!OAuthRefreshGate.shouldAttempt(refreshToken: "t", now: now))
+        // Still blocked within the base backoff, allowed after it elapses.
+        let withinBackoff = now.addingTimeInterval(OAuthRefreshGate.baseTransientBackoff - 1)
+        #expect(!OAuthRefreshGate.shouldAttempt(refreshToken: "t", now: withinBackoff))
+        let afterBackoff = now.addingTimeInterval(OAuthRefreshGate.baseTransientBackoff + 1)
+        #expect(OAuthRefreshGate.shouldAttempt(refreshToken: "t", now: afterBackoff))
+        OAuthRefreshGate.recordTransient(now: now)
+        OAuthRefreshGate.recordSuccess()
+        #expect(OAuthRefreshGate.shouldAttempt(refreshToken: "t", now: now))
     }
 }

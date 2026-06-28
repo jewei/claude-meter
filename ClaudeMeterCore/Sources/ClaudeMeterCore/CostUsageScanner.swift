@@ -106,30 +106,37 @@ public struct CostUsageScanner: Sendable {
             else { continue }
 
             for file in jsonlFiles where file.pathExtension == "jsonl" {
-                guard let attrs = try? fm.attributesOfItem(atPath: file.path),
-                    let modDate = attrs[.modificationDate] as? Date,
-                    modDate >= cutoff
-                else { continue }
-                let fileSize = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
+                // Bound peak memory to ~one file: each parse reads megabytes into
+                // Data/String, so without draining per file the transients pile up
+                // across every file in every account.
+                autoreleasepool {
+                    guard let attrs = try? fm.attributesOfItem(atPath: file.path),
+                        let modDate = attrs[.modificationDate] as? Date,
+                        modDate >= cutoff
+                    else { return }
+                    let fileSize = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
 
-                let perFile: [DayModelKey: TokenTotals]
-                if let cached = cache.cached(for: file.path, modDate: modDate, fileSize: fileSize) {
-                    perFile = cached.totals
-                    if cached.isPartial { isPartial = true }
-                } else {
-                    let parsed = parse(file: file, fileSize: fileSize)
-                    perFile = parsed.totals
-                    if parsed.isPartial { isPartial = true }
-                    cache.store(
-                        path: file.path,
-                        modDate: modDate,
-                        fileSize: fileSize,
-                        value: parsed.totals,
-                        isPartial: parsed.isPartial
-                    )
-                }
-                for (key, totals) in perFile where key.day >= cutoffDayString(cutoff) {
-                    byDayModel[key, default: .zero].add(totals)
+                    let perFile: [DayModelKey: TokenTotals]
+                    if let cached = cache.cached(
+                        for: file.path, modDate: modDate, fileSize: fileSize)
+                    {
+                        perFile = cached.totals
+                        if cached.isPartial { isPartial = true }
+                    } else {
+                        let parsed = parse(file: file, fileSize: fileSize)
+                        perFile = parsed.totals
+                        if parsed.isPartial { isPartial = true }
+                        cache.store(
+                            path: file.path,
+                            modDate: modDate,
+                            fileSize: fileSize,
+                            value: parsed.totals,
+                            isPartial: parsed.isPartial
+                        )
+                    }
+                    for (key, totals) in perFile where key.day >= cutoffDayString(cutoff) {
+                        byDayModel[key, default: .zero].add(totals)
+                    }
                 }
             }
         }

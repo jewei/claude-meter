@@ -53,10 +53,22 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         }
 
         if creds.isExpired {
-            guard let refreshed = try? await refreshToken(creds) else {
+            guard OAuthRefreshGate.shouldAttempt(refreshToken: creds.refreshToken, now: now) else {
+                return try await fallback.poll(now: now)
+            }
+            let refreshed: OAuthCredentials
+            do {
+                refreshed = try await refreshToken(creds)
+            } catch OAuthError.refreshRejected {
+                OAuthRefreshGate.recordTerminal(refreshToken: creds.refreshToken)
+                OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
+                return try await fallback.poll(now: now)
+            } catch {
+                OAuthRefreshGate.recordTransient(now: now)
                 OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
                 return try await fallback.poll(now: now)
             }
+            OAuthRefreshGate.recordSuccess()
             creds = refreshed
             OAuthSharedState.setCachedCredentials(refreshed, for: oauthMode)
             if oauthMode == "manual" {
@@ -70,10 +82,22 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             return try await fetchAndBuild(token: creds.accessToken, plan: plan, now: now)
         } catch OAuthError.unauthorized {
             // Token rejected despite appearing valid — attempt one refresh.
-            guard let refreshed = try? await refreshToken(creds) else {
+            guard OAuthRefreshGate.shouldAttempt(refreshToken: creds.refreshToken, now: now) else {
+                return try await fallback.poll(now: now)
+            }
+            let refreshed: OAuthCredentials
+            do {
+                refreshed = try await refreshToken(creds)
+            } catch OAuthError.refreshRejected {
+                OAuthRefreshGate.recordTerminal(refreshToken: creds.refreshToken)
+                OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
+                return try await fallback.poll(now: now)
+            } catch {
+                OAuthRefreshGate.recordTransient(now: now)
                 OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
                 return try await fallback.poll(now: now)
             }
+            OAuthRefreshGate.recordSuccess()
             OAuthSharedState.setCachedCredentials(refreshed, for: oauthMode)
             if oauthMode == "manual" {
                 OAuthKeychain.saveManual(
@@ -176,7 +200,20 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             return nil
         }
         if creds.isExpired {
-            guard let refreshed = try? await verifyRefresh(creds) else { return nil }
+            guard OAuthRefreshGate.shouldAttempt(refreshToken: creds.refreshToken, now: now) else {
+                return nil
+            }
+            let refreshed: OAuthCredentials
+            do {
+                refreshed = try await verifyRefresh(creds)
+            } catch OAuthError.refreshRejected {
+                OAuthRefreshGate.recordTerminal(refreshToken: creds.refreshToken)
+                return nil
+            } catch {
+                OAuthRefreshGate.recordTransient(now: now)
+                return nil
+            }
+            OAuthRefreshGate.recordSuccess()
             creds = OAuthCredentials(
                 accessToken: refreshed.accessToken,
                 refreshToken: refreshed.refreshToken,
@@ -246,7 +283,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         ])
         let (data, http) = try await transport.send(request)
         guard http.statusCode == 200 else {
-            throw OAuthError.refreshFailed
+            throw isInvalidGrant(data: data, status: http.statusCode)
+                ? OAuthError.refreshRejected : OAuthError.refreshFailed
         }
         let resp = try JSONDecoder().decode(TokenResponse.self, from: data)
         return OAuthCredentials(
@@ -255,6 +293,16 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             expiresAt: Date().addingTimeInterval(Double(resp.expiresIn)),
             subscriptionType: credentials.subscriptionType
         )
+    }
+
+    /// Classifies a non-200 token-endpoint response as a terminal `invalid_grant`
+    /// (dead refresh token) vs a transient failure, by inspecting the JSON body.
+    static func isInvalidGrant(data: Data, status: Int) -> Bool {
+        guard status == 400 || status == 401 || status == 403 else { return false }
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        let error = (obj["error"] as? String) ?? (obj["error_description"] as? String) ?? ""
+        return error.localizedCaseInsensitiveContains("invalid_grant")
     }
 
     // MARK: - API calls
@@ -327,7 +375,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         ])
         let (data, http) = try await Self.transport.send(request)
         guard http.statusCode == 200 else {
-            throw OAuthError.refreshFailed
+            throw Self.isInvalidGrant(data: data, status: http.statusCode)
+                ? OAuthError.refreshRejected : OAuthError.refreshFailed
         }
         let resp = try JSONDecoder().decode(TokenResponse.self, from: data)
         return OAuthCredentials(
@@ -396,7 +445,11 @@ enum OAuthError: Error {
     case rateLimited
     case invalidResponse
     case httpError(Int)
+    /// Transient refresh failure (network / 5xx) — safe to retry with backoff.
     case refreshFailed
+    /// Terminal refresh rejection (`invalid_grant`) — the refresh token is dead
+    /// (e.g. user ran `claude logout`); don't retry until credentials change.
+    case refreshRejected
 }
 
 // MARK: - Codable models
@@ -503,6 +556,70 @@ private enum OAuthSharedState {
         lock.lock()
         cachedCredsByMode.removeAll()
         lock.unlock()
+    }
+}
+
+/// Gates background OAuth token-refresh attempts so a dead refresh token (e.g.
+/// after `claude logout`) can't hammer the token endpoint every poll forever.
+///
+/// A terminal rejection (`invalid_grant`) blocks until the stored refresh token
+/// changes — i.e. the user re-authenticates and the Keychain holds a new token,
+/// which differs from the dead one, so the gate reopens automatically with no
+/// manual reset. Transient failures use exponential backoff. In-memory and
+/// process-wide, mirroring `OAuthSharedState` (consistent with our in-memory-only
+/// refresh policy). User-initiated refreshes (`verify`) bypass this gate.
+enum OAuthRefreshGate {
+    private static let lock = NSLock()
+    private static nonisolated(unsafe) var deadRefreshToken: String?
+    private static nonisolated(unsafe) var transientBlockedUntil: Date?
+    private static nonisolated(unsafe) var transientFailureCount = 0
+
+    static let baseTransientBackoff: TimeInterval = 5 * 60
+    static let maxTransientBackoff: TimeInterval = 6 * 60 * 60
+
+    /// Whether a refresh of `refreshToken` may be attempted as of `now`.
+    static func shouldAttempt(refreshToken: String, now: Date) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if deadRefreshToken == refreshToken { return false }
+        if let until = transientBlockedUntil, now < until { return false }
+        return true
+    }
+
+    static func recordSuccess() {
+        lock.lock()
+        defer { lock.unlock() }
+        deadRefreshToken = nil
+        transientBlockedUntil = nil
+        transientFailureCount = 0
+    }
+
+    /// Terminal rejection: block this exact token until it changes.
+    static func recordTerminal(refreshToken: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        deadRefreshToken = refreshToken
+        transientBlockedUntil = nil
+        transientFailureCount = 0
+    }
+
+    static func recordTransient(now: Date) {
+        lock.lock()
+        defer { lock.unlock() }
+        transientFailureCount += 1
+        let backoff = min(
+            baseTransientBackoff * pow(2, Double(transientFailureCount - 1)),
+            maxTransientBackoff
+        )
+        transientBlockedUntil = now.addingTimeInterval(backoff)
+    }
+
+    static func resetForTesting() {
+        lock.lock()
+        defer { lock.unlock() }
+        deadRefreshToken = nil
+        transientBlockedUntil = nil
+        transientFailureCount = 0
     }
 }
 

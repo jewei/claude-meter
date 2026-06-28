@@ -107,14 +107,18 @@ public struct ActivityScanner: Sendable {
             else { continue }
 
             for file in jsonlFiles where file.pathExtension == "jsonl" {
-                guard let attrs = try? fm.attributesOfItem(atPath: file.path),
-                    let modDate = attrs[.modificationDate] as? Date,
-                    modDate >= cutoff
-                else { continue }
-                let fileSize = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
-                parse(
-                    file: file, fileSize: fileSize, cutoff: cutoff, cal: cal,
-                    counts: &counts, days: &days, total: &total, isPartial: &isPartial)
+                // Drain per-file transients (multi-MB Data/String reads) so peak
+                // memory stays ~one file rather than scaling with the file count.
+                autoreleasepool {
+                    guard let attrs = try? fm.attributesOfItem(atPath: file.path),
+                        let modDate = attrs[.modificationDate] as? Date,
+                        modDate >= cutoff
+                    else { return }
+                    let fileSize = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
+                    parse(
+                        file: file, fileSize: fileSize, cutoff: cutoff, cal: cal,
+                        counts: &counts, days: &days, total: &total, isPartial: &isPartial)
+                }
             }
         }
     }

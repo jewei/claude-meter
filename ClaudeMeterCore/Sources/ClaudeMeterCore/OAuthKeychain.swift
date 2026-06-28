@@ -1,6 +1,8 @@
 import Foundation
 
 #if canImport(Security)
+    import Darwin
+    import LocalAuthentication
     import Security
 #endif
 
@@ -205,7 +207,9 @@ public enum OAuthKeychain: Sendable {
             if status == errSecItemNotFound {
                 var addQuery = query
                 addQuery[kSecValueData] = data
-                addQuery[kSecAttrAccessible] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+                // AfterFirstUnlock (not WhenUnlocked) so the item stays readable
+                // while the screen is locked — the poll loop runs across sleep/wake.
+                addQuery[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
                 return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
             }
             return false
@@ -216,17 +220,44 @@ public enum OAuthKeychain: Sendable {
         private static func readKeychainItemResult(service: String, account: String)
             -> KeychainReadResult<String>
         {
-            let query: [CFString: Any] = [
+            var query: [CFString: Any] = [
                 kSecClass: kSecClassGenericPassword,
                 kSecAttrService: service,
                 kSecAttrAccount: account,
                 kSecReturnData: true,
                 kSecMatchLimit: kSecMatchLimitOne,
             ]
+            applyNoUI(to: &query)
             var result: AnyObject?
             let status = SecItemCopyMatching(query as CFDictionary, &result)
             return mapKeychainStatus(status, data: result as? Data)
         }
+
+        /// Attaches a non-interactive policy so a Keychain read can never surface an
+        /// Allow/Deny prompt. Critical because `Claude Code-credentials` is owned by
+        /// another app (Claude Code), where a bare read can prompt; with this a
+        /// locked/forbidden item returns `errSecInteractionNotAllowed` →
+        /// `.temporarilyUnavailable` cleanly.
+        private static func applyNoUI(to query: inout [CFString: Any]) {
+            let context = LAContext()
+            context.interactionNotAllowed = true
+            query[kSecUseAuthenticationContext] = context
+            // On macOS `interactionNotAllowed` alone can still surface the legacy
+            // prompt; the UI-fail policy is what actually suppresses it. Resolve the
+            // (deprecated) constant at runtime to avoid a compile-time deprecation.
+            query[kSecUseAuthenticationUI] = noUIFailPolicy as CFString
+        }
+
+        private static let noUIFailPolicy: String = {
+            let path = "/System/Library/Frameworks/Security.framework/Security"
+            guard let handle = dlopen(path, RTLD_NOW) else { return "u_AuthUIF" }
+            defer { dlclose(handle) }
+            guard let symbol = dlsym(handle, "kSecUseAuthenticationUIFail") else {
+                return "u_AuthUIF"
+            }
+            let ptr = symbol.assumingMemoryBound(to: CFString?.self)
+            return (ptr.pointee as String?) ?? "u_AuthUIF"
+        }()
 
         /// Pure mapping of a Keychain read status to a result (exposed for tests).
         static func mapKeychainStatus(_ status: OSStatus, data: Data?) -> KeychainReadResult<String>

@@ -13,7 +13,9 @@ struct AppGroupConfigTests {
         defaults.set(70.0, forKey: AppGroupConfig.warningThresholdKey)
         defaults.set(90.0, forKey: AppGroupConfig.criticalThresholdKey)
 
-        let thresholds = AppGroupConfig.currentThresholds(defaults: defaults)
+        // shared: nil → read purely from the injected suite (hermetic; the real App
+        // Group suite the running app syncs into must not leak in).
+        let thresholds = AppGroupConfig.currentThresholds(shared: nil, defaults: defaults)
         #expect(thresholds.warning == 70)
         #expect(thresholds.critical == 90)
         #expect(thresholds.severity(for: 75) == .warning)

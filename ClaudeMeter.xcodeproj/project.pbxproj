@@ -30,7 +30,6 @@
 		BD2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterCore in Frameworks */ = {isa = PBXBuildFile; productRef = DA2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterCore */; };
 		BE2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 9A2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		BF2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AE2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework */; };
-		H97A3B4C5D6E7F8A9B0C1D2E /* ClaudeAIKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = H87A3B4C5D6E7F8A9B0C1D2E /* ClaudeAIKeychain.swift */; };
 		C5D3E4F50617289AC2D3E4F5 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = E4B2C3D5E6F7089AB1C2D3E4 /* Sparkle */; };
 /* End PBXBuildFile section */
 
@@ -83,7 +82,6 @@
 		CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		79FAFFB9B2AADEDB517FE4EF /* Fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Fonts; sourceTree = "<group>"; };
 		D39F041AC0894892922A9F90 /* MenuBarLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarLabel.swift; sourceTree = "<group>"; };
-		H87A3B4C5D6E7F8A9B0C1D2E /* ClaudeAIKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeAIKeychain.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -125,7 +123,6 @@
 				698B8E0E53F145B783C464F9 /* NotificationEngine.swift */,
 				07DBE9DE99AE4570ABDAA767 /* SettingsView.swift */,
 				B5D38012F5D5476997394541 /* DiagnosticsView.swift */,
-				H87A3B4C5D6E7F8A9B0C1D2E /* ClaudeAIKeychain.swift */,
 				CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */,
 				79FAFFB9B2AADEDB517FE4EF /* Fonts */,
 				803E43377A64429FBFAFB75C /* Info.plist */,
@@ -297,7 +294,6 @@
 				4D61D7AB7BDE4E48BA084D4F /* NotificationEngine.swift in Sources */,
 				60B15B0A00A24EE9A3EED2B1 /* SettingsView.swift in Sources */,
 				B6F53F78A9174898AEA761F3 /* DiagnosticsView.swift in Sources */,
-				H97A3B4C5D6E7F8A9B0C1D2E /* ClaudeAIKeychain.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

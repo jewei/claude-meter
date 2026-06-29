@@ -61,38 +61,3 @@ struct DiagnosticsSanitizerTests {
         #expect(out.contains("[redacted]"))
     }
 }
-
-@Suite("CredentialValidator")
-struct CredentialValidatorTests {
-    @Test func acceptsValidOrgId() {
-        let uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-        #expect(CredentialValidator.isValidOrgId(uuid))
-        #expect(CredentialValidator.normalizedOrgId(uuid) == uuid.lowercased())
-    }
-
-    @Test func rejectsInvalidOrgId() {
-        #expect(!CredentialValidator.isValidOrgId("not-a-uuid"))
-        #expect(!CredentialValidator.isValidOrgId(""))
-    }
-
-    @Test func acceptsValidSessionKey() {
-        #expect(CredentialValidator.isValidSessionKey("sk-ant-sid02-abc123"))
-    }
-
-    @Test func rejectsSessionKeyWithInjectionCharacters() {
-        #expect(!CredentialValidator.isValidSessionKey("sk-ant-sid02;evil=1"))
-        #expect(!CredentialValidator.isValidSessionKey(""))
-        #expect(!CredentialValidator.isValidSessionKey("not-a-key"))
-    }
-}
-
-@Suite("ClaudeAIError")
-struct ClaudeAIErrorTests {
-    @Test func authFailureDetection() {
-        #expect(ClaudeAIError.unauthorized.isAuthFailure)
-        #expect(ClaudeAIError.httpError(401).isAuthFailure)
-        #expect(ClaudeAIError.httpError(403).isAuthFailure)
-        #expect(!ClaudeAIError.httpError(500).isAuthFailure)
-        #expect(!ClaudeAIError.invalidURL.isAuthFailure)
-    }
-}

@@ -415,20 +415,11 @@ private struct DataSettingsTab: View {
 
     @AppStorage(AppSettings.statuslineSourceEnabledKey) private var statuslineSourceEnabled = true
     @AppStorage(AppSettings.oauthSourceEnabledKey) private var oauthSourceEnabled = true
-    @AppStorage(AppSettings.claudeAISourceEnabledKey) private var claudeAISourceEnabled = true
     @AppStorage(AppSettings.cursorSourceEnabledKey) private var cursorSourceEnabled = false
 
     @State private var cursorStatus = ""
     @State private var cursorStatusGeneration = 0
     @State private var cursorStatusTask: Task<Void, Never>?
-    @State private var sessionKey = ""
-    @State private var orgId = ""
-    @State private var isConnected = false
-    @State private var connectionStatus = ""
-    @State private var showSessionKey = false
-    @State private var isTesting = false
-    @State private var testResult = ""
-    @State private var isImporting = false
 
     var body: some View {
         ScrollView {
@@ -469,16 +460,6 @@ private struct DataSettingsTab: View {
                 }
 
                 DataSourceCard(
-                    icon: "globe",
-                    iconColor: Color(hex: "25B6F0"),
-                    title: "Claude.ai Session",
-                    subtitle: "Use web session usage API.",
-                    isEnabled: $claudeAISourceEnabled
-                ) {
-                    claudeAIContent
-                }
-
-                DataSourceCard(
                     icon: "cursorarrow.rays",
                     iconColor: Color(hex: "2DD4BF"),
                     title: "Cursor",
@@ -491,12 +472,10 @@ private struct DataSettingsTab: View {
             .padding(20)
         }
         .onAppear {
-            loadKeychainState()
             loadCursorStatus()
         }
         .onChange(of: statuslineSourceEnabled) { _, _ in appState.scheduleRebuildPipeline() }
         .onChange(of: oauthSourceEnabled) { _, _ in appState.scheduleRebuildPipeline() }
-        .onChange(of: claudeAISourceEnabled) { _, _ in appState.scheduleRebuildPipeline() }
         .onChange(of: cursorSourceEnabled) { _, enabled in
             loadCursorStatus()
             appState.setCursorSourceEnabled(enabled)
@@ -563,230 +542,6 @@ private struct DataSettingsTab: View {
         let local = parts[0]
         let masked = local.count <= 1 ? "*" : "\(local.prefix(1))***"
         return "\(masked)@\(parts[1])"
-    }
-
-    @ViewBuilder
-    private var claudeAIContent: some View {
-        if claudeAISourceEnabled {
-            if let expiredMessage = sessionExpiredMessage {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                    Text(expiredMessage)
-                }
-                .font(.caption)
-                .foregroundStyle(.red)
-            }
-
-            if isConnected {
-                if !testResult.isEmpty {
-                    Text(testResult)
-                        .font(.caption)
-                        .foregroundStyle(testResult.hasPrefix("Error") ? .red : .green)
-                }
-                HStack(spacing: 12) {
-                    Button(isTesting ? "Testing…" : "Test connection") { testConnection() }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .disabled(isTesting)
-                    Button("Disconnect") { disconnect() }
-                        .buttonStyle(.borderless)
-                        .controlSize(.small)
-                        .foregroundStyle(.red)
-                }
-            } else {
-                claudeAIConnectFields
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var claudeAIConnectFields: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("Session key")
-                    .font(.caption)
-                    .frame(width: 72, alignment: .leading)
-                Group {
-                    if showSessionKey {
-                        TextField(
-                            "", text: $sessionKey,
-                            prompt: Text("sk-ant-sid02-…").foregroundColor(.secondary))
-                    } else {
-                        SecureField(
-                            "", text: $sessionKey,
-                            prompt: Text("sk-ant-sid02-…").foregroundColor(.secondary))
-                    }
-                }
-                .textFieldStyle(.roundedBorder)
-                .font(.system(.caption, design: .monospaced))
-                Button {
-                    showSessionKey.toggle()
-                } label: {
-                    Image(systemName: showSessionKey ? "eye.slash" : "eye")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.borderless)
-            }
-            HStack(spacing: 8) {
-                Text("Org ID")
-                    .font(.caption)
-                    .frame(width: 72, alignment: .leading)
-                TextField(
-                    "", text: $orgId,
-                    prompt: Text("Auto-detect").foregroundColor(.secondary)
-                )
-                .textFieldStyle(.roundedBorder)
-                .font(.system(.caption, design: .monospaced))
-            }
-            if !connectionStatus.isEmpty {
-                Text(connectionStatus)
-                    .font(.caption)
-                    .foregroundStyle(connectionStatus.hasPrefix("Error") ? .red : .secondary)
-            }
-            HStack(spacing: 8) {
-                Button("Connect") { connect() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .disabled(
-                        sessionKey.trimmingCharacters(in: .whitespaces).isEmpty || isImporting)
-                Button {
-                    importFromBrowser()
-                } label: {
-                    if isImporting {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("Import from browser", systemImage: "arrow.down.doc")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(isImporting)
-            }
-            Text(
-                "Import reads the claude.ai session from Chrome, Brave, Edge, Arc, Firefox, or Safari. Or paste sessionKey from DevTools → Application → Cookies → claude.ai. Org ID is detected automatically."
-            )
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-        }
-    }
-
-    private var sessionExpiredMessage: String? {
-        let sources = [
-            appState.lastError,
-            testResult.hasPrefix("Error") ? testResult : nil,
-            connectionStatus.hasPrefix("Error") ? connectionStatus : nil,
-        ]
-        for text in sources.compactMap({ $0 }) {
-            if text.localizedCaseInsensitiveContains("session expired")
-                || text.localizedCaseInsensitiveContains("session key")
-                || text.localizedCaseInsensitiveContains("401")
-            {
-                return "Session expired. Please login again."
-            }
-        }
-        return nil
-    }
-
-    private func loadKeychainState() {
-        if let creds = ClaudeAIKeychain.load() {
-            orgId = creds.orgId
-            isConnected = true
-        } else {
-            isConnected = false
-        }
-    }
-
-    private func connect() {
-        let sk = sessionKey.trimmingCharacters(in: .whitespaces)
-        let org = orgId.trimmingCharacters(in: .whitespaces)
-        guard !sk.isEmpty else { return }
-        guard CredentialValidator.isValidSessionKey(sk) else {
-            connectionStatus = "Error: invalid session key format"
-            return
-        }
-        // Blank org → resolve it automatically from the session key.
-        if org.isEmpty {
-            connectionStatus = "Detecting organization…"
-            Task {
-                do {
-                    let resolved = try await ClaudeAIUsageClient.resolveOrgId(sessionKey: sk)
-                    finishConnect(sessionKey: sk, orgId: resolved)
-                } catch {
-                    connectionStatus =
-                        "Error: could not detect organization — \(error.localizedDescription)"
-                }
-            }
-            return
-        }
-        guard let normalizedOrg = CredentialValidator.normalizedOrgId(org) else {
-            connectionStatus = "Error: org ID must be a valid UUID"
-            return
-        }
-        finishConnect(sessionKey: sk, orgId: normalizedOrg)
-    }
-
-    private func importFromBrowser() {
-        isImporting = true
-        connectionStatus = "Importing from browser…"
-        Task {
-            let result = await Task.detached(priority: .userInitiated) {
-                BrowserCookieImporter.importClaudeSessionKey()
-            }.value
-            isImporting = false
-            switch result {
-            case .success(let cookie):
-                sessionKey = cookie.sessionKey
-                connectionStatus = "Imported from \(cookie.browser) — detecting organization…"
-                connect()  // org blank → auto-resolves, then saves
-            case .failure(let error):
-                connectionStatus = "Error: \(error.localizedDescription)"
-            }
-        }
-    }
-
-    private func finishConnect(sessionKey sk: String, orgId resolvedOrg: String) {
-        if ClaudeAIKeychain.save(sessionKey: sk, orgId: resolvedOrg) {
-            claudeAISourceEnabled = true
-            sessionKey = ""
-            orgId = resolvedOrg
-            isConnected = true
-            connectionStatus = ""
-            testResult = ""
-            rebuild()
-        } else {
-            connectionStatus = "Error: could not save to Keychain"
-        }
-    }
-
-    private func disconnect() {
-        ClaudeAIKeychain.delete()
-        sessionKey = ""
-        orgId = ""
-        isConnected = false
-        connectionStatus = ""
-        testResult = ""
-        rebuild()
-    }
-
-    private func testConnection() {
-        guard let creds = ClaudeAIKeychain.load() else { return }
-        isTesting = true
-        testResult = ""
-        Task {
-            defer { isTesting = false }
-            let client = ClaudeAIUsageClient(sessionKey: creds.sessionKey, orgId: creds.orgId)
-            do {
-                let usage = try await client.fetchUsage()
-                testResult =
-                    "Session \(Int(usage.sessionPercent))%  ·  Week \(Int(usage.weekPercent))%"
-            } catch {
-                testResult = "Error: \(error.localizedDescription)"
-            }
-        }
-    }
-
-    private func rebuild() {
-        appState.rebuildPipeline()
     }
 }
 

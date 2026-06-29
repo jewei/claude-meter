@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The **Claude.ai web-session source** (Settings → Data) and its "Import from
+  browser" cookie import. Claude Meter now collects usage from the **Statusline
+  Bridge** and **Claude Code OAuth** only — trimming the app's most fragile and
+  privacy-sensitive code (reading browser cookies). If you used only the
+  claude.ai source, connect via the statusline bridge (just run Claude Code) or
+  Claude Code OAuth.
+
 ## [2.2] - 2026-06-29
 
 ### Added

@@ -45,9 +45,15 @@ public struct ModelPricing: Sendable {
         ModelPricing(opus: opus, sonnet: sonnet, haiku: haiku, catalog: catalog)
     }
 
-    /// Current Anthropic list pricing (per MTok). Cache-write uses the 5-minute rate.
+    /// Current Anthropic list pricing (per MTok), used as the offline fallback when
+    /// the live models.dev `catalog` is absent. Cache-write uses the 5-minute rate
+    /// (1.25× input); the 1-hour rate (2× input) isn't tracked separately — Claude
+    /// Code's caches are 5-minute. The full 1M context window is billed at these
+    /// flat rates: no current model carries a >200K long-context premium.
     public static let current = ModelPricing(
-        opus: Rate(input: 15, output: 75, cacheRead: 1.50, cacheWrite: 18.75),
+        // Opus 4.5–4.8 list pricing (the prior $15/$75 was Opus 4.1-era and
+        // over-estimated current Opus usage ~3× whenever the catalog didn't load).
+        opus: Rate(input: 5, output: 25, cacheRead: 0.50, cacheWrite: 6.25),
         sonnet: Rate(input: 3, output: 15, cacheRead: 0.30, cacheWrite: 3.75),
         haiku: Rate(input: 1, output: 5, cacheRead: 0.10, cacheWrite: 1.25)
     )

@@ -5,18 +5,20 @@ import Testing
 
 @Suite("ModelPricing catalog matching")
 struct ModelPricingCatalogTests {
-    private let opus45 = ModelPricing.Rate(input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25)
+    // A deliberately distinct sentinel (not the real Opus rate) so a catalog hit is
+    // distinguishable from the static family fallback (which is also Opus $5).
+    private let opusCatalog = ModelPricing.Rate(input: 7, output: 25, cacheRead: 0.5, cacheWrite: 6.25)
 
     @Test("Exact and dated-prefix ids hit the catalog; others fall back to family") func matching() {
-        let catalog = ["claude-opus-4-5": opus45]
+        let catalog = ["claude-opus-4-5": opusCatalog]
         let pricing = ModelPricing.current.withCatalog(catalog)
 
-        // Exact id → catalog rate (the cheaper Opus 4.5 price, not the static 15/75).
-        #expect(pricing.rate(forModel: "claude-opus-4-5").input == 5)
+        // Exact id → catalog rate (the sentinel 7, not the static family fallback 5).
+        #expect(pricing.rate(forModel: "claude-opus-4-5").input == 7)
         // Dated transcript id → longest-prefix catalog hit.
-        #expect(pricing.rate(forModel: "claude-opus-4-5-20251101").input == 5)
-        // Unknown opus id with no catalog entry → static family fallback.
-        #expect(pricing.rate(forModel: "claude-opus-3").input == 15)
+        #expect(pricing.rate(forModel: "claude-opus-4-5-20251101").input == 7)
+        // Unknown opus id with no catalog entry → static family fallback (Opus $5).
+        #expect(pricing.rate(forModel: "claude-opus-3").input == 5)
         // Sonnet (not in catalog) → family fallback.
         #expect(pricing.rate(forModel: "claude-sonnet-4-5").input == 3)
     }
@@ -26,8 +28,8 @@ struct ModelPricingCatalogTests {
         let pricing = ModelPricing.current.withCatalog(["claude-opus-4": r])
         // Boundary hit (next char is '-') → catalog rate.
         #expect(pricing.rate(forModel: "claude-opus-4-5").input == 9)
-        // No boundary ("...-40") → must NOT match; falls back to opus family (15).
-        #expect(pricing.rate(forModel: "claude-opus-40").input == 15)
+        // No boundary ("...-40") → must NOT match; falls back to opus family ($5).
+        #expect(pricing.rate(forModel: "claude-opus-40").input == 5)
     }
 
     @Test("Longest matching prefix wins") func longestPrefix() {

@@ -42,31 +42,11 @@ struct MenuBarLabel: View {
                 .symbolRenderingMode(.hierarchical)
         } else {
             ZStack(alignment: .topTrailing) {
-                boltIcon
-                // The attention glyph carries its own badge, so hide the severity dot
-                // then to avoid a corner collision (the "% 5h" text still shows quota).
-                if !attentionNeeded {
-                    statusBadge
-                }
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 13, weight: .bold))
+                statusBadge
             }
         }
-    }
-
-    private var attentionNeeded: Bool {
-        appState.isActive && appState.attention.needsAttention
-    }
-
-    /// The bolt. Turns amber (and gently pulses) when a Claude Code session needs
-    /// attention — a channel distinct from the quota dot, so the two never collide.
-    @ViewBuilder
-    private var boltIcon: some View {
-        // The menu bar template-tints SF Symbols (custom color ignored) and doesn't
-        // run symbol animations, so attention is signalled by a glyph change — a
-        // bell-with-badge reads unmistakably as "needs you". Color + motion + detail
-        // live where they render: the popover banner and the notification.
-        Image(systemName: attentionNeeded ? "bell.badge.fill" : "bolt.fill")
-            .font(.system(size: 13, weight: .bold))
-            .foregroundStyle(appState.isActive ? .primary : .secondary)
     }
 
     @ViewBuilder

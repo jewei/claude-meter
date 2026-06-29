@@ -56,7 +56,9 @@ actor NotificationEngine {
         }
         let id =
             "com.claudemeter.attention.\(event.accountKey).\(event.sessionId ?? "?").\(event.kind.rawValue).\(Int(event.capturedAt.timeIntervalSince1970))"
-        _ = await post(id: id, title: title, body: body)
+        // Default sound → macOS plays the user's chosen per-app notification sound
+        // and respects Focus/Do-Not-Disturb. (Quota notifications stay silent.)
+        _ = await post(id: id, title: title, body: body, sound: .default)
     }
 
     // MARK: - Processing
@@ -153,12 +155,14 @@ actor NotificationEngine {
         }
     }
 
-    private func post(id: String, title: String, body: String) async -> Bool {
+    private func post(id: String, title: String, body: String, sound: UNNotificationSound? = nil)
+        async -> Bool
+    {
         await withCheckedContinuation { continuation in
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body
-            content.sound = nil
+            content.sound = sound
             let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
             center.add(request) { error in
                 continuation.resume(returning: error == nil)

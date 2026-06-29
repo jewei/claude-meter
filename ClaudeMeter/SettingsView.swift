@@ -1210,8 +1210,6 @@ private struct NotificationsSettingsTab: View {
     @AppStorage("criticalThresholdPercent") private var criticalThresholdPercent = 95.0
     @AppStorage(AppSettings.attentionStopEnabledKey) private var attentionStop = false
     @AppStorage(AppSettings.attentionNotificationEnabledKey) private var attentionNotification = false
-    @AppStorage(AppSettings.attentionSuppressWhenTerminalFocusedKey)
-    private var attentionSuppress = true
 
     var body: some View {
         ScrollView {
@@ -1237,20 +1235,15 @@ private struct NotificationsSettingsTab: View {
                 VStack(alignment: .leading, spacing: 14) {
                     attentionRow(
                         "Notify when Claude finishes a turn",
-                        "Pings you and lights the menu-bar bolt when a session is done and waiting.",
+                        "A native notification when a session is done and waiting on you.",
                         $attentionStop)
                     Divider().overlay(Color.pfCardBorder)
                     attentionRow(
                         "Notify when Claude needs permission",
                         "Covers permission prompts and idle waits.",
                         $attentionNotification)
-                    Divider().overlay(Color.pfCardBorder)
-                    attentionRow(
-                        "Stay quiet when a terminal is focused",
-                        "Skip the notification for a window you're already looking at (the bolt still shows).",
-                        $attentionSuppress)
                     SettingsHelperBox(
-                        "Installs lightweight Stop / Notification hooks into each Claude Code account; turning these off removes them."
+                        "Installs lightweight Stop / Notification hooks into each Claude Code account; turning these off removes them. Sound, Focus, and history are handled by macOS — tune them in System Settings → Notifications → Claude Meter."
                     )
                 }
                 .padding(16)

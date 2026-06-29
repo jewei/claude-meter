@@ -22,7 +22,8 @@ actor NotificationEngine {
     func requestAuthorizationIfNeeded() async {
         let status = await center.notificationSettings().authorizationStatus
         guard status == .notDetermined else { return }
-        _ = try? await center.requestAuthorization(options: [.alert])
+        // Request sound too, so attention notifications can play the user's sound.
+        _ = try? await center.requestAuthorization(options: [.alert, .sound])
     }
 
     /// Notifies the user that a new app version is available (gentle Sparkle reminder path).

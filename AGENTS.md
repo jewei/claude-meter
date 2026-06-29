@@ -102,7 +102,7 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 - **`expiresAt` is integer milliseconds** in the Keychain JSON; parse via `NSNumber`/`Int`/`Double`. Refresh when within 60 s of expiry.
 - **Token refresh** — `POST https://console.anthropic.com/v1/oauth/token`, `grant_type=refresh_token`, client id `9d1c250a-e61b-44d9-88ed-5944d1962f5e`; usage calls send `anthropic-beta: oauth-2025-04-20`. Ephemeral `URLSession`, no cookies, 10 s timeout.
 
-> **Removed (2026-06-29):** the claude.ai web source (`ClaudeAIPipeline`/`ClaudeAIUsageClient`/`ClaudeAIKeychain`/`BrowserCookieImporter`/`CredentialValidator`) was dropped — it duplicated OAuth's enrichment (Opus/extra/plan) while only adding coverage for web-only users, at the cost of the app's most fragile, privacy-invasive surface (browser-cookie AES decryption). Statusline + OAuth remain. `DiagnosticsSanitizer` keeps redacting `sessionKey=` defensively.
+> **Removed (2026-06-29):** the claude.ai web source (`ClaudeAIPipeline`/`ClaudeAIUsageClient`/`ClaudeAIKeychain`/`BrowserCookieImporter`/`CredentialValidator`) was dropped. It set only session / weekly-all-models / weekly-Opus; its sole unique value over the statusline was covering web-only users (who never run the CLI), at the cost of the app's most fragile, privacy-invasive surface (browser-cookie AES decryption). It **never** sourced plan or extra-usage — plan is primarily the **manual per-account picker** (`AppGroupConfig.accountPlans`, Settings) with OAuth's Keychain `subscriptionType` only as an active-account hint; extra-usage is OAuth-only. Statusline + OAuth remain. `DiagnosticsSanitizer` keeps redacting `sessionKey=` defensively.
 
 ## Cursor usage (opt-in)
 

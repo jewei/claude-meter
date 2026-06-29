@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2] - 2026-06-29
+
+### Added
+
+- **"Claude is waiting" notifications** — get a native macOS notification the
+  moment a Claude Code session finishes its turn or asks for permission, so you
+  can step away and get pulled back exactly when it needs you. Works across all
+  your accounts. Turn it on under Settings → Notifications → Claude Attention
+  (separate toggles for turn-finished and permission-needed).
+- **Run-out forecast** — account cards project when you're on pace to hit a
+  limit, not just how much energy is left right now.
+- **Outdated Claude Code warning** — the popover footer flags when your installed
+  Claude Code is behind the latest release and links to the changelog.
+
+### Changed
+
+- **More accurate cost estimates** — per-model pricing is now pulled live from
+  models.dev, with corrected built-in fallback rates (Opus was previously
+  over-estimated by roughly 3× when the live rates were unavailable).
+
+### Fixed
+
+- **Sturdier sign-in** — OAuth token refresh now prefers fresh in-memory
+  credentials over a stale Keychain entry, avoiding spurious signed-out states.
+
 ## [2.1] - 2026-06-28
 
 ### Added
@@ -187,7 +212,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.1...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.2...HEAD
+[2.2]: https://github.com/jewei/claude-meter/compare/v2.1...v2.2
 [2.1]: https://github.com/jewei/claude-meter/compare/v2.0...v2.1
 [2.0]: https://github.com/jewei/claude-meter/compare/v1.3...v2.0
 [1.3]: https://github.com/jewei/claude-meter/compare/v1.2...v1.3

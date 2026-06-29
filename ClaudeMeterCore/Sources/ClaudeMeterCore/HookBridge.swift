@@ -43,12 +43,18 @@ public enum HookBridge: Sendable {
     /// writes stdin to `events/<accountKey>/<session_id>.<event>.json`, and always
     /// exits 0 so a `Stop` hook can never block Claude Code. It does **not** echo
     /// stdin (hooks render nothing).
+    /// The marker filename includes `$$` (the hook process's PID, unique per fire)
+    /// so rapid events of the same kind for the same session each get their own
+    /// file instead of overwriting one another within a drain window.
     static let hookSnippet =
-        #"bash -c 'I=$(cat);A=$(basename "${CLAUDE_CONFIG_DIR:-$HOME/.claude}");A=${A#.};A=$(printf "%s" "$A"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$A" ]&&A=claude;E=$(printf "%s" "$I"|sed -n "s/.*\"hook_event_name\":\"\([^\"]*\)\".*/\1/p");E=$(printf "%s" "$E"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$E" ]&&E=event;D=$HOME/.claude-meter/events/$A;mkdir -p "$D" 2>/dev/null;S=$(printf "%s" "$I"|sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p");S=$(printf "%s" "$S"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$S" ]&&S=default;T="$D/.tmp.$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/$S.$E.json" 2>/dev/null||rm -f "$T" 2>/dev/null;exit 0'"#
+        #"bash -c 'I=$(cat);A=$(basename "${CLAUDE_CONFIG_DIR:-$HOME/.claude}");A=${A#.};A=$(printf "%s" "$A"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$A" ]&&A=claude;E=$(printf "%s" "$I"|sed -n "s/.*\"hook_event_name\":\"\([^\"]*\)\".*/\1/p");E=$(printf "%s" "$E"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$E" ]&&E=event;D=$HOME/.claude-meter/events/$A;mkdir -p "$D" 2>/dev/null;S=$(printf "%s" "$I"|sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p");S=$(printf "%s" "$S"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$S" ]&&S=default;T="$D/.tmp.$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/$S.$E.$$.json" 2>/dev/null||rm -f "$T" 2>/dev/null;exit 0'"#
 
-    /// Snippets from earlier versions, recognised so install can migrate them and
-    /// uninstall can remove them. (None yet — slot kept for forward-compat.)
-    static let legacyHookSnippets: [String] = []
+    /// Snippets from earlier versions, recognised so install migrates them to the
+    /// current snippet (and uninstall removes them) instead of leaving duplicates.
+    /// First entry: the pre-PID snippet that wrote a fixed `<session>.<event>.json`.
+    static let legacyHookSnippets: [String] = [
+        #"bash -c 'I=$(cat);A=$(basename "${CLAUDE_CONFIG_DIR:-$HOME/.claude}");A=${A#.};A=$(printf "%s" "$A"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$A" ]&&A=claude;E=$(printf "%s" "$I"|sed -n "s/.*\"hook_event_name\":\"\([^\"]*\)\".*/\1/p");E=$(printf "%s" "$E"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$E" ]&&E=event;D=$HOME/.claude-meter/events/$A;mkdir -p "$D" 2>/dev/null;S=$(printf "%s" "$I"|sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p");S=$(printf "%s" "$S"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$S" ]&&S=default;T="$D/.tmp.$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/$S.$E.json" 2>/dev/null||rm -f "$T" 2>/dev/null;exit 0'"#
+    ]
 
     private static var allHookSnippets: [String] { [hookSnippet] + legacyHookSnippets }
 
@@ -66,10 +72,8 @@ public enum HookBridge: Sendable {
     /// dir whose `settings.json` is invalid JSON is skipped (its error surfaced
     /// after) without blocking the others.
     public static func install(configDirs: [URL], events: Set<String>) throws {
-        if !events.isEmpty {
-            try? FileManager.default.createDirectory(
-                at: eventsDir, withIntermediateDirectories: true)
-        }
+        // The events dir is created lazily by the hook snippet's `mkdir -p` on first
+        // fire — install must not touch ~/.claude-meter (keeps tests off the real dir).
         var firstError: Error?
         for dir in configDirs {
             guard FileManager.default.fileExists(atPath: dir.path) else { continue }
@@ -88,7 +92,9 @@ public enum HookBridge: Sendable {
         try uninstall(configDirs: [defaultConfigDir])
     }
 
-    /// Removes our hook entries from each config dir and deletes the events dir.
+    /// Removes our hook entries from each config dir's `settings.json`. Touches only
+    /// the given config dirs — the events dir is cleaned by the app on disable (this
+    /// keeps the operation off the real ~/.claude-meter when called from tests).
     public static func uninstall(configDirs: [URL]) throws {
         var firstError: Error?
         for dir in configDirs {
@@ -100,13 +106,15 @@ public enum HookBridge: Sendable {
                 if firstError == nil { firstError = error }
             }
         }
-        try? FileManager.default.removeItem(at: eventsDir)
         if let firstError { throw firstError }
     }
 
     private static func installOne(settingsPath: URL, events: Set<String>) throws {
         var settings = try readSettings(at: settingsPath)
         let hadHooks = settings["hooks"] != nil
+        // If `hooks` exists but isn't an object, leave it alone — never overwrite a
+        // shape we don't understand (that would destroy the user's data).
+        if hadHooks, !(settings["hooks"] is [String: Any]) { return }
         var hooks = settings["hooks"] as? [String: Any] ?? [:]
 
         var changed = false
@@ -126,11 +134,36 @@ public enum HookBridge: Sendable {
     }
 
     /// Reconciles a single event's hook list to the desired state, preserving the
-    /// user's own groups. Returns true when the list actually changed.
+    /// user's own hooks. Works at the *command* level: it strips our command from
+    /// each group (keeping the user's other commands in that group) and drops only
+    /// groups that become empty, rather than discarding a whole group that merely
+    /// contains our command alongside the user's. Returns true when it changed.
+    ///
+    /// Our group is always (re-)appended last; since we are the only writer that
+    /// adds it, it stays last in steady state (no churn), and our marker-writing
+    /// hook is order-independent so a one-time reorder is harmless.
     static func reconcileEvent(_ event: String, want: Bool, in hooks: inout [String: Any]) -> Bool {
+        // Unexpected shape → leave untouched (don't clobber user data).
+        if let raw = hooks[event], !(raw is [[String: Any]]) { return false }
         let current = (hooks[event] as? [[String: Any]]) ?? []
-        let userGroups = current.filter { !groupIsOurs($0) }
-        let desired = want ? userGroups + [ourGroup()] : userGroups
+
+        var preserved: [[String: Any]] = []
+        for group in current {
+            guard let inner = group["hooks"] as? [[String: Any]] else {
+                preserved.append(group)  // unknown group shape — keep verbatim
+                continue
+            }
+            let userInner = inner.filter { !isOurCommand($0) }
+            if userInner.count == inner.count {
+                preserved.append(group)  // nothing of ours here
+            } else if !userInner.isEmpty {
+                var stripped = group
+                stripped["hooks"] = userInner  // keep the user's commands, drop ours
+                preserved.append(stripped)
+            }
+            // else: the group held only our command → drop it
+        }
+        let desired = want ? preserved + [ourGroup()] : preserved
 
         if NSArray(array: current).isEqual(NSArray(array: desired)) { return false }
         if desired.isEmpty {
@@ -141,64 +174,24 @@ public enum HookBridge: Sendable {
         return true
     }
 
-    /// A hook group is "ours" when it contains a command matching one of our
-    /// snippets (current or legacy).
-    private static func groupIsOurs(_ group: [String: Any]) -> Bool {
-        let inner = (group["hooks"] as? [[String: Any]]) ?? []
-        return inner.contains { entry in
-            (entry["command"] as? String).map { allHookSnippets.contains($0) } ?? false
-        }
+    /// A single hook entry is "ours" when its command matches one of our snippets
+    /// (current or legacy).
+    private static func isOurCommand(_ entry: [String: Any]) -> Bool {
+        guard let command = entry["command"] as? String else { return false }
+        return allHookSnippets.contains(command)
     }
 
     private static func ourGroup() -> [String: Any] {
         ["hooks": [["type": "command", "command": hookSnippet]]]
     }
 
-    // MARK: - Settings helpers (mirror StatuslineBridge)
+    // MARK: - Settings helpers
 
     private static func readSettings(at settingsPath: URL) throws -> [String: Any] {
-        guard FileManager.default.fileExists(atPath: settingsPath.path) else { return [:] }
-        return try parseSettingsData(Data(contentsOf: settingsPath))
-    }
-
-    internal static func parseSettingsDataForTesting(_ data: Data?) throws -> [String: Any] {
-        try parseSettingsData(data)
-    }
-
-    private static func parseSettingsData(_ data: Data?) throws -> [String: Any] {
-        guard let data else { return [:] }
-        guard !data.isEmpty else { throw HookBridgeError.invalidSettingsJSON }
-        let object: Any
-        do {
-            object = try JSONSerialization.jsonObject(with: data)
-        } catch {
-            throw HookBridgeError.invalidSettingsJSON
-        }
-        guard let settings = object as? [String: Any] else {
-            throw HookBridgeError.settingsRootNotObject
-        }
-        return settings
+        try SettingsFile.read(at: settingsPath)
     }
 
     private static func writeSettings(_ settings: [String: Any], at settingsPath: URL) throws {
-        let data = try JSONSerialization.data(
-            withJSONObject: settings, options: [.prettyPrinted, .sortedKeys])
-        let dir = settingsPath.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try data.write(to: settingsPath, options: .atomic)
-    }
-}
-
-private enum HookBridgeError: Error, LocalizedError {
-    case invalidSettingsJSON
-    case settingsRootNotObject
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidSettingsJSON:
-            "Claude Code settings.json is not valid JSON; attention hooks were not installed."
-        case .settingsRootNotObject:
-            "Claude Code settings.json must contain a JSON object; attention hooks were not installed."
-        }
+        try SettingsFile.write(settings, at: settingsPath)
     }
 }

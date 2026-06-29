@@ -447,27 +447,11 @@ public enum StatuslineBridge: Sendable {
     // MARK: - Settings helpers
 
     private static func readSettings(at settingsPath: URL) throws -> [String: Any] {
-        guard FileManager.default.fileExists(atPath: settingsPath.path) else { return [:] }
-        return try parseSettingsData(Data(contentsOf: settingsPath))
+        try SettingsFile.read(at: settingsPath)
     }
 
     internal static func parseSettingsDataForTesting(_ data: Data?) throws -> [String: Any] {
-        try parseSettingsData(data)
-    }
-
-    private static func parseSettingsData(_ data: Data?) throws -> [String: Any] {
-        guard let data else { return [:] }
-        guard !data.isEmpty else { throw StatuslineBridgeError.invalidSettingsJSON }
-        let object: Any
-        do {
-            object = try JSONSerialization.jsonObject(with: data)
-        } catch {
-            throw StatuslineBridgeError.invalidSettingsJSON
-        }
-        guard let settings = object as? [String: Any] else {
-            throw StatuslineBridgeError.settingsRootNotObject
-        }
-        return settings
+        try SettingsFile.parse(data)
     }
 
     private static func statusLineCommand(in settings: [String: Any]) -> String {
@@ -525,11 +509,7 @@ public enum StatuslineBridge: Sendable {
     }
 
     private static func writeSettings(_ settings: [String: Any], at settingsPath: URL) throws {
-        let data = try JSONSerialization.data(
-            withJSONObject: settings, options: [.prettyPrinted, .sortedKeys])
-        let dir = settingsPath.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try data.write(to: settingsPath, options: .atomic)
+        try SettingsFile.write(settings, at: settingsPath)
     }
 
     private static func numericValue(_ value: Any?) -> Double? {
@@ -542,16 +522,3 @@ public enum StatuslineBridge: Sendable {
     }
 }
 
-private enum StatuslineBridgeError: Error, LocalizedError {
-    case invalidSettingsJSON
-    case settingsRootNotObject
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidSettingsJSON:
-            "Claude Code settings.json is not valid JSON; statusline bridge was not installed."
-        case .settingsRootNotObject:
-            "Claude Code settings.json must contain a JSON object; statusline bridge was not installed."
-        }
-    }
-}

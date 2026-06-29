@@ -40,7 +40,9 @@ actor NotificationEngine {
     /// already applied focus-suppression; this only gates on the master toggle +
     /// authorization. Each event is consumed once, so no extra dedup is needed.
     func postAttention(event: SessionEvent, accountLabel: String) async {
-        guard isEnabled(), await isAuthorized() else { return }
+        // Gated only by authorization — attention has its own Settings toggles and is
+        // independent of the quota-notification master switch (`isEnabled()`).
+        guard await isAuthorized() else { return }
         let project = event.projectName ?? "a session"
         let title: String
         let body: String
@@ -51,7 +53,7 @@ actor NotificationEngine {
         case .notification:
             title = "Claude needs you"
             let detail = (event.message?.isEmpty == false) ? event.message! : "Waiting for input"
-            body = "\(detail) · \(project)"
+            body = "\(detail) · \(project) · \(accountLabel)"
         case .other:
             return
         }

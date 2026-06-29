@@ -52,8 +52,6 @@ final class AppState: ObservableObject {
     private var configRefreshTask: Task<Void, Never>?
     /// Periodic drain of Claude Code attention markers → native notifications.
     private var attentionTask: Task<Void, Never>?
-    /// In-flight attention-hook install task (mirrors `configRefreshTask`).
-    private var attentionHookTask: Task<Void, Never>?
 
     private static let pollIntervalSeconds: TimeInterval = 60
     private static let oauthEnrichmentIntervalSeconds: TimeInterval = 300
@@ -117,7 +115,12 @@ final class AppState: ObservableObject {
         }
         appUpdater.appState = self
         let monitor = PowerMonitor()
-        monitor.onWake = { [weak self] in self?.refreshNow() }
+        monitor.onWake = { [weak self] in
+            self?.refreshNow()
+            // Restart the attention watcher so markers written near wake surface
+            // promptly instead of waiting out the asleep-recheck interval.
+            self?.startAttentionWatcher()
+        }
         self.powerMonitor = monitor
         startPolling()
         Task { await notificationEngine.requestAuthorizationIfNeeded() }
@@ -140,18 +143,19 @@ final class AppState: ObservableObject {
         rebuildDebounceTask?.cancel()
         configRefreshTask?.cancel()
         attentionTask?.cancel()
-        attentionHookTask?.cancel()
     }
 
     func startPolling() {
         pollTask?.cancel()
+        // Config bridges + the attention watcher are independent of whether a usage
+        // data source is enabled (attention comes from Claude Code hooks, not the
+        // meter pipeline), so they run regardless of `canPoll`.
+        refreshConfigBridges()
+        startAttentionWatcher()
         guard canPoll else {
             pollTask = nil
             return
         }
-        installStatuslineBridgeIfNeeded()
-        installAttentionHooksIfNeeded()
-        startAttentionWatcher()
         pollTask = Task { [weak self] in
             await self?.poll()
             while !Task.isCancelled {
@@ -177,17 +181,18 @@ final class AppState: ObservableObject {
     }
 
     func stopPolling() {
+        // Only the meter poll — the attention watcher has its own lifecycle (it's
+        // not tied to having a usage data source).
         pollTask?.cancel()
         pollTask = nil
-        attentionTask?.cancel()
-        attentionTask = nil
     }
 
     /// Called by Settings when an attention toggle flips: reconcile the installed
-    /// hooks and (re)start or stop the watcher.
+    /// hooks, (re)start or stop the watcher, and clean up markers when disabled.
     func attentionSettingsChanged() {
-        installAttentionHooksIfNeeded()
+        refreshConfigBridges()
         startAttentionWatcher()
+        if !AppSettings.attentionEnabled { clearAttentionEvents() }
     }
 
     func checkForUpdates() {
@@ -267,7 +272,11 @@ final class AppState: ObservableObject {
         cachedOAuthEnrichment = nil
         hasEnabledDataSource = AppSettings.hasEnabledDataSource
         pipeline = AppState.makePipeline(store: store)
-        installStatuslineBridgeIfNeeded()
+        // Reconcile config bridges + attention regardless of canPoll, so adding a
+        // new account installs its hooks and attention keeps running even when no
+        // usage source is enabled.
+        refreshConfigBridges()
+        startAttentionWatcher()
         if canPoll && pollTask == nil {
             startPolling()
         } else if !canPoll {
@@ -285,6 +294,7 @@ final class AppState: ObservableObject {
             rebuildPipeline()
         } else {
             stopPolling()
+            startAttentionWatcher()  // self-cancels now that isActive == false
             isLoading = false
         }
     }
@@ -340,7 +350,7 @@ final class AppState: ObservableObject {
 
     private func poll() async {
         guard canPoll else { return }
-        installStatuslineBridgeIfNeeded()
+        refreshConfigBridges()  // self-heal statusline + attention hooks each poll
         let generation = pipelineGeneration
         guard !isLoading else {
             refreshPending = true
@@ -605,12 +615,15 @@ final class AppState: ObservableObject {
         isActive && AppSettings.hasEnabledDataSource
     }
 
-    /// Installs the statusline bridge into every discovered config dir (off-main,
-    /// idempotent + self-healing). Coalesces rapid re-invocations (source/account
-    /// toggles) by cancelling the prior in-flight task. Cost-scan discovery is
-    /// independent (see `scanCostModels`), so this is gated on the statusline source.
-    private func installStatuslineBridgeIfNeeded() {
-        guard AppSettings.statuslineSourceEnabled else { return }
+    /// Installs/self-heals the statusline bridge (when its source is enabled) AND
+    /// reconciles the attention hooks across every discovered config dir — in ONE
+    /// serialized off-main task. Running them sequentially over a single discovery
+    /// means the two never race on the same `settings.json` (separate concurrent
+    /// writers would clobber each other). Idempotent; coalesces rapid re-invocations
+    /// by cancelling the prior in-flight task.
+    private func refreshConfigBridges() {
+        let statuslineOn = AppSettings.statuslineSourceEnabled
+        let events = AppSettings.enabledAttentionEvents
         let store = store
         let configuredDirs = AppGroupConfig.configuredConfigDirs
         let disabledKeys = Set(AppGroupConfig.disabledAccountKeys)
@@ -619,8 +632,15 @@ final class AppState: ObservableObject {
             let accounts = ConfigDirDiscovery.discover(
                 configuredDirs: configuredDirs, disabledKeys: disabledKeys)
             guard !Task.isCancelled else { return }
+            let dirs = accounts.map(\.configDir)
             do {
-                try StatuslineBridge.install(configDirs: accounts.map(\.configDir))
+                if statuslineOn {
+                    try StatuslineBridge.install(configDirs: dirs)
+                }
+                // Reconcile hooks on enabled accounts (install enabled events, remove
+                // the rest). Disabled accounts keep their snippet — like the
+                // statusline bridge — and are filtered on the read path (`drain`).
+                try HookBridge.install(configDirs: dirs, events: events)
             } catch {
                 let message =
                     (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -632,24 +652,10 @@ final class AppState: ObservableObject {
 
     // MARK: - Attention (Claude Code hooks)
 
-    /// Reconciles attention hooks across all config dirs to the enabled event set
-    /// (installs enabled events, removes disabled). Mirrors the statusline install.
-    private func installAttentionHooksIfNeeded() {
-        let events = AppSettings.enabledAttentionEvents
-        let configuredDirs = AppGroupConfig.configuredConfigDirs
-        let disabledKeys = Set(AppGroupConfig.disabledAccountKeys)
-        attentionHookTask?.cancel()
-        attentionHookTask = Task.detached(priority: .utility) {
-            let accounts = ConfigDirDiscovery.discover(
-                configuredDirs: configuredDirs, disabledKeys: disabledKeys)
-            guard !Task.isCancelled else { return }
-            try? HookBridge.install(configDirs: accounts.map(\.configDir), events: events)
-        }
-    }
-
-    /// Drains attention markers every few seconds (while active + awake + enabled)
-    /// and fires a native notification per event. macOS owns sound, Focus/DND, and
-    /// Notification Center history — we don't reinvent any of it.
+    /// Drains attention markers and fires a native notification per event, on its
+    /// own energy-aware cadence (independent of the meter poll): backs off to the
+    /// asleep recheck while the display is asleep, and stretches on battery — macOS
+    /// owns sound, Focus/DND, and Notification-Center history.
     private func startAttentionWatcher() {
         attentionTask?.cancel()
         guard isActive, AppSettings.attentionEnabled else {
@@ -659,29 +665,56 @@ final class AppState: ObservableObject {
         attentionTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { break }
-                if self.powerMonitor?.isDisplayAsleep != true {
-                    await self.drainAttention()
+                if self.powerMonitor?.isDisplayAsleep == true {
+                    // Asleep: back off (PowerMonitor.onWake restarts us for an
+                    // immediate drain), don't spin a 2 s timer overnight.
+                    try? await Task.sleep(for: .seconds(Self.asleepRecheckSeconds))
+                    continue
                 }
-                try? await Task.sleep(for: .seconds(Self.attentionDrainSeconds))
+                await self.drainAttention()
+                let interval =
+                    self.powerMonitor?.isOnBattery == true
+                    ? Self.attentionDrainSeconds * Self.batteryPollMultiplier
+                    : Self.attentionDrainSeconds
+                try? await Task.sleep(for: .seconds(interval))
             }
         }
     }
 
     private func drainAttention() async {
         let now = Date()
+        let disabled = Set(AppGroupConfig.disabledAccountKeys)
         let events = await Task.detached(priority: .utility) {
-            SessionEventStore.drain(now: now)
+            SessionEventStore.drain(disabledAccountKeys: disabled, now: now)
         }.value
         guard !events.isEmpty else { return }
 
-        let names = AppGroupConfig.accountNames
         let engine = notificationEngine
         for event in events where AppSettings.enabledAttentionEvents.contains(event.kind.rawValue) {
-            let account = names[event.accountKey] ?? event.accountKey
+            let account = Self.friendlyAccountName(event.accountKey)
             // Fire-and-forget: a slow/wedged notification call must never stall the
             // drain loop.
             Task { await engine.postAttention(event: event, accountLabel: account) }
         }
+    }
+
+    /// Clears leftover markers when attention is disabled.
+    private func clearAttentionEvents() {
+        Task.detached(priority: .utility) { SessionEventStore.clearAll() }
+    }
+
+    /// The display name for an account key — the user's override, else a prettified
+    /// key — matching how the popover labels accounts.
+    static func friendlyAccountName(_ key: String) -> String {
+        AppGroupConfig.accountName(forKey: key) ?? friendlyName(key)
+    }
+
+    private static func friendlyName(_ raw: String) -> String {
+        let spaced = raw.replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+        return spaced.split(separator: " ")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
     }
 }
 

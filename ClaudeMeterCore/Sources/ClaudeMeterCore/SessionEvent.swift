@@ -49,12 +49,22 @@ public enum SessionEventStore {
     /// (fresh *and* stale, so a backlog never accumulates), and returns the fresh
     /// events. Markers older than `maxAge` are dropped silently — on app launch we
     /// don't want to replay a pile of old "your turn" pings.
-    public static func drain(now: Date = Date(), maxAge: TimeInterval = 120) -> [SessionEvent] {
-        drain(eventsRoot: HookBridge.eventsDir, now: now, maxAge: maxAge)
+    public static func drain(
+        disabledAccountKeys: Set<String> = [], now: Date = Date(), maxAge: TimeInterval = 120
+    ) -> [SessionEvent] {
+        drain(
+            eventsRoot: HookBridge.eventsDir, disabledAccountKeys: disabledAccountKeys, now: now,
+            maxAge: maxAge)
     }
 
     /// Testable core with an injectable root.
-    static func drain(eventsRoot: URL, now: Date, maxAge: TimeInterval) -> [SessionEvent] {
+    ///
+    /// `disabledAccountKeys` are skipped entirely — a disabled account's hook may
+    /// still be writing markers until it's reconciled away, and (per AGENTS.md) the
+    /// read path must filter disabled accounts too, not just discovery.
+    static func drain(
+        eventsRoot: URL, disabledAccountKeys: Set<String>, now: Date, maxAge: TimeInterval
+    ) -> [SessionEvent] {
         let fm = FileManager.default
         guard
             let subdirs = try? fm.contentsOfDirectory(
@@ -68,6 +78,7 @@ public enum SessionEventStore {
                 continue
             }
             let accountKey = sub.lastPathComponent
+            let isDisabled = disabledAccountKeys.contains(accountKey)
             guard
                 let files = try? fm.contentsOfDirectory(
                     at: sub, includingPropertiesForKeys: [.contentModificationDateKey])
@@ -75,17 +86,33 @@ public enum SessionEventStore {
             for file in files where file.pathExtension == "json" {
                 let mod =
                     (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
-                    .contentModificationDate ?? .distantPast
-                // Consume the marker regardless of freshness.
-                if now.timeIntervalSince(mod) < maxAge,
-                    let event = parse(file: file, accountKey: accountKey, capturedAt: mod)
-                {
-                    events.append(event)
+                    .contentModificationDate
+                // Unknown mtime → assume fresh (don't drop a real event to a stat blip).
+                let fresh = mod.map { now.timeIntervalSince($0) < maxAge } ?? true
+                if fresh {
+                    // Only consume on a successful parse; a transient read/parse
+                    // failure leaves the marker for the next tick (it's cleaned once
+                    // it ages past maxAge). Disabled accounts are consumed but NOT
+                    // emitted — that keeps their markers from piling up while still
+                    // never notifying for an account the user turned off.
+                    if let event = parse(
+                        file: file, accountKey: accountKey, capturedAt: mod ?? now)
+                    {
+                        if !isDisabled { events.append(event) }
+                        try? fm.removeItem(at: file)
+                    }
+                } else {
+                    try? fm.removeItem(at: file)  // definitively stale → clean up
                 }
-                try? fm.removeItem(at: file)
             }
         }
         return events
+    }
+
+    /// Removes all attention markers — used when the feature is disabled (the hook's
+    /// `mkdir -p` created the dir and nothing drains it once the watcher stops).
+    public static func clearAll() {
+        try? FileManager.default.removeItem(at: HookBridge.eventsDir)
     }
 
     static func parse(file: URL, accountKey: String, capturedAt: Date) -> SessionEvent? {

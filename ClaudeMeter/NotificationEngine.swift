@@ -22,7 +22,8 @@ actor NotificationEngine {
     func requestAuthorizationIfNeeded() async {
         let status = await center.notificationSettings().authorizationStatus
         guard status == .notDetermined else { return }
-        _ = try? await center.requestAuthorization(options: [.alert])
+        // Request sound too, so attention notifications can play the user's sound.
+        _ = try? await center.requestAuthorization(options: [.alert, .sound])
     }
 
     /// Notifies the user that a new app version is available (gentle Sparkle reminder path).
@@ -33,6 +34,34 @@ actor NotificationEngine {
             title: "Claude Meter update available",
             body: "Version \(version) is ready. Open the menu bar popover to install."
         )
+    }
+
+    /// Posts a "Claude needs you" notification for an attention event. Caller has
+    /// already applied focus-suppression; this only gates on the master toggle +
+    /// authorization. Each event is consumed once, so no extra dedup is needed.
+    func postAttention(event: SessionEvent, accountLabel: String) async {
+        // Gated only by authorization — attention has its own Settings toggles and is
+        // independent of the quota-notification master switch (`isEnabled()`).
+        guard await isAuthorized() else { return }
+        let project = event.projectName ?? "a session"
+        let title: String
+        let body: String
+        switch event.kind {
+        case .stop:
+            title = "Claude finished ✅"
+            body = "\(project) · \(accountLabel) — your turn"
+        case .notification:
+            title = "Claude needs you"
+            let detail = (event.message?.isEmpty == false) ? event.message! : "Waiting for input"
+            body = "\(detail) · \(project) · \(accountLabel)"
+        case .other:
+            return
+        }
+        let id =
+            "com.claudemeter.attention.\(event.accountKey).\(event.sessionId ?? "?").\(event.kind.rawValue).\(Int(event.capturedAt.timeIntervalSince1970))"
+        // Default sound → macOS plays the user's chosen per-app notification sound
+        // and respects Focus/Do-Not-Disturb. (Quota notifications stay silent.)
+        _ = await post(id: id, title: title, body: body, sound: .default)
     }
 
     // MARK: - Processing
@@ -129,12 +158,14 @@ actor NotificationEngine {
         }
     }
 
-    private func post(id: String, title: String, body: String) async -> Bool {
+    private func post(id: String, title: String, body: String, sound: UNNotificationSound? = nil)
+        async -> Bool
+    {
         await withCheckedContinuation { continuation in
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body
-            content.sound = nil
+            content.sound = sound
             let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
             center.add(request) { error in
                 continuation.resume(returning: error == nil)

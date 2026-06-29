@@ -129,8 +129,12 @@ public enum AppGroupConfig {
         }
     }
 
-    public static func currentThresholds(defaults: UserDefaults = .standard) -> UsageThresholds {
-        let shared = sharedDefaults
+    /// `shared` is injectable so tests can read purely from a passed `defaults`
+    /// suite instead of the process-wide App Group suite (which the running app
+    /// syncs into, making the test non-hermetic).
+    public static func currentThresholds(
+        shared: UserDefaults? = sharedDefaults, defaults: UserDefaults = .standard
+    ) -> UsageThresholds {
         let warning = readPositiveDouble(
             forKey: warningThresholdKey,
             shared: shared,

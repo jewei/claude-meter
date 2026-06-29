@@ -594,16 +594,6 @@ final class AppState: ObservableObject {
         let thresholds = AppGroupConfig.currentThresholds()
         var pipeline: any ClaudeMeterPipeline = CachedSnapshotPipeline(store: store)
 
-        if AppSettings.claudeAISourceEnabled, let creds = ClaudeAIKeychain.load() {
-            let client = ClaudeAIUsageClient(sessionKey: creds.sessionKey, orgId: creds.orgId)
-            pipeline = ClaudeAIPipeline(
-                client: client,
-                store: store,
-                fallback: pipeline,
-                thresholds: thresholds
-            )
-        }
-
         if AppSettings.oauthSourceEnabled {
             pipeline = OAuthPipeline(fallback: pipeline, store: store, thresholds: thresholds)
         }
@@ -752,7 +742,6 @@ enum AppSettings {
     static let isActiveKey = "isActive"
     static let statuslineSourceEnabledKey = "statuslineSourceEnabled"
     static let oauthSourceEnabledKey = "oauthSourceEnabled"
-    static let claudeAISourceEnabledKey = "claudeAISourceEnabled"
     static let cursorSourceEnabledKey = "cursorSourceEnabled"
     static let oauthModeKey = AppGroupConfig.oauthModeKey
 
@@ -769,11 +758,6 @@ enum AppSettings {
     static var oauthSourceEnabled: Bool {
         get { boolDefaultingTrue(forKey: oauthSourceEnabledKey) }
         set { UserDefaults.standard.set(newValue, forKey: oauthSourceEnabledKey) }
-    }
-
-    static var claudeAISourceEnabled: Bool {
-        get { boolDefaultingTrue(forKey: claudeAISourceEnabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: claudeAISourceEnabledKey) }
     }
 
     /// Cursor defaults off — it's an opt-in source with a different billing model.
@@ -810,7 +794,7 @@ enum AppSettings {
     static var attentionEnabled: Bool { !enabledAttentionEvents.isEmpty }
 
     static var hasClaudeSource: Bool {
-        statuslineSourceEnabled || oauthSourceEnabled || claudeAISourceEnabled
+        statuslineSourceEnabled || oauthSourceEnabled
     }
 
     static var hasEnabledDataSource: Bool {

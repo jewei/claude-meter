@@ -797,7 +797,6 @@ struct PopoverView: View {
     private func skipOnboardingForExistingUsers() {
         guard !hasCompletedOnboarding else { return }
         if appState.snapshot != nil
-            || ClaudeAIKeychain.load() != nil
             || OAuthKeychain.load() != nil
             || OAuthKeychain.loadManual() != nil
             || CursorTokenStore.isStateDBPresent()

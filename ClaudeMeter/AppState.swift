@@ -52,6 +52,8 @@ final class AppState: ObservableObject {
     private var configRefreshTask: Task<Void, Never>?
     /// Periodic drain of Claude Code attention markers → native notifications.
     private var attentionTask: Task<Void, Never>?
+    /// Guards against overlapping `drainAttention` runs (re-entrant restarts).
+    private var attentionDraining = false
 
     private static let pollIntervalSeconds: TimeInterval = 60
     private static let oauthEnrichmentIntervalSeconds: TimeInterval = 300
@@ -66,6 +68,9 @@ final class AppState: ObservableObject {
     /// How often to drain attention markers and fire notifications — low-latency
     /// "your turn" without a file watcher; cheap (a stat of a usually-empty dir).
     private static let attentionDrainSeconds: TimeInterval = 2
+    /// While the poll loop isn't running (attention on, no data source), self-heal
+    /// the hooks every this-many drain ticks (~60 s at the 2 s cadence).
+    private static let attentionSelfHealEveryTicks = 30
 
     var primarySourceWarning: String? {
         lastPollResult?.warnings.first { $0.field == "claude.ai API" }?.message
@@ -272,16 +277,20 @@ final class AppState: ObservableObject {
         cachedOAuthEnrichment = nil
         hasEnabledDataSource = AppSettings.hasEnabledDataSource
         pipeline = AppState.makePipeline(store: store)
-        // Reconcile config bridges + attention regardless of canPoll, so adding a
-        // new account installs its hooks and attention keeps running even when no
-        // usage source is enabled.
-        refreshConfigBridges()
-        startAttentionWatcher()
         if canPoll && pollTask == nil {
+            // startPolling reconciles bridges + (re)starts the attention watcher.
             startPolling()
-        } else if !canPoll {
-            stopPolling()
-            isLoading = false
+        } else {
+            // Already polling, or no data source — reconcile bridges + re-evaluate the
+            // attention watcher (it runs regardless of canPoll) without churning the
+            // poll loop. (Avoids the double-invoke that calling startPolling too would
+            // cause.)
+            refreshConfigBridges()
+            startAttentionWatcher()
+            if !canPoll {
+                stopPolling()
+                isLoading = false
+            }
         }
     }
 
@@ -627,8 +636,14 @@ final class AppState: ObservableObject {
         let store = store
         let configuredDirs = AppGroupConfig.configuredConfigDirs
         let disabledKeys = Set(AppGroupConfig.disabledAccountKeys)
-        configRefreshTask?.cancel()
+        let previous = configRefreshTask
+        previous?.cancel()
         configRefreshTask = Task.detached(priority: .utility) {
+            // Wait for any prior install to finish first — cancellation is cooperative
+            // and the synchronous install can't be interrupted mid-write, so this
+            // guarantees two installs never write the same settings.json concurrently.
+            _ = await previous?.value
+            guard !Task.isCancelled else { return }
             let accounts = ConfigDirDiscovery.discover(
                 configuredDirs: configuredDirs, disabledKeys: disabledKeys)
             guard !Task.isCancelled else { return }
@@ -663,6 +678,7 @@ final class AppState: ObservableObject {
             return
         }
         attentionTask = Task { [weak self] in
+            var tick = 0
             while !Task.isCancelled {
                 guard let self else { break }
                 if self.powerMonitor?.isDisplayAsleep == true {
@@ -672,6 +688,13 @@ final class AppState: ObservableObject {
                     continue
                 }
                 await self.drainAttention()
+                tick += 1
+                // Self-heal the hooks periodically when the poll loop isn't running to
+                // do it (attention enabled but no usage data source) — so a dropped
+                // hook still recovers without a relaunch.
+                if tick % Self.attentionSelfHealEveryTicks == 0, !self.canPoll {
+                    self.refreshConfigBridges()
+                }
                 let interval =
                     self.powerMonitor?.isOnBattery == true
                     ? Self.attentionDrainSeconds * Self.batteryPollMultiplier
@@ -682,6 +705,12 @@ final class AppState: ObservableObject {
     }
 
     private func drainAttention() async {
+        // Guard against overlapping drains (e.g. an onWake/toggle restart while a
+        // prior drain is mid-flight) — they could double-emit the same marker.
+        guard !attentionDraining else { return }
+        attentionDraining = true
+        defer { attentionDraining = false }
+
         let now = Date()
         let disabled = Set(AppGroupConfig.disabledAccountKeys)
         let events = await Task.detached(priority: .utility) {
@@ -704,9 +733,10 @@ final class AppState: ObservableObject {
     }
 
     /// The display name for an account key — the user's override, else a prettified
-    /// key — matching how the popover labels accounts.
+    /// label — matching how the popover labels accounts (which strips the `claude-`
+    /// prefix / maps `claude` → "default" via `ConfigDirDiscovery.label`).
     static func friendlyAccountName(_ key: String) -> String {
-        AppGroupConfig.accountName(forKey: key) ?? friendlyName(key)
+        AppGroupConfig.accountName(forKey: key) ?? friendlyName(ConfigDirDiscovery.label(forKey: key))
     }
 
     private static func friendlyName(_ raw: String) -> String {

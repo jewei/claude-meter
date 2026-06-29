@@ -87,22 +87,22 @@ public enum SessionEventStore {
                 let mod =
                     (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
                     .contentModificationDate
-                // Unknown mtime → assume fresh (don't drop a real event to a stat blip).
-                let fresh = mod.map { now.timeIntervalSince($0) < maxAge } ?? true
-                if fresh {
-                    // Only consume on a successful parse; a transient read/parse
-                    // failure leaves the marker for the next tick (it's cleaned once
-                    // it ages past maxAge). Disabled accounts are consumed but NOT
-                    // emitted — that keeps their markers from piling up while still
-                    // never notifying for an account the user turned off.
-                    if let event = parse(
-                        file: file, accountKey: accountKey, capturedAt: mod ?? now)
-                    {
-                        if !isDisabled { events.append(event) }
-                        try? fm.removeItem(at: file)
-                    }
+                let age = mod.map { now.timeIntervalSince($0) }
+                // Unknown mtime → treat as fresh for *emitting* (don't drop a real
+                // event to a stat blip). capturedAt uses the file mtime when known so
+                // the notification id is stable across drains.
+                let isFresh = age.map { $0 < maxAge } ?? true
+                if let event = parse(file: file, accountKey: accountKey, capturedAt: mod ?? now) {
+                    // Disabled accounts are consumed but NOT emitted — keeps their
+                    // markers from piling up while never notifying for a disabled one.
+                    if isFresh, !isDisabled { events.append(event) }
+                    try? fm.removeItem(at: file)  // consume on success
                 } else {
-                    try? fm.removeItem(at: file)  // definitively stale → clean up
+                    // Parse failed: retry only a genuinely-fresh, known-mtime marker
+                    // (a transient mid-write read). A stale OR unknown-mtime failure is
+                    // cleaned up so a permanently-corrupt marker can't loop forever.
+                    let retain = (age.map { $0 < maxAge }) == true
+                    if !retain { try? fm.removeItem(at: file) }
                 }
             }
         }

@@ -19,6 +19,7 @@
 		69BE2128EB0F41ACBF84F636 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0B0219D0744A52A145A257 /* AppState.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* AppUpdater.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5D /* AppUpdater.swift */; };
 		C1D2E3F4A5B6C7D8E9F0A1B2 /* PowerMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2D3E4F5A6B7C8D9E0F1A2B3 /* PowerMonitor.swift */; };
+		D1E2F3A4B5C6D7E8F9A0B1C2 /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2E3F4A5B6C7D8E9F0A1B2C3 /* NetworkMonitor.swift */; };
 		6D0A86762E7646A0B0D33439 /* UsageCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 270C84D9D514496BA99A010A /* UsageCardView.swift */; };
 		86A371C31B9048C1BF2F59F8 /* PopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3715D40A5AE0421A91C5BED0 /* PopoverView.swift */; };
 		95F163B0444944EE8CCFFF1F /* ClaudeMeterCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7C7F0222F61B410EB83CB0D4 /* ClaudeMeterCore */; };
@@ -76,6 +77,7 @@
 		AC2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClaudeMeterWidget.entitlements; sourceTree = "<group>"; };
 		AD0B0219D0744A52A145A257 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		C2D3E4F5A6B7C8D9E0F1A2B3 /* PowerMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerMonitor.swift; sourceTree = "<group>"; };
+		D2E3F4A5B6C7D8E9F0A1B2C3 /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
 		AD2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "ClaudeMeterWidget-Info.plist"; sourceTree = "<group>"; };
 		AE2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		B5D38012F5D5476997394541 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
@@ -114,6 +116,7 @@
 				AD0B0219D0744A52A145A257 /* AppState.swift */,
 				A1B2C3D4E5F60718293A4B5D /* AppUpdater.swift */,
 				C2D3E4F5A6B7C8D9E0F1A2B3 /* PowerMonitor.swift */,
+				D2E3F4A5B6C7D8E9F0A1B2C3 /* NetworkMonitor.swift */,
 				A33698B9F9BB4AE4BDF69097 /* DesignTokens.swift */,
 				E8C6B61CE7B7508EC05E5944 /* PlayfulTheme.swift */,
 				C30CB82FB9488E6512B08E66 /* PlayfulComponents.swift */,
@@ -285,6 +288,7 @@
 				69BE2128EB0F41ACBF84F636 /* AppState.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* AppUpdater.swift in Sources */,
 				C1D2E3F4A5B6C7D8E9F0A1B2 /* PowerMonitor.swift in Sources */,
+				D1E2F3A4B5C6D7E8F9A0B1C2 /* NetworkMonitor.swift in Sources */,
 				328C7D858BAA4A39B59ED745 /* DesignTokens.swift in Sources */,
 				5B4D714E08E985C8B6585454 /* PlayfulTheme.swift in Sources */,
 				CDD0658EE9F301E3F88CDB39 /* PlayfulComponents.swift in Sources */,

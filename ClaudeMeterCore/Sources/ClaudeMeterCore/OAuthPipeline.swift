@@ -59,7 +59,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             }
             let refreshed: OAuthCredentials
             do {
-                refreshed = try await refreshToken(creds)
+                refreshed = try await Self.coalescedRefresh(creds)
             } catch OAuthError.refreshRejected {
                 OAuthRefreshGate.recordTerminal(refreshToken: creds.refreshToken)
                 OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
@@ -92,7 +92,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             }
             let refreshed: OAuthCredentials
             do {
-                refreshed = try await refreshToken(creds)
+                refreshed = try await Self.coalescedRefresh(creds)
             } catch OAuthError.refreshRejected {
                 OAuthRefreshGate.recordTerminal(refreshToken: creds.refreshToken)
                 OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
@@ -165,7 +165,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     ) {
         var creds = credentials
         if creds.isExpired {
-            creds = try await verifyRefresh(creds)
+            creds = try await coalescedRefresh(creds)
         }
         let (data, http) = try await transport.send(usageRequest(token: creds.accessToken))
         guard http.statusCode == 200 else {
@@ -217,7 +217,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             }
             let refreshed: OAuthCredentials
             do {
-                refreshed = try await verifyRefresh(creds)
+                refreshed = try await coalescedRefresh(creds)
             } catch OAuthError.refreshRejected {
                 OAuthRefreshGate.recordTerminal(refreshToken: creds.refreshToken)
                 return nil
@@ -287,7 +287,24 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         return try JSONDecoder().decode(UsageResponse.self, from: data)
     }
 
-    private static func verifyRefresh(_ credentials: OAuthCredentials) async throws
+    /// Refreshes the access token, **coalescing concurrent refreshes of the same
+    /// refresh token into one network request** (single-flight).
+    ///
+    /// Anthropic *rotates* the refresh token on each refresh, so two overlapping
+    /// refreshes of the same token — `poll` + `fetchEnrichment`, or a wake/reconnect
+    /// `refreshNow` racing the poll loop — would have the second send an
+    /// already-consumed token and get `invalid_grant`, terminally gating the account
+    /// until it changes (a spurious "logged out"). Coalescing makes the second caller
+    /// await the first's result and reuse the rotated token instead.
+    static func coalescedRefresh(_ credentials: OAuthCredentials) async throws -> OAuthCredentials {
+        try await OAuthRefreshCoordinator.refresh(token: credentials.refreshToken) {
+            try await performTokenRefresh(credentials)
+        }
+    }
+
+    /// The actual token-endpoint POST. Always go through `coalescedRefresh`, never
+    /// this directly, so concurrent refreshes share one request.
+    private static func performTokenRefresh(_ credentials: OAuthCredentials) async throws
         -> OAuthCredentials
     {
         var request = URLRequest(url: tokenURL)
@@ -374,29 +391,6 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.dateFormat = "EEE',' dd MMM yyyy HH':'mm':'ss zzz"
         return formatter.date(from: raw)
-    }
-
-    private func refreshToken(_ credentials: OAuthCredentials) async throws -> OAuthCredentials {
-        var request = URLRequest(url: Self.tokenURL)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode([
-            "grant_type": "refresh_token",
-            "refresh_token": credentials.refreshToken,
-            "client_id": Self.oauthClientId,
-        ])
-        let (data, http) = try await Self.transport.send(request)
-        guard http.statusCode == 200 else {
-            throw Self.isInvalidGrant(data: data, status: http.statusCode)
-                ? OAuthError.refreshRejected : OAuthError.refreshFailed
-        }
-        let resp = try JSONDecoder().decode(TokenResponse.self, from: data)
-        return OAuthCredentials(
-            accessToken: resp.accessToken,
-            refreshToken: resp.refreshToken ?? credentials.refreshToken,
-            expiresAt: Date().addingTimeInterval(Double(resp.expiresIn)),
-            subscriptionType: credentials.subscriptionType
-        )
     }
 
     // MARK: - Snapshot builder
@@ -623,6 +617,61 @@ enum OAuthRefreshGate {
         deadRefreshToken = nil
         transientBlockedUntil = nil
         transientFailureCount = 0
+    }
+}
+
+/// Coalesces concurrent token refreshes that share the same refresh token into a
+/// single in-flight request, so a rotating refresh token is consumed exactly once.
+/// Process-wide and lock-guarded, mirroring `OAuthSharedState`.
+enum OAuthRefreshCoordinator {
+    private static let lock = NSLock()
+    private static nonisolated(unsafe) var inFlight: [String: Task<OAuthCredentials, Error>] = [:]
+
+    private enum Acquisition {
+        case joined(Task<OAuthCredentials, Error>)
+        case owned(Task<OAuthCredentials, Error>)
+    }
+
+    /// Runs `perform` for `token`, or — if a refresh of the same token is already
+    /// running — joins it and returns its result. The check-and-register is atomic
+    /// under one lock hold, so exactly one `perform` runs per token at a time. The
+    /// lock is only ever held in synchronous helpers, never across the `await`.
+    static func refresh(
+        token: String,
+        perform: @escaping @Sendable () async throws -> OAuthCredentials
+    ) async throws -> OAuthCredentials {
+        switch acquire(token: token, perform: perform) {
+        case .joined(let existing):
+            return try await existing.value
+        case .owned(let task):
+            defer { release(token: token, task: task) }
+            return try await task.value
+        }
+    }
+
+    private static func acquire(
+        token: String,
+        perform: @escaping @Sendable () async throws -> OAuthCredentials
+    ) -> Acquisition {
+        lock.lock()
+        defer { lock.unlock() }
+        if let existing = inFlight[token] { return .joined(existing) }
+        let task = Task { try await perform() }  // scheduled, not awaited under lock
+        inFlight[token] = task
+        return .owned(task)
+    }
+
+    /// Clear only if still ours, so a newer refresh that replaced us survives.
+    private static func release(token: String, task: Task<OAuthCredentials, Error>) {
+        lock.lock()
+        if inFlight[token] == task { inFlight[token] = nil }
+        lock.unlock()
+    }
+
+    static func resetForTesting() {
+        lock.lock()
+        inFlight.removeAll()
+        lock.unlock()
     }
 }
 

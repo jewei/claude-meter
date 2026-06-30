@@ -63,6 +63,9 @@ public struct CostUsageScanner: Sendable {
             scanRoot(projectsPath, cutoff: cutoff, fm: fm, into: &byDayModel, isPartial: &isPartial)
         }
 
+        // Persist the (possibly updated) per-file cache so the next launch resumes
+        // instead of re-parsing every transcript from scratch.
+        cache.flush()
         return aggregate(byDayModel, isPartial: isPartial)
     }
 
@@ -105,22 +108,27 @@ public struct CostUsageScanner: Sendable {
                     let fileSize = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
 
                     let perFile: [DayModelKey: TokenTotals]
-                    if let cached = cache.cached(
-                        for: file.path, modDate: modDate, fileSize: fileSize)
-                    {
-                        perFile = cached.totals
-                        if cached.isPartial { isPartial = true }
-                    } else {
-                        let parsed = parse(file: file, fileSize: fileSize)
-                        perFile = parsed.totals
-                        if parsed.isPartial { isPartial = true }
-                        cache.store(
-                            path: file.path,
-                            modDate: modDate,
-                            fileSize: fileSize,
-                            value: parsed.totals,
-                            isPartial: parsed.isPartial
-                        )
+                    switch cache.lookup(path: file.path, modDate: modDate, fileSize: fileSize) {
+                    case .exact(let value, let wasPartial):
+                        perFile = value
+                        if wasPartial { isPartial = true }
+                    case .resumable(let parsedBytes, let committed, let wasPartial):
+                        // Append-only growth: re-parse only from the committed boundary
+                        // and merge the delta. Falls back to a full parse if the file
+                        // can't be re-read incrementally.
+                        let scan =
+                            parseIncremental(
+                                file: file, from: parsedBytes, committed: committed,
+                                wasPartial: wasPartial)
+                            ?? parseFull(file: file, fileSize: fileSize)
+                        perFile = scan.value
+                        if scan.isPartial { isPartial = true }
+                        cache.store(file: file.path, modDate: modDate, fileSize: fileSize, scan: scan)
+                    case .miss:
+                        let scan = parseFull(file: file, fileSize: fileSize)
+                        perFile = scan.value
+                        if scan.isPartial { isPartial = true }
+                        cache.store(file: file.path, modDate: modDate, fileSize: fileSize, scan: scan)
                     }
                     for (key, totals) in perFile where key.day >= cutoffDayString(cutoff) {
                         byDayModel[key, default: .zero].add(totals)
@@ -130,16 +138,30 @@ public struct CostUsageScanner: Sendable {
         }
     }
 
-    private struct ParseResult {
-        let totals: [DayModelKey: TokenTotals]
-        let isPartial: Bool
+    /// The result of scanning a byte range of a transcript: the finalized totals for
+    /// every message block *except* the trailing (possibly still-growing) one, the
+    /// byte offset where that trailing block starts, and the full `value`.
+    struct FileScan: Sendable {
+        /// Per-(day, model) totals for blocks strictly before `pendingStart` — safe to
+        /// carry across an append boundary because no later message can change them.
+        var committed: [DayModelKey: TokenTotals]
+        /// Byte offset (absolute in the file) of the trailing block's first line. An
+        /// append resumes here and re-derives the trailing block, so a streaming
+        /// message split across the boundary is re-read whole, never double-counted.
+        var pendingStart: UInt64
+        var isPartial: Bool
+        /// `committed` plus the trailing block — the answer for this file.
+        var value: [DayModelKey: TokenTotals]
     }
 
     // MARK: - Parsing
 
-    private func parse(file: URL, fileSize: UInt64) -> ParseResult {
+    /// Full parse from scratch (cache miss). Large files are tail-read once; after
+    /// that, appends resume from the committed boundary so the tail cap is a one-time
+    /// cold-start cost rather than a per-poll re-read.
+    private func parseFull(file: URL, fileSize: UInt64) -> FileScan {
         guard let handle = try? FileHandle(forReadingFrom: file) else {
-            return ParseResult(totals: [:], isPartial: false)
+            return FileScan(committed: [:], pendingStart: 0, isPartial: false, value: [:])
         }
         defer { try? handle.close() }
 
@@ -150,20 +172,83 @@ public struct CostUsageScanner: Sendable {
             : 0
         if readFrom > 0 { try? handle.seek(toOffset: readFrom) }
         guard let data = try? handle.readToEnd(), !data.isEmpty else {
-            return ParseResult(totals: [:], isPartial: tailRead)
+            return FileScan(committed: [:], pendingStart: fileSize, isPartial: tailRead, value: [:])
+        }
+        // A tail read may start mid-line; drop the first partial line.
+        return scanBytes(data, baseOffset: readFrom, dropFirstLine: readFrom > 0, wasPartial: tailRead)
+    }
+
+    /// Incremental parse of an append: re-read only `[offset, EOF)` and merge into the
+    /// previously-committed totals. Returns `nil` if the file can't be re-read (caller
+    /// falls back to a full parse). Correctness rests on `offset` being a block
+    /// boundary (the previous scan's `pendingStart`), so the trailing in-flight message
+    /// is fully inside the re-read range and its cumulative max is recomputed, not added
+    /// to a stale partial.
+    private func parseIncremental(
+        file: URL, from offset: UInt64, committed: [DayModelKey: TokenTotals], wasPartial: Bool
+    ) -> FileScan? {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        defer { try? handle.close() }
+        guard (try? handle.seek(toOffset: offset)) != nil,
+            let data = try? handle.readToEnd()
+        else { return nil }
+
+        let tail = scanBytes(data, baseOffset: offset, dropFirstLine: false, wasPartial: false)
+        var newCommitted = committed
+        for (key, totals) in tail.committed { newCommitted[key, default: .zero].add(totals) }
+        var value = committed
+        for (key, totals) in tail.value { value[key, default: .zero].add(totals) }
+        return FileScan(
+            committed: newCommitted,
+            pendingStart: tail.pendingStart,
+            isPartial: wasPartial || tail.isPartial,
+            value: value
+        )
+    }
+
+    /// Core line scanner over a byte buffer. Tracks message blocks by *contiguity*
+    /// (streaming chunks of one message are consecutive lines), keeping the trailing
+    /// block separate so an append can resume at its start. `baseOffset` is the file
+    /// offset of `data`'s first byte, used to report an absolute `pendingStart`.
+    private func scanBytes(
+        _ data: Data, baseOffset: UInt64, dropFirstLine: Bool, wasPartial: Bool
+    ) -> FileScan {
+        // Collect newline-delimited line ranges, plus any trailing line with no final
+        // newline. A genuinely in-progress (partial-JSON) trailing line just fails to
+        // decode and is skipped, and `pendingStart` still points at the last *decoded*
+        // block — so an append re-reads it whole next time.
+        var lineRanges: [Range<Int>] = []
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            guard let base = raw.baseAddress else { return }
+            let bytes = base.assumingMemoryBound(to: UInt8.self)
+            var start = 0
+            for i in 0..<raw.count where bytes[i] == 0x0A {
+                lineRanges.append(start..<i)
+                start = i + 1
+            }
+            if start < raw.count { lineRanges.append(start..<raw.count) }
         }
 
-        let text = String(decoding: data, as: UTF8.self)
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
-        // A tail read may start mid-line; drop the first partial line.
-        let body = readFrom > 0 ? lines.dropFirst() : lines.dropFirst(0)
-
-        // Dedup cumulative streaming chunks by message id + request id.
-        var unique: [String: ParsedMessage] = [:]
         let decoder = JSONDecoder()
-        for (lineIndex, line) in body.enumerated() {
-            guard line.contains("\"usage\""), line.contains("\"assistant\"") else { continue }
-            guard let lineData = line.data(using: .utf8),
+        var committed: [DayModelKey: TokenTotals] = [:]
+        var pendingKey: String?
+        var pendingDay = ""
+        var pendingModel = ""
+        var pendingTotals = TokenTotals.zero
+        var havePending = false
+        var pendingStart = baseOffset + UInt64(data.count)  // EOF when no trailing block
+
+        func flushPending() {
+            guard havePending else { return }
+            committed[DayModelKey(day: pendingDay, model: pendingModel), default: .zero]
+                .add(pendingTotals)
+        }
+
+        for (lineIndex, range) in lineRanges.enumerated() {
+            if dropFirstLine && lineIndex == 0 { continue }
+            let lineData = data.subdata(in: range)
+            guard let line = String(data: lineData, encoding: .utf8),
+                line.contains("\"usage\""), line.contains("\"assistant\""),
                 let entry = try? decoder.decode(TranscriptLine.self, from: lineData),
                 entry.type == "assistant",
                 let message = entry.message,
@@ -174,33 +259,34 @@ public struct CostUsageScanner: Sendable {
 
             let model = message.model ?? "unknown"
             let key = dedupeKey(
-                messageId: message.id,
-                requestId: entry.requestId,
-                lineIndex: lineIndex
-            )
+                messageId: message.id, requestId: entry.requestId, lineIndex: lineIndex)
             let totals = TokenTotals(
                 input: usage.inputTokens ?? 0,
                 output: usage.outputTokens ?? 0,
                 cacheRead: usage.cacheReadInputTokens ?? 0,
                 cacheWrite: usage.cacheCreationInputTokens ?? 0
             )
-            if var existing = unique[key] {
-                existing.totals.takeMax(totals)
-                unique[key] = existing
+
+            if havePending && key == pendingKey {
+                pendingTotals.takeMax(totals)  // cumulative chunk of the same message
             } else {
-                unique[key] = ParsedMessage(
-                    day: JournalReader.dayString(from: date),
-                    model: model,
-                    totals: totals
-                )
+                flushPending()
+                pendingKey = key
+                pendingDay = JournalReader.dayString(from: date)
+                pendingModel = model
+                pendingTotals = totals
+                pendingStart = baseOffset + UInt64(range.lowerBound)
+                havePending = true
             }
         }
 
-        var result: [DayModelKey: TokenTotals] = [:]
-        for msg in unique.values {
-            result[DayModelKey(day: msg.day, model: msg.model), default: .zero].add(msg.totals)
+        var value = committed
+        if havePending {
+            value[DayModelKey(day: pendingDay, model: pendingModel), default: .zero]
+                .add(pendingTotals)
         }
-        return ParseResult(totals: result, isPartial: tailRead)
+        return FileScan(
+            committed: committed, pendingStart: pendingStart, isPartial: wasPartial, value: value)
     }
 
     /// Stable dedupe key for streaming chunks. Lines without ids are keyed by
@@ -306,12 +392,6 @@ struct TokenTotals: Sendable, Equatable {
     }
 }
 
-private struct ParsedMessage {
-    let day: String
-    let model: String
-    var totals: TokenTotals
-}
-
 // MARK: - JSON shapes
 
 private struct TranscriptLine: Decodable {
@@ -345,48 +425,82 @@ private struct TranscriptUsage: Decodable {
 
 /// Caches per-file `(day, model) -> tokens` aggregations, invalidated by file
 /// mtime + size. Window filtering happens at read time so the same cache serves
-/// any `daysBack`.
+/// any `daysBack`. Persisted to disk (Application Support, `0o600`) so a relaunch
+/// resumes instead of re-parsing every transcript; an append re-parses only the
+/// grown tail from the stored `parsedBytes` boundary.
 public final class CostUsageCache: @unchecked Sendable {
-    public static let shared = CostUsageCache()
+    public static let shared = CostUsageCache(persistenceURL: CostUsageCache.defaultPersistenceURL)
+
+    /// Result of a per-file lookup.
+    enum Lookup {
+        /// File unchanged (mtime + size match) — totals served directly.
+        case exact(value: [DayModelKey: TokenTotals], isPartial: Bool)
+        /// File grew (append assumed) — resume from `parsedBytes`, merging into `committed`.
+        case resumable(parsedBytes: UInt64, committed: [DayModelKey: TokenTotals], isPartial: Bool)
+        /// No usable entry (absent, shrunk, or rewritten in place) — full parse needed.
+        case miss
+    }
 
     private struct Entry {
-        let modDate: Date
-        let fileSize: UInt64
-        let value: [DayModelKey: TokenTotals]
-        let isPartial: Bool
+        var modDate: Date
+        var fileSize: UInt64
+        var parsedBytes: UInt64
+        var committed: [DayModelKey: TokenTotals]
+        var value: [DayModelKey: TokenTotals]
+        var isPartial: Bool
     }
 
     private static let maxEntries = 512
+    private static let diskVersion = 1
 
+    private let persistenceURL: URL?
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
     private var accessOrder: [String] = []
+    private var didLoad: Bool
+    private var dirty = false
 
-    public init() {}
+    /// In-memory only (used by tests); no disk I/O. Use `shared` for the persisted cache.
+    public init() {
+        self.persistenceURL = nil
+        self.didLoad = true
+    }
 
-    func cached(for path: String, modDate: Date, fileSize: UInt64) -> (
-        totals: [DayModelKey: TokenTotals], isPartial: Bool
-    )? {
+    init(persistenceURL: URL?) {
+        self.persistenceURL = persistenceURL
+        self.didLoad = false
+    }
+
+    func lookup(path: String, modDate: Date, fileSize: UInt64) -> Lookup {
         lock.lock()
         defer { lock.unlock() }
-        guard let entry = entries[path], entry.modDate == modDate, entry.fileSize == fileSize else {
-            return nil
+        loadIfNeededLocked()
+        guard let entry = entries[path] else { return .miss }
+        if entry.modDate == modDate && entry.fileSize == fileSize {
+            touchLocked(path)
+            return .exact(value: entry.value, isPartial: entry.isPartial)
         }
-        touchLocked(path)
-        return (entry.value, entry.isPartial)
+        // Append-only growth is the only safe resume; a shrink or a same-size mtime
+        // change means the file was rewritten in place, so re-parse fully.
+        if fileSize > entry.fileSize && entry.parsedBytes <= entry.fileSize {
+            touchLocked(path)
+            return .resumable(
+                parsedBytes: entry.parsedBytes, committed: entry.committed,
+                isPartial: entry.isPartial)
+        }
+        return .miss
     }
 
     func store(
-        path: String,
-        modDate: Date,
-        fileSize: UInt64,
-        value: [DayModelKey: TokenTotals],
-        isPartial: Bool
+        file path: String, modDate: Date, fileSize: UInt64, scan: CostUsageScanner.FileScan
     ) {
         lock.lock()
+        loadIfNeededLocked()
         entries[path] = Entry(
-            modDate: modDate, fileSize: fileSize, value: value, isPartial: isPartial)
+            modDate: modDate, fileSize: fileSize, parsedBytes: scan.pendingStart,
+            committed: scan.committed, value: scan.value, isPartial: scan.isPartial)
         touchLocked(path)
+        dirty = true
         while accessOrder.count > Self.maxEntries, let oldest = accessOrder.first {
             accessOrder.removeFirst()
             entries.removeValue(forKey: oldest)
@@ -394,10 +508,117 @@ public final class CostUsageCache: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Writes the cache to disk if anything changed since the last flush.
+    func flush() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard dirty, let url = persistenceURL else { return }
+        persistLocked(to: url)
+        dirty = false
+    }
+
     private func touchLocked(_ path: String) {
         if let idx = accessOrder.firstIndex(of: path) {
             accessOrder.remove(at: idx)
         }
         accessOrder.append(path)
+    }
+
+    // MARK: - Persistence
+
+    static var defaultPersistenceURL: URL? {
+        guard
+            let base = try? FileManager.default.url(
+                for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil,
+                create: false)
+        else { return nil }
+        return
+            base
+            .appendingPathComponent("ClaudeMeter", isDirectory: true)
+            .appendingPathComponent("cost-usage-cache.json")
+    }
+
+    private func loadIfNeededLocked() {
+        guard !didLoad else { return }
+        didLoad = true
+        guard let url = persistenceURL,
+            let data = try? Data(contentsOf: url),
+            let disk = try? JSONDecoder().decode(DiskCache.self, from: data),
+            disk.version == Self.diskVersion
+        else { return }
+        let fm = FileManager.default
+        for de in disk.entries where fm.fileExists(atPath: de.path) {
+            entries[de.path] = Entry(
+                modDate: Date(timeIntervalSinceReferenceDate: de.modDate),
+                fileSize: de.fileSize,
+                parsedBytes: de.parsedBytes,
+                committed: Self.dict(from: de.committed),
+                value: Self.dict(from: de.value),
+                isPartial: de.isPartial)
+            accessOrder.append(de.path)
+        }
+    }
+
+    private func persistLocked(to url: URL) {
+        let disk = DiskCache(
+            version: Self.diskVersion,
+            entries: accessOrder.compactMap { path in
+                guard let e = entries[path] else { return nil }
+                return DiskEntry(
+                    path: path, modDate: e.modDate.timeIntervalSinceReferenceDate,
+                    fileSize: e.fileSize,
+                    parsedBytes: e.parsedBytes, isPartial: e.isPartial,
+                    committed: Self.rows(from: e.committed), value: Self.rows(from: e.value))
+            })
+        guard let data = try? JSONEncoder().encode(disk) else { return }
+        let fm = FileManager.default
+        try? fm.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        do {
+            try data.write(to: url, options: .atomic)
+            try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        } catch {
+            // Best-effort cache; a failed write just means we re-parse next launch.
+        }
+    }
+
+    private static func rows(from dict: [DayModelKey: TokenTotals]) -> [DiskRow] {
+        dict.map { key, t in
+            DiskRow(
+                d: key.day, m: key.model, i: t.input, o: t.output, cr: t.cacheRead, cw: t.cacheWrite)
+        }
+    }
+
+    private static func dict(from rows: [DiskRow]) -> [DayModelKey: TokenTotals] {
+        var out: [DayModelKey: TokenTotals] = [:]
+        for r in rows {
+            out[DayModelKey(day: r.d, model: r.m)] = TokenTotals(
+                input: r.i, output: r.o, cacheRead: r.cr, cacheWrite: r.cw)
+        }
+        return out
+    }
+
+    private struct DiskCache: Codable {
+        var version: Int
+        var entries: [DiskEntry]
+    }
+
+    private struct DiskEntry: Codable {
+        var path: String
+        var modDate: Double
+        var fileSize: UInt64
+        var parsedBytes: UInt64
+        var isPartial: Bool
+        var committed: [DiskRow]
+        var value: [DiskRow]
+    }
+
+    private struct DiskRow: Codable {
+        var d: String
+        var m: String
+        var i: Int
+        var o: Int
+        var cr: Int
+        var cw: Int
     }
 }

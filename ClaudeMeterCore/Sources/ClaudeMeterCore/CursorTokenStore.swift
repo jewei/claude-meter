@@ -146,6 +146,29 @@ public enum CursorTokenStore {
         process.standardOutput = stdout
         process.standardError = stderr
 
+        // Drain both pipes on their own queues *concurrently with the child*, so a
+        // child that emits more than the ~64 KB pipe buffer can't block on write and
+        // wedge waitUntilExit() (a deadlock the post-exit read pattern is prone to).
+        // readDataToEndOfFile() returns when the child closes its end on exit.
+        final class CapturedData: @unchecked Sendable {
+            private let lock = NSLock()
+            private var data = Data()
+            func set(_ value: Data) { lock.lock(); data = value; lock.unlock() }
+            var value: Data { lock.lock(); defer { lock.unlock() }; return data }
+        }
+        let outBuffer = CapturedData()
+        let drainGroup = DispatchGroup()
+        drainGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            outBuffer.set(stdout.fileHandleForReading.readDataToEndOfFile())
+            drainGroup.leave()
+        }
+        drainGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            _ = stderr.fileHandleForReading.readDataToEndOfFile()
+            drainGroup.leave()
+        }
+
         let semaphore = DispatchSemaphore(value: 0)
         final class TerminationBox: @unchecked Sendable { var status: Int32 = -1 }
         let box = TerminationBox()
@@ -160,12 +183,16 @@ public enum CursorTokenStore {
             box.status = process.terminationStatus
         }
         if semaphore.wait(timeout: .now() + processTimeoutSeconds) == .timedOut {
+            // Escalate: SIGTERM, then SIGKILL if the child ignores the polite request.
             process.terminate()
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.4) {
+                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            }
             return nil
         }
         guard box.status == 0 else { return nil }
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        _ = stderr.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)
+        // The child has exited, so both pipes are at EOF; wait for the drains to flush.
+        drainGroup.wait()
+        return String(data: outBuffer.value, encoding: .utf8)
     }
 }

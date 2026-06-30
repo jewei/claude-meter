@@ -45,6 +45,7 @@ final class AppState: ObservableObject {
     /// (e.g. a "refueled" for a window that reset while the app was quit).
     private var didPollInSession = false
     private var powerMonitor: PowerMonitor?
+    private var networkMonitor: NetworkMonitor?
     private var lastOAuthEnrichmentAt: Date?
     private var cachedOAuthEnrichment: OAuthPipeline.OAuthEnrichment?
     /// In-flight statusline-bridge install task; cancelled and replaced on each
@@ -56,6 +57,12 @@ final class AppState: ObservableObject {
     private var attentionDraining = false
 
     private static let pollIntervalSeconds: TimeInterval = 60
+    /// Wall-clock backstop for a single tier read. Generous — above the worst-case
+    /// legitimate poll (OAuth refresh + usage GET + transient retries, ~40 s) — so it
+    /// only ever trips on a genuinely wedged read, never a slow-but-progressing one. A
+    /// trip throws so `isLoading` resets and the loop recovers on the next interval
+    /// instead of freezing every later refresh.
+    private static let pollTimeoutSeconds: TimeInterval = 60
     private static let oauthEnrichmentIntervalSeconds: TimeInterval = 300
     private static let rebuildDebounceMilliseconds: UInt64 = 300
     /// How much to stretch the poll cadence while on battery, to cut idle drain
@@ -127,6 +134,13 @@ final class AppState: ObservableObject {
             self?.startAttentionWatcher()
         }
         self.powerMonitor = monitor
+        let network = NetworkMonitor()
+        network.onReconnect = { [weak self] in
+            // Connectivity regained — refresh now instead of waiting out the
+            // remaining poll interval. Mirrors PowerMonitor.onWake.
+            self?.refreshNow()
+        }
+        self.networkMonitor = network
         startPolling()
         Task { await notificationEngine.requestAuthorizationIfNeeded() }
     }
@@ -392,9 +406,9 @@ final class AppState: ObservableObject {
         let now = Date()
         async let serviceStatusTask: Void = refreshServiceStatus(generation: generation)
         do {
-            let result = try await Task.detached {
+            let result = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
                 try await pipeline.poll(now: now)
-            }.value
+            }
             await serviceStatusTask
             guard generation == pipelineGeneration, canPoll else { return }
 
@@ -426,6 +440,11 @@ final class AppState: ObservableObject {
                 await notificationEngine.process(
                     snapshot: snap,
                     previous: didPollInSession ? previous : nil,
+                    // Recovery diffs against the real previous even on the first poll, so
+                    // a window that reset while the app was quit still fires "refueled"
+                    // (escalation stays suppressed by the nil above to avoid a stale
+                    // cross-window crossing).
+                    recoveryBaseline: previous,
                     isStale: claudeIsStale || snap.state.isStale
                 )
                 didPollInSession = true
@@ -453,9 +472,9 @@ final class AppState: ObservableObject {
         let provider = cursorProvider
         let now = Date()
         do {
-            let usage = try await Task.detached {
+            let usage = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
                 try await provider.fetchUsage(now: now)
-            }.value
+            }
             guard generation == pipelineGeneration,
                 canPoll,
                 AppSettings.cursorSourceEnabled

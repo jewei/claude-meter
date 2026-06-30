@@ -78,6 +78,7 @@ actor NotificationEngine {
     func process(
         snapshot: ClaudeUsageSnapshot,
         previous: ClaudeUsageSnapshot?,
+        recoveryBaseline: ClaudeUsageSnapshot?,
         isStale: Bool
     ) async {
         guard !isStale, isEnabled(), await isAuthorized() else { return }
@@ -88,6 +89,7 @@ actor NotificationEngine {
         let pending = NotificationPolicy.triggers(
             snapshot: snapshot,
             previous: previous,
+            recoveryBaseline: recoveryBaseline,
             thresholds: thresholds,
             now: now
         )

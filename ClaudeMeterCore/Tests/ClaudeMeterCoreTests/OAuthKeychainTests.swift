@@ -31,4 +31,40 @@ struct OAuthKeychainTests {
             """
         #expect(OAuthKeychain.parseForTesting(json) == nil)
     }
+
+    @Test func picksNewestHashedOverOlderLegacyAndIgnoresUnrelated() {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let candidates: [(service: String, modified: Date)] = [
+            ("Claude Code-credentials", base.addingTimeInterval(10)),  // legacy, but stale
+            ("Claude Code-credentials-abc312d1", base.addingTimeInterval(20)),
+            ("Claude Code-credentials-420899a1", base.addingTimeInterval(50)),  // newest overall
+            ("Claude Code-credentials-4631b25c", base.addingTimeInterval(30)),
+            ("com.jewei.claudemeter-oauth", base.addingTimeInterval(9999)),  // unrelated: ignored
+        ]
+        #expect(
+            OAuthKeychain.newestCredentialService(among: candidates)
+                == "Claude Code-credentials-420899a1"
+        )
+    }
+
+    @Test func picksLegacyWhenItIsTheNewestCredential() {
+        // The in-place-upgrade case the single-pass read fixes: a *fresh* legacy entry
+        // must win over an older hashed one (and vice-versa is covered above).
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let candidates: [(service: String, modified: Date)] = [
+            ("Claude Code-credentials", base.addingTimeInterval(99)),  // freshly refreshed legacy
+            ("Claude Code-credentials-abc312d1", base.addingTimeInterval(20)),  // stale hashed
+        ]
+        #expect(OAuthKeychain.newestCredentialService(among: candidates) == "Claude Code-credentials")
+    }
+
+    @Test func noCredentialServiceWhenOnlyUnrelatedPresent() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let candidates: [(service: String, modified: Date)] = [
+            ("Claude Safe Storage", now),
+            ("com.jewei.claudemeter-oauth", now),
+        ]
+        #expect(OAuthKeychain.newestCredentialService(among: candidates) == nil)
+        #expect(OAuthKeychain.newestCredentialService(among: []) == nil)
+    }
 }

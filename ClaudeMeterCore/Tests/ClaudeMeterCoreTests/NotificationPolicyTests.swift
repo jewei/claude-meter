@@ -108,6 +108,27 @@ struct NotificationPolicyTests {
         #expect(!triggers.contains { $0.level == "recovered" })
     }
 
+    @Test("Durable recovery: refuels on first poll via recoveryBaseline even with nil previous")
+    func durableRecoveryAcrossRestart() {
+        // First poll of a session passes `previous: nil` to suppress stale escalation,
+        // but the persisted baseline (was critical) still drives a refuel now that the
+        // window has reset back to normal.
+        let baseline = snapshot(session: 96)
+        let current = snapshot(session: 30)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: nil, recoveryBaseline: baseline, now: fixedNow)
+        #expect(triggers.contains { $0.scope == "session" && $0.level == "recovered" })
+        #expect(!triggers.contains { $0.level == "critical" || $0.level == "warning" })
+    }
+
+    @Test("No durable recovery when both previous and baseline are absent")
+    func noRecoveryWithoutBaseline() {
+        let current = snapshot(session: 30)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: nil, recoveryBaseline: .some(nil), now: fixedNow)
+        #expect(!triggers.contains { $0.level == "recovered" })
+    }
+
     /// A two-account snapshot whose top-level mirrors the `active` account.
     private func multiSnap(active: String, aSession: Double, bSession: Double)
         -> ClaudeUsageSnapshot

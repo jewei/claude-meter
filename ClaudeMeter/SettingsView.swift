@@ -948,6 +948,7 @@ private struct NotificationsSettingsTab: View {
     @AppStorage("criticalThresholdPercent") private var criticalThresholdPercent = 95.0
     @AppStorage(AppSettings.attentionStopEnabledKey) private var attentionStop = false
     @AppStorage(AppSettings.attentionNotificationEnabledKey) private var attentionNotification = false
+    @AppStorage(AppSettings.attentionLimitHitEnabledKey) private var attentionLimitHit = false
 
     var body: some View {
         ScrollView {
@@ -980,14 +981,20 @@ private struct NotificationsSettingsTab: View {
                         "Notify when Claude needs permission",
                         "Covers permission prompts and idle waits.",
                         $attentionNotification)
+                    Divider().overlay(Color.pfCardBorder)
+                    attentionRow(
+                        "Notify when Claude hits a limit",
+                        "Ground-truth alert the moment a turn is blocked by a rate limit or billing issue — and the meter re-polls immediately.",
+                        $attentionLimitHit)
                     SettingsHelperBox(
-                        "Installs lightweight Stop / Notification hooks into each Claude Code account; turning these off removes them. Sound, Focus, and history are handled by macOS — tune them in System Settings → Notifications → Claude Meter."
+                        "Installs lightweight Stop / Notification / StopFailure hooks into each Claude Code account; turning these off removes them. Sound, Focus, and history are handled by macOS — tune them in System Settings → Notifications → Claude Meter."
                     )
                 }
                 .padding(16)
                 .chunkyCard(radius: 18)
                 .onChange(of: attentionStop) { _, _ in appState.attentionSettingsChanged() }
                 .onChange(of: attentionNotification) { _, _ in appState.attentionSettingsChanged() }
+                .onChange(of: attentionLimitHit) { _, _ in appState.attentionSettingsChanged() }
 
                 Text("Severity Thresholds")
                     .font(PFont.display(26, .bold))

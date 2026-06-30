@@ -54,6 +54,15 @@ actor NotificationEngine {
             title = "Claude needs you"
             let detail = (event.message?.isEmpty == false) ? event.message! : "Waiting for input"
             body = "\(detail) · \(project) · \(accountLabel)"
+        case .stopFailure:
+            title = "Claude blocked 🚫"
+            let detail: String
+            switch event.errorType {
+            case "rate_limit": detail = "Rate limit hit"
+            case "billing_error": detail = "Billing issue"
+            default: detail = "Limit hit"
+            }
+            body = "\(detail) · \(project) · \(accountLabel)"
         case .other:
             return
         }

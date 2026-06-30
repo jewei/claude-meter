@@ -1,12 +1,14 @@
 import Foundation
 
 /// One attention event emitted by a Claude Code hook (see `HookBridge`): the agent
-/// finished a turn (`Stop`) or needs the user (`Notification`). Parsed from a marker
-/// file under `~/.claude-meter/events/<accountKey>/<session_id>.<event>.json`.
+/// finished a turn (`Stop`), needs the user (`Notification`), or a turn died on an
+/// API error (`StopFailure` — e.g. a rate-limit block). Parsed from a marker file
+/// under `~/.claude-meter/events/<accountKey>/<session_id>.<event>.json`.
 public struct SessionEvent: Sendable, Equatable {
     public enum Kind: String, Sendable {
         case stop = "Stop"
         case notification = "Notification"
+        case stopFailure = "StopFailure"
         case other = "other"
     }
 
@@ -18,19 +20,33 @@ public struct SessionEvent: Sendable, Equatable {
     public let cwd: String?
     /// `Notification` message text (e.g. "Claude needs your permission to use Bash").
     public let message: String?
+    /// `StopFailure` error classification (e.g. `rate_limit`, `overloaded`, `billing_error`).
+    public let errorType: String?
     /// File modification time — when the hook fired.
     public let capturedAt: Date
 
     public init(
         kind: Kind, accountKey: String, sessionId: String?, cwd: String?, message: String?,
-        capturedAt: Date
+        errorType: String? = nil, capturedAt: Date
     ) {
         self.kind = kind
         self.accountKey = accountKey
         self.sessionId = sessionId
         self.cwd = cwd
         self.message = message
+        self.errorType = errorType
         self.capturedAt = capturedAt
+    }
+
+    /// API errors that mean the user's own account was *blocked* (quota/payment) —
+    /// the only `StopFailure` cases worth alerting on, since claude-meter is a
+    /// rate-limit meter. Excludes `overloaded` (server-side 529, not a user limit)
+    /// and everything else (auth, invalid request, server error) as noise.
+    public static let blockingErrorTypes: Set<String> = ["rate_limit", "billing_error"]
+
+    /// True for a `StopFailure` whose error means the user hit a limit/billing block.
+    public var isLimitBlock: Bool {
+        kind == .stopFailure && errorType.map(SessionEvent.blockingErrorTypes.contains) == true
     }
 
     /// Last path component of `cwd` — the project name, for display.
@@ -128,6 +144,7 @@ public enum SessionEventStore {
             sessionId: json["session_id"] as? String,
             cwd: cwd,
             message: json["message"] as? String,
+            errorType: json["error_type"] as? String,
             capturedAt: capturedAt
         )
     }
@@ -138,6 +155,7 @@ extension SessionEvent.Kind {
         switch raw {
         case "Stop": self = .stop
         case "Notification": self = .notification
+        case "StopFailure": self = .stopFailure
         default: self = .other
         }
     }

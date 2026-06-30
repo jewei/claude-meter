@@ -33,7 +33,7 @@ public enum HookBridge: Sendable {
 
     /// The hook events this bridge installs. Anything else in `settings.json`
     /// `hooks` is left untouched.
-    public static let managedEvents = ["Stop", "Notification"]
+    public static let managedEvents = ["Stop", "Notification", "StopFailure"]
 
     // MARK: - Hook snippet
 

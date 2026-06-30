@@ -709,12 +709,22 @@ final class AppState: ObservableObject {
         guard !events.isEmpty else { return }
 
         let engine = notificationEngine
+        var sawLimitBlock = false
         for event in events where AppSettings.enabledAttentionEvents.contains(event.kind.rawValue) {
+            // A StopFailure only alerts when it's a real limit/billing block — auth,
+            // server, and invalid-request failures are noise for a rate-limit meter.
+            if event.kind == .stopFailure {
+                guard event.isLimitBlock else { continue }
+                sawLimitBlock = true
+            }
             let account = Self.friendlyAccountName(event.accountKey)
             // Fire-and-forget: a slow/wedged notification call must never stall the
             // drain loop.
             Task { await engine.postAttention(event: event, accountLabel: account) }
         }
+        // A limit block is ground truth that usage maxed out — re-poll now so the
+        // meter reflects it immediately instead of waiting for the next interval.
+        if sawLimitBlock { refreshNow() }
     }
 
     /// Clears leftover markers when attention is disabled.
@@ -773,6 +783,7 @@ enum AppSettings {
 
     static let attentionStopEnabledKey = "attentionStopEnabled"
     static let attentionNotificationEnabledKey = "attentionNotificationEnabled"
+    static let attentionLimitHitEnabledKey = "attentionLimitHitEnabled"
 
     /// Notify when Claude finishes a turn. Opt-in (installs a `Stop` hook).
     static var attentionStopEnabled: Bool {
@@ -786,11 +797,19 @@ enum AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: attentionNotificationEnabledKey) }
     }
 
+    /// Notify when a turn dies on a rate-limit/billing block. Opt-in (`StopFailure`
+    /// hook) — ground-truth signal that the account hit a limit.
+    static var attentionLimitHitEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: attentionLimitHitEnabledKey) }
+        set { UserDefaults.standard.set(newValue, forKey: attentionLimitHitEnabledKey) }
+    }
+
     /// The hook events the user enabled — drives `HookBridge` install + the watcher.
     static var enabledAttentionEvents: Set<String> {
         var events = Set<String>()
         if attentionStopEnabled { events.insert("Stop") }
         if attentionNotificationEnabled { events.insert("Notification") }
+        if attentionLimitHitEnabled { events.insert("StopFailure") }
         return events
     }
 

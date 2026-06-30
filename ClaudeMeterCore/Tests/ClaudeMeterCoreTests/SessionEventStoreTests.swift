@@ -54,6 +54,28 @@ struct SessionEventStoreTests {
         #expect(note.projectName == "other")
     }
 
+    @Test func parsesStopFailureErrorTypeAndClassifiesLimitBlock() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try writeMarker(
+            ["hook_event_name": "StopFailure", "session_id": "s1", "error_type": "rate_limit"],
+            account: "claude", name: "s1.StopFailure", mtime: now, in: root)
+        try writeMarker(
+            ["hook_event_name": "StopFailure", "session_id": "s2", "error_type": "server_error"],
+            account: "claude", name: "s2.StopFailure", mtime: now, in: root)
+
+        let events = SessionEventStore.drain(eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120)
+            .sorted { ($0.sessionId ?? "") < ($1.sessionId ?? "") }
+        #expect(events.count == 2)
+
+        #expect(events[0].kind == .stopFailure)
+        #expect(events[0].errorType == "rate_limit")
+        #expect(events[0].isLimitBlock)  // rate_limit → real block
+
+        #expect(events[1].errorType == "server_error")
+        #expect(!events[1].isLimitBlock)  // server_error → noise, no alert
+    }
+
     @Test func drainConsumesMarkers() throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }

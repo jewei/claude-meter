@@ -434,6 +434,11 @@ final class AppState: ObservableObject {
                 await notificationEngine.process(
                     snapshot: snap,
                     previous: didPollInSession ? previous : nil,
+                    // Recovery diffs against the real previous even on the first poll, so
+                    // a window that reset while the app was quit still fires "refueled"
+                    // (escalation stays suppressed by the nil above to avoid a stale
+                    // cross-window crossing).
+                    recoveryBaseline: previous,
                     isStale: claudeIsStale || snap.state.isStale
                 )
                 didPollInSession = true

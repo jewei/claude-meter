@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3] - 2026-06-30
+
 ### Removed
 
 - The **Claude.ai web-session source** (Settings → Data) and its "Import from
@@ -221,7 +223,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.2...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.3...HEAD
+[2.3]: https://github.com/jewei/claude-meter/compare/v2.2...v2.3
 [2.2]: https://github.com/jewei/claude-meter/compare/v2.1...v2.2
 [2.1]: https://github.com/jewei/claude-meter/compare/v2.0...v2.1
 [2.0]: https://github.com/jewei/claude-meter/compare/v1.3...v2.0

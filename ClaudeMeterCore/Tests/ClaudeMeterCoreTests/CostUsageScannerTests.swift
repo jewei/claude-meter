@@ -133,6 +133,102 @@ struct CostUsageScannerTests {
         #expect(result.isEmpty)
     }
 
+    /// Appends `lines` to an existing transcript on their own lines.
+    private func append(_ lines: [String], to file: URL) throws {
+        let handle = try FileHandle(forWritingTo: file)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(("\n" + lines.joined(separator: "\n")).utf8))
+    }
+
+    @Test("Incremental resume after append matches a full re-parse (no boundary double-count)")
+    func incrementalResumeMatchesFullParse() throws {
+        let now = Date()
+        let ts = iso(now)
+        let model = "claude-sonnet-4-6"
+        // m0 is a finalized earlier message; m1 is the trailing in-flight message whose
+        // chunks straddle the resume boundary on the next scan.
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let project = root.appendingPathComponent("p", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let file = project.appendingPathComponent("s.jsonl")
+        try [
+            assistantLine(id: "m0", requestId: "r0", model: model, input: 10, output: 1, ts: ts),
+            assistantLine(id: "m1", requestId: "r1", model: model, input: 100, output: 10, ts: ts),
+            assistantLine(id: "m1", requestId: "r1", model: model, input: 200, output: 20, ts: ts),
+        ].joined(separator: "\n").data(using: .utf8)!.write(to: file)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // First scan seeds the cache; m1 is the pending (trailing) block.
+        let cache = CostUsageCache()
+        let scanner = CostUsageScanner(projectsPath: root, cache: cache)
+        _ = scanner.scan(daysBack: 7, now: now)
+
+        // Append m1's final chunk (cumulative 300) and a new message m2.
+        try append(
+            [
+                assistantLine(id: "m1", requestId: "r1", model: model, input: 300, output: 30, ts: ts),
+                assistantLine(id: "m2", requestId: "r2", model: model, input: 50, output: 5, ts: ts),
+            ], to: file)
+
+        let incremental = scanner.scan(daysBack: 7, now: now)
+
+        // Independent from-scratch full parse of the final file.
+        let full = CostUsageScanner(projectsPath: root, cache: CostUsageCache())
+            .scan(daysBack: 7, now: now)
+
+        let inc = try #require(incremental.models.first { $0.name == model })
+        let ref = try #require(full.models.first { $0.name == model })
+        // m0(10) + m1 max(300) + m2(50) = 360. A naive additive merge would over-count
+        // m1 (200 + 300) and report 560.
+        #expect(inc.inputTokens == 360)
+        #expect(inc.inputTokens == ref.inputTokens)
+        #expect(inc.outputTokens == ref.outputTokens)
+    }
+
+    @Test("Cache persists to disk and a fresh cache serves an unchanged file as an exact hit")
+    func diskPersistenceRoundTrip() throws {
+        let now = Date()
+        let ts = iso(now)
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let project = root.appendingPathComponent("p", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let file = project.appendingPathComponent("s.jsonl")
+        try assistantLine(
+            id: "a", requestId: "1", model: "claude-opus-4-8", input: 1_000_000, output: 0, ts: ts)
+            .data(using: .utf8)!.write(to: file)
+        let diskURL = root.appendingPathComponent("cache.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // Scan with a disk-backed cache, which flushes on completion.
+        let first = CostUsageScanner(projectsPath: root, cache: CostUsageCache(persistenceURL: diskURL))
+            .scan(daysBack: 7, now: now)
+        #expect(FileManager.default.fileExists(atPath: diskURL.path))
+
+        // A brand-new cache pointed at the same file must load the entry and serve the
+        // unchanged transcript as an exact hit — no re-parse. Derive the path via
+        // enumeration so it matches the canonical form the scanner (and thus the cache)
+        // stores; on macOS temp dirs the manual `/var/...` path differs from `/private/var/...`.
+        let canonical = try #require(
+            FileManager.default.contentsOfDirectory(at: project, includingPropertiesForKeys: nil)
+                .first { $0.pathExtension == "jsonl" })
+        let attrs = try FileManager.default.attributesOfItem(atPath: canonical.path)
+        let modDate = try #require(attrs[.modificationDate] as? Date)
+        let size = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
+        let reloaded = CostUsageCache(persistenceURL: diskURL)
+        guard case .exact(let value, _) = reloaded.lookup(
+            path: canonical.path, modDate: modDate, fileSize: size)
+        else {
+            Issue.record("expected an exact cache hit after reload")
+            return
+        }
+        let total = value.values.reduce(0) { $0 + $1.input }
+        #expect(total == 1_000_000)
+        #expect(first.models.first?.inputTokens == 1_000_000)
+    }
+
     @Test func unionsMultipleProjectRootsAndIgnoresUnreadableRoot() throws {
         let now = Date()
         let ts = iso(now)

@@ -14,13 +14,23 @@ account, with optional notifications.
 - **Playful popover** — a combined-health hero and per-account **activity rings** (weekly + 5-hour), framed as energy remaining — plus a desktop widget, threshold notifications, launch at login, and auto-updates.
 - **Multi-account aware** — run several `CLAUDE_CONFIG_DIR` accounts side by side (rate limits are per-account); give each a display name and plan badge.
 - **Zero-config with Claude Code** — installs a transparent statusline bridge; no API keys needed.
-- **Optional sources** — Claude Code OAuth usage API, the claude.ai usage API, and (opt-in) Cursor billing-period usage.
+- **Optional sources** — Claude Code OAuth usage API and (opt-in) Cursor billing-period usage.
 - **Private** — local-first; Claude credentials live in the macOS Keychain. Cursor reads the locally signed-in Cursor app's token store (read-only); nothing is logged.
 
 ## Requirements
 
 - macOS 14+
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (for the zero-config statusline source)
+
+## Install
+
+1. Download the latest **`ClaudeMeter-<version>.dmg`** from the
+   [releases page](https://github.com/jewei/claude-meter/releases/latest).
+2. Open the DMG and drag **Claude Meter** into your **Applications** folder.
+3. Launch it — the meter appears in your menu bar (there's no Dock icon).
+
+The build is Developer-ID signed and notarized by Apple, so it opens without
+Gatekeeper warnings. Updates are delivered automatically via Sparkle.
 
 ## Build
 

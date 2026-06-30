@@ -208,7 +208,7 @@ struct PopoverView: View {
             return sorted.map { acc in
                 AccountCardModel(
                     id: acc.id,
-                    label: AppGroupConfig.accountName(forKey: acc.id) ?? friendlyName(acc.label),
+                    label: AppGroupConfig.accountName(forKey: acc.id) ?? acc.label.friendlyAccountLabel,
                     plan: AppGroupConfig.accountPlan(forKey: acc.id)
                         ?? (acc.isActive ? snap.account?.plan : acc.account?.plan),
                     subtitle: acc.isActive ? snap.account?.email : acc.account?.email,
@@ -234,15 +234,6 @@ struct PopoverView: View {
         ]
     }
 
-    /// "it-oneone" → "It Oneone", "default" → "Default".
-    private func friendlyName(_ raw: String) -> String {
-        let spaced = raw.replacingOccurrences(of: "-", with: " ")
-            .replacingOccurrences(of: "_", with: " ")
-        return spaced.split(separator: " ")
-            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-            .joined(separator: " ")
-    }
-
     // MARK: - Extra usage (pay-as-you-go overage)
 
     private func extraUsageCard(_ extra: ExtraUsage) -> some View {
@@ -266,7 +257,7 @@ struct PopoverView: View {
                     .monospacedDigit()
             }
             if let pct = extra.percentUsed {
-                capsuleBar(fraction: min(1, pct / 100), color: .pfEnergyFull)
+                EnergyBar(fraction: min(1, pct / 100), color: .pfEnergyFull, height: 12)
             }
         }
         .padding(.horizontal, 14)
@@ -460,7 +451,7 @@ struct PopoverView: View {
                     .foregroundStyle(band == .full ? Color.pfInk : tint)
                     .monospacedDigit()
             }
-            capsuleBar(fraction: (usage.clampedPercent ?? 0) / 100, color: tint)
+            EnergyBar(fraction: (usage.clampedPercent ?? 0) / 100, color: tint, height: 12)
             if let subtitle = cursorSubtitle(usage) {
                 Text(subtitle)
                     .font(PFont.body(11, .semibold))
@@ -489,22 +480,6 @@ struct PopoverView: View {
     }()
 
     /// Simple depleting/filling capsule bar with an inner top gloss.
-    private func capsuleBar(fraction: Double, color: Color) -> some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.pfTrack)
-                Capsule()
-                    .fill(color)
-                    .frame(width: max(0, geo.size.width * min(1, max(0, fraction))))
-                    .overlay(alignment: .top) {
-                        Capsule().fill(Color.white.opacity(0.4))
-                            .frame(height: 2).padding(.horizontal, 3).padding(.top, 2)
-                    }
-            }
-        }
-        .frame(height: 12)
-    }
-
     // MARK: - Non-data states
 
     private func statusState(

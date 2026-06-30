@@ -47,15 +47,11 @@ public struct HTTPRetryPolicy: Sendable {
 
     private static let idempotentMethods: Set<String> = ["GET", "HEAD", "OPTIONS"]
 
-    func shouldRetry(status: Int, attempt: Int, method: String) -> Bool {
-        guard attempt < maxRetries, retryableStatus.contains(status) else { return false }
-        guard idempotentMethodsOnly else { return true }
-        return Self.idempotentMethods.contains(method.uppercased())
-    }
-
-    func shouldRetryTransport(attempt: Int, method: String) -> Bool {
-        guard maxRetries > 0 else { return false }
+    /// `status: nil` is a transport-level failure (retry any transient error);
+    /// a non-nil status retries only when it's in `retryableStatus`.
+    func shouldRetry(attempt: Int, method: String, status: Int? = nil) -> Bool {
         guard attempt < maxRetries else { return false }
+        if let status, !retryableStatus.contains(status) { return false }
         guard idempotentMethodsOnly else { return true }
         return Self.idempotentMethods.contains(method.uppercased())
     }
@@ -112,9 +108,9 @@ public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
                 }
                 guard
                     retry.shouldRetry(
-                        status: http.statusCode,
                         attempt: attempt,
-                        method: request.httpMethod ?? "GET"
+                        method: request.httpMethod ?? "GET",
+                        status: http.statusCode
                     )
                 else {
                     return (data, http)
@@ -125,7 +121,7 @@ public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
                 attempt += 1
             } catch let error as URLError
                 where Self.isRetryableTransportError(error)
-                && retry.shouldRetryTransport(attempt: attempt, method: request.httpMethod ?? "GET")
+                && retry.shouldRetry(attempt: attempt, method: request.httpMethod ?? "GET")
             {
                 let wait = retry.delay(attempt: attempt, retryAfter: nil)
                 if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }

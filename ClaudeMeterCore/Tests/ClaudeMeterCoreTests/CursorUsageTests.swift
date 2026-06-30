@@ -39,14 +39,14 @@ struct CursorUsageTests {
 
     @Test func parsesDateFromMillisSecondsAndISO() {
         #expect(
-            CursorUsageResponse.parseDate("1752592200000")
+            parseEpochOrISODate("1752592200000")
                 == Date(timeIntervalSince1970: 1_752_592_200))
         #expect(
-            CursorUsageResponse.parseDate("1752592200")
+            parseEpochOrISODate("1752592200")
                 == Date(timeIntervalSince1970: 1_752_592_200))
-        #expect(CursorUsageResponse.parseDate("2025-07-15T14:30:00Z") != nil)
-        #expect(CursorUsageResponse.parseDate("") == nil)
-        #expect(CursorUsageResponse.parseDate(nil) == nil)
+        #expect(parseEpochOrISODate("2025-07-15T14:30:00Z") != nil)
+        #expect(parseEpochOrISODate("") == nil)
+        #expect(parseEpochOrISODate(nil) == nil)
     }
 
     @Test func decodesJWTExpiry() {

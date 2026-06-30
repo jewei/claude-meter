@@ -4,7 +4,6 @@ import Testing
 @testable import ClaudeMeterCore
 
 private let fixedDate = Date(timeIntervalSince1970: 1_782_108_000)  // 2026-06-22T06:00:00Z
-private let klTZ = TimeZone(identifier: "Asia/Kuala_Lumpur")!
 
 private func makeStore() throws -> SnapshotStore {
     let dir = FileManager.default.temporaryDirectory

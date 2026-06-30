@@ -248,7 +248,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         }
         let opus = usage.sevenDayOpus.flatMap { entry -> LimitWindow? in
             guard let u = entry.utilization else { return nil }
-            return LimitWindow(percentUsed: u, resetsAt: entry.resetsAt.flatMap(parseDate))
+            return LimitWindow(percentUsed: u, resetsAt: parseEpochOrISODate(entry.resetsAt))
                 .resolved(asOf: now)
         }
         let enrichment = OAuthEnrichment(
@@ -442,16 +442,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     /// empty (unknown) window rather than fabricating 0%.
     private static func window(from entry: QuotaEntry?) -> LimitWindow {
         guard let entry, let utilization = entry.utilization else { return LimitWindow() }
-        return LimitWindow(percentUsed: utilization, resetsAt: entry.resetsAt.flatMap(parseDate))
-    }
-
-    private static func parseDate(_ string: String) -> Date? {
-        let withFraction = ISO8601DateFormatter()
-        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = withFraction.date(from: string) { return d }
-        let plain = ISO8601DateFormatter()
-        plain.formatOptions = [.withInternetDateTime]
-        return plain.date(from: string)
+        return LimitWindow(percentUsed: utilization, resetsAt: parseEpochOrISODate(entry.resetsAt))
     }
 }
 

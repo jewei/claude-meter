@@ -29,7 +29,7 @@ public struct CostUsageScanner: Sendable {
         cache: CostUsageCache = .shared
     ) {
         let roots = projectsPaths.isEmpty ? [JournalReader.defaultProjectsPath] : projectsPaths
-        self.projectsPaths = CostUsageScanner.dedupe(roots)
+        self.projectsPaths = roots.dedupedByResolvedPath()
         self.pricing = pricing
         self.cache = cache
     }
@@ -45,18 +45,6 @@ public struct CostUsageScanner: Sendable {
             pricing: pricing,
             cache: cache
         )
-    }
-
-    /// Dedups roots by resolved path so overlapping discovery + custom entries
-    /// (or symlinks) never double-count cost.
-    private static func dedupe(_ urls: [URL]) -> [URL] {
-        var seen = Set<String>()
-        var out: [URL] = []
-        for url in urls {
-            let key = url.resolvingSymlinksInPath().standardizedFileURL.path
-            if seen.insert(key).inserted { out.append(url) }
-        }
-        return out
     }
 
     /// Aggregated per-model usage/cost over the window.

@@ -70,7 +70,7 @@ struct CursorUsageResponse: Decodable {
             percentUsed: planUsage?.totalPercentUsed,
             spendUsd: planUsage?.totalSpend.map { Double($0) / 100 },
             limitUsd: planUsage?.limit.flatMap { $0 > 0 ? Double($0) / 100 : nil },
-            periodEnd: CursorUsageResponse.parseDate(billingCycleEnd),
+            periodEnd: parseEpochOrISODate(billingCycleEnd),
             planName: planName,
             email: email,
             capturedAt: now
@@ -83,21 +83,6 @@ struct CursorUsageResponse: Decodable {
         return usage(planName: planName, email: email, now: now)
     }
 
-    /// Cursor returns the cycle boundary as a string that is either epoch
-    /// milliseconds/seconds or an ISO-8601 timestamp.
-    static func parseDate(_ string: String?) -> Date? {
-        guard let string, !string.isEmpty else { return nil }
-        if let number = Double(string) {
-            // Heuristic: 13-digit values are milliseconds.
-            let seconds = number > 1_000_000_000_000 ? number / 1000 : number
-            return Date(timeIntervalSince1970: seconds)
-        }
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = iso.date(from: string) { return date }
-        iso.formatOptions = [.withInternetDateTime]
-        return iso.date(from: string)
-    }
 }
 
 /// `GetPlanInfo` response (optional companion call for the plan label).

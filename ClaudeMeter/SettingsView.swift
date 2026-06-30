@@ -607,7 +607,7 @@ private struct ConfigDirAccountsSection: View {
 
     private func accountRow(_ account: AccountConfig) -> some View {
         let isDefault = account.id == StatuslineBridge.defaultAccountKey
-        let display = (names[account.id]?.isEmpty == false) ? names[account.id]! : friendlyName(account.label)
+        let display = (names[account.id]?.isEmpty == false) ? names[account.id]! : account.label.friendlyAccountLabel
         let letter = String(
             display.drop(while: { !$0.isLetter && !$0.isNumber }).first ?? Character("C")
         ).uppercased()
@@ -618,7 +618,7 @@ private struct ConfigDirAccountsSection: View {
                     .foregroundStyle(.white)
             }
             VStack(alignment: .leading, spacing: 5) {
-                TextField(friendlyName(account.label), text: nameBinding(for: account.id))
+                TextField(account.label.friendlyAccountLabel, text: nameBinding(for: account.id))
                     .textFieldStyle(.plain)
                     .font(PFont.display(15, .semibold))
                     .foregroundStyle(Color.pfInk)
@@ -716,15 +716,6 @@ private struct ConfigDirAccountsSection: View {
                 AppGroupConfig.accountNames = names
             }
         )
-    }
-
-    /// Mirrors the popover's default label derivation ("it-oneone" → "It Oneone").
-    private func friendlyName(_ raw: String) -> String {
-        raw.replacingOccurrences(of: "-", with: " ")
-            .replacingOccurrences(of: "_", with: " ")
-            .split(separator: " ")
-            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-            .joined(separator: " ")
     }
 
     private func reload() {
@@ -916,15 +907,7 @@ private struct AppearanceSettingsTab: View {
     }
 
     private func displayName(_ account: AccountConfig) -> String {
-        AppGroupConfig.accountName(forKey: account.id) ?? friendlyName(account.label)
-    }
-
-    private func friendlyName(_ raw: String) -> String {
-        raw.replacingOccurrences(of: "-", with: " ")
-            .replacingOccurrences(of: "_", with: " ")
-            .split(separator: " ")
-            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-            .joined(separator: " ")
+        AppGroupConfig.accountName(forKey: account.id) ?? account.label.friendlyAccountLabel
     }
 
     private func reloadAccounts() {

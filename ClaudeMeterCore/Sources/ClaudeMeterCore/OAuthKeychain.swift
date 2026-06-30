@@ -53,9 +53,10 @@ public enum KeychainReadResult<Value: Sendable>: Sendable {
 ///   service = "Claude Code-credentials", account = current username
 ///
 /// Newer Claude Code (≈ 2.1.52+) namespaces the entry per install/config dir as
-/// `Claude Code-credentials-<hash>`, so a machine can hold several. When the
-/// unsuffixed legacy entry is absent we fall back to the most recently written
-/// hashed entry (see `readClaudeCodeCredentials`).
+/// `Claude Code-credentials-<hash>`, so a machine can hold several (often alongside
+/// the legacy unsuffixed one after an in-place upgrade). We rank *all* candidate
+/// entries by modification date in one pass and read the newest — the live login —
+/// rather than blindly preferring the legacy name (see `readClaudeCodeCredentials`).
 ///
 /// The `-a $(whoami)` flag is required — without it the correct entry is not found.
 public enum OAuthKeychain: Sendable {
@@ -79,16 +80,7 @@ public enum OAuthKeychain: Sendable {
         let account = claudeCodeAccount
         guard !account.isEmpty else { return .missing }
         #if canImport(Security)
-            let legacy = readKeychainItemResult(service: service, account: account)
-            // Only a genuinely absent legacy entry falls through to hashed
-            // discovery. A lock (`.temporarilyUnavailable`) or a present entry
-            // (`.found`/`.invalid`) must short-circuit — re-reading under a lock
-            // would just hit the same lock, and a present legacy entry wins.
-            guard case .missing = legacy else { return legacy }
-            guard let hashed = discoverHashedServiceName(account: account) else {
-                return legacy
-            }
-            return readKeychainItemResult(service: hashed, account: account)
+            return readNewestClaudeCodeCredential(account: account)
         #else
             guard
                 let json = runSecurity([
@@ -147,18 +139,18 @@ public enum OAuthKeychain: Sendable {
         }
     }
 
-    /// From candidate `(service, modificationDate)` pairs, returns the
-    /// `Claude Code-credentials-<hash>` service with the newest modification date
-    /// (the entry Claude Code refreshed most recently, i.e. the live login).
-    /// Ignores the unsuffixed legacy name and any unrelated service. Pure;
-    /// exposed for tests.
-    static func newestHashedService(among candidates: [(service: String, modified: Date)])
+    /// From candidate `(service, modificationDate)` pairs, returns the credential
+    /// service — the legacy unsuffixed `Claude Code-credentials` **or** any
+    /// `Claude Code-credentials-<hash>` — with the newest modification date (the entry
+    /// Claude Code refreshed most recently, i.e. the live login). Ignores unrelated
+    /// services. Pure; exposed for tests.
+    static func newestCredentialService(among candidates: [(service: String, modified: Date)])
         -> String?
     {
         let prefix = service + "-"
         return
             candidates
-            .filter { $0.service.hasPrefix(prefix) }
+            .filter { $0.service == service || $0.service.hasPrefix(prefix) }
             .max { $0.modified < $1.modified }?
             .service
     }
@@ -263,29 +255,60 @@ public enum OAuthKeychain: Sendable {
             return mapKeychainStatus(status, data: result as? Data)
         }
 
-        /// Finds the live hashed credentials entry when the legacy unsuffixed one is
-        /// absent. Enumerates generic-password **attributes only** (no `kSecReturnData`,
-        /// so no Allow/Deny prompt and no `security` subprocess) for `account`, then
-        /// picks the `Claude Code-credentials-<hash>` service Claude Code most recently
-        /// wrote — i.e. the live login. Returns nil when no hashed entry exists.
-        private static func discoverHashedServiceName(account: String) -> String? {
+        /// Reads Claude Code's credentials by ranking *all* candidate entries — the
+        /// legacy unsuffixed `Claude Code-credentials` and every per-install
+        /// `…-<hash>` — in one **attributes-only** enumeration (no `kSecReturnData`, so
+        /// no Allow/Deny prompt and no `security` subprocess), then reading the newest
+        /// (the live login) by its persistent ref. An in-place Claude Code upgrade can
+        /// leave a stale legacy entry beside a newer hashed one; ranking by
+        /// modification date resolves to the entry actually in use instead of always
+        /// preferring the legacy name.
+        private static func readNewestClaudeCodeCredential(account: String)
+            -> KeychainReadResult<String>
+        {
             let query: [CFString: Any] = [
                 kSecClass: kSecClassGenericPassword,
                 kSecAttrAccount: account,
                 kSecReturnAttributes: true,
+                kSecReturnPersistentRef: true,
                 kSecMatchLimit: kSecMatchLimitAll,
             ]
             var result: AnyObject?
             let status = SecItemCopyMatching(query as CFDictionary, &result)
-            guard status == errSecSuccess, let items = result as? [[String: Any]] else {
-                return nil
+            switch status {
+            case errSecSuccess: break
+            case errSecItemNotFound: return .missing
+            // Locked keychain or other transient error — never assume "missing".
+            default: return .temporarilyUnavailable
             }
+            guard let items = result as? [[String: Any]] else { return .missing }
+
             let candidates: [(service: String, modified: Date)] = items.compactMap { item in
                 guard let svc = item[kSecAttrService as String] as? String else { return nil }
                 let modified = item[kSecAttrModificationDate as String] as? Date ?? .distantPast
                 return (svc, modified)
             }
-            return newestHashedService(among: candidates)
+            guard let winner = newestCredentialService(among: candidates),
+                let ref = items.first(where: {
+                    ($0[kSecAttrService as String] as? String) == winner
+                })?[kSecValuePersistentRef as String] as? Data
+            else {
+                return .missing
+            }
+            return readCredentialData(persistentRef: ref)
+        }
+
+        /// Reads a generic-password's secret by persistent ref under the no-UI policy,
+        /// so the data fetch — the only step that could prompt — stays non-interactive.
+        private static func readCredentialData(persistentRef: Data) -> KeychainReadResult<String> {
+            var query: [CFString: Any] = [
+                kSecValuePersistentRef: persistentRef,
+                kSecReturnData: true,
+            ]
+            applyNoUI(to: &query)
+            var result: AnyObject?
+            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            return mapKeychainStatus(status, data: result as? Data)
         }
 
         /// Attaches a non-interactive policy so a Keychain read can never surface an

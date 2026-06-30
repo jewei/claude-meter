@@ -57,6 +57,12 @@ final class AppState: ObservableObject {
     private var attentionDraining = false
 
     private static let pollIntervalSeconds: TimeInterval = 60
+    /// Wall-clock backstop for a single tier read. Generous — above the worst-case
+    /// legitimate poll (OAuth refresh + usage GET + transient retries, ~40 s) — so it
+    /// only ever trips on a genuinely wedged read, never a slow-but-progressing one. A
+    /// trip throws so `isLoading` resets and the loop recovers on the next interval
+    /// instead of freezing every later refresh.
+    private static let pollTimeoutSeconds: TimeInterval = 60
     private static let oauthEnrichmentIntervalSeconds: TimeInterval = 300
     private static let rebuildDebounceMilliseconds: UInt64 = 300
     /// How much to stretch the poll cadence while on battery, to cut idle drain
@@ -400,9 +406,9 @@ final class AppState: ObservableObject {
         let now = Date()
         async let serviceStatusTask: Void = refreshServiceStatus(generation: generation)
         do {
-            let result = try await Task.detached {
+            let result = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
                 try await pipeline.poll(now: now)
-            }.value
+            }
             await serviceStatusTask
             guard generation == pipelineGeneration, canPoll else { return }
 
@@ -466,9 +472,9 @@ final class AppState: ObservableObject {
         let provider = cursorProvider
         let now = Date()
         do {
-            let usage = try await Task.detached {
+            let usage = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
                 try await provider.fetchUsage(now: now)
-            }.value
+            }
             guard generation == pipelineGeneration,
                 canPoll,
                 AppSettings.cursorSourceEnabled

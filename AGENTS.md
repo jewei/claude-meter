@@ -55,6 +55,8 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 
 **Energy-aware poll loop** — `AppState.startPolling()` is gated by `PowerMonitor` (app target; AppKit `NSWorkspace` sleep/wake + IOKit battery — never in Core). Parking uses `screensDidSleep` only (not `willSleep`, so a cancelled sleep doesn't stall polling). While `isDisplayAsleep` the loop skips polling and re-checks every 300 s (`asleepRecheckSeconds`); `PowerMonitor.onWake` triggers an immediate `refreshNow()` so the number isn't stale a full interval after wake. On battery the 60 s base is ×2 (`batteryPollMultiplier`). `PowerMonitor` is `@MainActor`; its `NSWorkspace` observer tokens live in a plain `ObserverBag` so cleanup runs from a nonisolated `deinit` (a `@MainActor` class can't touch isolated non-`Sendable` state from its own deinit under Swift 6). Test `AppState.init(pipeline:)` skips `PowerMonitor`.
 
+`NetworkMonitor` (app target; `Network`/`NWPathMonitor` — never in Core) is the connectivity analogue: it fires `onReconnect → refreshNow()` on a lost→regained transition (`wasSatisfied` guard, hops from the monitor's background queue to `@MainActor`), so a Wi-Fi drop / network switch / VPN flap refreshes immediately instead of waiting out the interval. Like `PowerMonitor`, it's skipped by `AppState.init(pipeline:)`.
+
 ### Networking — `ProviderHTTP.swift`
 
 - **All** provider HTTP goes through `ProviderHTTPClient.shared` (a `HTTPTransport`): one cookie-less ephemeral session (10 s) behind `RedirectGuardDelegate`, which drops any redirect that isn't same-origin HTTPS — credentials (`Bearer`/`Cookie`) must never be replayed off-origin or downgraded. OAuth and status clients all use it.
@@ -64,6 +66,7 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 ### Keychain reads
 
 - `OAuthKeychain.loadResult()` / `loadManualResult()` return `KeychainReadResult { found / missing / temporarilyUnavailable / invalid }`; `mapKeychainStatus` classifies the `OSStatus` (a locked Keychain → `temporarilyUnavailable`, `errSecAuthFailed` → `invalid`, never `missing` on error). `OAuthPipeline.poll` and `fetchEnrichment` branch on these (prefer in-memory cache on `.temporarilyUnavailable`). `load()`/`loadManual()` remain the `Optional` convenience wrappers.
+- **Hashed service-name fallback** — Claude Code ≈2.1.52+ namespaces the credentials entry per install/config dir as `Claude Code-credentials-<hash>` (a machine can hold several + the legacy unsuffixed one). `readClaudeCodeCredentials` reads the legacy `Claude Code-credentials` first; **only** a genuine `.missing` (not a lock, not a present entry) falls through to `discoverHashedServiceName`, which enumerates generic-password **attributes only** (`kSecReturnAttributes`, no `kSecReturnData` → no Allow/Deny prompt, no `security` subprocess) for `NSUserName()` and reads the entry with the newest `kSecAttrModificationDate` (the live login). Selection logic is the pure, tested `newestHashedService(among:)`. No `dump-keychain` (the reference app's approach — slow/hang-prone; unneeded via Security.framework).
 
 ---
 

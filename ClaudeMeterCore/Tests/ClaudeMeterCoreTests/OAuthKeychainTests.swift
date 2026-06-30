@@ -31,4 +31,28 @@ struct OAuthKeychainTests {
             """
         #expect(OAuthKeychain.parseForTesting(json) == nil)
     }
+
+    @Test func picksNewestHashedServiceIgnoringLegacyAndUnrelated() {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let candidates: [(service: String, modified: Date)] = [
+            ("Claude Code-credentials", base.addingTimeInterval(999)),  // legacy: ignored
+            ("Claude Code-credentials-abc312d1", base.addingTimeInterval(10)),
+            ("Claude Code-credentials-420899a1", base.addingTimeInterval(50)),  // newest hashed
+            ("Claude Code-credentials-4631b25c", base.addingTimeInterval(30)),
+            ("com.jewei.claudemeter-oauth", base.addingTimeInterval(9999)),  // unrelated: ignored
+        ]
+        #expect(
+            OAuthKeychain.newestHashedService(among: candidates) == "Claude Code-credentials-420899a1"
+        )
+    }
+
+    @Test func noHashedServiceWhenOnlyLegacyOrUnrelatedPresent() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let candidates: [(service: String, modified: Date)] = [
+            ("Claude Code-credentials", now),
+            ("Claude Safe Storage", now),
+        ]
+        #expect(OAuthKeychain.newestHashedService(among: candidates) == nil)
+        #expect(OAuthKeychain.newestHashedService(among: []) == nil)
+    }
 }

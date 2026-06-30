@@ -45,6 +45,7 @@ final class AppState: ObservableObject {
     /// (e.g. a "refueled" for a window that reset while the app was quit).
     private var didPollInSession = false
     private var powerMonitor: PowerMonitor?
+    private var networkMonitor: NetworkMonitor?
     private var lastOAuthEnrichmentAt: Date?
     private var cachedOAuthEnrichment: OAuthPipeline.OAuthEnrichment?
     /// In-flight statusline-bridge install task; cancelled and replaced on each
@@ -127,6 +128,13 @@ final class AppState: ObservableObject {
             self?.startAttentionWatcher()
         }
         self.powerMonitor = monitor
+        let network = NetworkMonitor()
+        network.onReconnect = { [weak self] in
+            // Connectivity regained — refresh now instead of waiting out the
+            // remaining poll interval. Mirrors PowerMonitor.onWake.
+            self?.refreshNow()
+        }
+        self.networkMonitor = network
         startPolling()
         Task { await notificationEngine.requestAuthorizationIfNeeded() }
     }

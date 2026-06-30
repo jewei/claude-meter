@@ -30,6 +30,9 @@ final class AppState: ObservableObject {
     /// opens it from the cost card. `nil` until first requested.
     @Published var activityHeatmap: ActivityHeatmap? = nil
     @Published var activityHeatmapLoading = false
+    /// Active account's recent usage series (Trends screen), loaded on demand.
+    @Published var usageTrends: UsageTrends? = nil
+    @Published var usageTrendsLoading = false
     private let cursorProvider = CursorUsageProvider()
 
     var pipeline: any ClaudeMeterPipeline
@@ -94,6 +97,12 @@ final class AppState: ObservableObject {
     /// Label of the account currently mirrored into the menu bar / top-level fields.
     var activeAccountLabel: String? {
         snapshot?.accounts?.first(where: { $0.isActive })?.label
+    }
+
+    /// Account key for the active account — matches `recordUsageHistory`'s keying so
+    /// the Trends screen reads back the same per-account series.
+    var activeAccountKey: String {
+        snapshot?.accounts?.first(where: { $0.isActive })?.id ?? "claude"
     }
 
     private static func makeStore() -> SnapshotStore {
@@ -637,6 +646,43 @@ final class AppState: ObservableObject {
             activityHeatmap = result
             activityHeatmapLoading = false
         }
+    }
+
+    /// Loads the active account's recent usage series for the Trends screen. The
+    /// history store is an actor, so the read is already off the main actor.
+    func loadUsageTrends() {
+        guard !usageTrendsLoading else { return }
+        usageTrendsLoading = true
+        let store = usageHistory
+        let key = activeAccountKey
+        let now = Date()
+        Task {
+            let trends = await Self.buildTrends(store: store, accountKey: key, now: now)
+            usageTrends = trends
+            usageTrendsLoading = false
+        }
+    }
+
+    /// Builds per-window series for an account: the 5-hour session (last 6 h) and the
+    /// weekly windows (last 7 d). Opus is included only when it has observations.
+    static func buildTrends(store: UsageHistoryStore, accountKey: String, now: Date) async
+        -> UsageTrends
+    {
+        func series(_ window: UsageHistoryWindow, _ title: String, since: TimeInterval) async
+            -> UsageTrends.Series
+        {
+            let samples = await store.samples(
+                accountKey: accountKey, window: window, since: now.addingTimeInterval(-since))
+            return UsageTrends.Series(
+                window: window, title: title,
+                points: samples.map { UsageTrends.Point(at: $0.sampledAt, used: $0.usedPercent) })
+        }
+        var all: [UsageTrends.Series] = []
+        all.append(await series(.session, "5-hour session", since: 6 * 3600))
+        all.append(await series(.weekly, "This week", since: 7 * 24 * 3600))
+        let opus = await series(.weeklyOpus, "Weekly Opus", since: 7 * 24 * 3600)
+        if !opus.points.isEmpty { all.append(opus) }
+        return UsageTrends(series: all)
     }
 
     private func shouldReloadWidget(

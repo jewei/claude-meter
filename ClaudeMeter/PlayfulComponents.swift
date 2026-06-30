@@ -594,3 +594,106 @@ struct ActivityHeatmapGrid: View {
         }
     }
 }
+
+// MARK: - Usage trends (history sparklines)
+
+/// View model for the Trends screen: the active account's recent usage series,
+/// one per window. Built off-main from `UsageHistoryStore`. Stores raw `used`
+/// (0–100) so the view can flip to energy-left per the progression setting.
+struct UsageTrends: Equatable, Sendable {
+    struct Point: Equatable, Sendable {
+        let at: Date
+        let used: Double
+    }
+
+    struct Series: Equatable, Sendable, Identifiable {
+        let window: UsageHistoryWindow
+        let title: String
+        let points: [Point]
+        var id: String { window.rawValue }
+        /// Needs at least two observations to draw a line.
+        var hasTrend: Bool { points.count >= 2 }
+        var latestUsed: Double? { points.last?.used }
+    }
+
+    let series: [Series]
+    var isEmpty: Bool { series.isEmpty }
+}
+
+/// Hand-drawn sparkline of a usage series over its recent history. The y-axis is
+/// fixed to 0–100 (so a low line reads low, not auto-scaled), x is spaced by real
+/// time. In the default energy framing the line plots remaining fuel and depletes
+/// left→right; with `usage` it plots consumption climbing.
+struct UsageSparkline: View {
+    let points: [UsageTrends.Point]
+    let usage: Bool
+    let tint: Color
+    var height: CGFloat = 44
+
+    private static let inset: CGFloat = 3
+
+    var body: some View {
+        GeometryReader { geo in
+            let coords = coordinates(in: geo.size)
+            ZStack {
+                if coords.count >= 2 {
+                    areaPath(coords, height: geo.size.height)
+                        .fill(
+                            LinearGradient(
+                                colors: [tint.opacity(0.32), tint.opacity(0.02)],
+                                startPoint: .top, endPoint: .bottom))
+                    linePath(coords)
+                        .stroke(
+                            tint,
+                            style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                    if let last = coords.last {
+                        Circle()
+                            .fill(tint)
+                            .frame(width: 6, height: 6)
+                            .position(last)
+                    }
+                }
+            }
+        }
+        .frame(height: height)
+    }
+
+    private func value(_ p: UsageTrends.Point) -> Double {
+        let v = usage ? p.used : (100 - p.used)
+        return min(100, max(0, v))
+    }
+
+    private func coordinates(in size: CGSize) -> [CGPoint] {
+        guard points.count >= 2 else { return [] }
+        let inset = Self.inset
+        let w = max(size.width - inset * 2, 1)
+        let h = max(size.height - inset * 2, 1)
+        let times = points.map { $0.at.timeIntervalSinceReferenceDate }
+        let tMin = times.min() ?? 0
+        let tSpan = max((times.max() ?? 0) - tMin, 1)
+        return points.map { p in
+            let x = inset + CGFloat((p.at.timeIntervalSinceReferenceDate - tMin) / tSpan) * w
+            let y = inset + (1 - CGFloat(value(p) / 100)) * h
+            return CGPoint(x: x, y: y)
+        }
+    }
+
+    private func linePath(_ coords: [CGPoint]) -> Path {
+        Path { path in
+            guard let first = coords.first else { return }
+            path.move(to: first)
+            for point in coords.dropFirst() { path.addLine(to: point) }
+        }
+    }
+
+    private func areaPath(_ coords: [CGPoint], height: CGFloat) -> Path {
+        Path { path in
+            guard let first = coords.first, let last = coords.last else { return }
+            path.move(to: CGPoint(x: first.x, y: height))
+            path.addLine(to: first)
+            for point in coords.dropFirst() { path.addLine(to: point) }
+            path.addLine(to: CGPoint(x: last.x, y: height))
+            path.closeSubpath()
+        }
+    }
+}

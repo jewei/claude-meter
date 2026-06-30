@@ -11,6 +11,7 @@ struct PopoverView: View {
     @AppStorage(AppGroupConfig.progressionModeKey) private var progressionMode = "left"
     @State private var now = Date()
     @State private var showHeatmap = false
+    @State private var showTrends = false
 
     private var usageThresholds: UsageThresholds {
         AppState.currentThresholds()
@@ -30,6 +31,8 @@ struct PopoverView: View {
             headerBar
             if showHeatmap {
                 heatmapBody
+            } else if showTrends {
+                trendsBody
             } else {
                 if appState.updateAvailable {
                     updateAvailableNotice
@@ -52,7 +55,10 @@ struct PopoverView: View {
         // The popover view is retained across dismissals (MenuBarExtra `.window`),
         // so reset to the main view on close — otherwise reopening lands on the
         // heatmap and skips onboarding/error/loading branches.
-        .onDisappear { showHeatmap = false }
+        .onDisappear {
+            showHeatmap = false
+            showTrends = false
+        }
     }
 
     // MARK: - Header
@@ -137,6 +143,7 @@ struct PopoverView: View {
                 } else {
                     activityEntryCard
                 }
+                trendsEntryCard
             }
             if hasCursor, let cursor = appState.cursorUsage {
                 cursorNotices()
@@ -282,6 +289,36 @@ struct PopoverView: View {
         withAnimation(.easeInOut(duration: 0.2)) { showHeatmap = true }
     }
 
+    /// Opens the Trends screen and loads (or refreshes) the usage series.
+    private func openTrends() {
+        appState.loadUsageTrends()
+        withAnimation(.easeInOut(duration: 0.2)) { showTrends = true }
+    }
+
+    /// Entry into the Trends screen — usage-over-time sparklines per window.
+    private var trendsEntryCard: some View {
+        Button(action: openTrends) {
+            HStack(spacing: 7) {
+                Text("📈").font(.system(size: 13))
+                Text("Trends")
+                    .font(PFont.display(14, .semibold))
+                    .foregroundStyle(Color.pfInk)
+                Spacer()
+                Text("Usage over time")
+                    .font(PFont.body(12, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.pfInkMuted)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 13)
+            .chunkyCard()
+        }
+        .buttonStyle(.plain)
+        .help("View usage over time")
+    }
+
     /// Heatmap entry when there's no 7-day cost data (OAuth-only week, pricing
     /// miss, idle week) — so activity is still reachable whenever transcripts exist.
     private var activityEntryCard: some View {
@@ -354,6 +391,90 @@ struct PopoverView: View {
 
     private static func usd(_ value: Double) -> String {
         value < 0.01 && value > 0 ? "<$0.01" : String(format: "$%.2f", value)
+    }
+
+    // MARK: - Trends (usage over time)
+
+    private var trendsBody: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { showTrends = false }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left").font(.system(size: 11, weight: .bold))
+                        Text("Back").font(PFont.display(13, .semibold))
+                    }
+                    .foregroundStyle(Color.pfInk)
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                Text("📈").font(.system(size: 13))
+                Text("Trends")
+                    .font(PFont.display(15, .semibold))
+                    .foregroundStyle(Color.pfInk)
+            }
+            trendsContent
+        }
+        .padding(.horizontal, 15)
+        .padding(.top, 2)
+        .padding(.bottom, 12)
+    }
+
+    @ViewBuilder
+    private var trendsContent: some View {
+        if let trends = appState.usageTrends, !trends.isEmpty {
+            VStack(spacing: 10) {
+                ForEach(trends.series) { series in
+                    trendCard(series)
+                }
+                Text(usage ? "Usage climbing through each window." : "Fuel remaining through each window.")
+                    .font(PFont.body(11, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 2)
+            }
+        } else if appState.usageTrendsLoading {
+            ProgressView()
+                .controlSize(.small)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+        } else {
+            Text("No history yet — check back in a day or two.")
+                .font(PFont.body(12, .semibold))
+                .foregroundStyle(Color.pfInkMuted)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 24)
+        }
+    }
+
+    private func trendCard(_ series: UsageTrends.Series) -> some View {
+        let band = EnergyBand(severity: usageThresholds.severity(for: series.latestUsed))
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Text(series.title)
+                    .font(PFont.display(14, .semibold))
+                    .foregroundStyle(Color.pfInk)
+                Spacer()
+                if let latest = series.latestUsed {
+                    Text("\(Int((usage ? latest : 100 - latest).rounded()))%")
+                        .font(PFont.display(14, .bold))
+                        .foregroundStyle(band.color)
+                        .monospacedDigit()
+                }
+            }
+            if series.hasTrend {
+                UsageSparkline(points: series.points, usage: usage, tint: band.color)
+            } else {
+                Text("Building history — check back in a day or two.")
+                    .font(PFont.body(12, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .chunkyCard()
     }
 
     // MARK: - Activity heatmap (cost card flips to this)

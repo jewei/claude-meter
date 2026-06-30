@@ -612,9 +612,7 @@ struct PopoverView: View {
 
     private var pollErrorText: String {
         let err = appState.lastError ?? ""
-        if err.localizedCaseInsensitiveContains("session expired")
-            || err.localizedCaseInsensitiveContains("session key")
-        {
+        if isSessionExpiredError(err) {
             return err
         }
         if err.contains("decode") || err.contains("data couldn't be read") {
@@ -790,11 +788,14 @@ struct PopoverView: View {
 
     // MARK: - Error helpers
 
+    private func isSessionExpiredError(_ err: String) -> Bool {
+        err.localizedCaseInsensitiveContains("session expired")
+            || err.localizedCaseInsensitiveContains("session key")
+    }
+
     private var errorTitle: String {
         let err = appState.lastError ?? ""
-        if err.localizedCaseInsensitiveContains("session expired")
-            || err.localizedCaseInsensitiveContains("session key")
-        {
+        if isSessionExpiredError(err) {
             return "Session expired"
         }
         if err.contains("decode") || err.contains("data couldn't be read") {
@@ -805,9 +806,7 @@ struct PopoverView: View {
 
     private var errorHint: String? {
         let err = appState.lastError ?? ""
-        if err.localizedCaseInsensitiveContains("session expired")
-            || err.localizedCaseInsensitiveContains("session key")
-        {
+        if isSessionExpiredError(err) {
             return "Update your session key and org ID in Settings → Data."
         }
         if err.contains("decode") {

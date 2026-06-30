@@ -359,27 +359,23 @@ public enum StatuslineBridge: Sendable {
     /// Merges per-session payloads into a single coherent reading. Account-wide
     /// windows are picked by observation recency; session metadata comes from the
     /// most recently written file. Returns nil for an empty input.
+    /// Picks the window observed most recently (latest `resets_at`, breaking ties
+    /// by higher used %), since rate-limit buckets are independent per account.
+    private static func mostRecentWindow(_ windows: [RateLimitWindow]) -> RateLimitWindow? {
+        windows.max { a, b in
+            let ra = a.resetsAt ?? .distantPast
+            let rb = b.resetsAt ?? .distantPast
+            if ra != rb { return ra < rb }
+            return a.usedPercentage < b.usedPercentage
+        }
+    }
+
     static func mergePayloads(_ payloads: [StatuslinePayload]) -> StatuslinePayload? {
         guard let base = payloads.max(by: { $0.capturedAt < $1.capturedAt }) else { return nil }
 
-        let fiveHour = payloads.compactMap(\.fiveHour).max { a, b in
-            let ra = a.resetsAt ?? .distantPast
-            let rb = b.resetsAt ?? .distantPast
-            if ra != rb { return ra < rb }
-            return a.usedPercentage < b.usedPercentage
-        }
-        let sevenDay = payloads.compactMap(\.sevenDay).max { a, b in
-            let ra = a.resetsAt ?? .distantPast
-            let rb = b.resetsAt ?? .distantPast
-            if ra != rb { return ra < rb }
-            return a.usedPercentage < b.usedPercentage
-        }
-        let sevenDayOpus = payloads.compactMap(\.sevenDayOpus).max { a, b in
-            let ra = a.resetsAt ?? .distantPast
-            let rb = b.resetsAt ?? .distantPast
-            if ra != rb { return ra < rb }
-            return a.usedPercentage < b.usedPercentage
-        }
+        let fiveHour = mostRecentWindow(payloads.compactMap(\.fiveHour))
+        let sevenDay = mostRecentWindow(payloads.compactMap(\.sevenDay))
+        let sevenDayOpus = mostRecentWindow(payloads.compactMap(\.sevenDayOpus))
 
         return StatuslinePayload(
             fiveHour: fiveHour,

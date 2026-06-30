@@ -136,25 +136,25 @@ struct MenuBarLabel: View {
 
     /// "99% 5h" for one window (energy-left, or usage when in "used" mode), or nil
     /// when the window has no value.
+    /// Energy-left, or usage when in "used" mode.
+    private func displayed(_ left: Double) -> Double {
+        progressionMode == "used" ? 100 - left : left
+    }
+
     private func part(_ window: LimitWindow?, suffix: String, now: Date) -> String? {
         guard let left = window?.percentLeft(asOf: now) else { return nil }
-        let value = progressionMode == "used" ? 100 - left : left
-        return "\(Int(value.rounded()))% \(suffix)"
+        return "\(Int(displayed(left).rounded()))% \(suffix)"
     }
 
     /// Lowest energy-left across every window of every menu-bar account — the
     /// nearest limit. No window suffix (it may come from any window/account).
     private func nearestText(now: Date) -> String? {
-        var lefts: [Double] = []
-        for limits in appState.menuBarLimitSets {
-            let windows = [
-                limits.currentSession, limits.currentWeekAllModels, limits.currentWeekOpus,
-            ].compactMap { $0 }
-            lefts.append(contentsOf: windows.compactMap { $0.percentLeft(asOf: now) })
+        let lefts = appState.menuBarLimitSets.flatMap { limits in
+            [limits.currentSession, limits.currentWeekAllModels, limits.currentWeekOpus]
+                .compactMap { $0?.percentLeft(asOf: now) }
         }
         guard let minLeft = lefts.min() else { return nil }
         // "Used" mode shows the max usage (= the nearest limit, inverted).
-        let value = progressionMode == "used" ? 100 - minLeft : minLeft
-        return "\(Int(value.rounded()))%"
+        return "\(Int(displayed(minLeft).rounded()))%"
     }
 }

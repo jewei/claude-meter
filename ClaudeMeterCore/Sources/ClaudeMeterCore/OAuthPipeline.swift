@@ -167,12 +167,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         if creds.isExpired {
             creds = try await verifyRefresh(creds)
         }
-        var request = URLRequest(url: usageURL)
-        request.setValue("Bearer \(creds.accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        let (data, http) = try await transport.send(request)
+        let (data, http) = try await transport.send(usageRequest(token: creds.accessToken))
         guard http.statusCode == 200 else {
             if http.statusCode == 401 || http.statusCode == 403 { throw OAuthError.unauthorized }
             throw OAuthError.httpError(http.statusCode)
@@ -262,17 +257,22 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         return enrichment.isEmpty ? nil : enrichment
     }
 
-    /// Shared usage GET. Honors the process-wide 429 backoff used by `poll` and
-    /// `fetchEnrichment`.
-    private static func requestUsage(token: String, now: Date = Date()) async throws
-        -> UsageResponse
-    {
+    /// Builds the authenticated GET for the usage API (shared header setup).
+    private static func usageRequest(token: String) -> URLRequest {
         var request = URLRequest(url: usageURL)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        let (data, http) = try await transport.send(request)
+        return request
+    }
+
+    /// Shared usage GET. Honors the process-wide 429 backoff used by `poll` and
+    /// `fetchEnrichment`.
+    private static func requestUsage(token: String, now: Date = Date()) async throws
+        -> UsageResponse
+    {
+        let (data, http) = try await transport.send(usageRequest(token: token))
         guard http.statusCode == 200 else {
             if http.statusCode == 401 || http.statusCode == 403 { throw OAuthError.unauthorized }
             if http.statusCode == 429 {
@@ -340,12 +340,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     }
 
     private func fetchUsage(token: String, now: Date) async throws -> UsageResponse {
-        var request = URLRequest(url: Self.usageURL)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
-        let (data, http) = try await Self.transport.send(request)
+        let (data, http) = try await Self.transport.send(Self.usageRequest(token: token))
         guard http.statusCode == 200 else {
             if http.statusCode == 401 || http.statusCode == 403 { throw OAuthError.unauthorized }
             if http.statusCode == 429 {

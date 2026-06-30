@@ -541,10 +541,10 @@ final class AppState: ObservableObject {
     }
 
     private static func scanCostModels(now: Date) async -> CostUsageResult {
-        // Live per-model prices from models.dev (24 h disk cache, static family
-        // rates as the offline fallback), fetched off the scan thread.
-        let catalog = await ModelsDevPricing.loadCatalog(now: now)
-        return await Task.detached(priority: .utility) {
+        await Task.detached(priority: .utility) {
+            // Live per-model prices from models.dev (24 h disk cache, static family
+            // rates as the offline fallback), fetched off the poll thread.
+            let catalog = await ModelsDevPricing.loadCatalog(now: now)
             let accounts = ConfigDirDiscovery.discover(
                 configuredDirs: AppGroupConfig.configuredConfigDirs,
                 disabledKeys: Set(AppGroupConfig.disabledAccountKeys))

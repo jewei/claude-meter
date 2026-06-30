@@ -11,6 +11,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4] - 2026-06-30
+
+### Added
+
+- **Trends** — a new screen in the popover (tap the **📈 Trends** card) charts your
+  usage over time as per-window sparklines: the 5-hour session, the week, and the
+  weekly Opus window. It builds up as you use Claude and shows "building history"
+  until there's enough to plot.
+
+### Changed
+
+- **Faster launches.** Local cost-usage history is now cached to disk, so Claude
+  Meter no longer re-scans every transcript on startup — only new activity is read.
+- **"Refueled" notifications are more reliable** — they now fire even when a limit
+  reset while Claude Meter was closed.
+
+### Fixed
+
+- **Launch at Login** no longer switches itself back off when macOS leaves the
+  login item pending approval (common after a first launch or a macOS update).
+- A stalled network read can no longer freeze refreshes — the poll loop always
+  recovers on the next tick.
+- No more spurious "signed out" after waking from sleep or changing networks
+  (overlapping token refreshes are coalesced into one).
+- After updating Claude Code, Claude Meter reads your most recently used
+  credentials instead of an older leftover Keychain entry.
+
 ## [2.3] - 2026-06-30
 
 ### Removed
@@ -223,7 +250,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.3...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.4...HEAD
+[2.4]: https://github.com/jewei/claude-meter/compare/v2.3...v2.4
 [2.3]: https://github.com/jewei/claude-meter/compare/v2.2...v2.3
 [2.2]: https://github.com/jewei/claude-meter/compare/v2.1...v2.2
 [2.1]: https://github.com/jewei/claude-meter/compare/v2.0...v2.1

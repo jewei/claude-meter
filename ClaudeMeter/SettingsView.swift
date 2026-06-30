@@ -1198,15 +1198,36 @@ private struct AdvancedSettingsTab: View {
     }
 
     private func applyLaunchAtLogin(_ enabled: Bool) {
-        if enabled {
-            try? SMAppService.mainApp.register()
-        } else {
-            try? SMAppService.mainApp.unregister()
+        do {
+            if enabled {
+                // Only register from a genuinely-unregistered state; `.enabled` and
+                // `.requiresApproval` already mean "registered", so re-registering is a
+                // redundant no-op (and would loop with the onAppear sync below).
+                switch SMAppService.mainApp.status {
+                case .notRegistered, .notFound:
+                    try SMAppService.mainApp.register()
+                default:
+                    break
+                }
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            // The change didn't take (e.g. approval revoked) — snap the toggle back to
+            // the real system state instead of leaving it lying.
+            NSLog(
+                "Claude Meter: launch-at-login \(enabled ? "register" : "unregister") failed: "
+                    + error.localizedDescription)
+            syncLaunchAtLoginFromSystem()
         }
     }
 
     private func syncLaunchAtLoginFromSystem() {
-        let enabled = SMAppService.mainApp.status == .enabled
+        // Treat `.requiresApproval` as enabled: macOS parks a freshly registered login
+        // item there pending the user's approval in System Settings, and reading that as
+        // "off" would wrongly flip the toggle back and re-trigger registration.
+        let status = SMAppService.mainApp.status
+        let enabled = status == .enabled || status == .requiresApproval
         if launchAtLogin != enabled {
             launchAtLogin = enabled
         }

@@ -44,16 +44,16 @@ struct RedirectGuardTests {
 @Suite("HTTPRetryPolicy")
 struct HTTPRetryPolicyTests {
     @Test func retriesIdempotentTransientStatus() {
-        #expect(HTTPRetryPolicy.transient.shouldRetry(status: 503, attempt: 0, method: "GET"))
-        #expect(HTTPRetryPolicy.transient.shouldRetry(status: 503, attempt: 0, method: "HEAD"))
-        #expect(!HTTPRetryPolicy.transient.shouldRetry(status: 429, attempt: 0, method: "GET"))
+        #expect(HTTPRetryPolicy.transient.shouldRetry(attempt: 0, method: "GET", status: 503))
+        #expect(HTTPRetryPolicy.transient.shouldRetry(attempt: 0, method: "HEAD", status: 503))
+        #expect(!HTTPRetryPolicy.transient.shouldRetry(attempt: 0, method: "GET", status: 429))
     }
 
     @Test func doesNotRetryNonIdempotentOrExhausted() {
-        #expect(!HTTPRetryPolicy.transient.shouldRetry(status: 503, attempt: 0, method: "POST"))
-        #expect(!HTTPRetryPolicy.transient.shouldRetry(status: 503, attempt: 1, method: "GET"))  // maxRetries=1
-        #expect(!HTTPRetryPolicy.transient.shouldRetry(status: 404, attempt: 0, method: "GET"))
-        #expect(!HTTPRetryPolicy.none.shouldRetry(status: 429, attempt: 0, method: "GET"))
+        #expect(!HTTPRetryPolicy.transient.shouldRetry(attempt: 0, method: "POST", status: 503))
+        #expect(!HTTPRetryPolicy.transient.shouldRetry(attempt: 1, method: "GET", status: 503))  // maxRetries=1
+        #expect(!HTTPRetryPolicy.transient.shouldRetry(attempt: 0, method: "GET", status: 404))
+        #expect(!HTTPRetryPolicy.none.shouldRetry(attempt: 0, method: "GET", status: 429))
     }
 
     @Test func honorsRetryAfterCappedAtMax() {

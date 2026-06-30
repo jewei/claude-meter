@@ -726,13 +726,16 @@ final class AppState: ObservableObject {
     /// label — matching how the popover labels accounts (which strips the `claude-`
     /// prefix / maps `claude` → "default" via `ConfigDirDiscovery.label`).
     static func friendlyAccountName(_ key: String) -> String {
-        AppGroupConfig.accountName(forKey: key) ?? friendlyName(ConfigDirDiscovery.label(forKey: key))
+        AppGroupConfig.accountName(forKey: key) ?? ConfigDirDiscovery.label(forKey: key).friendlyAccountLabel
     }
+}
 
-    private static func friendlyName(_ raw: String) -> String {
-        let spaced = raw.replacingOccurrences(of: "-", with: " ")
+extension String {
+    /// "it-oneone" → "It Oneone": replace `-`/`_` with spaces, title-case each word.
+    var friendlyAccountLabel: String {
+        replacingOccurrences(of: "-", with: " ")
             .replacingOccurrences(of: "_", with: " ")
-        return spaced.split(separator: " ")
+            .split(separator: " ")
             .map { $0.prefix(1).uppercased() + $0.dropFirst() }
             .joined(separator: " ")
     }

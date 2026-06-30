@@ -45,19 +45,7 @@ public struct ActivityScanner: Sendable {
     public let projectsPaths: [URL]
 
     public init(projectsPaths: [URL]) {
-        self.projectsPaths = ActivityScanner.dedupe(projectsPaths)
-    }
-
-    /// Dedupes roots by resolved path so two config dirs sharing a symlinked
-    /// `projects/` tree aren't double-counted (mirrors `CostUsageScanner`).
-    private static func dedupe(_ urls: [URL]) -> [URL] {
-        var seen = Set<String>()
-        var out: [URL] = []
-        for url in urls {
-            let key = url.resolvingSymlinksInPath().standardizedFileURL.path
-            if seen.insert(key).inserted { out.append(url) }
-        }
-        return out
+        self.projectsPaths = projectsPaths.dedupedByResolvedPath()
     }
 
     public func scan(daysBack days: Int = 30, now: Date = Date()) -> ActivityHeatmap {

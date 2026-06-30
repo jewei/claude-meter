@@ -25,7 +25,7 @@ public struct JournalReader: Sendable {
     /// Multi-root: unions message counts across several config dirs' `projects/`.
     public init(projectsPaths: [URL], cache: JournalCache = .shared) {
         let roots = projectsPaths.isEmpty ? [JournalReader.defaultProjectsPath] : projectsPaths
-        self.projectsPaths = JournalReader.dedupe(roots)
+        self.projectsPaths = roots.dedupedByResolvedPath()
         self.cache = cache
     }
 
@@ -35,17 +35,6 @@ public struct JournalReader: Sendable {
             projectsPaths: [projectsPath ?? JournalReader.defaultProjectsPath],
             cache: cache
         )
-    }
-
-    /// Dedups roots by resolved path so overlapping entries never double-count.
-    private static func dedupe(_ urls: [URL]) -> [URL] {
-        var seen = Set<String>()
-        var out: [URL] = []
-        for url in urls {
-            let key = url.resolvingSymlinksInPath().standardizedFileURL.path
-            if seen.insert(key).inserted { out.append(url) }
-        }
-        return out
     }
 
     /// Returns a dict of local-date-string → assistant message count for the
@@ -241,6 +230,36 @@ public final class JournalCache: @unchecked Sendable {
         f.dateFormat = "yyyy-MM-dd"
         f.locale = Locale(identifier: "en_US_POSIX")
         return f.date(from: string)
+    }
+}
+
+/// Parses a timestamp that may be epoch seconds/milliseconds or ISO-8601
+/// (with or without fractional seconds). Returns nil for empty/unparseable input.
+func parseEpochOrISODate(_ string: String?) -> Date? {
+    guard let string, !string.isEmpty else { return nil }
+    if let number = Double(string) {
+        // Heuristic: 13-digit values are milliseconds.
+        let seconds = number > 1_000_000_000_000 ? number / 1000 : number
+        return Date(timeIntervalSince1970: seconds)
+    }
+    let iso = ISO8601DateFormatter()
+    iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = iso.date(from: string) { return date }
+    iso.formatOptions = [.withInternetDateTime]
+    return iso.date(from: string)
+}
+
+extension Array where Element == URL {
+    /// Dedups roots by resolved path so overlapping discovery/custom entries
+    /// (or symlinks) never double-count.
+    func dedupedByResolvedPath() -> [URL] {
+        var seen = Set<String>()
+        var out: [URL] = []
+        for url in self {
+            let key = url.resolvingSymlinksInPath().standardizedFileURL.path
+            if seen.insert(key).inserted { out.append(url) }
+        }
+        return out
     }
 }
 

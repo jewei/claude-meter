@@ -709,8 +709,9 @@ final class AppState: ObservableObject {
         guard !events.isEmpty else { return }
 
         let engine = notificationEngine
+        let enabled = AppSettings.enabledAttentionEvents
         var sawLimitBlock = false
-        for event in events where AppSettings.enabledAttentionEvents.contains(event.kind.rawValue) {
+        for event in events where enabled.contains(event.kind.rawValue) {
             // A StopFailure only alerts when it's a real limit/billing block — auth,
             // server, and invalid-request failures are noise for a rate-limit meter.
             if event.kind == .stopFailure {

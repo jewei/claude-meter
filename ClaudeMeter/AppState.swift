@@ -34,6 +34,8 @@ final class AppState: ObservableObject {
 
     var pipeline: any ClaudeMeterPipeline
     let notificationEngine = NotificationEngine()
+    /// Persisted per-account usage time series; sampled on each successful poll.
+    let usageHistory = UsageHistoryStore()
     private let store: SnapshotStore
     private let appUpdater: AppUpdater
     private var pollTask: Task<Void, Never>?
@@ -437,6 +439,7 @@ final class AppState: ObservableObject {
                 }
                 snapshot = snap
                 lastPolledAt = snap.lastSuccessfulPollAt ?? Date()
+                recordUsageHistory(snap, now: now)
                 await notificationEngine.process(
                     snapshot: snap,
                     previous: didPollInSession ? previous : nil,
@@ -497,6 +500,45 @@ final class AppState: ObservableObject {
                 (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             )
         }
+    }
+
+    /// Samples each account's windows into the persisted usage history (fire-and-forget
+    /// onto the history actor). Per-account so multi-account users keep distinct series;
+    /// a lone single-account snapshot is keyed `claude`, matching the bridge default.
+    private func recordUsageHistory(_ snap: ClaudeUsageSnapshot, now: Date) {
+        let accounts: [(key: String, limits: LimitInfo)]
+        if let accs = snap.accounts, !accs.isEmpty {
+            accounts = accs.map { ($0.id, $0.limits) }
+        } else {
+            accounts = [("claude", snap.limits)]
+        }
+        let samples = accounts.flatMap {
+            Self.usageHistorySamples(accountKey: $0.key, limits: $0.limits, now: now)
+        }
+        guard !samples.isEmpty else { return }
+        let store = usageHistory
+        Task.detached { for sample in samples { await store.record(sample) } }
+    }
+
+    /// Builds history samples for an account's resolved windows. Uses `resolved(asOf:)`
+    /// so an expired window records 0% rather than a stale reading.
+    static func usageHistorySamples(accountKey: String, limits: LimitInfo, now: Date)
+        -> [UsageHistorySample]
+    {
+        var out: [UsageHistorySample] = []
+        func add(_ window: UsageHistoryWindow, _ raw: LimitWindow?) {
+            guard let resolved = raw?.resolved(asOf: now), let used = resolved.percentUsed else {
+                return
+            }
+            out.append(
+                UsageHistorySample(
+                    accountKey: accountKey, window: window, sampledAt: now,
+                    usedPercent: used, resetsAt: resolved.resetsAt))
+        }
+        add(.session, limits.currentSession)
+        add(.weekly, limits.currentWeekAllModels)
+        add(.weeklyOpus, limits.currentWeekOpus)
+        return out
     }
 
     /// Refreshes Anthropic service status off-main. Advisory only — failures clear

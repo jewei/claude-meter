@@ -611,7 +611,7 @@ struct PopoverView: View {
         return f
     }()
 
-    // MARK: - Codex card (energy-based, local to the popover)
+    // MARK: - Codex card (usage-based, local to the popover)
 
     @ViewBuilder
     private func codexNotices() -> some View {
@@ -627,8 +627,7 @@ struct PopoverView: View {
     private func codexCard(_ usage: CodexUsage) -> some View {
         let primary = usage.primaryWindow
         let percentUsed = primary?.usedPercent
-        let percentLeft = primary?.energyLeftPercent
-        let displayPercent = self.usage ? percentUsed : percentLeft
+        let displayPercent = primary?.cardDisplayPercent
         let band = EnergyBand(severity: usageThresholds.severity(for: percentUsed))
         let tint: Color = band == .full ? .pfEnergyFull : band.color
         return VStack(alignment: .leading, spacing: 8) {
@@ -660,8 +659,8 @@ struct PopoverView: View {
     private func codexSubtitle(_ usage: CodexUsage) -> String? {
         var parts: [String] = []
         if let plan = usage.plan, !plan.isEmpty { parts.append(plan.capitalized) }
-        if let weekly = usage.secondaryWindow?.energyLeftPercent {
-            parts.append("Weekly \(Int(weekly.rounded()))% left")
+        if let weekly = usage.secondaryWindow?.cardDisplayPercent {
+            parts.append("Weekly \(Int(weekly.rounded()))% used")
         }
         if let credits = usage.usageCredits {
             if credits.unlimited {

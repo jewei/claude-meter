@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Codex usage now matches Cursor's percent semantics** — the Codex card shows
+  percent used, fills upward, and labels weekly usage as used instead of left.
+
 ## [2.5] - 2026-07-06
 
 ### Added

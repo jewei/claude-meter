@@ -48,6 +48,17 @@ struct CodexUsageTests {
         #expect(window.displayLabel == "24h")
     }
 
+    @Test func cardDisplayPercentUsesUsedPercentLikeCursor() {
+        let window = CodexLimitWindow(
+            kind: .primary,
+            usedPercent: 82,
+            resetAt: nil,
+            durationSeconds: 18_000,
+            rawLabel: nil)
+
+        #expect(window.cardDisplayPercent == 82)
+    }
+
     @Test func decodesOAuthUsageWithoutRequiringAllWindows() throws {
         let json = """
             {

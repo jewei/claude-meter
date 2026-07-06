@@ -53,6 +53,10 @@ public struct CodexLimitWindow: Codable, Equatable, Sendable {
         usedPercent.map { Self.clampPercent(100 - $0) }
     }
 
+    public var cardDisplayPercent: Double? {
+        usedPercent
+    }
+
     public var displayLabel: String {
         if let rawLabel, !rawLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return rawLabel

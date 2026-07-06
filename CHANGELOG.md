@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5] - 2026-07-06
+
 ### Added
 
 - **Codex usage** — an opt-in Data source for Codex usage, shown as its own
@@ -257,7 +259,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.4...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.5...HEAD
+[2.5]: https://github.com/jewei/claude-meter/compare/v2.3...v2.5
 [2.4]: https://github.com/jewei/claude-meter/compare/v2.3...v2.4
 [2.3]: https://github.com/jewei/claude-meter/compare/v2.2...v2.3
 [2.2]: https://github.com/jewei/claude-meter/compare/v2.1...v2.2

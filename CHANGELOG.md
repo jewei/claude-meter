@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-07-06
+
 ### Fixed
 
 - **Codex usage now matches Cursor's percent semantics** — the Codex card shows
@@ -264,7 +266,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.5...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.5.1...HEAD
+[2.5.1]: https://github.com/jewei/claude-meter/compare/v2.3...v2.5.1
 [2.5]: https://github.com/jewei/claude-meter/compare/v2.3...v2.5
 [2.4]: https://github.com/jewei/claude-meter/compare/v2.3...v2.4
 [2.3]: https://github.com/jewei/claude-meter/compare/v2.2...v2.3

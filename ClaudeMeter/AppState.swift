@@ -25,6 +25,9 @@ final class AppState: ObservableObject {
     @Published var cursorUsage: CursorUsage? = nil
     @Published var cursorError: String? = nil
     @Published var cursorLastPolledAt: Date? = nil
+    @Published var codexUsage: CodexUsage? = nil
+    @Published var codexError: String? = nil
+    @Published var codexLastPolledAt: Date? = nil
     @Published var costScanPartial = false
     /// Activity heatmap (7×24 message counts), scanned on demand when the user
     /// opens it from the cost card. `nil` until first requested.
@@ -34,6 +37,7 @@ final class AppState: ObservableObject {
     @Published var usageTrends: UsageTrends? = nil
     @Published var usageTrendsLoading = false
     private let cursorProvider = CursorUsageProvider()
+    private let codexProvider = CodexUsageProvider()
 
     var pipeline: any ClaudeMeterPipeline
     let notificationEngine = NotificationEngine()
@@ -264,6 +268,10 @@ final class AppState: ObservableObject {
         AppGroupConfig.isSnapshotStale(lastPollAt: cursorLastPolledAt)
     }
 
+    var codexIsStale: Bool {
+        AppGroupConfig.isSnapshotStale(lastPollAt: codexLastPolledAt)
+    }
+
     func setCursorSourceEnabled(_ enabled: Bool) {
         hasEnabledDataSource = AppSettings.hasEnabledDataSource
         if enabled {
@@ -284,6 +292,28 @@ final class AppState: ObservableObject {
         cursorUsage = nil
         cursorError = nil
         cursorLastPolledAt = nil
+    }
+
+    func setCodexSourceEnabled(_ enabled: Bool) {
+        hasEnabledDataSource = AppSettings.hasEnabledDataSource
+        if enabled {
+            if isActive { startPolling() }
+        } else {
+            pipelineGeneration += 1
+            clearCodexState()
+            if canPoll {
+                // Claude/Cursor sources may still be enabled.
+            } else {
+                stopPolling()
+                isLoading = false
+            }
+        }
+    }
+
+    func clearCodexState() {
+        codexUsage = nil
+        codexError = nil
+        codexLastPolledAt = nil
     }
 
     /// Debounced rebuild for source toggles — avoids restarting the poll loop on every flip.
@@ -399,16 +429,16 @@ final class AppState: ObservableObject {
             }
         }
 
-        if AppSettings.hasClaudeSource {
-            async let claude: Void = pollClaude(generation: generation)
-            if AppSettings.cursorSourceEnabled {
-                async let cursor: Void = pollCursor(generation: generation)
-                _ = await (claude, cursor)
-            } else {
-                await claude
+        await withTaskGroup(of: Void.self) { group in
+            if AppSettings.hasClaudeSource {
+                group.addTask { await self.pollClaude(generation: generation) }
             }
-        } else if AppSettings.cursorSourceEnabled {
-            await pollCursor(generation: generation)
+            if AppSettings.cursorSourceEnabled {
+                group.addTask { await self.pollCursor(generation: generation) }
+            }
+            if AppSettings.codexSourceEnabled {
+                group.addTask { await self.pollCodex(generation: generation) }
+            }
         }
     }
 
@@ -506,6 +536,33 @@ final class AppState: ObservableObject {
                 break
             }
             cursorError = DiagnosticsSanitizer.sanitize(
+                (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            )
+        }
+    }
+
+    /// Codex runs independently of Claude and Cursor so failures never affect
+    /// Claude state, menu-bar severity, widget data, or notifications.
+    private func pollCodex(generation: Int) async {
+        let provider = codexProvider
+        let now = Date()
+        do {
+            let usage = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
+                try await provider.fetchUsage(mode: AppSettings.codexSourceMode, now: now)
+            }
+            guard generation == pipelineGeneration,
+                canPoll,
+                AppSettings.codexSourceEnabled
+            else { return }
+            codexUsage = usage
+            codexError = nil
+            codexLastPolledAt = Date()
+        } catch {
+            guard generation == pipelineGeneration,
+                canPoll,
+                AppSettings.codexSourceEnabled
+            else { return }
+            codexError = DiagnosticsSanitizer.sanitize(
                 (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             )
         }
@@ -864,6 +921,8 @@ enum AppSettings {
     static let statuslineSourceEnabledKey = "statuslineSourceEnabled"
     static let oauthSourceEnabledKey = "oauthSourceEnabled"
     static let cursorSourceEnabledKey = "cursorSourceEnabled"
+    static let codexSourceEnabledKey = "codexSourceEnabled"
+    static let codexSourceModeKey = "codexSourceMode"
     static let oauthModeKey = AppGroupConfig.oauthModeKey
 
     static var isActive: Bool {
@@ -885,6 +944,17 @@ enum AppSettings {
     static var cursorSourceEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: cursorSourceEnabledKey) }
         set { UserDefaults.standard.set(newValue, forKey: cursorSourceEnabledKey) }
+    }
+
+    /// Codex defaults off — it is a separate provider card like Cursor.
+    static var codexSourceEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: codexSourceEnabledKey) }
+        set { UserDefaults.standard.set(newValue, forKey: codexSourceEnabledKey) }
+    }
+
+    static var codexSourceMode: CodexSourceMode {
+        get { CodexSourceMode.normalized(UserDefaults.standard.string(forKey: codexSourceModeKey)) }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: codexSourceModeKey) }
     }
 
     // MARK: - Attention (Claude Code hooks)
@@ -928,7 +998,7 @@ enum AppSettings {
     }
 
     static var hasEnabledDataSource: Bool {
-        hasClaudeSource || cursorSourceEnabled
+        hasClaudeSource || cursorSourceEnabled || codexSourceEnabled
     }
 
     private static func boolDefaultingTrue(forKey key: String) -> Bool {

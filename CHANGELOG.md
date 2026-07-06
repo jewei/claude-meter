@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Codex usage** — an opt-in Data source for Codex usage, shown as its own
+  popover card like Cursor while leaving Claude's menu-bar, widget, and
+  notifications unchanged. Auto mode prefers the Codex CLI App Server, with a
+  read-only direct OAuth fallback for file-backed Codex logins.
+
 ## [2.4] - 2026-06-30
 
 ### Added

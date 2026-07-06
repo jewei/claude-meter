@@ -416,10 +416,15 @@ private struct DataSettingsTab: View {
     @AppStorage(AppSettings.statuslineSourceEnabledKey) private var statuslineSourceEnabled = true
     @AppStorage(AppSettings.oauthSourceEnabledKey) private var oauthSourceEnabled = true
     @AppStorage(AppSettings.cursorSourceEnabledKey) private var cursorSourceEnabled = false
+    @AppStorage(AppSettings.codexSourceEnabledKey) private var codexSourceEnabled = false
+    @AppStorage(AppSettings.codexSourceModeKey) private var codexSourceMode = CodexSourceMode.auto.rawValue
 
     @State private var cursorStatus = ""
     @State private var cursorStatusGeneration = 0
     @State private var cursorStatusTask: Task<Void, Never>?
+    @State private var codexStatus = ""
+    @State private var codexStatusGeneration = 0
+    @State private var codexStatusTask: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
@@ -468,17 +473,36 @@ private struct DataSettingsTab: View {
                 ) {
                     cursorContent
                 }
+
+                DataSourceCard(
+                    icon: "sparkles",
+                    iconColor: Color(hex: "49A3B0"),
+                    title: "Codex",
+                    subtitle: "Read Codex usage from Codex CLI App Server or local Codex auth.",
+                    isEnabled: $codexSourceEnabled
+                ) {
+                    codexContent
+                }
             }
             .padding(20)
         }
         .onAppear {
             loadCursorStatus()
+            loadCodexStatus()
         }
         .onChange(of: statuslineSourceEnabled) { _, _ in appState.scheduleRebuildPipeline() }
         .onChange(of: oauthSourceEnabled) { _, _ in appState.scheduleRebuildPipeline() }
         .onChange(of: cursorSourceEnabled) { _, enabled in
             loadCursorStatus()
             appState.setCursorSourceEnabled(enabled)
+        }
+        .onChange(of: codexSourceEnabled) { _, enabled in
+            loadCodexStatus()
+            appState.setCodexSourceEnabled(enabled)
+        }
+        .onChange(of: codexSourceMode) { _, _ in
+            loadCodexStatus()
+            if codexSourceEnabled { appState.refreshNow() }
         }
     }
 
@@ -533,6 +557,72 @@ private struct DataSettingsTab: View {
             }
             guard !Task.isCancelled, generation == cursorStatusGeneration else { return }
             cursorStatus = status
+        }
+    }
+
+    @ViewBuilder
+    private var codexContent: some View {
+        if codexSourceEnabled {
+            VStack(alignment: .leading, spacing: 8) {
+                Picker("Source", selection: $codexSourceMode) {
+                    Text("Auto").tag(CodexSourceMode.auto.rawValue)
+                    Text("Codex CLI App Server").tag(CodexSourceMode.appServer.rawValue)
+                    Text("Direct OAuth").tag(CodexSourceMode.directOAuth.rawValue)
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+
+                HStack(spacing: 6) {
+                    Image(
+                        systemName: codexStatus.hasPrefix("Connected")
+                            ? "checkmark.circle.fill" : "exclamationmark.circle")
+                    .foregroundStyle(codexStatus.hasPrefix("Connected") ? .green : .secondary)
+                    Text(codexStatus.isEmpty ? "Checking…" : codexStatus)
+                }
+                if let err = appState.codexError {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text(err)
+                    }
+                    .foregroundStyle(.red)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private func loadCodexStatus() {
+        codexStatusTask?.cancel()
+        guard codexSourceEnabled else {
+            codexStatus = ""
+            return
+        }
+        codexStatus = ""
+        codexStatusGeneration += 1
+        let generation = codexStatusGeneration
+        let mode = CodexSourceMode.normalized(codexSourceMode)
+        codexStatusTask = Task {
+            let status = await Task.detached(priority: .userInitiated) {
+                let cliFound = CodexCLILocator.resolve() != nil
+                let authAvailable = (try? CodexOAuthCredentialsStore.load()) != nil
+                switch mode {
+                case .appServer:
+                    return cliFound
+                        ? "Connected via Codex CLI"
+                        : "Codex CLI not found"
+                case .directOAuth:
+                    return authAvailable
+                        ? "Connected via direct OAuth"
+                        : "Direct OAuth unavailable; run `codex login` or use Auto"
+                case .auto:
+                    if cliFound { return "Connected via Codex CLI" }
+                    if authAvailable { return "Connected via direct OAuth" }
+                    return "Codex CLI not found — run `codex login` after installing Codex."
+                }
+            }.value
+            guard !Task.isCancelled, generation == codexStatusGeneration else { return }
+            codexStatus = DiagnosticsSanitizer.sanitize(status)
         }
     }
 

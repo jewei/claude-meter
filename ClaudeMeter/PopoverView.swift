@@ -7,6 +7,7 @@ struct PopoverView: View {
     @Environment(\.openSettings) private var openSettings
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage(AppSettings.cursorSourceEnabledKey) private var cursorSourceEnabled = false
+    @AppStorage(AppSettings.codexSourceEnabledKey) private var codexSourceEnabled = false
     @AppStorage(AppGroupConfig.cardStyleKey) private var cardStyle = "rings"
     @AppStorage(AppGroupConfig.progressionModeKey) private var progressionMode = "left"
     @State private var now = Date()
@@ -98,8 +99,12 @@ struct PopoverView: View {
         cursorSourceEnabled && appState.cursorUsage != nil
     }
 
+    private var hasCodex: Bool {
+        codexSourceEnabled && appState.codexUsage != nil
+    }
+
     private var hasAnyData: Bool {
-        appState.snapshot != nil || hasCursor
+        appState.snapshot != nil || hasCursor || hasCodex
     }
 
     @ViewBuilder
@@ -118,6 +123,8 @@ struct PopoverView: View {
             errorState
         } else if cursorSourceEnabled && appState.cursorError != nil {
             cursorErrorState
+        } else if codexSourceEnabled && appState.codexError != nil {
+            codexErrorState
         } else {
             setupState
         }
@@ -148,6 +155,10 @@ struct PopoverView: View {
             if hasCursor, let cursor = appState.cursorUsage {
                 cursorNotices()
                 cursorCard(cursor)
+            }
+            if hasCodex, let codex = appState.codexUsage {
+                codexNotices()
+                codexCard(codex)
             }
         }
         .padding(.horizontal, 15)
@@ -600,6 +611,88 @@ struct PopoverView: View {
         return f
     }()
 
+    // MARK: - Codex card (energy-based, local to the popover)
+
+    @ViewBuilder
+    private func codexNotices() -> some View {
+        if appState.codexError != nil {
+            noticeBanner(
+                appState.codexError ?? "Codex refresh failed — showing last known data",
+                systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
+        } else if appState.codexIsStale {
+            noticeBanner("Codex data may be outdated", systemImage: "clock.fill", tint: .pfInkMuted)
+        }
+    }
+
+    private func codexCard(_ usage: CodexUsage) -> some View {
+        let primary = usage.primaryWindow
+        let percentUsed = primary?.usedPercent
+        let percentLeft = primary?.energyLeftPercent
+        let displayPercent = self.usage ? percentUsed : percentLeft
+        let band = EnergyBand(severity: usageThresholds.severity(for: percentUsed))
+        let tint: Color = band == .full ? .pfEnergyFull : band.color
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(tint)
+                Text("Codex")
+                    .font(PFont.display(14, .semibold))
+                    .foregroundStyle(Color.pfInk)
+                Spacer()
+                Text(displayPercent.map { "\(Int($0.rounded()))%" } ?? "—")
+                    .font(PFont.display(14, .bold))
+                    .foregroundStyle(band == .full ? Color.pfInk : tint)
+                    .monospacedDigit()
+            }
+            EnergyBar(fraction: (displayPercent ?? 0) / 100, color: tint, height: 12)
+            if let subtitle = codexSubtitle(usage) {
+                Text(subtitle)
+                    .font(PFont.body(11, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .chunkyCard()
+    }
+
+    private func codexSubtitle(_ usage: CodexUsage) -> String? {
+        var parts: [String] = []
+        if let plan = usage.plan, !plan.isEmpty { parts.append(plan.capitalized) }
+        if let weekly = usage.secondaryWindow?.energyLeftPercent {
+            parts.append("Weekly \(Int(weekly.rounded()))% left")
+        }
+        if let credits = usage.usageCredits {
+            if credits.unlimited {
+                parts.append("Unlimited credits")
+            } else {
+                let formatted =
+                    Self.codexCreditsFormatter.string(from: NSNumber(value: credits.remaining))
+                    ?? "\(credits.remaining)"
+                parts.append("\(formatted) credits")
+            }
+        }
+        if let reset = usage.primaryWindow?.resetAt, reset > now {
+            parts.append("Resets \(Self.codexDateFormatter.string(from: reset))")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private static let codexDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .none
+        f.timeStyle = .short
+        return f
+    }()
+
+    private static let codexCreditsFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.maximumFractionDigits = 1
+        return f
+    }()
+
     /// Simple depleting/filling capsule bar with an inner top gloss.
     // MARK: - Non-data states
 
@@ -662,7 +755,12 @@ struct PopoverView: View {
     }
 
     private var loadingMessage: String {
-        if AppSettings.hasClaudeSource && cursorSourceEnabled { return "Checking your tanks…" }
+        if AppSettings.hasClaudeSource && (cursorSourceEnabled || codexSourceEnabled) {
+            return "Checking your tanks…"
+        }
+        if codexSourceEnabled && !AppSettings.hasClaudeSource && !cursorSourceEnabled {
+            return "Checking Codex…"
+        }
         if cursorSourceEnabled && !AppSettings.hasClaudeSource { return "Checking Cursor…" }
         return "Checking your tanks…"
     }
@@ -672,11 +770,14 @@ struct PopoverView: View {
     }
 
     private var setupMessage: String {
-        if cursorSourceEnabled && !AppSettings.hasClaudeSource {
+        if codexSourceEnabled && !AppSettings.hasClaudeSource && !cursorSourceEnabled {
+            return "Install Codex or run `codex login` so Claude Meter can read Codex usage."
+        }
+        if cursorSourceEnabled && !AppSettings.hasClaudeSource && !codexSourceEnabled {
             return "Sign in to the Cursor app so Claude Meter can read your billing usage."
         }
-        if AppSettings.hasClaudeSource && cursorSourceEnabled {
-            return "Open Claude Code or sign in to Cursor, or connect OAuth/claude.ai in Settings."
+        if AppSettings.hasClaudeSource && (cursorSourceEnabled || codexSourceEnabled) {
+            return "Open Claude Code, sign in to enabled sources, or connect OAuth in Settings."
         }
         return
             "Open Claude Code so the statusline bridge can publish usage, or connect OAuth/claude.ai in Settings."
@@ -686,6 +787,13 @@ struct PopoverView: View {
         statusState(
             emoji: "⚠️", title: "Couldn't read Cursor",
             message: appState.cursorError ?? "Open Cursor and try again.",
+            primaryTitle: "Open Settings", primary: openSettingsAndCompleteOnboarding)
+    }
+
+    private var codexErrorState: some View {
+        statusState(
+            emoji: "⚠️", title: "Couldn't read Codex",
+            message: appState.codexError ?? "Install Codex or run `codex login`.",
             primaryTitle: "Open Settings", primary: openSettingsAndCompleteOnboarding)
     }
 

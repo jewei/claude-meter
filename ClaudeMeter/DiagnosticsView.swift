@@ -58,6 +58,14 @@ struct DiagnosticsView: View {
                 LabeledContent(
                     "Cursor", value: appState.cursorUsage != nil ? "Connected" : "Not available")
             }
+            if AppSettings.codexSourceEnabled {
+                LabeledContent("Codex mode", value: AppSettings.codexSourceMode.rawValue)
+                LabeledContent(
+                    "Codex", value: appState.codexUsage != nil ? "Connected" : "Not available")
+                if let source = appState.codexUsage?.source.rawValue {
+                    LabeledContent("Codex source", value: source)
+                }
+            }
         }
     }
 
@@ -76,6 +84,17 @@ struct DiagnosticsView: View {
                 LabeledContent("Cursor", value: cursorPollTimeText)
                 if let err = appState.cursorError {
                     LabeledContent("Cursor error") {
+                        Text(DiagnosticsSanitizer.sanitize(err))
+                            .foregroundStyle(Color.cmCritical)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            if AppSettings.codexSourceEnabled {
+                LabeledContent("Codex", value: codexPollTimeText)
+                if let err = appState.codexError {
+                    LabeledContent("Codex error") {
                         Text(DiagnosticsSanitizer.sanitize(err))
                             .foregroundStyle(Color.cmCritical)
                             .font(.system(.caption, design: .monospaced))
@@ -127,6 +146,11 @@ struct DiagnosticsView: View {
         return isoFormatter.string(from: date)
     }
 
+    private var codexPollTimeText: String {
+        guard let date = appState.codexLastPolledAt else { return "Never" }
+        return isoFormatter.string(from: date)
+    }
+
     private var dataSourceMode: String {
         let parserVersion = appState.snapshot?.parserVersion ?? ""
         if parserVersion.hasPrefix("statusline") { return "Statusline bridge" }
@@ -161,6 +185,14 @@ struct DiagnosticsView: View {
             lines += [
                 "  Cursor: \(cursorPollTimeText)",
                 "  Cursor error: \(DiagnosticsSanitizer.sanitize(appState.cursorError ?? "None"))",
+            ]
+        }
+        if AppSettings.codexSourceEnabled {
+            lines += [
+                "  Codex: \(codexPollTimeText)",
+                "  Codex mode: \(AppSettings.codexSourceMode.rawValue)",
+                "  Codex source: \(appState.codexUsage?.source.rawValue ?? "None")",
+                "  Codex error: \(DiagnosticsSanitizer.sanitize(appState.codexError ?? "None"))",
             ]
         }
         lines += [""]

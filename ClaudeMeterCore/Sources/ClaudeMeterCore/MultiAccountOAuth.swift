@@ -128,3 +128,108 @@ extension MultiAccountOAuth {
             severity: severity)
     }
 }
+
+// MARK: - Snapshot merge
+
+extension MultiAccountOAuth {
+
+    /// Merges per-account OAuth readings into a snapshot's `accounts` list.
+    /// Fill-only-missing: statusline data (near-real-time) wins on conflict;
+    /// OAuth contributes what the statusline can't see (Opus weekly, extra
+    /// usage, plan, email, org) and covers accounts with no live session.
+    /// The snapshot's TOP-LEVEL fields are never modified here.
+    public static func merge(
+        readings: [OAuthAccountReading],
+        into snapshot: ClaudeUsageSnapshot,
+        now: Date
+    ) -> ClaudeUsageSnapshot {
+        guard !readings.isEmpty else { return snapshot }
+        var byKey = Dictionary(uniqueKeysWithValues: readings.map { ($0.accountKey, $0) })
+        var snap = snapshot
+
+        if var accounts = snap.accounts, !accounts.isEmpty {
+            for index in accounts.indices {
+                guard let reading = byKey.removeValue(forKey: accounts[index].id) else {
+                    continue
+                }
+                accounts[index] = filled(accounts[index], from: reading)
+            }
+            accounts.append(
+                contentsOf: byKey.values.sorted { $0.accountKey < $1.accountKey }
+                    .map { newAccount(from: $0, now: now) })
+            snap.accounts = sorted(accounts)
+            return snap
+        }
+
+        // No accounts list: only materialize one for a real multi-account picture
+        // (a lone default account keeps `current.json` byte-identical).
+        guard readings.count >= 2 else { return snap }
+        let activeKey = byKey["claude"] != nil ? "claude" : readings[0].accountKey
+        let accounts = readings.map { reading in
+            var account = newAccount(from: reading, now: now)
+            account.isActive = reading.accountKey == activeKey
+            return account
+        }
+        snap.accounts = sorted(accounts)
+        return snap
+    }
+
+    /// Account keys that share an organization id with another account — two
+    /// config dirs logged into the same login (their quota is one bucket shown
+    /// twice).
+    public static func duplicateOrgAccountKeys(_ accounts: [AccountUsage]) -> Set<String> {
+        var byOrg: [String: [String]] = [:]
+        for account in accounts {
+            guard let org = account.account?.organization, !org.isEmpty else { continue }
+            byOrg[org, default: []].append(account.id)
+        }
+        return Set(byOrg.values.filter { $0.count >= 2 }.flatMap { $0 })
+    }
+
+    private static func filled(_ existing: AccountUsage, from reading: OAuthAccountReading)
+        -> AccountUsage
+    {
+        var account = existing
+        var info = account.account ?? AccountInfo()
+        if info.email == nil { info.email = reading.email }
+        if info.plan == nil { info.plan = reading.plan }
+        if info.organization == nil { info.organization = reading.organizationId }
+        if info.loginMethod == nil { info.loginMethod = "OAuth" }
+        account.account = info.isEmpty ? nil : info
+        if account.limits.currentWeekOpus == nil {
+            account.limits.currentWeekOpus = reading.limits.currentWeekOpus
+        }
+        if account.limits.extraUsage == nil {
+            account.limits.extraUsage = reading.limits.extraUsage
+        }
+        if account.limits.currentSession.percentUsed == nil {
+            account.limits.currentSession = reading.limits.currentSession
+        }
+        if account.limits.currentWeekAllModels.percentUsed == nil {
+            account.limits.currentWeekAllModels = reading.limits.currentWeekAllModels
+        }
+        return account
+    }
+
+    private static func newAccount(from reading: OAuthAccountReading, now: Date) -> AccountUsage {
+        AccountUsage(
+            id: reading.accountKey,
+            label: reading.label,
+            account: AccountInfo(
+                loginMethod: "OAuth",
+                organization: reading.organizationId,
+                email: reading.email,
+                plan: reading.plan),
+            limits: reading.limits,
+            lastSuccessfulPollAt: now,
+            severity: reading.severity,
+            isActive: false)
+    }
+
+    private static func sorted(_ accounts: [AccountUsage]) -> [AccountUsage] {
+        accounts.sorted { lhs, rhs in
+            if lhs.isActive != rhs.isActive { return lhs.isActive }
+            return lhs.id < rhs.id
+        }
+    }
+}

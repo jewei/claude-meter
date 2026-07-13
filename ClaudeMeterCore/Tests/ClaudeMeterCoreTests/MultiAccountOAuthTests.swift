@@ -172,3 +172,112 @@ extension MultiAccountOAuthTests {
         #expect(transport.requests.count == 1)
     }
 }
+
+// MARK: - merge + duplicate detection
+
+extension MultiAccountOAuthTests {
+    private static func reading(
+        key: String, label: String? = nil, email: String? = "user@x.com",
+        org: String?, session: Double = 10, week: Double = 20, opus: Double? = 5
+    ) -> OAuthAccountReading {
+        OAuthAccountReading(
+            accountKey: key, label: label ?? key, email: email, plan: "Max 5x",
+            organizationId: org,
+            limits: LimitInfo(
+                currentSession: LimitWindow(percentUsed: session, resetsAt: nil),
+                currentWeekAllModels: LimitWindow(percentUsed: week, resetsAt: nil),
+                currentWeekOpus: opus.map { LimitWindow(percentUsed: $0, resetsAt: nil) },
+                extraUsage: nil),
+            severity: .normal)
+    }
+
+    private static func statuslineSnapshot(accounts: [AccountUsage]?) -> ClaudeUsageSnapshot {
+        ClaudeUsageSnapshot(
+            parserVersion: "statusline-1.0", createdAt: Date(),
+            source: SourceInfo(cliPath: "statusline", command: "bridge"),
+            limits: LimitInfo(
+                currentSession: LimitWindow(percentUsed: 50, resetsAt: nil),
+                currentWeekAllModels: LimitWindow(percentUsed: 60, resetsAt: nil)),
+            state: SnapshotState(status: .ok, severity: .normal),
+            accounts: accounts)
+    }
+
+    @Test func mergeFillsExistingAccountGaps() {
+        let existing = AccountUsage(
+            id: "claude-work", label: "work",
+            account: nil,
+            limits: LimitInfo(
+                currentSession: LimitWindow(percentUsed: 42, resetsAt: nil),
+                currentWeekAllModels: LimitWindow()),
+            severity: .normal, isActive: false)
+        let snap = Self.statuslineSnapshot(accounts: [existing])
+        let merged = MultiAccountOAuth.merge(
+            readings: [Self.reading(key: "claude-work", email: "w@x.com", org: "org-W", week: 88)],
+            into: snap, now: Date())
+        let acc = merged.accounts!.first { $0.id == "claude-work" }!
+        // Statusline session (real data) wins; empty weekly filled from OAuth.
+        #expect(acc.limits.currentSession.percentUsed == 42)
+        #expect(acc.limits.currentWeekAllModels.percentUsed == 88)
+        #expect(acc.limits.currentWeekOpus?.percentUsed == 5)
+        #expect(acc.account?.email == "w@x.com")
+        #expect(acc.account?.organization == "org-W")
+        #expect(acc.account?.plan == "Max 5x")
+    }
+
+    @Test func mergeAppendsUnknownAccounts() {
+        let snap = Self.statuslineSnapshot(accounts: [
+            AccountUsage(
+                id: "claude", label: "default", limits: LimitInfo(),
+                severity: .normal, isActive: true)
+        ])
+        let merged = MultiAccountOAuth.merge(
+            readings: [Self.reading(key: "claude-idle", org: "org-I")],
+            into: snap, now: Date())
+        let appended = merged.accounts!.first { $0.id == "claude-idle" }
+        #expect(appended != nil)
+        #expect(appended?.isActive == false)
+        #expect(appended?.limits.currentSession.percentUsed == 10)
+        // Active account stays first.
+        #expect(merged.accounts?.first?.id == "claude")
+    }
+
+    @Test func mergeLeavesSingleAccountSnapshotUntouched() {
+        let snap = Self.statuslineSnapshot(accounts: nil)
+        let merged = MultiAccountOAuth.merge(
+            readings: [Self.reading(key: "claude", org: "org-A")], into: snap, now: Date())
+        #expect(merged.accounts == nil)  // byte-compat promise
+        #expect(merged.limits == snap.limits)  // top level untouched
+    }
+
+    @Test func mergeBuildsAccountsListFromTwoReadings() {
+        let snap = Self.statuslineSnapshot(accounts: nil)
+        let merged = MultiAccountOAuth.merge(
+            readings: [
+                Self.reading(key: "claude-work", org: "org-W"),
+                Self.reading(key: "claude", org: "org-A"),
+            ],
+            into: snap, now: Date())
+        #expect(merged.accounts?.count == 2)
+        #expect(merged.accounts?.first?.id == "claude")
+        #expect(merged.accounts?.first?.isActive == true)
+        #expect(merged.limits == snap.limits)
+    }
+
+    @Test func duplicateOrgDetection() {
+        let a = AccountUsage(
+            id: "claude", label: "default",
+            account: AccountInfo(organization: "org-same"),
+            limits: LimitInfo(), severity: .normal, isActive: true)
+        let b = AccountUsage(
+            id: "claude-copy", label: "copy",
+            account: AccountInfo(organization: "org-same"),
+            limits: LimitInfo(), severity: .normal, isActive: false)
+        let c = AccountUsage(
+            id: "claude-other", label: "other",
+            account: AccountInfo(organization: "org-diff"),
+            limits: LimitInfo(), severity: .normal, isActive: false)
+        #expect(
+            MultiAccountOAuth.duplicateOrgAccountKeys([a, b, c]) == ["claude", "claude-copy"])
+        #expect(MultiAccountOAuth.duplicateOrgAccountKeys([a, c]).isEmpty)
+    }
+}

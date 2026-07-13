@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Grok usage** — an opt-in Data source for Grok Build (xAI CLI) weekly credit
+  usage, shown as its own popover card like Cursor and Codex. Reads the `grok`
+  CLI's sign-in; unofficial endpoint, may break without notice.
 - **Per-account live usage for every Claude account** — plan, email, weekly
   Opus, and extra-usage now appear for *all* your `CLAUDE_CONFIG_DIR` accounts,
   not just the active one, read directly from each account's own login. Idle

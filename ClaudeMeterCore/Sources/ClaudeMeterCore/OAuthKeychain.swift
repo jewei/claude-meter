@@ -12,17 +12,21 @@ public struct OAuthCredentials: Sendable {
     public var expiresAt: Date
     /// Plan hint from Claude Code's credentials (`subscriptionType`), e.g. "max".
     public var subscriptionType: String?
+    /// Finer plan hint when present, e.g. "default_claude_max_5x" (→ "Max 5x").
+    public var rateLimitTier: String?
 
     public init(
         accessToken: String,
         refreshToken: String,
         expiresAt: Date,
-        subscriptionType: String? = nil
+        subscriptionType: String? = nil,
+        rateLimitTier: String? = nil
     ) {
         self.accessToken = accessToken
         self.refreshToken = refreshToken
         self.expiresAt = expiresAt
         self.subscriptionType = subscriptionType
+        self.rateLimitTier = rateLimitTier
     }
 
     /// True when the access token is expired or within 60 s of expiry.
@@ -126,7 +130,8 @@ public enum OAuthKeychain: Sendable {
             accessToken: accessToken,
             refreshToken: refreshToken,
             expiresAt: Date(timeIntervalSince1970: expiresAtMs / 1000),
-            subscriptionType: oauth["subscriptionType"] as? String
+            subscriptionType: oauth["subscriptionType"] as? String,
+            rateLimitTier: oauth["rateLimitTier"] as? String
         )
     }
 

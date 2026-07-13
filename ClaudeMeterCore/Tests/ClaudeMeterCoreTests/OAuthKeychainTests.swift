@@ -32,6 +32,14 @@ struct OAuthKeychainTests {
         #expect(OAuthKeychain.parseForTesting(json) == nil)
     }
 
+    @Test func parseReadsRateLimitTier() {
+        let json = """
+            {"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":1999999999999,"subscriptionType":"max","rateLimitTier":"default_claude_max_20x"}}
+            """
+        let creds = OAuthKeychain.parseForTesting(json)
+        #expect(creds?.rateLimitTier == "default_claude_max_20x")
+    }
+
     @Test func picksNewestHashedOverOlderLegacyAndIgnoresUnrelated() {
         let base = Date(timeIntervalSince1970: 1_700_000_000)
         let candidates: [(service: String, modified: Date)] = [

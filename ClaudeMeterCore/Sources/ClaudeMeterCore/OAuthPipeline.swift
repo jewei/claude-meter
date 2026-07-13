@@ -261,8 +261,17 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         return enrichment.isEmpty ? nil : enrichment
     }
 
+    /// Backoff bridge for the multi-account fetcher (`OAuthSharedState` is private).
+    static func isRateLimited(now: Date) -> Bool {
+        OAuthSharedState.isRateLimited(now: now)
+    }
+
+    static func recordRateLimit(retryAfter: Date?, now: Date) {
+        OAuthSharedState.recordRateLimit(retryAfter: retryAfter, now: now)
+    }
+
     /// Builds the authenticated GET for the usage API (shared header setup).
-    private static func usageRequest(token: String) -> URLRequest {
+    static func usageRequest(token: String) -> URLRequest {
         var request = URLRequest(url: usageURL)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")

@@ -655,8 +655,16 @@ final class AppState: ObservableObject {
     /// tier). Interval-gated like the single-slot enrichment; the fetch itself
     /// runs off-main (inside `Timeout.run`'s detached task). Returns cached
     /// readings between refreshes so every poll can re-merge.
+    ///
+    /// Gated on `oauthMode == "auto"` (the user explicitly connected the Claude
+    /// Code token), not just the source toggle: reading another app's Keychain
+    /// items surfaces the macOS ACL password prompt once per entry, which must
+    /// never ambush a statusline-only user. Manual mode is excluded too — its
+    /// app-owned token deliberately avoids Claude Code's Keychain entries.
     private func accountReadings(now: Date) async -> [OAuthAccountReading] {
-        guard AppSettings.oauthSourceEnabled else { return [] }
+        guard AppSettings.oauthSourceEnabled,
+            UserDefaults.standard.string(forKey: AppGroupConfig.oauthModeKey) == "auto"
+        else { return [] }
         if let lastAccountsFetchAt,
             now.timeIntervalSince(lastAccountsFetchAt) < Self.oauthEnrichmentIntervalSeconds
         {

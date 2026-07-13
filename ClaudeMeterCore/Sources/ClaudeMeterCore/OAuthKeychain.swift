@@ -12,17 +12,21 @@ public struct OAuthCredentials: Sendable {
     public var expiresAt: Date
     /// Plan hint from Claude Code's credentials (`subscriptionType`), e.g. "max".
     public var subscriptionType: String?
+    /// Finer plan hint when present, e.g. "default_claude_max_5x" (→ "Max 5x").
+    public var rateLimitTier: String?
 
     public init(
         accessToken: String,
         refreshToken: String,
         expiresAt: Date,
-        subscriptionType: String? = nil
+        subscriptionType: String? = nil,
+        rateLimitTier: String? = nil
     ) {
         self.accessToken = accessToken
         self.refreshToken = refreshToken
         self.expiresAt = expiresAt
         self.subscriptionType = subscriptionType
+        self.rateLimitTier = rateLimitTier
     }
 
     /// True when the access token is expired or within 60 s of expiry.
@@ -126,7 +130,8 @@ public enum OAuthKeychain: Sendable {
             accessToken: accessToken,
             refreshToken: refreshToken,
             expiresAt: Date(timeIntervalSince1970: expiresAtMs / 1000),
-            subscriptionType: oauth["subscriptionType"] as? String
+            subscriptionType: oauth["subscriptionType"] as? String,
+            rateLimitTier: oauth["rateLimitTier"] as? String
         )
     }
 
@@ -137,6 +142,41 @@ public enum OAuthKeychain: Sendable {
         case let n as NSNumber: n.doubleValue
         default: nil
         }
+    }
+
+    /// Candidate Keychain service names for a config dir's credentials, preferred
+    /// first. Custom dirs use only their hashed service; the default dir prefers
+    /// the legacy unsuffixed entry with the hashed one as a fallback (newer
+    /// Claude Code may namespace even the default install).
+    public static func credentialServices(forConfigDirPath path: String, isDefault: Bool)
+        -> [String]
+    {
+        let hashed = service + "-" + MultiAccountOAuth.hashedServiceSuffix(forPath: path)
+        return isDefault ? [service, hashed] : [hashed]
+    }
+
+    /// Reads the credentials bound to one config dir (multi-account read path).
+    /// Same attributes-only enumeration + persistent-ref read as the single-slot
+    /// path, but filtered to the dir's candidate services instead of "newest wins".
+    public static func loadResult(configDirPath: String, isDefault: Bool)
+        -> KeychainReadResult<OAuthCredentials>
+    {
+        let account = claudeCodeAccount
+        guard !account.isEmpty else { return .missing }
+        #if canImport(Security)
+            let services = credentialServices(
+                forConfigDirPath: standardizedConfigDirPath(configDirPath), isDefault: isDefault)
+            return parseResult(readCredential(services: services, account: account))
+        #else
+            return .missing
+        #endif
+    }
+
+    /// Standardizes a config dir path the same way the hash input expects:
+    /// absolute, tilde-expanded, symlinks resolved, no trailing slash.
+    static func standardizedConfigDirPath(_ raw: String) -> String {
+        URL(fileURLWithPath: (raw as NSString).expandingTildeInPath)
+            .resolvingSymlinksInPath().standardizedFileURL.path
     }
 
     /// From candidate `(service, modificationDate)` pairs, returns the credential
@@ -296,6 +336,37 @@ public enum OAuthKeychain: Sendable {
                 return .missing
             }
             return readCredentialData(persistentRef: ref)
+        }
+
+        /// Reads the first present service from `services` (preference order) via
+        /// attributes-only enumeration + persistent-ref data read. `.missing` only
+        /// when none of the candidates exist.
+        private static func readCredential(services: [String], account: String)
+            -> KeychainReadResult<String>
+        {
+            let query: [CFString: Any] = [
+                kSecClass: kSecClassGenericPassword,
+                kSecAttrAccount: account,
+                kSecReturnAttributes: true,
+                kSecReturnPersistentRef: true,
+                kSecMatchLimit: kSecMatchLimitAll,
+            ]
+            var result: AnyObject?
+            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            switch status {
+            case errSecSuccess: break
+            case errSecItemNotFound: return .missing
+            default: return .temporarilyUnavailable
+            }
+            guard let items = result as? [[String: Any]] else { return .missing }
+            for service in services {
+                if let ref = items.first(where: {
+                    ($0[kSecAttrService as String] as? String) == service
+                })?[kSecValuePersistentRef as String] as? Data {
+                    return readCredentialData(persistentRef: ref)
+                }
+            }
+            return .missing
         }
 
         /// Reads a generic-password's secret by persistent ref under the no-UI policy,

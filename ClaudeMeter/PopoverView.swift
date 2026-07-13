@@ -219,6 +219,7 @@ struct PopoverView: View {
     /// Plan/email/Opus come from OAuth and exist only for the active account.
     private func accountModels(_ snap: ClaudeUsageSnapshot) -> [AccountCardModel] {
         if let accounts = snap.accounts, !accounts.isEmpty {
+            let duplicates = MultiAccountOAuth.duplicateOrgAccountKeys(accounts)
             let sorted = accounts.sorted { lhs, rhs in
                 if lhs.isActive != rhs.isActive { return lhs.isActive }
                 return lhs.label.localizedCaseInsensitiveCompare(rhs.label) == .orderedAscending
@@ -228,11 +229,16 @@ struct PopoverView: View {
                     id: acc.id,
                     label: AppGroupConfig.accountName(forKey: acc.id) ?? acc.label.friendlyAccountLabel,
                     plan: AppGroupConfig.accountPlan(forKey: acc.id)
-                        ?? (acc.isActive ? snap.account?.plan : acc.account?.plan),
-                    subtitle: acc.isActive ? snap.account?.email : acc.account?.email,
+                        ?? (acc.isActive ? snap.account?.plan : acc.account?.plan)
+                        ?? acc.account?.plan,
+                    subtitle: (acc.isActive ? snap.account?.email : acc.account?.email)
+                        ?? acc.account?.email,
                     session: acc.limits.currentSession,
                     week: acc.limits.currentWeekAllModels,
-                    opus: acc.isActive ? snap.limits.currentWeekOpus : acc.limits.currentWeekOpus
+                    opus: acc.isActive
+                        ? (snap.limits.currentWeekOpus ?? acc.limits.currentWeekOpus)
+                        : acc.limits.currentWeekOpus,
+                    isDuplicateLogin: duplicates.contains(acc.id)
                 )
             }
         }

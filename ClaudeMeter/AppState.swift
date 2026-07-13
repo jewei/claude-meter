@@ -57,6 +57,8 @@ final class AppState: ObservableObject {
     private var networkMonitor: NetworkMonitor?
     private var lastOAuthEnrichmentAt: Date?
     private var cachedOAuthEnrichment: OAuthPipeline.OAuthEnrichment?
+    private var lastAccountsFetchAt: Date?
+    private var cachedAccountReadings: [OAuthAccountReading] = []
     /// In-flight statusline-bridge install task; cancelled and replaced on each
     /// refresh so rapid source/account toggles don't pile up or race.
     private var configRefreshTask: Task<Void, Never>?
@@ -330,6 +332,8 @@ final class AppState: ObservableObject {
         pipelineGeneration += 1
         lastOAuthEnrichmentAt = nil
         cachedOAuthEnrichment = nil
+        lastAccountsFetchAt = nil
+        cachedAccountReadings = []
         hasEnabledDataSource = AppSettings.hasEnabledDataSource
         pipeline = AppState.makePipeline(store: store)
         if canPoll && pollTask == nil {
@@ -473,7 +477,14 @@ final class AppState: ObservableObject {
                 // snapshot, layer those fields on if OAuth creds are available.
                 let enrichment = await oauthEnrichment(for: snap, now: now)
                 if let enrichment { Self.apply(enrichment, to: &snap) }
-                if !costResult.models.isEmpty || enrichment != nil {
+                // Per-account OAuth readings (multi-account tier): fill each
+                // account's plan/email/Opus/extra and cover accounts with no
+                // live session. Fill-only-missing; top-level fields untouched.
+                let readings = await accountReadings(now: now)
+                let mergedSnap = MultiAccountOAuth.merge(readings: readings, into: snap, now: now)
+                let accountsChanged = mergedSnap != snap
+                snap = mergedSnap
+                if !costResult.models.isEmpty || enrichment != nil || accountsChanged {
                     try? store.writeLatest(snap)
                 }
                 snapshot = snap
@@ -638,6 +649,39 @@ final class AppState: ObservableObject {
             return enrichment
         }
         return cachedOAuthEnrichment
+    }
+
+    /// Per-account OAuth readings for every discovered config dir (multi-account
+    /// tier). Interval-gated like the single-slot enrichment; the fetch itself
+    /// runs off-main (inside `Timeout.run`'s detached task). Returns cached
+    /// readings between refreshes so every poll can re-merge.
+    private func accountReadings(now: Date) async -> [OAuthAccountReading] {
+        guard AppSettings.oauthSourceEnabled else { return [] }
+        if let lastAccountsFetchAt,
+            now.timeIntervalSince(lastAccountsFetchAt) < Self.oauthEnrichmentIntervalSeconds
+        {
+            return cachedAccountReadings
+        }
+        lastAccountsFetchAt = now
+        let configuredDirs = AppGroupConfig.configuredConfigDirs
+        let disabledKeys = Set(AppGroupConfig.disabledAccountKeys)
+        let thresholds = AppGroupConfig.currentThresholds()
+        let readings =
+            (try? await Timeout.run(seconds: 30) { () async -> [OAuthAccountReading] in
+                let accounts = ConfigDirDiscovery.discover(
+                    configuredDirs: configuredDirs, disabledKeys: disabledKeys)
+                return await MultiAccountOAuth.fetchAll(
+                    accounts: accounts,
+                    home: FileManager.default.homeDirectoryForCurrentUser,
+                    thresholds: thresholds,
+                    transport: ProviderHTTPClient.shared,
+                    credentialsLoader: { path, isDefault in
+                        OAuthKeychain.loadResult(configDirPath: path, isDefault: isDefault)
+                    },
+                    now: now)
+            }) ?? []
+        if !readings.isEmpty { cachedAccountReadings = readings }
+        return cachedAccountReadings
     }
 
     private static func apply(

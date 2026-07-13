@@ -59,8 +59,8 @@ public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
 ///
 /// Flat display value type (no nested snapshot) so it persists cleanly inside the
 /// widget-readable `current.json`. The active account is also mirrored into the
-/// snapshot's top-level fields; the others are statusline-only (no plan/Opus
-/// enrichment, which is single-slot — see `OAuthPipeline`).
+/// snapshot's top-level fields; every account's plan/email/org/Opus can be filled
+/// by the multi-account OAuth tier (see `MultiAccountOAuth.merge`).
 public struct AccountUsage: Codable, Equatable, Sendable, Identifiable {
     /// Account key (see `ConfigDirDiscovery.accountKey`).
     public var id: String

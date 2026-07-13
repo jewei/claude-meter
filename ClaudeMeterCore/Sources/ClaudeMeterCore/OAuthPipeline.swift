@@ -79,7 +79,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             }
         }
 
-        let plan = ClaudePlan.displayName(subscriptionType: creds.subscriptionType)
+        let plan = ClaudePlan.displayName(
+            subscriptionType: creds.subscriptionType, rateLimitTier: creds.rateLimitTier)
         do {
             return try await fetchAndBuild(token: creds.accessToken, plan: plan, now: now)
         } catch OAuthError.unauthorized {
@@ -108,7 +109,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 OAuthKeychain.saveManual(
                     accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
             }
-            let refreshedPlan = ClaudePlan.displayName(subscriptionType: refreshed.subscriptionType)
+            let refreshedPlan = ClaudePlan.displayName(
+                subscriptionType: refreshed.subscriptionType,
+                rateLimitTier: refreshed.rateLimitTier)
             if let result = try? await fetchAndBuild(
                 token: refreshed.accessToken, plan: refreshedPlan, now: now)
             {
@@ -230,7 +233,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 accessToken: refreshed.accessToken,
                 refreshToken: refreshed.refreshToken,
                 expiresAt: refreshed.expiresAt,
-                subscriptionType: creds.subscriptionType
+                subscriptionType: creds.subscriptionType,
+                rateLimitTier: creds.rateLimitTier
             )
             OAuthSharedState.setCachedCredentials(creds, for: oauthMode)
             if oauthMode == "manual" {
@@ -251,14 +255,23 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             extraUsage: usage.extraUsage?.model,
             plan: ClaudePlan.displayName(
                 subscriptionType: creds.subscriptionType,
-                rateLimitTier: nil
+                rateLimitTier: creds.rateLimitTier
             )
         )
         return enrichment.isEmpty ? nil : enrichment
     }
 
+    /// Backoff bridge for the multi-account fetcher (`OAuthSharedState` is private).
+    static func isRateLimited(now: Date) -> Bool {
+        OAuthSharedState.isRateLimited(now: now)
+    }
+
+    static func recordRateLimit(retryAfter: Date?, now: Date) {
+        OAuthSharedState.recordRateLimit(retryAfter: retryAfter, now: now)
+    }
+
     /// Builds the authenticated GET for the usage API (shared header setup).
-    private static func usageRequest(token: String) -> URLRequest {
+    static func usageRequest(token: String) -> URLRequest {
         var request = URLRequest(url: usageURL)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
@@ -325,7 +338,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             accessToken: resp.accessToken,
             refreshToken: resp.refreshToken ?? credentials.refreshToken,
             expiresAt: Date().addingTimeInterval(Double(resp.expiresIn)),
-            subscriptionType: credentials.subscriptionType
+            subscriptionType: credentials.subscriptionType,
+            rateLimitTier: credentials.rateLimitTier
         )
     }
 

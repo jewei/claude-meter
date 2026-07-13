@@ -53,3 +53,5 @@ Icon?
 
 # Brag files
 brag-output/
+# Superpowers planning docs (local-only)
+docs/superpowers/

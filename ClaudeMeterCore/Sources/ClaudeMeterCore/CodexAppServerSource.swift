@@ -129,7 +129,10 @@ final class CodexAppServerClient: @unchecked Sendable {
 
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = ["-s", "read-only", "-a", "untrusted", "app-server"]
-        process.environment = env
+        // Scrub auth-override vars (CODEX_API_KEY, OPENAI_BASE_URL, …) so an env
+        // inherited from a terminal launch can't point the read at a different
+        // account/provider than the local login.
+        process.environment = AuthEnv.scrubbed(env)
         process.standardInput = stdinPipe
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe

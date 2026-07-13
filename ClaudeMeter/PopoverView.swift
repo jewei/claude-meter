@@ -763,9 +763,17 @@ struct PopoverView: View {
             }
         }
         if let reset = usage.resetsAt, reset > now {
-            parts.append("Resets \(Self.codexDateFormatter.string(from: reset))")
+            parts.append("Resets \(Self.grokResetText(reset))")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// Weekly resets are usually days away — a bare time ("1:57 PM") reads as
+    /// today. Same-day resets keep the time; anything later shows the date.
+    private static func grokResetText(_ reset: Date) -> String {
+        Calendar.current.isDateInToday(reset)
+            ? codexDateFormatter.string(from: reset)
+            : cursorDateFormatter.string(from: reset)
     }
 
     /// Simple depleting/filling capsule bar with an inner top gloss.

@@ -112,6 +112,14 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 
 - **Provider subprocess env is scrubbed** — `codex app-server` spawns strip `AuthEnv.overrideVariables` (`CODEX_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `ANTHROPIC_*`, Bedrock/Vertex selectors, …) so an env inherited from a terminal launch can't point the read at a different account/provider. Reuse `AuthEnv.scrubbed` for any future provider subprocess.
 
+## Grok usage (opt-in)
+
+- **Separate from Claude pipeline** — `grokSourceEnabled` defaults `false`; polled in parallel via `pollGrok`, not part of `makePipeline()`.
+- **Token read-only** — `GrokAuthStore` reads `~/.grok/auth.json` (`GROK_HOME` override), prefers the `https://auth.x.ai::<client-id>` OIDC entry over legacy `https://accounts.x.ai/sign-in`. Never refreshes, never writes; expired token (~6 h TTL, CLI-owned refresh) → `loginRequired`, never sent.
+- **API** — unofficial `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits` (same upstream call as the CLI's `/usage`); may break without notice. `creditUsagePercent` is authoritative; **proto3 omits zero fields** — absent percent with a present `currentPeriod` decodes as 0, not missing. Timestamps carry microsecond fractions — `GrokTimestamp.parse` strips the fraction (`ISO8601DateFormatter.withFractionalSeconds` requires exactly 3 digits).
+- **Monetary `{val}` wrappers are minor units** (cents): `onDemandUsed`/`onDemandCap`/`prepaidBalance`.
+- **UX** — `grokError` surfaces in popover/settings/diagnostics. Menu bar stays Claude-only; not in widget/notifications.
+
 ## Cursor usage (opt-in)
 
 - **Separate from Claude pipeline** — `cursorSourceEnabled` defaults `false`; polled in parallel via `pollCursor`, not part of `makePipeline()`.

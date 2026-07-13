@@ -159,6 +159,9 @@ struct AccountCardModel: Identifiable {
     var session: LimitWindow
     var week: LimitWindow
     var opus: LimitWindow?
+    /// Another account shares this one's organization id — same login, one
+    /// quota shown twice (see `MultiAccountOAuth.duplicateOrgAccountKeys`).
+    var isDuplicateLogin: Bool = false
 
     var avatarLetter: String {
         let trimmed = label.drop(while: { !$0.isLetter && !$0.isNumber })
@@ -202,6 +205,20 @@ func avatarColorForID(_ id: String) -> Color {
     return pfAvatarPalette[((h % n) + n) % n]
 }
 
+/// Chip flagging that two config dirs are logged into the same Claude account
+/// (their windows are one shared quota rendered twice).
+struct DuplicateLoginBadge: View {
+    var body: some View {
+        Text("same login")
+            .font(PFont.body(9, .bold))
+            .foregroundStyle(Color.pfInkMuted)
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(Capsule().fill(Color.pfTrack))
+            .help(
+                "Two config dirs are logged into the same Claude account — they share one quota.")
+    }
+}
+
 // MARK: - Account ring card
 
 struct AccountRingCard: View {
@@ -229,6 +246,7 @@ struct AccountRingCard: View {
                         .foregroundStyle(Color.pfInk)
                         .lineLimit(1)
                     Spacer(minLength: 4)
+                    if model.isDuplicateLogin { DuplicateLoginBadge() }
                     if let plan = model.plan { PlanBadge(plan: plan) }
                 }
                 if let subtitle = model.subtitle {
@@ -317,6 +335,7 @@ struct AccountBarCard: View {
                     }
                 }
                 Spacer(minLength: 4)
+                if model.isDuplicateLogin { DuplicateLoginBadge() }
                 if let plan = model.plan { PlanBadge(plan: plan) }
             }
             barSection("5-Hour Energy", icon: "⚡️", window: model.session, kind: .session)

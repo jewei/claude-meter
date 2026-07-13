@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6] - 2026-07-13
+
 ### Added
 
 - **Grok usage** — an opt-in Data source for Grok Build (xAI CLI) weekly credit
@@ -289,7 +291,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.5.1...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.6...HEAD
+[2.6]: https://github.com/jewei/claude-meter/compare/v2.5.1...v2.6
 [2.5.1]: https://github.com/jewei/claude-meter/compare/v2.3...v2.5.1
 [2.5]: https://github.com/jewei/claude-meter/compare/v2.3...v2.5
 [2.4]: https://github.com/jewei/claude-meter/compare/v2.3...v2.4

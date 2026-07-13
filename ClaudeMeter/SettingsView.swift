@@ -417,6 +417,7 @@ private struct DataSettingsTab: View {
     @AppStorage(AppSettings.oauthSourceEnabledKey) private var oauthSourceEnabled = true
     @AppStorage(AppSettings.cursorSourceEnabledKey) private var cursorSourceEnabled = false
     @AppStorage(AppSettings.codexSourceEnabledKey) private var codexSourceEnabled = false
+    @AppStorage(AppSettings.grokSourceEnabledKey) private var grokSourceEnabled = false
     @AppStorage(AppSettings.codexSourceModeKey) private var codexSourceMode = CodexSourceMode.auto.rawValue
 
     @State private var cursorStatus = ""
@@ -425,6 +426,9 @@ private struct DataSettingsTab: View {
     @State private var codexStatus = ""
     @State private var codexStatusGeneration = 0
     @State private var codexStatusTask: Task<Void, Never>?
+    @State private var grokStatus = ""
+    @State private var grokStatusGeneration = 0
+    @State private var grokStatusTask: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
@@ -483,12 +487,23 @@ private struct DataSettingsTab: View {
                 ) {
                     codexContent
                 }
+
+                DataSourceCard(
+                    icon: "atom",
+                    iconColor: Color(hex: "1C1C1E"),
+                    title: "Grok",
+                    subtitle: "Read Grok Build weekly credit usage (unofficial API; may break).",
+                    isEnabled: $grokSourceEnabled
+                ) {
+                    grokContent
+                }
             }
             .padding(20)
         }
         .onAppear {
             loadCursorStatus()
             loadCodexStatus()
+            loadGrokStatus()
         }
         .onChange(of: statuslineSourceEnabled) { _, _ in appState.scheduleRebuildPipeline() }
         .onChange(of: oauthSourceEnabled) { _, _ in appState.scheduleRebuildPipeline() }
@@ -503,6 +518,10 @@ private struct DataSettingsTab: View {
         .onChange(of: codexSourceMode) { _, _ in
             loadCodexStatus()
             if codexSourceEnabled { appState.refreshNow() }
+        }
+        .onChange(of: grokSourceEnabled) { _, enabled in
+            loadGrokStatus()
+            appState.setGrokSourceEnabled(enabled)
         }
     }
 
@@ -626,7 +645,59 @@ private struct DataSettingsTab: View {
         }
     }
 
-    private static func maskedEmail(_ email: String) -> String {
+    @ViewBuilder
+    private var grokContent: some View {
+        if grokSourceEnabled {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(
+                        systemName: grokStatus.hasPrefix("Connected")
+                            ? "checkmark.circle.fill" : "exclamationmark.circle"
+                    )
+                    .foregroundStyle(grokStatus.hasPrefix("Connected") ? .green : .secondary)
+                    Text(grokStatus.isEmpty ? "Checking…" : grokStatus)
+                }
+                if let err = appState.grokError {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text(err)
+                    }
+                    .foregroundStyle(.red)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private func loadGrokStatus() {
+        grokStatusTask?.cancel()
+        guard grokSourceEnabled else {
+            grokStatus = ""
+            return
+        }
+        grokStatus = ""
+        grokStatusGeneration += 1
+        let generation = grokStatusGeneration
+        grokStatusTask = Task {
+            let status = await Task.detached(priority: .userInitiated) { () -> String in
+                do {
+                    let creds = try GrokAuthStore.load()
+                    if let email = creds.email {
+                        return "Connected as \(Self.maskedEmail(email))"
+                    }
+                    return "Connected via Grok Build CLI"
+                } catch {
+                    return (error as? LocalizedError)?.errorDescription
+                        ?? "Grok Build CLI not signed in — run `grok login`."
+                }
+            }.value
+            guard !Task.isCancelled, generation == grokStatusGeneration else { return }
+            grokStatus = DiagnosticsSanitizer.sanitize(status)
+        }
+    }
+
+    private nonisolated static func maskedEmail(_ email: String) -> String {
         let parts = email.split(separator: "@", maxSplits: 1)
         guard parts.count == 2 else { return "***" }
         let local = parts[0]

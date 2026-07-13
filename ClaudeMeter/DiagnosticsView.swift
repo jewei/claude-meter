@@ -66,6 +66,10 @@ struct DiagnosticsView: View {
                     LabeledContent("Codex source", value: source)
                 }
             }
+            if AppSettings.grokSourceEnabled {
+                LabeledContent(
+                    "Grok", value: appState.grokUsage != nil ? "Connected" : "Not available")
+            }
         }
     }
 
@@ -95,6 +99,17 @@ struct DiagnosticsView: View {
                 LabeledContent("Codex", value: codexPollTimeText)
                 if let err = appState.codexError {
                     LabeledContent("Codex error") {
+                        Text(DiagnosticsSanitizer.sanitize(err))
+                            .foregroundStyle(Color.cmCritical)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            if AppSettings.grokSourceEnabled {
+                LabeledContent("Grok", value: grokPollTimeText)
+                if let err = appState.grokError {
+                    LabeledContent("Grok error") {
                         Text(DiagnosticsSanitizer.sanitize(err))
                             .foregroundStyle(Color.cmCritical)
                             .font(.system(.caption, design: .monospaced))
@@ -151,6 +166,11 @@ struct DiagnosticsView: View {
         return isoFormatter.string(from: date)
     }
 
+    private var grokPollTimeText: String {
+        guard let date = appState.grokLastPolledAt else { return "Never" }
+        return isoFormatter.string(from: date)
+    }
+
     private var dataSourceMode: String {
         let parserVersion = appState.snapshot?.parserVersion ?? ""
         if parserVersion.hasPrefix("statusline") { return "Statusline bridge" }
@@ -193,6 +213,12 @@ struct DiagnosticsView: View {
                 "  Codex mode: \(AppSettings.codexSourceMode.rawValue)",
                 "  Codex source: \(appState.codexUsage?.source.rawValue ?? "None")",
                 "  Codex error: \(DiagnosticsSanitizer.sanitize(appState.codexError ?? "None"))",
+            ]
+        }
+        if AppSettings.grokSourceEnabled {
+            lines += [
+                "  Grok: \(grokPollTimeText)",
+                "  Grok error: \(DiagnosticsSanitizer.sanitize(appState.grokError ?? "None"))",
             ]
         }
         lines += [""]

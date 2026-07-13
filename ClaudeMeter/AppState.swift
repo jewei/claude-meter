@@ -28,6 +28,9 @@ final class AppState: ObservableObject {
     @Published var codexUsage: CodexUsage? = nil
     @Published var codexError: String? = nil
     @Published var codexLastPolledAt: Date? = nil
+    @Published var grokUsage: GrokUsage? = nil
+    @Published var grokError: String? = nil
+    @Published var grokLastPolledAt: Date? = nil
     @Published var costScanPartial = false
     /// Activity heatmap (7×24 message counts), scanned on demand when the user
     /// opens it from the cost card. `nil` until first requested.
@@ -38,6 +41,7 @@ final class AppState: ObservableObject {
     @Published var usageTrendsLoading = false
     private let cursorProvider = CursorUsageProvider()
     private let codexProvider = CodexUsageProvider()
+    private let grokProvider = GrokUsageProvider()
 
     var pipeline: any ClaudeMeterPipeline
     let notificationEngine = NotificationEngine()
@@ -274,6 +278,10 @@ final class AppState: ObservableObject {
         AppGroupConfig.isSnapshotStale(lastPollAt: codexLastPolledAt)
     }
 
+    var grokIsStale: Bool {
+        AppGroupConfig.isSnapshotStale(lastPollAt: grokLastPolledAt)
+    }
+
     func setCursorSourceEnabled(_ enabled: Bool) {
         hasEnabledDataSource = AppSettings.hasEnabledDataSource
         if enabled {
@@ -316,6 +324,28 @@ final class AppState: ObservableObject {
         codexUsage = nil
         codexError = nil
         codexLastPolledAt = nil
+    }
+
+    func setGrokSourceEnabled(_ enabled: Bool) {
+        hasEnabledDataSource = AppSettings.hasEnabledDataSource
+        if enabled {
+            if isActive { startPolling() }
+        } else {
+            pipelineGeneration += 1
+            clearGrokState()
+            if canPoll {
+                // Claude/Cursor/Codex sources may still be enabled.
+            } else {
+                stopPolling()
+                isLoading = false
+            }
+        }
+    }
+
+    func clearGrokState() {
+        grokUsage = nil
+        grokError = nil
+        grokLastPolledAt = nil
     }
 
     /// Debounced rebuild for source toggles — avoids restarting the poll loop on every flip.
@@ -442,6 +472,9 @@ final class AppState: ObservableObject {
             }
             if AppSettings.codexSourceEnabled {
                 group.addTask { await self.pollCodex(generation: generation) }
+            }
+            if AppSettings.grokSourceEnabled {
+                group.addTask { await self.pollGrok(generation: generation) }
             }
         }
     }
@@ -574,6 +607,33 @@ final class AppState: ObservableObject {
                 AppSettings.codexSourceEnabled
             else { return }
             codexError = DiagnosticsSanitizer.sanitize(
+                (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            )
+        }
+    }
+
+    /// Grok runs independently of Claude, Cursor, and Codex so failures never
+    /// affect Claude state, menu-bar severity, widget data, or notifications.
+    private func pollGrok(generation: Int) async {
+        let provider = grokProvider
+        let now = Date()
+        do {
+            let usage = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
+                try await provider.fetchUsage(now: now)
+            }
+            guard generation == pipelineGeneration,
+                canPoll,
+                AppSettings.grokSourceEnabled
+            else { return }
+            grokUsage = usage
+            grokError = nil
+            grokLastPolledAt = Date()
+        } catch {
+            guard generation == pipelineGeneration,
+                canPoll,
+                AppSettings.grokSourceEnabled
+            else { return }
+            grokError = DiagnosticsSanitizer.sanitize(
                 (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             )
         }
@@ -974,6 +1034,7 @@ enum AppSettings {
     static let oauthSourceEnabledKey = "oauthSourceEnabled"
     static let cursorSourceEnabledKey = "cursorSourceEnabled"
     static let codexSourceEnabledKey = "codexSourceEnabled"
+    static let grokSourceEnabledKey = "grokSourceEnabled"
     static let codexSourceModeKey = "codexSourceMode"
     static let oauthModeKey = AppGroupConfig.oauthModeKey
 
@@ -1002,6 +1063,12 @@ enum AppSettings {
     static var codexSourceEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: codexSourceEnabledKey) }
         set { UserDefaults.standard.set(newValue, forKey: codexSourceEnabledKey) }
+    }
+
+    /// Grok defaults off — it is a separate provider card like Cursor and Codex.
+    static var grokSourceEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: grokSourceEnabledKey) }
+        set { UserDefaults.standard.set(newValue, forKey: grokSourceEnabledKey) }
     }
 
     static var codexSourceMode: CodexSourceMode {
@@ -1050,7 +1117,7 @@ enum AppSettings {
     }
 
     static var hasEnabledDataSource: Bool {
-        hasClaudeSource || cursorSourceEnabled || codexSourceEnabled
+        hasClaudeSource || cursorSourceEnabled || codexSourceEnabled || grokSourceEnabled
     }
 
     private static func boolDefaultingTrue(forKey key: String) -> Bool {

@@ -8,6 +8,7 @@ struct PopoverView: View {
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage(AppSettings.cursorSourceEnabledKey) private var cursorSourceEnabled = false
     @AppStorage(AppSettings.codexSourceEnabledKey) private var codexSourceEnabled = false
+    @AppStorage(AppSettings.grokSourceEnabledKey) private var grokSourceEnabled = false
     @AppStorage(AppGroupConfig.cardStyleKey) private var cardStyle = "rings"
     @AppStorage(AppGroupConfig.progressionModeKey) private var progressionMode = "left"
     @State private var now = Date()
@@ -103,8 +104,12 @@ struct PopoverView: View {
         codexSourceEnabled && appState.codexUsage != nil
     }
 
+    private var hasGrok: Bool {
+        grokSourceEnabled && appState.grokUsage != nil
+    }
+
     private var hasAnyData: Bool {
-        appState.snapshot != nil || hasCursor || hasCodex
+        appState.snapshot != nil || hasCursor || hasCodex || hasGrok
     }
 
     @ViewBuilder
@@ -125,6 +130,8 @@ struct PopoverView: View {
             cursorErrorState
         } else if codexSourceEnabled && appState.codexError != nil {
             codexErrorState
+        } else if grokSourceEnabled && appState.grokError != nil {
+            grokErrorState
         } else {
             setupState
         }
@@ -159,6 +166,10 @@ struct PopoverView: View {
             if hasCodex, let codex = appState.codexUsage {
                 codexNotices()
                 codexCard(codex)
+            }
+            if hasGrok, let grok = appState.grokUsage {
+                grokNotices()
+                grokCard(grok)
             }
         }
         .padding(.horizontal, 15)
@@ -698,6 +709,73 @@ struct PopoverView: View {
         return f
     }()
 
+    // MARK: - Grok card (usage-based, local to the popover)
+
+    @ViewBuilder
+    private func grokNotices() -> some View {
+        if appState.grokError != nil {
+            noticeBanner(
+                appState.grokError ?? "Grok refresh failed — showing last known data",
+                systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
+        } else if appState.grokIsStale {
+            noticeBanner("Grok data may be outdated", systemImage: "clock.fill", tint: .pfInkMuted)
+        }
+    }
+
+    private func grokCard(_ usage: GrokUsage) -> some View {
+        let band = EnergyBand(severity: usageThresholds.severity(for: usage.usedPercent))
+        let tint: Color = band == .full ? .pfEnergyFull : band.color
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "atom")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(tint)
+                Text("Grok")
+                    .font(PFont.display(14, .semibold))
+                    .foregroundStyle(Color.pfInk)
+                Spacer()
+                Text("\(Int(usage.cardDisplayPercent.rounded()))%")
+                    .font(PFont.display(14, .bold))
+                    .foregroundStyle(band == .full ? Color.pfInk : tint)
+                    .monospacedDigit()
+            }
+            EnergyBar(fraction: usage.cardDisplayPercent / 100, color: tint, height: 12)
+            if let subtitle = grokSubtitle(usage) {
+                Text(subtitle)
+                    .font(PFont.body(11, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .chunkyCard()
+    }
+
+    private func grokSubtitle(_ usage: GrokUsage) -> String? {
+        var parts: [String] = [usage.windowLabel]
+        if usage.onDemandUsedCents > 0 {
+            let used = Double(usage.onDemandUsedCents) / 100
+            if usage.onDemandCapCents > 0 {
+                let cap = Double(usage.onDemandCapCents) / 100
+                parts.append(String(format: "On-demand $%.2f of $%.2f", used, cap))
+            } else {
+                parts.append(String(format: "On-demand $%.2f", used))
+            }
+        }
+        if let reset = usage.resetsAt, reset > now {
+            parts.append("Resets \(Self.grokResetText(reset))")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// Weekly resets are usually days away — a bare time ("1:57 PM") reads as
+    /// today. Same-day resets keep the time; anything later shows the date.
+    private static func grokResetText(_ reset: Date) -> String {
+        Calendar.current.isDateInToday(reset)
+            ? codexDateFormatter.string(from: reset)
+            : cursorDateFormatter.string(from: reset)
+    }
+
     /// Simple depleting/filling capsule bar with an inner top gloss.
     // MARK: - Non-data states
 
@@ -760,11 +838,18 @@ struct PopoverView: View {
     }
 
     private var loadingMessage: String {
-        if AppSettings.hasClaudeSource && (cursorSourceEnabled || codexSourceEnabled) {
+        if AppSettings.hasClaudeSource
+            && (cursorSourceEnabled || codexSourceEnabled || grokSourceEnabled)
+        {
             return "Checking your tanks…"
         }
         if codexSourceEnabled && !AppSettings.hasClaudeSource && !cursorSourceEnabled {
             return "Checking Codex…"
+        }
+        if grokSourceEnabled && !AppSettings.hasClaudeSource && !cursorSourceEnabled
+            && !codexSourceEnabled
+        {
+            return "Checking Grok…"
         }
         if cursorSourceEnabled && !AppSettings.hasClaudeSource { return "Checking Cursor…" }
         return "Checking your tanks…"
@@ -799,6 +884,13 @@ struct PopoverView: View {
         statusState(
             emoji: "⚠️", title: "Couldn't read Codex",
             message: appState.codexError ?? "Install Codex or run `codex login`.",
+            primaryTitle: "Open Settings", primary: openSettingsAndCompleteOnboarding)
+    }
+
+    private var grokErrorState: some View {
+        statusState(
+            emoji: "⚠️", title: "Couldn't read Grok",
+            message: appState.grokError ?? "Install Grok Build or run `grok login`.",
             primaryTitle: "Open Settings", primary: openSettingsAndCompleteOnboarding)
     }
 

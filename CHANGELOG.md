@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Per-account live usage for every Claude account** — plan, email, weekly
+  Opus, and extra-usage now appear for *all* your `CLAUDE_CONFIG_DIR` accounts,
+  not just the active one, read directly from each account's own login. Idle
+  accounts no longer need an open Claude Code session to show their energy.
+- **"Same login" badge** — two config dirs signed into the same Claude account
+  are flagged on their cards (they share one quota, shown twice).
+- **Max 5x / Max 20x plan names** — the plan badge now shows the subscription
+  multiplier when Anthropic reports it, instead of a bare "Max".
+
+### Fixed
+
+- Codex usage reads ignore auth-override environment variables
+  (`CODEX_API_KEY`, `OPENAI_BASE_URL`, …) inherited from a terminal launch, so
+  they can't point the reading at a different account.
+
 ## [2.5.1] - 2026-07-06
 
 ### Fixed

@@ -14,42 +14,61 @@ public struct ModelPricing: Sendable {
         public let input: Double
         public let output: Double
         public let cacheRead: Double
+        /// 5-minute-TTL cache-write rate (1.25× input on Anthropic's list).
         public let cacheWrite: Double
+        /// 1-hour-TTL cache-write rate. `nil` derives the list convention (2× input)
+        /// — models.dev only publishes the 5m rate, so catalog entries stay `nil`.
+        public let cacheWrite1h: Double?
 
-        public init(input: Double, output: Double, cacheRead: Double, cacheWrite: Double) {
+        public init(
+            input: Double, output: Double, cacheRead: Double, cacheWrite: Double,
+            cacheWrite1h: Double? = nil
+        ) {
             self.input = input
             self.output = output
             self.cacheRead = cacheRead
             self.cacheWrite = cacheWrite
+            self.cacheWrite1h = cacheWrite1h
         }
+
+        /// The 1h cache-write rate, deriving 2× input when not explicitly set.
+        public var resolvedCacheWrite1h: Double { cacheWrite1h ?? input * 2 }
     }
 
     private let opus: Rate
     private let sonnet: Rate
     private let haiku: Rate
+    private let fable: Rate
     /// Optional per-exact-model-id rate catalog (normalized lowercased ids), e.g.
     /// fetched live from models.dev. Takes precedence over family matching; the
     /// family rates remain the offline fallback. See `ModelsDevPricing`.
     private let catalog: [String: Rate]?
 
-    public init(opus: Rate, sonnet: Rate, haiku: Rate, catalog: [String: Rate]? = nil) {
+    public init(
+        opus: Rate, sonnet: Rate, haiku: Rate,
+        fable: Rate = Rate(input: 10, output: 50, cacheRead: 1.0, cacheWrite: 12.5),
+        catalog: [String: Rate]? = nil
+    ) {
         self.opus = opus
         self.sonnet = sonnet
         self.haiku = haiku
+        self.fable = fable
         self.catalog = catalog
     }
 
     /// Returns a copy carrying a per-model-id catalog (keeping the family rates as
     /// the fallback). Used to layer live models.dev pricing onto `.current`.
     public func withCatalog(_ catalog: [String: Rate]?) -> ModelPricing {
-        ModelPricing(opus: opus, sonnet: sonnet, haiku: haiku, catalog: catalog)
+        ModelPricing(opus: opus, sonnet: sonnet, haiku: haiku, fable: fable, catalog: catalog)
     }
 
     /// Current Anthropic list pricing (per MTok), used as the offline fallback when
-    /// the live models.dev `catalog` is absent. Cache-write uses the 5-minute rate
-    /// (1.25× input); the 1-hour rate (2× input) isn't tracked separately — Claude
-    /// Code's caches are 5-minute. The full 1M context window is billed at these
-    /// flat rates: no current model carries a >200K long-context premium.
+    /// the live models.dev `catalog` is absent. `cacheWrite` is the 5-minute rate
+    /// (1.25× input); the 1-hour tier (2× input) is derived via
+    /// `Rate.resolvedCacheWrite1h` — Claude Code now writes 1h caches for top-level
+    /// sessions, with the tier split carried in the transcript's `cache_creation`
+    /// breakdown. The full 1M context window is billed at these flat rates: no
+    /// current model carries a >200K long-context premium.
     public static let current = ModelPricing(
         // Opus 4.5–4.8 list pricing (the prior $15/$75 was Opus 4.1-era and
         // over-estimated current Opus usage ~3× whenever the catalog didn't load).
@@ -65,6 +84,7 @@ public struct ModelPricing: Sendable {
         if let catalog, let hit = Self.catalogRate(for: lower, in: catalog) { return hit }
         if lower.contains("opus") { return opus }
         if lower.contains("haiku") { return haiku }
+        if lower.contains("fable") { return fable }
         return sonnet
     }
 
@@ -85,13 +105,15 @@ public struct ModelPricing: Sendable {
         return best?.rate
     }
 
-    /// Estimated USD cost for one model's token totals.
+    /// Estimated USD cost for one model's token totals. `cacheWriteTokens` is the
+    /// 5-minute tier; `cacheWrite1hTokens` bills at the 1-hour rate (2× input).
     public func cost(
         forModel model: String,
         inputTokens: Int,
         outputTokens: Int,
         cacheReadTokens: Int,
-        cacheWriteTokens: Int
+        cacheWriteTokens: Int,
+        cacheWrite1hTokens: Int = 0
     ) -> Double {
         let r = rate(forModel: model)
         let perToken = 1_000_000.0
@@ -99,5 +121,6 @@ public struct ModelPricing: Sendable {
             + Double(outputTokens) / perToken * r.output
             + Double(cacheReadTokens) / perToken * r.cacheRead
             + Double(cacheWriteTokens) / perToken * r.cacheWrite
+            + Double(cacheWrite1hTokens) / perToken * r.resolvedCacheWrite1h
     }
 }

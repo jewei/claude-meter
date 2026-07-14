@@ -87,14 +87,10 @@ public struct ActivityScanner: Sendable {
 
         for projectDir in projectDirs {
             var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: projectDir.path, isDirectory: &isDir), isDir.boolValue,
-                let jsonlFiles = try? fm.contentsOfDirectory(
-                    at: projectDir,
-                    includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
-                    options: [.skipsHiddenFiles])
+            guard fm.fileExists(atPath: projectDir.path, isDirectory: &isDir), isDir.boolValue
             else { continue }
 
-            for file in jsonlFiles where file.pathExtension == "jsonl" {
+            for file in JournalReader.transcriptFiles(inProjectDir: projectDir, fm: fm) {
                 // Drain per-file transients (multi-MB Data/String reads) so peak
                 // memory stays ~one file rather than scaling with the file count.
                 autoreleasepool {

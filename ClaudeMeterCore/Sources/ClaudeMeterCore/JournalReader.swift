@@ -160,6 +160,47 @@ public struct JournalReader: Sendable {
         return try? JSONDecoder().decode(JournalEntry.self, from: data)
     }
 
+    /// Transcript files for one project dir: top-level session `*.jsonl` plus each
+    /// session's `subagents/*.jsonl` — Claude Code writes subagent transcripts there
+    /// and the parent transcript does **not** repeat their usage, so skipping them
+    /// silently drops all delegated-agent activity. Context-fork transcripts
+    /// (`agent-acompact-*`, `agent-aside_question-*`) replay the parent's history
+    /// verbatim, usage blocks included, and are excluded to avoid double-counting.
+    /// Non-recursive below `subagents/` (so `subagents/workflows/` journals, which
+    /// carry no usage, are never walked).
+    static func transcriptFiles(inProjectDir projectDir: URL, fm: FileManager) -> [URL] {
+        guard
+            let entries = try? fm.contentsOfDirectory(
+                at: projectDir,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles])
+        else { return [] }
+        var files: [URL] = []
+        for entry in entries {
+            if entry.pathExtension == "jsonl" {
+                files.append(entry)
+            } else if (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                let subagentsDir = entry.appendingPathComponent("subagents", isDirectory: true)
+                guard
+                    let subFiles = try? fm.contentsOfDirectory(
+                        at: subagentsDir,
+                        includingPropertiesForKeys: nil,
+                        options: [.skipsHiddenFiles])
+                else { continue }
+                for file in subFiles
+                where file.pathExtension == "jsonl" && !isContextForkTranscript(file) {
+                    files.append(file)
+                }
+            }
+        }
+        return files
+    }
+
+    static func isContextForkTranscript(_ url: URL) -> Bool {
+        let name = url.lastPathComponent
+        return name.hasPrefix("agent-acompact-") || name.hasPrefix("agent-aside_question-")
+    }
+
     static func parseTimestamp(_ str: String) -> Date? {
         let formats = [
             "yyyy-MM-dd'T'HH:mm:ss.SSSZ",

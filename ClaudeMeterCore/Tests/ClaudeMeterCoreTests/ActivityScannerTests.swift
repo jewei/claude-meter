@@ -76,6 +76,32 @@ struct ActivityScannerTests {
         #expect(map.counts[0][11] == 1)
     }
 
+    @Test("Subagent transcripts under <session>/subagents/ are counted; fork files skipped")
+    func countsSubagentTranscriptsSkipsForks() throws {
+        let (ts, date) = localTS(
+            DateComponents(year: 2026, month: 6, day: 29, hour: 9))
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        let project = root.appendingPathComponent("p", isDirectory: true)
+        let subagents = project
+            .appendingPathComponent("session-uuid", isDirectory: true)
+            .appendingPathComponent("subagents", isDirectory: true)
+        try fm.createDirectory(at: subagents, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        try line(id: "top", ts: ts).data(using: .utf8)!
+            .write(to: project.appendingPathComponent("session-uuid.jsonl"))
+        try line(id: "sub", ts: ts).data(using: .utf8)!
+            .write(to: subagents.appendingPathComponent("agent-abc.jsonl"))
+        try line(id: "fork", ts: ts).data(using: .utf8)!
+            .write(to: subagents.appendingPathComponent("agent-acompact-x.jsonl"))
+
+        let map = ActivityScanner(projectsPaths: [root]).scan(daysBack: 60, now: date)
+        #expect(map.total == 2)  // top-level + subagent; acompact fork excluded
+        #expect(map.counts[0][9] == 2)
+    }
+
     @Test func excludesRecordsBeforeCutoff() throws {
         let (recentTS, now) = localTS(
             DateComponents(year: 2026, month: 6, day: 29, hour: 10))

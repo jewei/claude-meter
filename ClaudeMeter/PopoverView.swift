@@ -60,6 +60,8 @@ struct PopoverView: View {
         .onDisappear {
             showHeatmap = false
             showTrends = false
+            // Don't keep burning disk I/O on a heatmap nobody is looking at.
+            appState.cancelActivityHeatmapLoad()
         }
     }
 
@@ -229,6 +231,10 @@ struct PopoverView: View {
     /// (active first), else a single card synthesized from the top-level snapshot.
     /// Plan/email/Opus come from OAuth and exist only for the active account.
     private func accountModels(_ snap: ClaudeUsageSnapshot) -> [AccountCardModel] {
+        // "Live" = a Claude Code session is open right now: the snapshot came from
+        // the statusline tier and isn't stale. OAuth-tier snapshots mean no open
+        // CLI session, so no dot.
+        let bridgeLive = snap.parserVersion.hasPrefix("statusline") && !appState.claudeIsStale
         if let accounts = snap.accounts, !accounts.isEmpty {
             let duplicates = MultiAccountOAuth.duplicateOrgAccountKeys(accounts)
             let sorted = accounts.sorted { lhs, rhs in
@@ -249,7 +255,8 @@ struct PopoverView: View {
                     opus: acc.isActive
                         ? (snap.limits.currentWeekOpus ?? acc.limits.currentWeekOpus)
                         : acc.limits.currentWeekOpus,
-                    isDuplicateLogin: duplicates.contains(acc.id)
+                    isDuplicateLogin: duplicates.contains(acc.id),
+                    isLive: acc.isActive && bridgeLive
                 )
             }
         }
@@ -264,7 +271,8 @@ struct PopoverView: View {
                 subtitle: snap.account?.email,
                 session: snap.limits.currentSession,
                 week: snap.limits.currentWeekAllModels,
-                opus: snap.limits.currentWeekOpus
+                opus: snap.limits.currentWeekOpus,
+                isLive: bridgeLive
             )
         ]
     }
@@ -512,6 +520,7 @@ struct PopoverView: View {
             HStack(spacing: 8) {
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) { showHeatmap = false }
+                    appState.cancelActivityHeatmapLoad()
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left").font(.system(size: 11, weight: .bold))
@@ -543,7 +552,7 @@ struct PopoverView: View {
                 ActivityHeatmapGrid(map: map)
                 heatmapLegend
             } else if appState.activityHeatmapLoading {
-                heatmapPlaceholder("Scanning your activity…")
+                heatmapPlaceholder("Scanning your activity…", loading: true)
             } else {
                 heatmapPlaceholder("No activity in the last 30 days")
             }
@@ -554,11 +563,16 @@ struct PopoverView: View {
         .chunkyCard()
     }
 
-    private func heatmapPlaceholder(_ text: String) -> some View {
-        Text(text)
-            .font(PFont.body(12, .semibold))
-            .foregroundStyle(Color.pfInkMuted)
-            .frame(maxWidth: .infinity, minHeight: 120, alignment: .center)
+    private func heatmapPlaceholder(_ text: String, loading: Bool = false) -> some View {
+        VStack(spacing: 10) {
+            if loading {
+                ProgressView().controlSize(.small)
+            }
+            Text(text)
+                .font(PFont.body(12, .semibold))
+                .foregroundStyle(Color.pfInkMuted)
+        }
+        .frame(maxWidth: .infinity, minHeight: 120, alignment: .center)
     }
 
     private func heatmapSubtitle(_ map: ActivityHeatmap) -> String {

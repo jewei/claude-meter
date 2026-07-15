@@ -1234,6 +1234,10 @@ private struct AdvancedSettingsTab: View {
     let appState: AppState
 
     @AppStorage("launchAtLogin") private var launchAtLogin = false
+    /// `SMAppService` reported `.requiresApproval`: registered, but held by macOS
+    /// until the user approves it in System Settings — surfaced so the "on"
+    /// toggle isn't silently a no-op.
+    @State private var launchAtLoginNeedsApproval = false
     @AppStorage("SUEnableAutomaticChecks") private var automaticallyCheckForUpdates = true
 
     @State private var showingDiagnostics = false
@@ -1242,14 +1246,31 @@ private struct AdvancedSettingsTab: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 sectionHeading("App")
-                HStack(spacing: 12) {
-                    RaisedTile(fill: Color(hex: "C77DFF"), size: 40, radius: 11) {
-                        Image(systemName: "power").font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(.white)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 12) {
+                        RaisedTile(fill: Color(hex: "C77DFF"), size: 40, radius: 11) {
+                            Image(systemName: "power").font(.system(size: 17, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                        cardText("Launch at login", "Start Claude Meter when you log in.")
+                        Spacer(minLength: 8)
+                        Toggle("", isOn: $launchAtLogin).toggleStyle(.switch).labelsHidden()
                     }
-                    cardText("Launch at login", "Start Claude Meter when you log in.")
-                    Spacer(minLength: 8)
-                    Toggle("", isOn: $launchAtLogin).toggleStyle(.switch).labelsHidden()
+                    // macOS parks fresh registrations in `.requiresApproval` — the
+                    // toggle reads "on" but nothing happens until the user approves.
+                    if launchAtLoginNeedsApproval {
+                        HStack(spacing: 8) {
+                            Image(systemName: "hourglass")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(Color.pfEnergyLow)
+                            Text("Waiting for approval in System Settings › Login Items.")
+                                .font(PFont.body(12, .semibold))
+                                .foregroundStyle(Color.pfInkMuted)
+                            Spacer(minLength: 8)
+                            Button("Open") { SMAppService.openSystemSettingsLoginItems() }
+                                .font(PFont.body(12, .bold))
+                        }
+                    }
                 }
                 .padding(16).chunkyCard(radius: 18)
 
@@ -1380,7 +1401,9 @@ private struct AdvancedSettingsTab: View {
                 "Claude Meter: launch-at-login \(enabled ? "register" : "unregister") failed: "
                     + error.localizedDescription)
             syncLaunchAtLoginFromSystem()
+            return
         }
+        launchAtLoginNeedsApproval = SMAppService.mainApp.status == .requiresApproval
     }
 
     private func syncLaunchAtLoginFromSystem() {
@@ -1392,6 +1415,7 @@ private struct AdvancedSettingsTab: View {
         if launchAtLogin != enabled {
             launchAtLogin = enabled
         }
+        launchAtLoginNeedsApproval = status == .requiresApproval
     }
 }
 

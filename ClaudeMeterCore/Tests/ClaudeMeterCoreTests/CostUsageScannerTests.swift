@@ -378,6 +378,28 @@ struct CostUsageScannerTests {
         #expect(opus.inputTokens == 500_000)  // fork files excluded
     }
 
+    @Test("A cancelled task stops the scan early and marks the result partial")
+    func cancelledTaskStopsScanEarly() async throws {
+        let now = Date()
+        let ts = iso(now)
+        let (scanner, root) = try makeScanner(lines: [
+            assistantLine(
+                id: "m1", requestId: "r1", model: "claude-opus-4-8", input: 1_000_000, output: 0,
+                ts: ts)
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let task = Task.detached { () -> CostUsageResult in
+            // Deterministic: only start scanning once cancellation is guaranteed.
+            while !Task.isCancelled { try? await Task.sleep(nanoseconds: 1_000_000) }
+            return scanner.scan(daysBack: 7, now: now)
+        }
+        task.cancel()
+        let result = await task.value
+        #expect(result.isEmpty)
+        #expect(result.isPartialEstimate)  // honest: totals were cut short
+    }
+
     @Test func unionsMultipleProjectRootsAndIgnoresUnreadableRoot() throws {
         let now = Date()
         let ts = iso(now)

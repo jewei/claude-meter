@@ -147,6 +147,23 @@ struct ActivityScannerTests {
         #expect(scanner.scan(daysBack: 60, now: date).total == 3)
     }
 
+    @Test("A cancelled task stops the heatmap scan early and marks it partial")
+    func cancelledTaskStopsScanEarly() async throws {
+        let (ts, date) = localTS(
+            DateComponents(year: 2026, month: 6, day: 29, hour: 9))
+        let (scanner, root) = try makeScanner(lines: [line(id: "a", ts: ts)])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let task = Task.detached { () -> ActivityHeatmap in
+            while !Task.isCancelled { try? await Task.sleep(nanoseconds: 1_000_000) }
+            return scanner.scan(daysBack: 60, now: date)
+        }
+        task.cancel()
+        let map = await task.value
+        #expect(map.total == 0)
+        #expect(map.isPartial)
+    }
+
     @Test func excludesRecordsBeforeCutoff() throws {
         let (recentTS, now) = localTS(
             DateComponents(year: 2026, month: 6, day: 29, hour: 10))

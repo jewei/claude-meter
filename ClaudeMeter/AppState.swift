@@ -798,23 +798,42 @@ final class AppState: ObservableObject {
 
     /// Scans local transcripts for the 7×24 activity heatmap (off-main). Called
     /// when the user opens the heatmap; refreshes the existing result in place.
+    /// The task handle is kept so closing the heatmap cancels a scan mid-flight
+    /// (the scanner checks `Task.isCancelled` per file); the generation guard
+    /// keeps a cancelled scan's completion from clobbering a newer load's state.
+    private var activityHeatmapTask: Task<Void, Never>?
+    private var activityHeatmapGeneration = 0
+
     func loadActivityHeatmap() {
         guard !activityHeatmapLoading else { return }
         activityHeatmapLoading = true
+        activityHeatmapGeneration += 1
+        let generation = activityHeatmapGeneration
         let now = Date()
-        Task {
-            let result = await Task.detached(priority: .userInitiated) {
-                let accounts = ConfigDirDiscovery.discover(
-                    configuredDirs: AppGroupConfig.configuredConfigDirs,
-                    disabledKeys: Set(AppGroupConfig.disabledAccountKeys))
-                let paths =
-                    accounts.isEmpty
-                    ? [JournalReader.defaultProjectsPath] : accounts.map(\.projectsPath)
-                return ActivityScanner(projectsPaths: paths).scan(daysBack: 30, now: now)
-            }.value
-            activityHeatmap = result
-            activityHeatmapLoading = false
+        activityHeatmapTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let accounts = ConfigDirDiscovery.discover(
+                configuredDirs: AppGroupConfig.configuredConfigDirs,
+                disabledKeys: Set(AppGroupConfig.disabledAccountKeys))
+            let paths =
+                accounts.isEmpty
+                ? [JournalReader.defaultProjectsPath] : accounts.map(\.projectsPath)
+            let result = ActivityScanner(projectsPaths: paths).scan(daysBack: 30, now: now)
+            let cancelled = Task.isCancelled
+            await MainActor.run { [weak self] in
+                guard let self, self.activityHeatmapGeneration == generation else { return }
+                if !cancelled { self.activityHeatmap = result }
+                self.activityHeatmapLoading = false
+            }
         }
+    }
+
+    /// Cancels an in-flight heatmap scan (the user closed the heatmap or the
+    /// popover). The cut-short grid is discarded, never published.
+    func cancelActivityHeatmapLoad() {
+        activityHeatmapTask?.cancel()
+        activityHeatmapTask = nil
+        activityHeatmapGeneration += 1
+        activityHeatmapLoading = false
     }
 
     /// Loads the active account's recent usage series for the Trends screen. The

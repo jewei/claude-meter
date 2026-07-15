@@ -76,6 +76,77 @@ struct ActivityScannerTests {
         #expect(map.counts[0][11] == 1)
     }
 
+    @Test("Subagent transcripts under <session>/subagents/ are counted; fork files skipped")
+    func countsSubagentTranscriptsSkipsForks() throws {
+        let (ts, date) = localTS(
+            DateComponents(year: 2026, month: 6, day: 29, hour: 9))
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        let project = root.appendingPathComponent("p", isDirectory: true)
+        let subagents = project
+            .appendingPathComponent("session-uuid", isDirectory: true)
+            .appendingPathComponent("subagents", isDirectory: true)
+        try fm.createDirectory(at: subagents, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        try line(id: "top", ts: ts).data(using: .utf8)!
+            .write(to: project.appendingPathComponent("session-uuid.jsonl"))
+        try line(id: "sub", ts: ts).data(using: .utf8)!
+            .write(to: subagents.appendingPathComponent("agent-abc.jsonl"))
+        try line(id: "fork", ts: ts).data(using: .utf8)!
+            .write(to: subagents.appendingPathComponent("agent-acompact-x.jsonl"))
+
+        let map = ActivityScanner(projectsPaths: [root]).scan(daysBack: 60, now: date)
+        #expect(map.total == 2)  // top-level + subagent; acompact fork excluded
+        #expect(map.counts[0][9] == 2)
+    }
+
+    @Test("Unchanged files (same mtime+size) are served from the cache; growth invalidates")
+    func servesUnchangedFileFromCache() throws {
+        let (ts, date) = localTS(
+            DateComponents(year: 2026, month: 6, day: 29, hour: 9))
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        let project = root.appendingPathComponent("p", isDirectory: true)
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        let file = project.appendingPathComponent("s.jsonl")
+        defer { try? fm.removeItem(at: root) }
+
+        // Two lines with the SAME id dedup to total 1. Pin a round-second mtime —
+        // a Date read back from APFS loses sub-second precision on the round trip,
+        // which would spuriously miss the cache.
+        let modDate = date.addingTimeInterval(-3600).timeIntervalSince1970.rounded()
+        let pinnedMtime = Date(timeIntervalSince1970: modDate)
+        try [line(id: "m1", ts: ts), line(id: "m1", ts: ts)]
+            .joined(separator: "\n").data(using: .utf8)!.write(to: file)
+        try fm.setAttributes([.modificationDate: pinnedMtime], ofItemAtPath: file.path)
+
+        let cache = ActivityCache()
+        let scanner = ActivityScanner(projectsPaths: [root], cache: cache)
+        #expect(scanner.scan(daysBack: 60, now: date).total == 1)
+
+        // Rewrite with identical byte length but DISTINCT ids (would total 2 on a
+        // re-read) and restore the mtime: the scanner must trust the cache.
+        try [line(id: "m1", ts: ts), line(id: "m2", ts: ts)]
+            .joined(separator: "\n").data(using: .utf8)!.write(to: file)
+        try fm.setAttributes([.modificationDate: pinnedMtime], ofItemAtPath: file.path)
+
+        #expect(scanner.scan(daysBack: 60, now: date).total == 1)  // cache hit
+        // Fresh cache re-reads and sees both messages — proving the bytes changed.
+        let fresh = ActivityScanner(projectsPaths: [root], cache: ActivityCache())
+            .scan(daysBack: 60, now: date)
+        #expect(fresh.total == 2)
+
+        // Append (size grows) → entry invalidates; the re-read sees all three.
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: "\n\(line(id: "m3", ts: ts))".data(using: .utf8)!)
+        try handle.close()
+        #expect(scanner.scan(daysBack: 60, now: date).total == 3)
+    }
+
     @Test func excludesRecordsBeforeCutoff() throws {
         let (recentTS, now) = localTS(
             DateComponents(year: 2026, month: 6, day: 29, hour: 10))

@@ -23,6 +23,23 @@ struct ModelPricingTests {
         )
         #expect(abs(cost - 3.0) < 0.0001)
     }
+
+    @Test func fableHasItsOwnFallbackRateNotSonnet() {
+        let r = ModelPricing.current.rate(forModel: "claude-fable-5")
+        #expect(r.input == 10)
+        #expect(r.output == 50)
+        #expect(r.cacheRead == 1.0)
+    }
+
+    @Test func oneHourCacheWriteRateDerivesDoubleInputUnlessExplicit() {
+        // Derived: models.dev only publishes the 5m rate, so catalog Rates carry nil.
+        let derived = ModelPricing.Rate(input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25)
+        #expect(derived.resolvedCacheWrite1h == 10)
+        // Explicit value wins when a source does provide one.
+        let explicit = ModelPricing.Rate(
+            input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25, cacheWrite1h: 11)
+        #expect(explicit.resolvedCacheWrite1h == 11)
+    }
 }
 
 @Suite("ModelUsage.displayName")
@@ -227,6 +244,138 @@ struct CostUsageScannerTests {
         let total = value.values.reduce(0) { $0 + $1.input }
         #expect(total == 1_000_000)
         #expect(first.models.first?.inputTokens == 1_000_000)
+    }
+
+    /// Assistant line with an explicit `cache_creation` breakdown alongside the
+    /// legacy total, as Claude Code emits both today.
+    private func cacheLine(
+        id: String, model: String, legacyTotal: Int, fiveMinute: Int?, oneHour: Int?, ts: String
+    ) -> String {
+        let breakdown: String
+        if fiveMinute != nil || oneHour != nil {
+            breakdown =
+                ",\"cache_creation\":{\"ephemeral_5m_input_tokens\":\(fiveMinute ?? 0),\"ephemeral_1h_input_tokens\":\(oneHour ?? 0)}"
+        } else {
+            breakdown = ""
+        }
+        return """
+            {"type":"assistant","timestamp":"\(ts)","requestId":"r-\(id)","message":{"id":"\(id)","model":"\(model)","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":\(legacyTotal)\(breakdown)}}}
+            """
+    }
+
+    @Test("1h cache writes are priced at 2× input, not the 5m rate")
+    func pricesOneHourCacheWritesAtDoubleInputRate() throws {
+        let now = Date()
+        let ts = iso(now)
+        // Opus input $5/MTok → 1h cache-write $10/MTok; the 5m rate would be $6.25.
+        let (scanner, root) = try makeScanner(lines: [
+            cacheLine(
+                id: "m1", model: "claude-opus-4-8", legacyTotal: 1_000_000,
+                fiveMinute: 0, oneHour: 1_000_000, ts: ts)
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let result = scanner.scan(daysBack: 7, now: now)
+        let opus = try #require(result.models.first { $0.name == "claude-opus-4-8" })
+        #expect(opus.cacheWriteTokens == 1_000_000)  // display total stays combined
+        #expect(abs((opus.costUsd ?? 0) - 10.0) < 0.001)
+    }
+
+    @Test("Mixed 5m/1h breakdown prices each tier separately")
+    func pricesMixedCacheWriteTiers() throws {
+        let now = Date()
+        let ts = iso(now)
+        // 1M at 5m ($6.25) + 1M at 1h ($10) = $16.25.
+        let (scanner, root) = try makeScanner(lines: [
+            cacheLine(
+                id: "m1", model: "claude-opus-4-8", legacyTotal: 2_000_000,
+                fiveMinute: 1_000_000, oneHour: 1_000_000, ts: ts)
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let result = scanner.scan(daysBack: 7, now: now)
+        let opus = try #require(result.models.first { $0.name == "claude-opus-4-8" })
+        #expect(opus.cacheWriteTokens == 2_000_000)
+        #expect(abs((opus.costUsd ?? 0) - 16.25) < 0.001)
+    }
+
+    @Test("Legacy total without a breakdown keeps the 5m rate (older transcripts)")
+    func legacyCacheTotalWithoutBreakdownUsesFiveMinuteRate() throws {
+        let now = Date()
+        let ts = iso(now)
+        let (scanner, root) = try makeScanner(lines: [
+            cacheLine(
+                id: "m1", model: "claude-opus-4-8", legacyTotal: 1_000_000,
+                fiveMinute: nil, oneHour: nil, ts: ts)
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let result = scanner.scan(daysBack: 7, now: now)
+        let opus = try #require(result.models.first { $0.name == "claude-opus-4-8" })
+        #expect(opus.cacheWriteTokens == 1_000_000)
+        #expect(abs((opus.costUsd ?? 0) - 6.25) < 0.001)
+    }
+
+    @Test("Subagent transcripts under <session>/subagents/ are counted")
+    func countsSubagentTranscripts() throws {
+        let now = Date()
+        let ts = iso(now)
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        let project = root.appendingPathComponent("p", isDirectory: true)
+        let subagents = project
+            .appendingPathComponent("session-uuid", isDirectory: true)
+            .appendingPathComponent("subagents", isDirectory: true)
+        try fm.createDirectory(at: subagents, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        try assistantLine(
+            id: "top", requestId: "r1", model: "claude-opus-4-8", input: 1_000_000, output: 0,
+            ts: ts
+        ).data(using: .utf8)!.write(to: project.appendingPathComponent("session-uuid.jsonl"))
+        try assistantLine(
+            id: "sub", requestId: "r2", model: "claude-opus-4-8", input: 2_000_000, output: 0,
+            ts: ts
+        ).data(using: .utf8)!.write(to: subagents.appendingPathComponent("agent-abc123.jsonl"))
+
+        let result = CostUsageScanner(projectsPath: root, cache: CostUsageCache())
+            .scan(daysBack: 7, now: now)
+        let opus = try #require(result.models.first { $0.name == "claude-opus-4-8" })
+        #expect(opus.inputTokens == 3_000_000)  // top-level + subagent
+    }
+
+    @Test("Context-fork subagent transcripts (acompact/aside_question) are skipped")
+    func skipsContextForkSubagentTranscripts() throws {
+        let now = Date()
+        let ts = iso(now)
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        let subagents = root
+            .appendingPathComponent("p", isDirectory: true)
+            .appendingPathComponent("session-uuid", isDirectory: true)
+            .appendingPathComponent("subagents", isDirectory: true)
+        try fm.createDirectory(at: subagents, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        // Fork files replay the parent's history verbatim (same usage blocks) —
+        // counting them would double-bill. A plain agent file still counts.
+        for name in ["agent-acompact-x.jsonl", "agent-aside_question-y.jsonl"] {
+            try assistantLine(
+                id: "fork-\(name)", requestId: "r", model: "claude-opus-4-8",
+                input: 1_000_000, output: 0, ts: ts
+            ).data(using: .utf8)!.write(to: subagents.appendingPathComponent(name))
+        }
+        try assistantLine(
+            id: "plain", requestId: "r", model: "claude-opus-4-8", input: 500_000, output: 0,
+            ts: ts
+        ).data(using: .utf8)!.write(to: subagents.appendingPathComponent("agent-plain.jsonl"))
+
+        let result = CostUsageScanner(projectsPath: root, cache: CostUsageCache())
+            .scan(daysBack: 7, now: now)
+        let opus = try #require(result.models.first { $0.name == "claude-opus-4-8" })
+        #expect(opus.inputTokens == 500_000)  // fork files excluded
     }
 
     @Test func unionsMultipleProjectRootsAndIgnoresUnreadableRoot() throws {

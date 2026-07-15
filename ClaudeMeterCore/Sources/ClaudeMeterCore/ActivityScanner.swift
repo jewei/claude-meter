@@ -43,25 +43,30 @@ public struct ActivityScanner: Sendable {
     static let tailReadBytes: UInt64 = 4 * 1024 * 1024
 
     public let projectsPaths: [URL]
+    private let cache: ActivityCache
 
-    public init(projectsPaths: [URL]) {
+    public init(projectsPaths: [URL], cache: ActivityCache = .shared) {
         self.projectsPaths = projectsPaths.dedupedByResolvedPath()
+        self.cache = cache
     }
 
     public func scan(daysBack days: Int = 30, now: Date = Date()) -> ActivityHeatmap {
         let cal = Calendar.current
         let offset = -(max(days, 1) - 1)
         let cutoff = cal.startOfDay(for: cal.date(byAdding: .day, value: offset, to: now)!)
+        // Local yyyy-MM-dd strings compare lexicographically, and `cutoff` is a local
+        // start-of-day, so `bucket.day >= cutoffDay` ⟺ `timestamp >= cutoff`.
+        let cutoffDay = JournalReader.dayString(from: cutoff)
         let fm = FileManager.default
 
         var counts = Array(repeating: Array(repeating: 0, count: 24), count: 7)
-        var days = Set<Int>()  // distinct calendar days (ordinal) seen
+        var days = Set<String>()  // distinct local calendar days seen
         var total = 0
         var isPartial = false
 
         for projectsPath in projectsPaths {
             scanRoot(
-                projectsPath, cutoff: cutoff, cal: cal, fm: fm,
+                projectsPath, cutoff: cutoff, cutoffDay: cutoffDay, cal: cal, fm: fm,
                 counts: &counts, days: &days, total: &total, isPartial: &isPartial)
         }
 
@@ -72,10 +77,11 @@ public struct ActivityScanner: Sendable {
     private func scanRoot(
         _ projectsPath: URL,
         cutoff: Date,
+        cutoffDay: String,
         cal: Calendar,
         fm: FileManager,
         counts: inout [[Int]],
-        days: inout Set<Int>,
+        days: inout Set<String>,
         total: inout Int,
         isPartial: inout Bool
     ) {
@@ -87,14 +93,10 @@ public struct ActivityScanner: Sendable {
 
         for projectDir in projectDirs {
             var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: projectDir.path, isDirectory: &isDir), isDir.boolValue,
-                let jsonlFiles = try? fm.contentsOfDirectory(
-                    at: projectDir,
-                    includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
-                    options: [.skipsHiddenFiles])
+            guard fm.fileExists(atPath: projectDir.path, isDirectory: &isDir), isDir.boolValue
             else { continue }
 
-            for file in jsonlFiles where file.pathExtension == "jsonl" {
+            for file in JournalReader.transcriptFiles(inProjectDir: projectDir, fm: fm) {
                 // Drain per-file transients (multi-MB Data/String reads) so peak
                 // memory stays ~one file rather than scaling with the file count.
                 autoreleasepool {
@@ -103,25 +105,37 @@ public struct ActivityScanner: Sendable {
                         modDate >= cutoff
                     else { return }
                     let fileSize = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
-                    parse(
-                        file: file, fileSize: fileSize, cutoff: cutoff, cal: cal,
-                        counts: &counts, days: &days, total: &total, isPartial: &isPartial)
+
+                    let scan: ActivityCache.FileScan
+                    if let hit = cache.cached(
+                        path: file.path, modDate: modDate, fileSize: fileSize)
+                    {
+                        scan = hit
+                    } else {
+                        scan = parseFile(file, fileSize: fileSize, cal: cal)
+                        cache.store(
+                            path: file.path, modDate: modDate, fileSize: fileSize, scan: scan)
+                    }
+                    if scan.isPartial { isPartial = true }
+                    for (bucket, count) in scan.buckets where bucket.day >= cutoffDay {
+                        counts[bucket.weekday][bucket.hour] += count
+                        total += count
+                        days.insert(bucket.day)
+                    }
                 }
             }
         }
     }
 
-    private func parse(
-        file: URL,
-        fileSize: UInt64,
-        cutoff: Date,
-        cal: Calendar,
-        counts: inout [[Int]],
-        days: inout Set<Int>,
-        total: inout Int,
-        isPartial: inout Bool
-    ) {
-        guard let handle = try? FileHandle(forReadingFrom: file) else { return }
+    /// Parses one transcript into per-(day, weekday, hour) message counts,
+    /// **unfiltered** by window — filtering happens at read time so one cached
+    /// entry serves any `daysBack`.
+    private func parseFile(
+        _ file: URL, fileSize: UInt64, cal: Calendar
+    ) -> ActivityCache.FileScan {
+        guard let handle = try? FileHandle(forReadingFrom: file) else {
+            return ActivityCache.FileScan(buckets: [:], isPartial: false)
+        }
         defer { try? handle.close() }
 
         let tailRead = fileSize > Self.maxFullReadBytes
@@ -129,10 +143,8 @@ public struct ActivityScanner: Sendable {
             tailRead ? (fileSize > Self.tailReadBytes ? fileSize - Self.tailReadBytes : 0) : 0
         if readFrom > 0 { try? handle.seek(toOffset: readFrom) }
         guard let data = try? handle.readToEnd(), !data.isEmpty else {
-            if tailRead { isPartial = true }
-            return
+            return ActivityCache.FileScan(buckets: [:], isPartial: tailRead)
         }
-        if tailRead { isPartial = true }
 
         let text = String(decoding: data, as: UTF8.self)
         let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
@@ -142,6 +154,7 @@ public struct ActivityScanner: Sendable {
         // Dedup streaming chunks by message id within this file: each distinct
         // message counts once, at its timestamp's local weekday/hour.
         var seen = Set<String>()
+        var buckets: [ActivityCache.Bucket: Int] = [:]
         let decoder = JSONDecoder()
         for (lineIndex, line) in body.enumerated() {
             guard line.contains("\"usage\""), line.contains("\"assistant\"") else { continue }
@@ -149,20 +162,70 @@ public struct ActivityScanner: Sendable {
                 let entry = try? decoder.decode(ActivityLine.self, from: lineData),
                 entry.type == "assistant",
                 let tsStr = entry.timestamp,
-                let date = JournalReader.parseTimestamp(tsStr),
-                date >= cutoff
+                let date = JournalReader.parseTimestamp(tsStr)
             else { continue }
 
             let key = entry.message?.id ?? "line:\(file.lastPathComponent):\(lineIndex)"
             guard seen.insert(key).inserted else { continue }
 
             // Calendar weekday is 1=Sun…7=Sat; remap to 0=Mon…6=Sun.
-            let weekday = (cal.component(.weekday, from: date) + 5) % 7
-            let hour = cal.component(.hour, from: date)
-            counts[weekday][hour] += 1
-            total += 1
-            days.insert(cal.ordinality(of: .day, in: .era, for: date) ?? 0)
+            let bucket = ActivityCache.Bucket(
+                day: JournalReader.dayString(from: date),
+                weekday: (cal.component(.weekday, from: date) + 5) % 7,
+                hour: cal.component(.hour, from: date))
+            buckets[bucket, default: 0] += 1
         }
+        return ActivityCache.FileScan(buckets: buckets, isPartial: tailRead)
+    }
+}
+
+/// In-memory per-file cache for `ActivityScanner`, keyed by mtime + size — without
+/// it every heatmap open re-reads and re-decodes hundreds of MB of transcripts.
+/// Buckets are stored unfiltered (every day in the file) so one entry serves any
+/// `daysBack`; only the active session's growing file misses. Deliberately not
+/// persisted: the heatmap is on-demand, so the first open per app session pays the
+/// parse and later opens are stat walks.
+public final class ActivityCache: @unchecked Sendable {
+    public static let shared = ActivityCache()
+
+    struct Bucket: Hashable, Sendable {
+        /// Local `yyyy-MM-dd` — enables read-time window filtering.
+        let day: String
+        /// `0 = Monday … 6 = Sunday`, matching `ActivityHeatmap.counts`.
+        let weekday: Int
+        let hour: Int
+    }
+
+    struct FileScan: Sendable {
+        var buckets: [Bucket: Int]
+        var isPartial: Bool
+    }
+
+    private struct Entry {
+        let modDate: Date
+        let fileSize: UInt64
+        let scan: FileScan
+    }
+
+    private let lock = NSLock()
+    private var entries: [String: Entry] = [:]
+
+    public init() {}
+
+    func cached(path: String, modDate: Date, fileSize: UInt64) -> FileScan? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let entry = entries[path],
+            entry.modDate == modDate,
+            entry.fileSize == fileSize
+        else { return nil }
+        return entry.scan
+    }
+
+    func store(path: String, modDate: Date, fileSize: UInt64, scan: FileScan) {
+        lock.lock()
+        entries[path] = Entry(modDate: modDate, fileSize: fileSize, scan: scan)
+        lock.unlock()
     }
 }
 

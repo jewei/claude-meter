@@ -88,15 +88,10 @@ public struct CostUsageScanner: Sendable {
 
         for projectDir in projectDirs {
             var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: projectDir.path, isDirectory: &isDir), isDir.boolValue,
-                let jsonlFiles = try? fm.contentsOfDirectory(
-                    at: projectDir,
-                    includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
-                    options: [.skipsHiddenFiles]
-                )
+            guard fm.fileExists(atPath: projectDir.path, isDirectory: &isDir), isDir.boolValue
             else { continue }
 
-            for file in jsonlFiles where file.pathExtension == "jsonl" {
+            for file in JournalReader.transcriptFiles(inProjectDir: projectDir, fm: fm) {
                 // Bound peak memory to ~one file: each parse reads megabytes into
                 // Data/String, so without draining per file the transients pile up
                 // across every file in every account.
@@ -260,11 +255,13 @@ public struct CostUsageScanner: Sendable {
             let model = message.model ?? "unknown"
             let key = dedupeKey(
                 messageId: message.id, requestId: entry.requestId, lineIndex: lineIndex)
+            let cacheWrite = usage.cacheWriteSplit
             let totals = TokenTotals(
                 input: usage.inputTokens ?? 0,
                 output: usage.outputTokens ?? 0,
                 cacheRead: usage.cacheReadInputTokens ?? 0,
-                cacheWrite: usage.cacheCreationInputTokens ?? 0
+                cacheWrite5m: cacheWrite.fiveMinute,
+                cacheWrite1h: cacheWrite.oneHour
             )
 
             if havePending && key == pendingKey {
@@ -332,7 +329,8 @@ public struct CostUsageScanner: Sendable {
             inputTokens: totals.input,
             outputTokens: totals.output,
             cacheReadTokens: totals.cacheRead,
-            cacheWriteTokens: totals.cacheWrite
+            cacheWriteTokens: totals.cacheWrite5m,
+            cacheWrite1hTokens: totals.cacheWrite1h
         )
     }
 
@@ -372,15 +370,23 @@ struct TokenTotals: Sendable, Equatable {
     var input: Int
     var output: Int
     var cacheRead: Int
-    var cacheWrite: Int
+    /// Cache writes split by TTL tier — they bill differently (5m = 1.25× input,
+    /// 1h = 2× input), so the tiers stay separate through aggregation.
+    var cacheWrite5m: Int
+    var cacheWrite1h: Int
 
-    static let zero = TokenTotals(input: 0, output: 0, cacheRead: 0, cacheWrite: 0)
+    /// Combined cache-write tokens, for display.
+    var cacheWrite: Int { cacheWrite5m + cacheWrite1h }
+
+    static let zero = TokenTotals(
+        input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0)
 
     mutating func add(_ other: TokenTotals) {
         input += other.input
         output += other.output
         cacheRead += other.cacheRead
-        cacheWrite += other.cacheWrite
+        cacheWrite5m += other.cacheWrite5m
+        cacheWrite1h += other.cacheWrite1h
     }
 
     /// Keeps the larger of each field — for cumulative streaming chunks.
@@ -388,7 +394,8 @@ struct TokenTotals: Sendable, Equatable {
         input = max(input, other.input)
         output = max(output, other.output)
         cacheRead = max(cacheRead, other.cacheRead)
-        cacheWrite = max(cacheWrite, other.cacheWrite)
+        cacheWrite5m = max(cacheWrite5m, other.cacheWrite5m)
+        cacheWrite1h = max(cacheWrite1h, other.cacheWrite1h)
     }
 }
 
@@ -412,12 +419,35 @@ private struct TranscriptUsage: Decodable {
     let outputTokens: Int?
     let cacheReadInputTokens: Int?
     let cacheCreationInputTokens: Int?
+    let cacheCreation: CacheCreationBreakdown?
 
     enum CodingKeys: String, CodingKey {
         case inputTokens = "input_tokens"
         case outputTokens = "output_tokens"
         case cacheReadInputTokens = "cache_read_input_tokens"
         case cacheCreationInputTokens = "cache_creation_input_tokens"
+        case cacheCreation = "cache_creation"
+    }
+
+    /// Splits cache writes into (5m, 1h) tier tokens. The explicit breakdown wins
+    /// when at least one sub-field is present (the legacy total duplicates its sum);
+    /// older transcripts without one attribute the whole legacy total to the 5m
+    /// tier. Never sum breakdown + legacy — that double-counts.
+    var cacheWriteSplit: (fiveMinute: Int, oneHour: Int) {
+        if let b = cacheCreation, b.ephemeral5m != nil || b.ephemeral1h != nil {
+            return (b.ephemeral5m ?? 0, b.ephemeral1h ?? 0)
+        }
+        return (cacheCreationInputTokens ?? 0, 0)
+    }
+}
+
+private struct CacheCreationBreakdown: Decodable {
+    let ephemeral5m: Int?
+    let ephemeral1h: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case ephemeral5m = "ephemeral_5m_input_tokens"
+        case ephemeral1h = "ephemeral_1h_input_tokens"
     }
 }
 
@@ -450,8 +480,12 @@ public final class CostUsageCache: @unchecked Sendable {
         var isPartial: Bool
     }
 
-    private static let maxEntries = 512
-    private static let diskVersion = 1
+    // Subagent transcripts roughly triple the file count vs top-level-only scans,
+    // so the cap is sized to keep a heavy month fully resident.
+    private static let maxEntries = 2048
+    // v2: cache-write totals split into 5m/1h tiers. Old caches are discarded
+    // (one-time full re-parse) rather than migrated — a v1 total can't be split.
+    private static let diskVersion = 2
 
     private let persistenceURL: URL?
     private let lock = NSLock()
@@ -585,7 +619,8 @@ public final class CostUsageCache: @unchecked Sendable {
     private static func rows(from dict: [DayModelKey: TokenTotals]) -> [DiskRow] {
         dict.map { key, t in
             DiskRow(
-                d: key.day, m: key.model, i: t.input, o: t.output, cr: t.cacheRead, cw: t.cacheWrite)
+                d: key.day, m: key.model, i: t.input, o: t.output, cr: t.cacheRead,
+                cw: t.cacheWrite5m, c1: t.cacheWrite1h)
         }
     }
 
@@ -593,7 +628,7 @@ public final class CostUsageCache: @unchecked Sendable {
         var out: [DayModelKey: TokenTotals] = [:]
         for r in rows {
             out[DayModelKey(day: r.d, model: r.m)] = TokenTotals(
-                input: r.i, output: r.o, cacheRead: r.cr, cacheWrite: r.cw)
+                input: r.i, output: r.o, cacheRead: r.cr, cacheWrite5m: r.cw, cacheWrite1h: r.c1)
         }
         return out
     }
@@ -619,6 +654,9 @@ public final class CostUsageCache: @unchecked Sendable {
         var i: Int
         var o: Int
         var cr: Int
+        /// 5m-tier cache-write tokens.
         var cw: Int
+        /// 1h-tier cache-write tokens.
+        var c1: Int
     }
 }

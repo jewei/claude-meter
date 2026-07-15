@@ -160,28 +160,96 @@ public struct JournalReader: Sendable {
         return try? JSONDecoder().decode(JournalEntry.self, from: data)
     }
 
-    static func parseTimestamp(_ str: String) -> Date? {
-        let formats = [
+    /// Transcript files for one project dir: top-level session `*.jsonl` plus each
+    /// session's `subagents/*.jsonl` — Claude Code writes subagent transcripts there
+    /// and the parent transcript does **not** repeat their usage, so skipping them
+    /// silently drops all delegated-agent activity. Context-fork transcripts
+    /// (`agent-acompact-*`, `agent-aside_question-*`) replay the parent's history
+    /// verbatim, usage blocks included, and are excluded to avoid double-counting.
+    /// Non-recursive below `subagents/` (so `subagents/workflows/` journals, which
+    /// carry no usage, are never walked).
+    static func transcriptFiles(inProjectDir projectDir: URL, fm: FileManager) -> [URL] {
+        guard
+            let entries = try? fm.contentsOfDirectory(
+                at: projectDir,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles])
+        else { return [] }
+        var files: [URL] = []
+        for entry in entries {
+            if entry.pathExtension == "jsonl" {
+                files.append(entry)
+            } else if (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                let subagentsDir = entry.appendingPathComponent("subagents", isDirectory: true)
+                guard
+                    let subFiles = try? fm.contentsOfDirectory(
+                        at: subagentsDir,
+                        includingPropertiesForKeys: nil,
+                        options: [.skipsHiddenFiles])
+                else { continue }
+                for file in subFiles
+                where file.pathExtension == "jsonl" && !isContextForkTranscript(file) {
+                    files.append(file)
+                }
+            }
+        }
+        return files
+    }
+
+    static func isContextForkTranscript(_ url: URL) -> Bool {
+        let name = url.lastPathComponent
+        return name.hasPrefix("agent-acompact-") || name.hasPrefix("agent-aside_question-")
+    }
+
+    // Cached formatters — `DateFormatter`/`ISO8601DateFormatter` are documented
+    // thread-safe on macOS as long as they're never mutated after creation; these
+    // are create-once, read-only. Allocating per call was the scanners' hottest
+    // allocation (up to four `DateFormatter`s per transcript line).
+    private nonisolated(unsafe) static let isoFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private nonisolated(unsafe) static let isoPlain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+    private nonisolated(unsafe) static let legacyTimestampFormatters: [DateFormatter] = {
+        [
             "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
             "yyyy-MM-dd'T'HH:mm:ssZ",
             "yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX",
             "yyyy-MM-dd'T'HH:mm:ssXXXXX",
-        ]
-        for format in formats {
+        ].map { format in
             let f = DateFormatter()
             f.dateFormat = format
             f.locale = Locale(identifier: "en_US_POSIX")
             f.timeZone = TimeZone(secondsFromGMT: 0)
+            return f
+        }
+    }()
+    private nonisolated(unsafe) static let dayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    static func parseTimestamp(_ str: String) -> Date? {
+        // Fast path: Claude Code emits ISO 8601 with exactly three fraction digits
+        // and `Z` (what `.withFractionalSeconds` requires). The legacy chain stays
+        // as the fallback for variants ISO8601DateFormatter rejects (e.g. `+0000`).
+        if let date = isoFractional.date(from: str) { return date }
+        if let date = isoPlain.date(from: str) { return date }
+        for f in legacyTimestampFormatters {
             if let date = f.date(from: str) { return date }
         }
         return nil
     }
 
     public static func dayString(from date: Date) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        return f.string(from: date)
+        dayFormatter.string(from: date)
     }
 }
 
@@ -225,11 +293,16 @@ public final class JournalCache: @unchecked Sendable {
         lock.unlock()
     }
 
-    static func parseDay(_ string: String) -> Date? {
+    // Read-only after creation; see the formatter-caching note in `JournalReader`.
+    private nonisolated(unsafe) static let dayParser: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
         f.locale = Locale(identifier: "en_US_POSIX")
-        return f.date(from: string)
+        return f
+    }()
+
+    static func parseDay(_ string: String) -> Date? {
+        dayParser.date(from: string)
     }
 }
 

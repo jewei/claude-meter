@@ -60,6 +60,14 @@ public struct CostUsageScanner: Sendable {
         var byDayModel: [DayModelKey: TokenTotals] = [:]
         var isPartial = false
         for projectsPath in projectsPaths {
+            // Cooperative cancellation (checked per root and per file): a caller
+            // that no longer wants the answer shouldn't keep paying for disk I/O.
+            // Cut-short totals are marked partial so they're never mistaken for
+            // the full window.
+            if Task.isCancelled {
+                isPartial = true
+                break
+            }
             scanRoot(projectsPath, cutoff: cutoff, fm: fm, into: &byDayModel, isPartial: &isPartial)
         }
 
@@ -92,6 +100,10 @@ public struct CostUsageScanner: Sendable {
             else { continue }
 
             for file in JournalReader.transcriptFiles(inProjectDir: projectDir, fm: fm) {
+                if Task.isCancelled {
+                    isPartial = true
+                    return
+                }
                 // Bound peak memory to ~one file: each parse reads megabytes into
                 // Data/String, so without draining per file the transients pile up
                 // across every file in every account.

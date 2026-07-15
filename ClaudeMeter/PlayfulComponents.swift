@@ -162,6 +162,10 @@ struct AccountCardModel: Identifiable {
     /// Another account shares this one's organization id — same login, one
     /// quota shown twice (see `MultiAccountOAuth.duplicateOrgAccountKeys`).
     var isDuplicateLogin: Bool = false
+    /// A Claude Code session is open for this account right now (fresh
+    /// statusline bridge + active account). "Open", not "burning tokens" —
+    /// the bridge rewrites session files once a second even while idle.
+    var isLive: Bool = false
 
     var avatarLetter: String {
         let trimmed = label.drop(while: { !$0.isLetter && !$0.isNumber })
@@ -205,6 +209,31 @@ func avatarColorForID(_ id: String) -> Color {
     return pfAvatarPalette[((h % n) + n) % n]
 }
 
+/// Pulsing "session open now" marker on the active account's card; static when
+/// Reduce Motion is on.
+struct LiveDot: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Group {
+            if reduceMotion {
+                Circle().fill(Color.pfEnergyFull).frame(width: 7, height: 7)
+            } else {
+                TimelineView(.animation) { context in
+                    let t = context.date.timeIntervalSinceReferenceDate
+                    let phase = (sin(t * 2 * .pi / 1.6) + 1) / 2  // 0…1 over 1.6s
+                    Circle()
+                        .fill(Color.pfEnergyFull)
+                        .frame(width: 7, height: 7)
+                        .opacity(0.55 + 0.45 * phase)
+                }
+            }
+        }
+        .accessibilityLabel("Session open")
+        .help("A Claude Code session is open for this account right now.")
+    }
+}
+
 /// Chip flagging that two config dirs are logged into the same Claude account
 /// (their windows are one shared quota rendered twice).
 struct DuplicateLoginBadge: View {
@@ -245,6 +274,7 @@ struct AccountRingCard: View {
                         .font(PFont.display(15, .semibold))
                         .foregroundStyle(Color.pfInk)
                         .lineLimit(1)
+                    if model.isLive { LiveDot() }
                     Spacer(minLength: 4)
                     if model.isDuplicateLogin { DuplicateLoginBadge() }
                     if let plan = model.plan { PlanBadge(plan: plan) }
@@ -327,8 +357,12 @@ struct AccountBarCard: View {
                     Text(model.avatarLetter).font(PFont.display(17, .bold)).foregroundStyle(.white)
                 }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(model.label)
-                        .font(PFont.display(15, .semibold)).foregroundStyle(Color.pfInk).lineLimit(1)
+                    HStack(spacing: 8) {
+                        Text(model.label)
+                            .font(PFont.display(15, .semibold)).foregroundStyle(Color.pfInk)
+                            .lineLimit(1)
+                        if model.isLive { LiveDot() }
+                    }
                     if let subtitle = model.subtitle {
                         Text(subtitle)
                             .font(PFont.body(11, .bold)).foregroundStyle(Color.pfInkMuted).lineLimit(1)

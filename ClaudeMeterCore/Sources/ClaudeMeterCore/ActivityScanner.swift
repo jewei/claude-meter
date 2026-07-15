@@ -65,6 +65,13 @@ public struct ActivityScanner: Sendable {
         var isPartial = false
 
         for projectsPath in projectsPaths {
+            // Cooperative cancellation (per root and per file): the heatmap scan
+            // keeps running after the popover closes without it. Cut-short grids
+            // are marked partial.
+            if Task.isCancelled {
+                isPartial = true
+                break
+            }
             scanRoot(
                 projectsPath, cutoff: cutoff, cutoffDay: cutoffDay, cal: cal, fm: fm,
                 counts: &counts, days: &days, total: &total, isPartial: &isPartial)
@@ -97,6 +104,10 @@ public struct ActivityScanner: Sendable {
             else { continue }
 
             for file in JournalReader.transcriptFiles(inProjectDir: projectDir, fm: fm) {
+                if Task.isCancelled {
+                    isPartial = true
+                    return
+                }
                 // Drain per-file transients (multi-MB Data/String reads) so peak
                 // memory stays ~one file rather than scaling with the file count.
                 autoreleasepool {

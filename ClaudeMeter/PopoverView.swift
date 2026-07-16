@@ -614,7 +614,29 @@ struct PopoverView: View {
                     .foregroundStyle(band == .full ? Color.pfInk : tint)
                     .monospacedDigit()
             }
+            if let planName = usage.displayPlanName {
+                HStack {
+                    Text("Current plan")
+                        .font(PFont.body(11, .semibold))
+                        .foregroundStyle(Color.pfInkMuted)
+                    Spacer()
+                    Text(planName)
+                        .font(PFont.body(11, .bold))
+                        .foregroundStyle(Color.pfInk)
+                }
+            }
             EnergyBar(fraction: (usage.clampedPercent ?? 0) / 100, color: tint, height: 12)
+            if usage.clampedAutoPercent != nil || usage.clampedAPIPercent != nil {
+                Divider().overlay(Color.pfCardBorder)
+                VStack(spacing: 7) {
+                    if let percent = usage.clampedAutoPercent {
+                        cursorUsageRow("Auto + Composer", percent: percent)
+                    }
+                    if let percent = usage.clampedAPIPercent {
+                        cursorUsageRow("API", percent: percent)
+                    }
+                }
+            }
             if let subtitle = cursorSubtitle(usage) {
                 Text(subtitle)
                     .font(PFont.body(11, .semibold))
@@ -624,6 +646,27 @@ struct PopoverView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
         .chunkyCard()
+    }
+
+    private func cursorUsageRow(_ label: String, percent: Double) -> some View {
+        let band = EnergyBand(severity: usageThresholds.severity(for: percent))
+        let tint: Color = band == .full ? .pfEnergyFull : band.color
+        return VStack(spacing: 4) {
+            HStack {
+                Text(label)
+                    .font(PFont.body(11, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+                Spacer()
+                Text("\(Int(percent.rounded()))%")
+                    .font(PFont.body(11, .bold))
+                    .foregroundStyle(Color.pfInk)
+                    .monospacedDigit()
+            }
+            EnergyBar(fraction: percent / 100, color: tint, height: 7)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label) usage")
+        .accessibilityValue("\(Int(percent.rounded())) percent")
     }
 
     private func cursorSubtitle(_ usage: CursorUsage) -> String? {
@@ -675,7 +718,31 @@ struct PopoverView: View {
                     .foregroundStyle(band == .full ? Color.pfInk : tint)
                     .monospacedDigit()
             }
+            if let planName = usage.displayPlanName {
+                HStack {
+                    Text("Current plan")
+                        .font(PFont.body(11, .semibold))
+                        .foregroundStyle(Color.pfInkMuted)
+                    Spacer()
+                    Text(planName)
+                        .font(PFont.body(11, .bold))
+                        .foregroundStyle(Color.pfInk)
+                }
+            }
             EnergyBar(fraction: (displayPercent ?? 0) / 100, color: tint, height: 12)
+            if let resets = usage.rateLimitResets {
+                Divider().overlay(Color.pfCardBorder)
+                VStack(spacing: 5) {
+                    codexDetailRow(
+                        "Usage resets",
+                        value: "\(resets.availableCount) available")
+                    if let expiration = resets.nearestExpiration(after: now) {
+                        codexDetailRow(
+                            "Next expiry",
+                            value: Self.codexResetExpiryFormatter.string(from: expiration))
+                    }
+                }
+            }
             if let subtitle = codexSubtitle(usage) {
                 Text(subtitle)
                     .font(PFont.body(11, .semibold))
@@ -687,9 +754,22 @@ struct PopoverView: View {
         .chunkyCard()
     }
 
+    private func codexDetailRow(_ label: String, value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(PFont.body(11, .semibold))
+                .foregroundStyle(Color.pfInkMuted)
+            Spacer()
+            Text(value)
+                .font(PFont.body(11, .bold))
+                .foregroundStyle(Color.pfInk)
+                .monospacedDigit()
+        }
+        .accessibilityElement(children: .combine)
+    }
+
     private func codexSubtitle(_ usage: CodexUsage) -> String? {
         var parts: [String] = []
-        if let plan = usage.plan, !plan.isEmpty { parts.append(plan.capitalized) }
         if let weekly = usage.secondaryWindow?.cardDisplayPercent {
             parts.append("Weekly \(Int(weekly.rounded()))% used")
         }
@@ -708,6 +788,13 @@ struct PopoverView: View {
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
+
+    private static let codexResetExpiryFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .none
+        return f
+    }()
 
     private static let codexDateFormatter: DateFormatter = {
         let f = DateFormatter()

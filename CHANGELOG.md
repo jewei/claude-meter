@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Richer provider cards** — Cursor now shows its plan and Auto + Composer/API
+  split. Codex now shows its plan, available usage resets, and the nearest reset
+  expiry when Codex provides the detail.
+
 ## [2.6] - 2026-07-13
 
 ### Added

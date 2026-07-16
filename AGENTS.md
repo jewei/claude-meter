@@ -111,6 +111,8 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 ## Codex usage (opt-in)
 
 - **Provider subprocess env is scrubbed** — `codex app-server` spawns strip `AuthEnv.overrideVariables` (`CODEX_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `ANTHROPIC_*`, Bedrock/Vertex selectors, …) so an env inherited from a terminal launch can't point the read at a different account/provider. Reuse `AuthEnv.scrubbed` for any future provider subprocess.
+- **Reset credits** — `account/rateLimits/read` can return `rateLimitResetCredits`; `availableCount` is authoritative because `credits` may be nil or capped. The Codex card shows that count plus the nearest future `expiresAt` from the returned detail rows. This is display-only; Claude Meter never calls `account/rateLimitResetCredit/consume`.
+- **Plan labels** — app-server `prolite` displays as `Pro 5X`; `pro` displays as `Pro 20X`. `go` and `plus` display as `Go` and `Plus`.
 
 ## Grok usage (opt-in)
 
@@ -124,7 +126,7 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 
 - **Separate from Claude pipeline** — `cursorSourceEnabled` defaults `false`; polled in parallel via `pollCursor`, not part of `makePipeline()`.
 - **Token read-only** — `CursorTokenStore` reads `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` (batched `sqlite3 -readonly`, 10 s timeout) with Keychain fallback (`cursor-access-token` / `cursor-refresh-token`). Never writes back.
-- **API** — unofficial Connect-RPC on `api2.cursor.sh` (`GetCurrentPeriodUsage`); may break without notice. `totalPercentUsed` is authoritative over raw spend/limit.
+- **API** — unofficial Connect-RPC on `api2.cursor.sh` (`GetCurrentPeriodUsage`); may break without notice. `totalPercentUsed` is authoritative over raw spend/limit; the popover also shows the optional `autoPercentUsed` (`Auto + Composer`) and `apiPercentUsed` bucket breakdowns when returned.
 - **Refresh** — in-memory only for the app session; rotated refresh tokens are cached in `CursorUsageProvider`. Open Cursor if refresh fails.
 - **UX** — `cursorError` surfaces in popover/settings/diagnostics. The **menu bar is Claude-only** — Cursor has its own popover card but is never folded into the menu-bar dot/number/error (it would otherwise dominate the nearest-limit signal). Not in widget/notifications yet.
 

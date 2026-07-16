@@ -187,7 +187,11 @@ Anatomy (top to bottom):
   Each card has two concentric depleting rings (outer = weekly, inner = 5-hour),
   the avatar letter, the account name (user-set display name or config-dir label),
   an optional plan badge, and `5-hr / week / opus` rows with % left + reset.
-- Extra-usage, last-7-days cost, and Cursor cards follow when present (restyled).
+- Extra-usage, last-7-days cost, Cursor, and Codex cards follow when present (restyled).
+  The Cursor card shows the current plan and the API's optional `Auto + Composer`
+  and `API` usage percentages below the authoritative total percentage.
+  The Codex card shows its normalized plan tier plus the authoritative available
+  rate-limit-reset count and the nearest known reset-credit expiry.
   The **last-7-days cost card is tappable** — it flips the popover body to an
   **activity heatmap** (a GitHub-style 7×24 punchcard, Mon–Sun × hour-of-day,
   shaded by message volume) with a **Back** button. The heatmap is scanned on

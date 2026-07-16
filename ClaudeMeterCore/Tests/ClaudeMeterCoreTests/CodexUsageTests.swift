@@ -14,13 +14,21 @@ struct CodexUsageTests {
                 "primary": { "usedPercent": 22, "windowDurationMins": 300, "resetsAt": 1766948068 },
                 "secondary": { "usedPercent": 43, "windowDurationMins": 10080, "resetsAt": 1767407914 },
                 "credits": { "hasCredits": true, "unlimited": false, "balance": "112.4" }
+              },
+              "rateLimitResetCredits": {
+                "availableCount": 4,
+                "credits": [
+                  { "title": "Full reset", "expiresAt": 1751100000 },
+                  { "title": "Full reset", "expiresAt": 1752592200 }
+                ]
               }
             }
             """
         let response = try JSONDecoder().decode(CodexAppServerRateLimitsResponse.self, from: Data(json.utf8))
+        let now = Date(timeIntervalSince1970: 1_751_000_000)
         let usage = try response.usage(
             account: CodexAppServerAccount(email: "alpha@example.com", plan: nil, authMode: .chatGPT),
-            now: Date(timeIntervalSince1970: 1_766_000_000),
+            now: now,
             source: .appServer)
 
         #expect(usage.primaryWindow?.usedPercent == 22)
@@ -32,8 +40,41 @@ struct CodexUsageTests {
         #expect(usage.secondaryWindow?.displayLabel == "Weekly")
         #expect(usage.usageCredits?.remaining == 112.4)
         #expect(usage.plan == "pro")
+        #expect(usage.displayPlanName == "Pro 20X")
+        #expect(usage.rateLimitResets?.availableCount == 4)
+        #expect(usage.rateLimitResets?.credits?.count == 2)
+        #expect(
+            usage.rateLimitResets?.nearestExpiration(after: now)
+                == Date(timeIntervalSince1970: 1_751_100_000))
         #expect(usage.maskedAccountEmail == "a***@example.com")
         #expect(usage.source == .appServer)
+    }
+
+    @Test func formatsCurrentPlanNames() {
+        let expected = [
+            "go": "Go",
+            "plus": "Plus",
+            "prolite": "Pro 5X",
+            "pro": "Pro 20X",
+        ]
+        for (raw, display) in expected {
+            let usage = CodexUsage(
+                primaryWindow: nil,
+                secondaryWindow: nil,
+                usageCredits: nil,
+                accountEmail: nil,
+                plan: raw,
+                source: .appServer,
+                updatedAt: Date())
+            #expect(usage.displayPlanName == display)
+        }
+    }
+
+    @Test func resetCountRemainsAuthoritativeWhenDetailsAreMissing() {
+        let resets = CodexRateLimitResets(availableCount: 4, credits: nil)
+
+        #expect(resets.availableCount == 4)
+        #expect(resets.nearestExpiration(after: Date()) == nil)
     }
 
     @Test func unknownPercentDoesNotBecomeZeroEnergy() {

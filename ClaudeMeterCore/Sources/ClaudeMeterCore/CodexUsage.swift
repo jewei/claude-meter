@@ -99,11 +99,38 @@ public struct CodexCredits: Codable, Equatable, Sendable {
     }
 }
 
+public struct CodexRateLimitResetCredit: Codable, Equatable, Sendable {
+    public var title: String?
+    public var expiresAt: Date?
+
+    public init(title: String?, expiresAt: Date?) {
+        self.title = title
+        self.expiresAt = expiresAt
+    }
+}
+
+public struct CodexRateLimitResets: Codable, Equatable, Sendable {
+    /// The backend's authoritative total. It can exceed `credits.count` because
+    /// the detail list may be capped or omitted.
+    public var availableCount: Int
+    public var credits: [CodexRateLimitResetCredit]?
+
+    public init(availableCount: Int, credits: [CodexRateLimitResetCredit]?) {
+        self.availableCount = max(0, availableCount)
+        self.credits = credits
+    }
+
+    public func nearestExpiration(after now: Date) -> Date? {
+        credits?.compactMap(\.expiresAt).filter { $0 > now }.min()
+    }
+}
+
 public struct CodexUsage: Codable, Equatable, Sendable {
     public var primaryWindow: CodexLimitWindow?
     public var secondaryWindow: CodexLimitWindow?
     public var additionalWindows: [CodexLimitWindow]
     public var usageCredits: CodexCredits?
+    public var rateLimitResets: CodexRateLimitResets?
     public var accountEmail: String?
     public var maskedAccountEmail: String?
     public var plan: String?
@@ -115,6 +142,7 @@ public struct CodexUsage: Codable, Equatable, Sendable {
         secondaryWindow: CodexLimitWindow?,
         additionalWindows: [CodexLimitWindow] = [],
         usageCredits: CodexCredits?,
+        rateLimitResets: CodexRateLimitResets? = nil,
         accountEmail: String?,
         plan: String?,
         source: CodexUsageSource,
@@ -124,11 +152,31 @@ public struct CodexUsage: Codable, Equatable, Sendable {
         self.secondaryWindow = secondaryWindow
         self.additionalWindows = additionalWindows
         self.usageCredits = usageCredits
+        self.rateLimitResets = rateLimitResets
         self.accountEmail = accountEmail
         self.maskedAccountEmail = accountEmail.map(Self.maskedEmail)
         self.plan = plan
         self.source = source
         self.updatedAt = updatedAt
+    }
+
+    public var displayPlanName: String? {
+        guard let plan else { return nil }
+        let normalized = plan.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+        switch normalized {
+        case "free": return "Free"
+        case "go": return "Go"
+        case "plus": return "Plus"
+        case "prolite", "pro_lite": return "Pro 5X"
+        case "pro": return "Pro 20X"
+        case "team": return "Team"
+        case "self_serve_business_usage_based", "business": return "Business"
+        case "enterprise_cbp_usage_based", "enterprise": return "Enterprise"
+        case "edu", "education": return "Edu"
+        case "unknown", "": return nil
+        default: return plan.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
     }
 
     public static func maskedEmail(_ email: String) -> String {
@@ -154,6 +202,7 @@ public struct CodexAppServerAccount: Codable, Equatable, Sendable {
 
 public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
     let rateLimits: AppServerRateLimitSnapshot
+    let rateLimitResetCredits: AppServerRateLimitResetCredits?
 
     public func usage(
         account: CodexAppServerAccount?,
@@ -162,13 +211,16 @@ public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
     ) throws -> CodexUsage {
         let primary = Self.window(rateLimits.primary, kind: .primary, rawLabel: nil)
         let secondary = Self.window(rateLimits.secondary, kind: .secondary, rawLabel: nil)
-        guard primary != nil || secondary != nil || rateLimits.credits != nil else {
+        guard primary != nil || secondary != nil || rateLimits.credits != nil
+            || rateLimitResetCredits != nil
+        else {
             throw CodexUsageError.noUsageData
         }
         return CodexUsage(
             primaryWindow: primary,
             secondaryWindow: secondary,
             usageCredits: rateLimits.credits?.codexCredits,
+            rateLimitResets: rateLimitResetCredits?.codexRateLimitResets,
             accountEmail: account?.email,
             plan: rateLimits.planType ?? account?.plan,
             source: source,
@@ -227,6 +279,28 @@ public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
             if unlimited == true { return CodexCredits(remaining: 0, unlimited: true) }
             guard let balance, let value = Double(balance) else { return nil }
             return CodexCredits(remaining: value)
+        }
+    }
+
+    struct AppServerRateLimitResetCredits: Decodable, Sendable {
+        let availableCount: Int
+        let credits: [AppServerRateLimitResetCredit]?
+
+        var codexRateLimitResets: CodexRateLimitResets {
+            CodexRateLimitResets(
+                availableCount: availableCount,
+                credits: credits?.map(\.codexRateLimitResetCredit))
+        }
+    }
+
+    struct AppServerRateLimitResetCredit: Decodable, Sendable {
+        let title: String?
+        let expiresAt: Int64?
+
+        var codexRateLimitResetCredit: CodexRateLimitResetCredit {
+            CodexRateLimitResetCredit(
+                title: title,
+                expiresAt: expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) })
         }
     }
 }

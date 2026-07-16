@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7] - 2026-07-16
+
 ### Added
 
 - **Richer provider cards.** Cursor now shows its plan and Auto + Composer/API
@@ -315,7 +317,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.6...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.7...HEAD
+[2.7]: https://github.com/jewei/claude-meter/compare/v2.6...v2.7
 [2.6]: https://github.com/jewei/claude-meter/compare/v2.5.1...v2.6
 [2.5.1]: https://github.com/jewei/claude-meter/compare/v2.3...v2.5.1
 [2.5]: https://github.com/jewei/claude-meter/compare/v2.3...v2.5

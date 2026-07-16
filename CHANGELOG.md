@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Turn-finished notifications now ignore subagent completions, so parallel
+  workers do not alert before the main Claude turn has finished.
+
 ## [2.7] - 2026-07-16
 
 ### Added

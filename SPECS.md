@@ -784,6 +784,13 @@ Authorization:
 - Request notification authorization once if status is `.notDetermined`.
 - Treat `.authorized` and `.provisional` as allowed.
 
+Claude Attention:
+
+- A `Stop` hook posts a turn-finished notification only for the main agent. Hook
+  payloads with `agent_id` came from a subagent; consume those markers without
+  emitting them. Subagent permission `Notification` events and blocking
+  `StopFailure` events remain actionable and still surface.
+
 Enablement:
 
 - `enableNotifications` defaults to true when key is absent.

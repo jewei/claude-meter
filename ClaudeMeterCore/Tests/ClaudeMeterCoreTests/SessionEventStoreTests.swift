@@ -88,6 +88,35 @@ struct SessionEventStoreTests {
         #expect(SessionEventStore.drain(eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120).isEmpty)
     }
 
+    @Test func consumesSubagentStopsWithoutEmittingThem() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try writeMarker(
+            ["hook_event_name": "Stop", "session_id": "main"],
+            account: "claude", name: "main.Stop", mtime: now, in: root)
+        try writeMarker(
+            [
+                "hook_event_name": "Stop", "session_id": "main",
+                "agent_id": "agent-worker-1",
+            ],
+            account: "claude", name: "subagent.Stop", mtime: now, in: root)
+        try writeMarker(
+            [
+                "hook_event_name": "Notification", "session_id": "main",
+                "agent_id": "agent-worker-1", "message": "Permission needed",
+            ],
+            account: "claude", name: "subagent.Notification", mtime: now, in: root)
+
+        let events = SessionEventStore.drain(
+            eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120)
+
+        #expect(events.count == 2)
+        #expect(events.contains { $0.kind == .stop && !$0.isSubagent })
+        #expect(events.contains { $0.kind == .notification && $0.isSubagent })
+        let dir = root.appendingPathComponent("claude")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).isEmpty)
+    }
+
     @Test func staleMarkersAreDroppedButStillDeleted() throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }

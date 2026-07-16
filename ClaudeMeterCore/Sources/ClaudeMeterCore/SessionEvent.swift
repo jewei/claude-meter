@@ -16,6 +16,8 @@ public struct SessionEvent: Sendable, Equatable {
     /// Config-dir account key the event came from (the marker's subdirectory).
     public let accountKey: String
     public let sessionId: String?
+    /// Present only when Claude Code fired the hook from inside a subagent call.
+    public let agentId: String?
     /// Working directory of the session — the project the user was in.
     public let cwd: String?
     /// `Notification` message text (e.g. "Claude needs your permission to use Bash").
@@ -26,12 +28,14 @@ public struct SessionEvent: Sendable, Equatable {
     public let capturedAt: Date
 
     public init(
-        kind: Kind, accountKey: String, sessionId: String?, cwd: String?, message: String?,
+        kind: Kind, accountKey: String, sessionId: String?, agentId: String? = nil, cwd: String?,
+        message: String?,
         errorType: String? = nil, capturedAt: Date
     ) {
         self.kind = kind
         self.accountKey = accountKey
         self.sessionId = sessionId
+        self.agentId = agentId
         self.cwd = cwd
         self.message = message
         self.errorType = errorType
@@ -47,6 +51,11 @@ public struct SessionEvent: Sendable, Equatable {
     /// True for a `StopFailure` whose error means the user hit a limit/billing block.
     public var isLimitBlock: Bool {
         kind == .stopFailure && errorType.map(SessionEvent.blockingErrorTypes.contains) == true
+    }
+
+    /// Claude Code includes `agent_id` only for hooks fired inside a subagent call.
+    public var isSubagent: Bool {
+        agentId?.isEmpty == false
     }
 
     /// Last path component of `cwd` — the project name, for display.
@@ -109,9 +118,14 @@ public enum SessionEventStore {
                 // the notification id is stable across drains.
                 let isFresh = age.map { $0 < maxAge } ?? true
                 if let event = parse(file: file, accountKey: accountKey, capturedAt: mod ?? now) {
-                    // Disabled accounts are consumed but NOT emitted — keeps their
-                    // markers from piling up while never notifying for a disabled one.
-                    if isFresh, !isDisabled { events.append(event) }
+                    // A subagent finishing is not the end of the user's turn. Consume
+                    // its marker without emitting a pointless "your turn" alert. Keep
+                    // other subagent events: permission prompts and limit blocks still
+                    // need the user's attention.
+                    let isNoisySubagentStop = event.kind == .stop && event.isSubagent
+                    // Disabled accounts and noisy subagent stops are consumed but NOT
+                    // emitted, so their markers cannot pile up.
+                    if isFresh, !isDisabled, !isNoisySubagentStop { events.append(event) }
                     try? fm.removeItem(at: file)  // consume on success
                 } else {
                     // Parse failed: retry only a genuinely-fresh, known-mtime marker
@@ -142,6 +156,7 @@ public enum SessionEventStore {
             kind: kind,
             accountKey: accountKey,
             sessionId: json["session_id"] as? String,
+            agentId: json["agent_id"] as? String,
             cwd: cwd,
             message: json["message"] as? String,
             errorType: json["error_type"] as? String,

@@ -11,6 +11,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Richer provider cards.** Cursor now shows its plan and Auto + Composer/API
+  split. Codex now shows its plan, available usage resets, and the nearest reset
+  expiry when Codex provides the detail.
+- **Live session indicator.** The active Claude account shows a pulsing green dot
+  while its statusline bridge is fresh. Reduce Motion keeps the dot static.
+
+### Changed
+
+- **More complete local usage estimates.** Cost totals and activity now include
+  Claude subagent transcripts without counting context-fork replays twice. Cost
+  estimates also price Claude Code's one-hour cache writes at the correct rate.
+- **Faster repeat heatmap loads.** The activity scanner caches parsed transcript
+  buckets for the app session. It also stops a scan when the heatmap closes and
+  shows a spinner while the first scan is running.
+
+### Fixed
+
+- Launch at Login now explains when macOS approval is still required and links
+  directly to the Login Items settings page.
+- Closing Sparkle's update window no longer leaves an open Claude Meter Settings
+  window without normal app focus or Command-Tab access.
+
 ## [2.6] - 2026-07-13
 
 ### Added

@@ -11,7 +11,13 @@ struct CursorUsageTests {
             {
               "billingCycleStart": "1750000000000",
               "billingCycleEnd": "1752592200000",
-              "planUsage": { "totalSpend": 1240, "limit": 2000, "totalPercentUsed": 62.0 },
+              "planUsage": {
+                "totalSpend": 1240,
+                "limit": 2000,
+                "autoPercentUsed": 10.0,
+                "apiPercentUsed": 100.0,
+                "totalPercentUsed": 62.0
+              },
               "enabled": true
             }
             """
@@ -20,11 +26,14 @@ struct CursorUsageTests {
         let usage = response.usage(planName: "pro", email: "x@y.z", now: now)
 
         #expect(usage.percentUsed == 62.0)
+        #expect(usage.autoPercentUsed == 10.0)
+        #expect(usage.apiPercentUsed == 100.0)
         #expect(usage.spendUsd == 12.40)
         #expect(usage.limitUsd == 20.00)
         #expect(usage.periodEnd == Date(timeIntervalSince1970: 1_752_592_200))
         #expect(usage.spendText == "$12.40")
         #expect(usage.planName == "pro")
+        #expect(usage.displayPlanName == "Pro")
     }
 
     @Test func zeroLimitMeansNoFixedLimit() throws {
@@ -35,6 +44,32 @@ struct CursorUsageTests {
         let usage = response.usage(planName: nil, email: nil, now: Date())
         #expect(usage.limitUsd == nil)
         #expect(usage.spendText == "$5.00")
+    }
+
+    @Test func optionalBreakdownStaysMissingForOlderResponses() throws {
+        let json = """
+            { "planUsage": { "totalPercentUsed": 22 }, "enabled": true }
+            """
+        let response = try JSONDecoder().decode(CursorUsageResponse.self, from: Data(json.utf8))
+        let usage = response.usage(planName: "pro_plus", email: nil, now: Date())
+
+        #expect(usage.percentUsed == 22)
+        #expect(usage.autoPercentUsed == nil)
+        #expect(usage.apiPercentUsed == nil)
+        #expect(usage.displayPlanName == "Pro+")
+    }
+
+    @Test func clampsBreakdownPercentagesForDisplay() {
+        let usage = CursorUsage(
+            percentUsed: 101,
+            autoPercentUsed: -1,
+            apiPercentUsed: 103,
+            planName: "  Custom Plan  ")
+
+        #expect(usage.clampedPercent == 100)
+        #expect(usage.clampedAutoPercent == 0)
+        #expect(usage.clampedAPIPercent == 100)
+        #expect(usage.displayPlanName == "Custom Plan")
     }
 
     @Test func parsesDateFromMillisSecondsAndISO() {

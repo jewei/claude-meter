@@ -7,6 +7,8 @@ import Foundation
 /// and the period reset date.
 public struct CursorUsage: Codable, Equatable, Sendable {
     public var percentUsed: Double?  // 0–100
+    public var autoPercentUsed: Double?  // 0–100, Auto + Composer bucket
+    public var apiPercentUsed: Double?  // 0–100, named-model API bucket
     public var spendUsd: Double?  // dollars used this period
     public var limitUsd: Double?  // plan limit in dollars (nil = no fixed limit)
     public var periodEnd: Date?  // billing cycle end
@@ -16,6 +18,8 @@ public struct CursorUsage: Codable, Equatable, Sendable {
 
     public init(
         percentUsed: Double? = nil,
+        autoPercentUsed: Double? = nil,
+        apiPercentUsed: Double? = nil,
         spendUsd: Double? = nil,
         limitUsd: Double? = nil,
         periodEnd: Date? = nil,
@@ -24,6 +28,8 @@ public struct CursorUsage: Codable, Equatable, Sendable {
         capturedAt: Date = Date()
     ) {
         self.percentUsed = percentUsed
+        self.autoPercentUsed = autoPercentUsed
+        self.apiPercentUsed = apiPercentUsed
         self.spendUsd = spendUsd
         self.limitUsd = limitUsd
         self.periodEnd = periodEnd
@@ -34,6 +40,30 @@ public struct CursorUsage: Codable, Equatable, Sendable {
 
     public var clampedPercent: Double? {
         percentUsed.map { min(100, max(0, $0)) }
+    }
+
+    public var clampedAutoPercent: Double? {
+        autoPercentUsed.map { min(100, max(0, $0)) }
+    }
+
+    public var clampedAPIPercent: Double? {
+        apiPercentUsed.map { min(100, max(0, $0)) }
+    }
+
+    public var displayPlanName: String? {
+        guard let planName else { return nil }
+        let trimmed = planName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        switch trimmed.lowercased().replacingOccurrences(of: "-", with: "_") {
+        case "free": return "Free"
+        case "pro": return "Pro"
+        case "pro_plus", "pro+": return "Pro+"
+        case "ultra": return "Ultra"
+        case "business": return "Business"
+        case "team", "teams": return "Teams"
+        default: return trimmed
+        }
     }
 
     /// Dollars spent this cycle, e.g. "$12.40". We deliberately avoid a
@@ -61,6 +91,8 @@ struct CursorUsageResponse: Decodable {
     struct PlanUsage: Decodable {
         let totalSpend: Int?  // cents
         let limit: Int?  // cents
+        let autoPercentUsed: Double?
+        let apiPercentUsed: Double?
         let totalPercentUsed: Double?
     }
 
@@ -68,6 +100,8 @@ struct CursorUsageResponse: Decodable {
     func usage(planName: String?, email: String?, now: Date) -> CursorUsage {
         CursorUsage(
             percentUsed: planUsage?.totalPercentUsed,
+            autoPercentUsed: planUsage?.autoPercentUsed,
+            apiPercentUsed: planUsage?.apiPercentUsed,
             spendUsd: planUsage?.totalSpend.map { Double($0) / 100 },
             limitUsd: planUsage?.limit.flatMap { $0 > 0 ? Double($0) / 100 : nil },
             periodEnd: parseEpochOrISODate(billingCycleEnd),

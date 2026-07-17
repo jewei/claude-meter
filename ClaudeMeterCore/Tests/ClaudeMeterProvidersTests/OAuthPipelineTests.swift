@@ -57,6 +57,30 @@ struct OAuthPipelineTests {
         #expect(usage.sevenDay?.utilization == 61.0)
     }
 
+    @Test func decodesScopedSevenDayWindows() throws {
+        let json = """
+            {"five_hour":{"utilization":20.0},
+             "seven_day":{"utilization":61.0},
+             "seven_day_opus":{"utilization":80.0},
+             "seven_day_sonnet":{"utilization":34.0,"resets_at":"2026-07-20T00:00:00Z"},
+             "seven_day_cowork":{"utilization":null},
+             "seven_day_omelette":[1,2],
+             "limits":[{"kind":"weekly"}]}
+            """
+        let data = try #require(json.data(using: .utf8))
+        let usage = try JSONDecoder().decode(UsageResponse.self, from: data)
+
+        // Opus stays a first-class field; only extra seven_day_* keys are scoped,
+        // a non-quota shape is skipped, and a null-utilization scope is dropped
+        // by the window mapper.
+        #expect(usage.sevenDayOpus?.utilization == 80.0)
+        #expect(usage.scopedWeekly.map(\.key) == ["seven_day_cowork", "seven_day_sonnet"])
+        let scoped = try #require(OAuthPipeline.scopedWindows(from: usage))
+        #expect(scoped.map(\.id) == ["seven_day_sonnet"])
+        #expect(scoped.first?.window.percentUsed == 34.0)
+        #expect(scoped.first?.displayName == "Sonnet")
+    }
+
     @Test func retryAfterParsesDeltaSeconds() throws {
         let now = Date(timeIntervalSince1970: 1_000_000)
         let response = try #require(

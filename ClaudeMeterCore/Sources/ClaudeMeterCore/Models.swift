@@ -176,6 +176,26 @@ public struct SessionInfo: Codable, Equatable, Sendable {
 
 // MARK: - Limits
 
+/// A scoped weekly window keyed by its raw API name (`seven_day_sonnet`, …).
+public struct ScopedLimitWindow: Codable, Equatable, Sendable, Identifiable {
+    /// Raw API key, e.g. `seven_day_sonnet`.
+    public var id: String
+    public var window: LimitWindow
+
+    public init(id: String, window: LimitWindow) {
+        self.id = id
+        self.window = window
+    }
+
+    /// "Sonnet" from `seven_day_sonnet`; falls back to the raw key.
+    public var displayName: String {
+        let scope = id.hasPrefix("seven_day_") ? String(id.dropFirst("seven_day_".count)) : id
+        guard !scope.isEmpty else { return id }
+        return scope.split(separator: "_").map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
+}
+
 public struct LimitInfo: Codable, Equatable, Sendable {
     public var currentSession: LimitWindow
     public var currentWeekAllModels: LimitWindow
@@ -183,6 +203,10 @@ public struct LimitInfo: Codable, Equatable, Sendable {
     /// subscribers, who exhaust Opus weekly before the all-models weekly window.
     /// `nil` when the source doesn't report it (older snapshots, non-OAuth shapes).
     public var currentWeekOpus: LimitWindow?
+    /// Other scoped weekly windows the OAuth API reports as `seven_day_<scope>`
+    /// (e.g. `seven_day_sonnet`, `seven_day_cowork`). Display-only: they do not
+    /// feed severity, the menu bar, or notifications. `nil` on older snapshots.
+    public var scopedWeekly: [ScopedLimitWindow]?
     /// Monthly pay-as-you-go overage spend (`extra_usage`), when enabled on the plan.
     public var extraUsage: ExtraUsage?
 
@@ -190,11 +214,13 @@ public struct LimitInfo: Codable, Equatable, Sendable {
         currentSession: LimitWindow = LimitWindow(),
         currentWeekAllModels: LimitWindow = LimitWindow(),
         currentWeekOpus: LimitWindow? = nil,
+        scopedWeekly: [ScopedLimitWindow]? = nil,
         extraUsage: ExtraUsage? = nil
     ) {
         self.currentSession = currentSession
         self.currentWeekAllModels = currentWeekAllModels
         self.currentWeekOpus = currentWeekOpus
+        self.scopedWeekly = scopedWeekly
         self.extraUsage = extraUsage
     }
 

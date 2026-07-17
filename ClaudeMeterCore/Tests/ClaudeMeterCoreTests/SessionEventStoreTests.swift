@@ -25,6 +25,18 @@ struct SessionEventStoreTests {
         try FileManager.default.setAttributes([.modificationDate: mtime], ofItemAtPath: url.path)
     }
 
+    @Test func recognizesSupportedTerminalPrograms() {
+        #expect(TerminalRoute(termProgram: "Ghostty", tty: nil, identifier: nil)?.client == .ghostty)
+        #expect(
+            TerminalRoute(termProgram: "Apple_Terminal", tty: nil, identifier: nil)?.client
+                == .terminal)
+        #expect(TerminalRoute(termProgram: "iTerm.app", tty: nil, identifier: nil)?.client == .iTerm2)
+        #expect(TerminalRoute(termProgram: "WezTerm", tty: nil, identifier: nil)?.client == .wezTerm)
+        #expect(
+            TerminalRoute(termProgram: "WarpTerminal", tty: nil, identifier: nil)?.client == .warp)
+        #expect(TerminalRoute(termProgram: "unknown", tty: nil, identifier: nil) == nil)
+    }
+
     @Test func parsesFreshStopAndNotificationAcrossAccounts() throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -52,6 +64,27 @@ struct SessionEventStoreTests {
         #expect(note.accountKey == "claude-work")
         #expect(note.message == "Claude needs your permission")
         #expect(note.projectName == "other")
+    }
+
+    @Test func parsesTerminalRouteFromMarkerFilename() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let route = Data("WezTerm\nttys003\n42".utf8).base64EncodedString()
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "=", with: "")
+        try writeMarker(
+            ["hook_event_name": "Stop", "session_id": "s1"],
+            account: "claude", name: "s1.Stop.123.cmr-\(route)", mtime: now, in: root)
+
+        let event = try #require(
+            SessionEventStore.drain(
+                eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120
+            ).first)
+        #expect(event.terminalRoute?.client == .wezTerm)
+        #expect(event.terminalRoute?.tty == "ttys003")
+        #expect(event.terminalRoute?.deviceTTY == "/dev/ttys003")
+        #expect(event.terminalRoute?.identifier == "42")
     }
 
     @Test func parsesStopFailureErrorTypeAndClassifiesLimitBlock() throws {
@@ -86,6 +119,35 @@ struct SessionEventStoreTests {
         #expect(SessionEventStore.drain(eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120).count == 1)
         // Second drain finds nothing — the marker was consumed.
         #expect(SessionEventStore.drain(eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120).isEmpty)
+    }
+
+    @Test func consumesSubagentStopsWithoutEmittingThem() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try writeMarker(
+            ["hook_event_name": "Stop", "session_id": "main"],
+            account: "claude", name: "main.Stop", mtime: now, in: root)
+        try writeMarker(
+            [
+                "hook_event_name": "Stop", "session_id": "main",
+                "agent_id": "agent-worker-1",
+            ],
+            account: "claude", name: "subagent.Stop", mtime: now, in: root)
+        try writeMarker(
+            [
+                "hook_event_name": "Notification", "session_id": "main",
+                "agent_id": "agent-worker-1", "message": "Permission needed",
+            ],
+            account: "claude", name: "subagent.Notification", mtime: now, in: root)
+
+        let events = SessionEventStore.drain(
+            eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120)
+
+        #expect(events.count == 2)
+        #expect(events.contains { $0.kind == .stop && !$0.isSubagent })
+        #expect(events.contains { $0.kind == .notification && $0.isSubagent })
+        let dir = root.appendingPathComponent("claude")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).isEmpty)
     }
 
     @Test func staleMarkersAreDroppedButStillDeleted() throws {

@@ -971,7 +971,7 @@ struct PopoverView: View {
             return "Open Claude Code, sign in to enabled sources, or connect OAuth in Settings."
         }
         return
-            "Open Claude Code so the statusline bridge can publish usage, or connect OAuth/claude.ai in Settings."
+            "Open Claude Code so the statusline bridge can publish usage, or connect OAuth in Settings."
     }
 
     private var cursorErrorState: some View {
@@ -1175,9 +1175,16 @@ struct PopoverView: View {
     }
 
     private var updatedText: String {
-        let claudeAt = appState.snapshot?.lastSuccessfulPollAt ?? appState.lastPolledAt
-        let cursorAt = appState.cursorLastPolledAt
-        guard let polledAt = [claudeAt, cursorAt].compactMap({ $0 }).max() else {
+        let claudeAt =
+            AppSettings.hasClaudeSource
+            ? (appState.snapshot?.lastSuccessfulPollAt ?? appState.lastPolledAt) : nil
+        let cursorAt = AppSettings.cursorSourceEnabled ? appState.cursorLastPolledAt : nil
+        let codexAt = AppSettings.codexSourceEnabled ? appState.codexLastPolledAt : nil
+        let grokAt = AppSettings.grokSourceEnabled ? appState.grokLastPolledAt : nil
+        guard
+            let polledAt = [claudeAt, cursorAt, codexAt, grokAt]
+                .compactMap({ $0 }).max()
+        else {
             return "Not yet polled"
         }
         let elapsed = Int(now.timeIntervalSince(polledAt))

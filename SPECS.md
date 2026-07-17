@@ -295,7 +295,12 @@ progression change):
 Chunky-card layout.
 
 - **Enable notifications** card (`enableNotifications`, default true) with a helper
-  box: one alert per threshold per reset window.
+  box: one alert per threshold per reset window. `predictiveNotificationsEnabled`
+  defaults off; when enabled, a depletion forecast must qualify on two consecutive
+  fresh polls for the same account/window/reset cycle before it alerts.
+- **Claude Attention** card with independent Stop / Notification / StopFailure
+  toggles. Clicking an alert returns to the originating terminal when a captured
+  route is still live; macOS may request Automation access on first use.
 - **Severity Thresholds** card with two **color-coded `ColorSlider`s** (orange
   Warning, red Critical) — each a dot + label + tinted percentage pill + a
   ring-thumb slider:
@@ -784,6 +789,21 @@ Authorization:
 - Request notification authorization once if status is `.notDetermined`.
 - Treat `.authorized` and `.provisional` as allowed.
 
+Claude Attention:
+
+- A `Stop` hook posts a turn-finished notification only for the main agent. Hook
+  payloads with `agent_id` came from a subagent; consume those markers without
+  emitting them. Subagent permission `Notification` events and blocking
+  `StopFailure` events remain actionable and still surface.
+- The hook marker filename carries a base64url `cmr-` route suffix: terminal
+  client, controlling TTY, and an optional client locator. Notification `userInfo`
+  carries the decoded route; other notification types carry none.
+- Clicking the default notification action focuses Ghostty by working directory,
+  Terminal/iTerm2 by TTY, or WezTerm by pane id. Warp has no public exact-pane
+  route, so it activates the running app. If an exact route is absent or stale,
+  activate the already-running terminal only; never launch an app or create a
+  window. Ghostty may choose the first match when several terminals share a cwd.
+
 Enablement:
 
 - `enableNotifications` defaults to true when key is absent.
@@ -808,7 +828,8 @@ Trigger rules:
 
 Delivery:
 
-- No sound.
+- Quota threshold notifications have no sound; Claude Attention uses the user's
+  configured default notification sound.
 - Mark fired only after `UNUserNotificationCenter.add` succeeds.
 
 Sparkle:

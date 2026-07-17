@@ -153,6 +153,9 @@ private struct OAuthConnectionSection: View {
     @State private var manualRefresh = ""
     @State private var testResult = ""
     @State private var isTesting = false
+    @AppStorage("oauthKeychainConsentAcknowledged")
+    private var keychainConsentAcknowledged = false
+    @State private var showKeychainConsent = false
 
     var body: some View {
         Group {
@@ -161,6 +164,17 @@ private struct OAuthConnectionSection: View {
             }
         }
         .onAppear { loadState() }
+        .alert("Connect Claude Code?", isPresented: $showKeychainConsent) {
+            Button("Cancel", role: .cancel) {}
+            Button("Continue") {
+                keychainConsentAcknowledged = true
+                connectAutoDetected()
+            }
+        } message: {
+            Text(
+                "Claude Meter will ask macOS for access to Claude Code's OAuth credentials. Tokens stay in Keychain and are never shown or copied."
+            )
+        }
     }
 
     private var isConnected: Bool {
@@ -175,7 +189,7 @@ private struct OAuthConnectionSection: View {
 
         case .promptAuto:
             HStack(spacing: 10) {
-                Button("Connect") { useAutoDetected() }
+                Button("Connect") { requestAutoConnection() }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                 Button("Enter manually") { state = .manualEntry }
@@ -298,7 +312,7 @@ private struct OAuthConnectionSection: View {
                             || manualRefresh.trimmingCharacters(in: .whitespaces).isEmpty)
                 if oauthMode.isEmpty {
                     Button("Cancel") {
-                        state = OAuthKeychain.load() != nil ? .promptAuto : .promptNoAuto
+                        state = disconnectedState()
                     }
                     .buttonStyle(.borderless)
                     .controlSize(.small)
@@ -317,7 +331,7 @@ private struct OAuthConnectionSection: View {
         switch oauthMode {
         case "auto": state = .connectedAuto
         case "manual": state = OAuthKeychain.loadManual() != nil ? .connectedManual : .manualEntry
-        default: state = OAuthKeychain.load() != nil ? .promptAuto : .promptNoAuto
+        default: state = disconnectedState()
         }
     }
 
@@ -325,13 +339,31 @@ private struct OAuthConnectionSection: View {
         if oauthMode == "manual" {
             state = .manualEntry
         } else {
-            useAutoDetected()
+            requestAutoConnection()
         }
     }
 
-    private func useAutoDetected() {
-        guard let creds = OAuthKeychain.load() else {
-            state = .error("Claude Code credentials not found in Keychain")
+    private func requestAutoConnection() {
+        if keychainConsentAcknowledged {
+            connectAutoDetected()
+        } else {
+            showKeychainConsent = true
+        }
+    }
+
+    private func connectAutoDetected() {
+        let creds: OAuthCredentials
+        switch OAuthKeychain.loadResult() {
+        case .found(let found):
+            creds = found
+        case .missing:
+            state = .error("Claude Code credentials were not found in Keychain")
+            return
+        case .temporarilyUnavailable:
+            state = .error("Keychain access is unavailable. Unlock your Mac and try again.")
+            return
+        case .invalid:
+            state = .error("Claude Code credentials in Keychain are invalid")
             return
         }
         state = .verifying
@@ -378,24 +410,7 @@ private struct OAuthConnectionSection: View {
     }
 
     private func retryAuto() {
-        guard let creds = OAuthKeychain.load() else {
-            state = .promptNoAuto
-            return
-        }
-        state = .verifying
-        Task {
-            do {
-                let (s, w) = try await OAuthPipeline.verify(credentials: creds)
-                oauthSourceEnabled = true
-                oauthMode = "auto"
-                testResult = "Session \(Int(s))%  ·  Week \(Int(w))%"
-                state = .connectedAuto
-                appState.rebuildPipeline()
-                appState.refreshNow()
-            } catch {
-                state = .error(error.localizedDescription)
-            }
-        }
+        requestAutoConnection()
     }
 
     private func disconnect() {
@@ -406,7 +421,14 @@ private struct OAuthConnectionSection: View {
         manualAccess = ""
         manualRefresh = ""
         appState.rebuildPipeline()
-        state = OAuthKeychain.load() != nil ? .promptAuto : .promptNoAuto
+        state = disconnectedState()
+    }
+
+    private func disconnectedState() -> OAuthSetupState {
+        switch OAuthKeychain.credentialAvailability() {
+        case .available, .temporarilyUnavailable: return .promptAuto
+        case .missing: return .promptNoAuto
+        }
     }
 }
 
@@ -1107,6 +1129,8 @@ private struct NotificationsSettingsTab: View {
     @AppStorage("enableNotifications") private var enableNotifications = true
     @AppStorage("warningThresholdPercent") private var warningThresholdPercent = 80.0
     @AppStorage("criticalThresholdPercent") private var criticalThresholdPercent = 95.0
+    @AppStorage(AppSettings.predictiveNotificationsEnabledKey)
+    private var predictiveNotifications = false
     @AppStorage(AppSettings.attentionStopEnabledKey) private var attentionStop = false
     @AppStorage(AppSettings.attentionNotificationEnabledKey) private var attentionNotification = false
     @AppStorage(AppSettings.attentionLimitHitEnabledKey) private var attentionLimitHit = false
@@ -1122,9 +1146,15 @@ private struct NotificationsSettingsTab: View {
                     isEnabled: $enableNotifications,
                     contentLeading: 0
                 ) {
-                    SettingsHelperBox(
-                        "Posts a notification when session or weekly usage crosses the warning or critical threshold — one alert per threshold, per reset window."
-                    )
+                    VStack(alignment: .leading, spacing: 12) {
+                        attentionRow(
+                            "Predict early depletion",
+                            "Warn when the current pace may empty a limit before it refills.",
+                            $predictiveNotifications)
+                        SettingsHelperBox(
+                            "Threshold alerts fire once per level and reset window. Predictive alerts are opt-in and require two consecutive fresh readings."
+                        )
+                    }
                 }
 
                 Text("Claude Attention")
@@ -1148,7 +1178,7 @@ private struct NotificationsSettingsTab: View {
                         "Ground-truth alert the moment a turn is blocked by a rate limit or billing issue — and the meter re-polls immediately.",
                         $attentionLimitHit)
                     SettingsHelperBox(
-                        "Installs lightweight Stop / Notification / StopFailure hooks into each Claude Code account; turning these off removes them. Sound, Focus, and history are handled by macOS — tune them in System Settings → Notifications → Claude Meter."
+                        "Installs lightweight Stop / Notification / StopFailure hooks into each Claude Code account; turning these off removes them. Click an alert to return to its Ghostty, Terminal, iTerm2, or WezTerm tab when available; Warp brings the app forward. macOS may ask once for Automation access."
                     )
                 }
                 .padding(16)
@@ -1361,7 +1391,8 @@ private struct AdvancedSettingsTab: View {
     }
 
     private var updateStatus: String {
-        appState.updateAvailable ? "Update available — click to install" : "Up to date · v\(appVersion) ✓"
+        appState.updateAvailable
+            ? "Update available · click to install" : "Installed v\(appVersion)"
     }
 
     private var updateStatusColor: Color {

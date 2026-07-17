@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Clicking a Claude Attention notification now returns to its originating
+  Ghostty, Terminal, iTerm2, or WezTerm tab when possible, with a safe app-focus
+  fallback for Warp and stale routes.
+- Diagnostics now show a bounded, non-sensitive statusline, OAuth, and cache
+  attempt trail.
+- Optional predictive alerts warn when a fresh two-poll forecast says session or
+  weekly energy may run out before reset.
+
+### Changed
+
+- OAuth setup checks Keychain item attributes passively and reads Claude Code's
+  credentials only after explicit consent.
+- A single local verification command now runs Core tests plus unsigned Debug
+  and Release builds; releases validate signed artifacts before changing git.
+
+### Fixed
+
+- Turn-finished notifications now ignore subagent completions, so parallel
+  workers do not alert before the main Claude turn has finished.
+
 ## [2.7] - 2026-07-16
 
 ### Added

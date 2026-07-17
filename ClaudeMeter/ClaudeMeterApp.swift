@@ -3,6 +3,7 @@ import SwiftUI
 
 @main
 struct ClaudeMeterApp: App {
+    @NSApplicationDelegateAdaptor(ClaudeMeterAppDelegate.self) private var appDelegate
     @StateObject private var appState = AppState()
 
     var body: some Scene {

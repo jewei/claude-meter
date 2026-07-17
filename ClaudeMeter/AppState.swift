@@ -1100,6 +1100,7 @@ enum AppSettings {
     static let attentionStopEnabledKey = "attentionStopEnabled"
     static let attentionNotificationEnabledKey = "attentionNotificationEnabled"
     static let attentionLimitHitEnabledKey = "attentionLimitHitEnabled"
+    static let predictiveNotificationsEnabledKey = "predictiveNotificationsEnabled"
 
     /// Notify when Claude finishes a turn. Opt-in (installs a `Stop` hook).
     static var attentionStopEnabled: Bool {

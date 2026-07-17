@@ -2,10 +2,8 @@ import Foundation
 
 /// Primary pipeline that reads Claude Code's own rate-limit data via the statusline bridge.
 ///
-/// Fallback order when stale (rate-limited to once per minute):
-/// 1. Statusline bridge (`~/.claude-meter/sessions/<session_id>.json`, merged)
-/// 2. OAuth usage API (`GET /api/oauth/usage` with Bearer token)
-/// 3. claude.ai usage API (`GET /api/organizations/{orgId}/usage` with sessionKey cookie)
+/// Fallback order when stale (rate-limited to once per minute): statusline bridge,
+/// OAuth usage API, then the last cached snapshot.
 public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     private let fallback: any ClaudeMeterPipeline
@@ -65,13 +63,17 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
                 warnings: [],
                 errors: [],
                 rawHash: String(freshest.timeIntervalSince1970),
-                parserVersion: "statusline-1.0"
+                parserVersion: "statusline-1.0",
+                sourceAttempts: [
+                    SourceAttempt(source: .statusline, outcome: .selected, reason: .freshData)
+                ]
             )
         }
 
         // Statusline is stale. Check if the fallback cooldown has elapsed.
         if markFallbackPollIfCooldownElapsed(now: now) {
-            return try await fallback.poll(now: now)
+            return try await fallback.poll(now: now).prependingSourceAttempt(
+                SourceAttempt(source: .statusline, outcome: .skipped, reason: .staleData))
         }
 
         // Within cooldown window — serve the last cached snapshot as stale.
@@ -89,13 +91,18 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
                 ],
                 errors: [],
                 rawHash: "",
-                parserVersion: snap.parserVersion
+                parserVersion: snap.parserVersion,
+                sourceAttempts: [
+                    SourceAttempt(source: .statusline, outcome: .skipped, reason: .cooldown),
+                    SourceAttempt(source: .cache, outcome: .selected, reason: .cachedSnapshot),
+                ]
             )
         }
 
         // No cache either — call fallback unconditionally.
         markFallbackPoll(now: now)
-        return try await fallback.poll(now: now)
+        return try await fallback.poll(now: now).prependingSourceAttempt(
+            SourceAttempt(source: .statusline, outcome: .skipped, reason: .staleData))
     }
 
     private func secondsUntilNextFallback(now: Date) -> Int {

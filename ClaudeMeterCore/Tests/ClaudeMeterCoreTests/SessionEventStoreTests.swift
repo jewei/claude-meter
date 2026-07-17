@@ -25,6 +25,18 @@ struct SessionEventStoreTests {
         try FileManager.default.setAttributes([.modificationDate: mtime], ofItemAtPath: url.path)
     }
 
+    @Test func recognizesSupportedTerminalPrograms() {
+        #expect(TerminalRoute(termProgram: "Ghostty", tty: nil, identifier: nil)?.client == .ghostty)
+        #expect(
+            TerminalRoute(termProgram: "Apple_Terminal", tty: nil, identifier: nil)?.client
+                == .terminal)
+        #expect(TerminalRoute(termProgram: "iTerm.app", tty: nil, identifier: nil)?.client == .iTerm2)
+        #expect(TerminalRoute(termProgram: "WezTerm", tty: nil, identifier: nil)?.client == .wezTerm)
+        #expect(
+            TerminalRoute(termProgram: "WarpTerminal", tty: nil, identifier: nil)?.client == .warp)
+        #expect(TerminalRoute(termProgram: "unknown", tty: nil, identifier: nil) == nil)
+    }
+
     @Test func parsesFreshStopAndNotificationAcrossAccounts() throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -52,6 +64,27 @@ struct SessionEventStoreTests {
         #expect(note.accountKey == "claude-work")
         #expect(note.message == "Claude needs your permission")
         #expect(note.projectName == "other")
+    }
+
+    @Test func parsesTerminalRouteFromMarkerFilename() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let route = Data("WezTerm\nttys003\n42".utf8).base64EncodedString()
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "=", with: "")
+        try writeMarker(
+            ["hook_event_name": "Stop", "session_id": "s1"],
+            account: "claude", name: "s1.Stop.123.cmr-\(route)", mtime: now, in: root)
+
+        let event = try #require(
+            SessionEventStore.drain(
+                eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120
+            ).first)
+        #expect(event.terminalRoute?.client == .wezTerm)
+        #expect(event.terminalRoute?.tty == "ttys003")
+        #expect(event.terminalRoute?.deviceTTY == "/dev/ttys003")
+        #expect(event.terminalRoute?.identifier == "42")
     }
 
     @Test func parsesStopFailureErrorTypeAndClassifiesLimitBlock() throws {

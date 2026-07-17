@@ -182,6 +182,46 @@ struct HookBridgeTests {
         #expect(commands(out, event: "Stop") == [HookBridge.hookSnippet])
     }
 
+    @Test func hookMarkerCapturesTerminalRoute() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-c", HookBridge.hookSnippet]
+        var environment = ProcessInfo.processInfo.environment
+        environment["HOME"] = home.path
+        environment["CLAUDE_CONFIG_DIR"] = home.appendingPathComponent(".claude-work").path
+        environment["TERM_PROGRAM"] = "WezTerm"
+        environment["WEZTERM_PANE"] = "42"
+        environment.removeValue(forKey: "ITERM_SESSION_ID")
+        environment.removeValue(forKey: "TERM_SESSION_ID")
+        environment.removeValue(forKey: "WARP_SESSION_ID")
+        process.environment = environment
+        let input = Pipe()
+        process.standardInput = input
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+
+        try process.run()
+        try input.fileHandleForWriting.write(
+            contentsOf: Data(#"{"hook_event_name":"Stop","session_id":"s1"}"#.utf8))
+        try input.fileHandleForWriting.close()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+
+        let eventsRoot = home.appendingPathComponent(".claude-meter/events")
+        let event = try #require(
+            SessionEventStore.drain(
+                eventsRoot: eventsRoot, disabledAccountKeys: [], now: Date(), maxAge: 120
+            ).first)
+        #expect(event.accountKey == "claude-work")
+        #expect(event.terminalRoute?.client == .wezTerm)
+        #expect(event.terminalRoute?.identifier == "42")
+    }
+
     @Test func invalidSettingsJSONThrows() throws {
         let (dir, settings) = try makeConfigDir()
         defer { try? FileManager.default.removeItem(at: dir) }

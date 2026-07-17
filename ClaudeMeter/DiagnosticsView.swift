@@ -10,6 +10,7 @@ struct DiagnosticsView: View {
         VStack(spacing: 0) {
             Form {
                 dataSourceSection
+                sourceAttemptsSection
                 pollSection
                 snapshotSection
                 warningsSection
@@ -42,6 +43,19 @@ struct DiagnosticsView: View {
                     .buttonStyle(.bordered)
             }
             .padding()
+        }
+    }
+
+    @ViewBuilder
+    private var sourceAttemptsSection: some View {
+        if let attempts = appState.lastPollResult?.sourceAttempts, !attempts.isEmpty {
+            Section("Source Attempts") {
+                ForEach(Array(attempts.enumerated()), id: \.offset) { _, attempt in
+                    Text(attempt.diagnosticDescription)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                }
+            }
         }
     }
 
@@ -223,6 +237,12 @@ struct DiagnosticsView: View {
         }
         lines += [""]
 
+        if let attempts = appState.lastPollResult?.sourceAttempts, !attempts.isEmpty {
+            lines.append("Source Attempts")
+            lines += attempts.map { "  \($0.diagnosticDescription)" }
+            lines.append("")
+        }
+
         if let snap = appState.snapshot {
             lines += [
                 "Snapshot",
@@ -242,7 +262,6 @@ struct DiagnosticsView: View {
             }
             lines.append("")
         }
-
 
         return lines.joined(separator: "\n")
     }

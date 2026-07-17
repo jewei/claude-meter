@@ -44,15 +44,17 @@ public enum HookBridge: Sendable {
     /// exits 0 so a `Stop` hook can never block Claude Code. It does **not** echo
     /// stdin (hooks render nothing).
     /// The marker filename includes `$$` (the hook process's PID, unique per fire)
-    /// so rapid events of the same kind for the same session each get their own
-    /// file instead of overwriting one another within a drain window.
+    /// plus a compact route suffix containing `TERM_PROGRAM`, the controlling TTY,
+    /// and a client-specific locator. This keeps the hook payload byte-identical to
+    /// Claude Code's JSON while giving notification clicks a terminal to focus.
     static let hookSnippet =
-        #"bash -c 'I=$(cat);A=$(basename "${CLAUDE_CONFIG_DIR:-$HOME/.claude}");A=${A#.};A=$(printf "%s" "$A"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$A" ]&&A=claude;E=$(printf "%s" "$I"|sed -n "s/.*\"hook_event_name\":\"\([^\"]*\)\".*/\1/p");E=$(printf "%s" "$E"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$E" ]&&E=event;D=$HOME/.claude-meter/events/$A;mkdir -p "$D" 2>/dev/null;S=$(printf "%s" "$I"|sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p");S=$(printf "%s" "$S"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$S" ]&&S=default;T="$D/.tmp.$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/$S.$E.$$.json" 2>/dev/null||rm -f "$T" 2>/dev/null;exit 0'"#
+        #"bash -c 'I=$(cat);A=$(basename "${CLAUDE_CONFIG_DIR:-$HOME/.claude}");A=${A#.};A=$(printf "%s" "$A"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$A" ]&&A=claude;E=$(printf "%s" "$I"|sed -n "s/.*\"hook_event_name\":\"\([^\"]*\)\".*/\1/p");E=$(printf "%s" "$E"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$E" ]&&E=event;D=$HOME/.claude-meter/events/$A;mkdir -p "$D" 2>/dev/null;S=$(printf "%s" "$I"|sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p");S=$(printf "%s" "$S"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$S" ]&&S=default;P=$(printf "%s" "${TERM_PROGRAM:-}"|LC_ALL=C tr -cd "[:alnum:]._-" );P=${P:0:32};Y=$(/bin/ps -o tty= -p $$ 2>/dev/null);Y=$(printf "%s" "$Y"|LC_ALL=C tr -cd "[:alnum:]._-");Y=${Y:0:32};X=${WEZTERM_PANE:-${ITERM_SESSION_ID:-${TERM_SESSION_ID:-${WARP_SESSION_ID:-}}}};X=$(printf "%s" "$X"|LC_ALL=C tr -cd "[:alnum:]._:-");X=${X:0:64};M=;[ -n "$P" ]&&M=$(printf "%s\n%s\n%s" "$P" "$Y" "$X"|/usr/bin/base64|tr -d "\n"|tr "/+" "_-"|tr -d "=");[ -n "$M" ]&&M=.cmr-$M;T="$D/.tmp.$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/$S.$E.$$$M.json" 2>/dev/null||rm -f "$T" 2>/dev/null;exit 0'"#
 
     /// Snippets from earlier versions, recognised so install migrates them to the
     /// current snippet (and uninstall removes them) instead of leaving duplicates.
-    /// First entry: the pre-PID snippet that wrote a fixed `<session>.<event>.json`.
+    /// First entry: the pre-route snippet; second: the pre-PID fixed filename.
     static let legacyHookSnippets: [String] = [
+        #"bash -c 'I=$(cat);A=$(basename "${CLAUDE_CONFIG_DIR:-$HOME/.claude}");A=${A#.};A=$(printf "%s" "$A"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$A" ]&&A=claude;E=$(printf "%s" "$I"|sed -n "s/.*\"hook_event_name\":\"\([^\"]*\)\".*/\1/p");E=$(printf "%s" "$E"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$E" ]&&E=event;D=$HOME/.claude-meter/events/$A;mkdir -p "$D" 2>/dev/null;S=$(printf "%s" "$I"|sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p");S=$(printf "%s" "$S"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$S" ]&&S=default;T="$D/.tmp.$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/$S.$E.$$.json" 2>/dev/null||rm -f "$T" 2>/dev/null;exit 0'"#,
         #"bash -c 'I=$(cat);A=$(basename "${CLAUDE_CONFIG_DIR:-$HOME/.claude}");A=${A#.};A=$(printf "%s" "$A"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$A" ]&&A=claude;E=$(printf "%s" "$I"|sed -n "s/.*\"hook_event_name\":\"\([^\"]*\)\".*/\1/p");E=$(printf "%s" "$E"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$E" ]&&E=event;D=$HOME/.claude-meter/events/$A;mkdir -p "$D" 2>/dev/null;S=$(printf "%s" "$I"|sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p");S=$(printf "%s" "$S"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$S" ]&&S=default;T="$D/.tmp.$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/$S.$E.json" 2>/dev/null||rm -f "$T" 2>/dev/null;exit 0'"#
     ]
 

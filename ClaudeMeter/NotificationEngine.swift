@@ -10,6 +10,7 @@ import UserNotifications
 actor NotificationEngine {
     private let center = UNUserNotificationCenter.current()
     private let defaults: UserDefaults
+    private var predictiveTracker = PredictiveNotificationTracker()
 
     private static let firedKeysStorageKey = "com.claudemeter.notif.firedKeys"
 
@@ -70,7 +71,12 @@ actor NotificationEngine {
             "com.claudemeter.attention.\(event.accountKey).\(event.sessionId ?? "?").\(event.kind.rawValue).\(Int(event.capturedAt.timeIntervalSince1970))"
         // Default sound → macOS plays the user's chosen per-app notification sound
         // and respects Focus/Do-Not-Disturb. (Quota notifications stay silent.)
-        _ = await post(id: id, title: title, body: body, sound: .default)
+        let userInfo =
+            event.terminalRoute.map {
+                AttentionNotificationRoute(route: $0, cwd: event.cwd).userInfo
+            } ?? [:]
+        _ = await post(
+            id: id, title: title, body: body, sound: .default, userInfo: userInfo)
     }
 
     // MARK: - Processing
@@ -81,7 +87,10 @@ actor NotificationEngine {
         recoveryBaseline: ClaudeUsageSnapshot?,
         isStale: Bool
     ) async {
-        guard !isStale, isEnabled(), await isAuthorized() else { return }
+        guard !isStale, isEnabled(), await isAuthorized() else {
+            predictiveTracker.reset()
+            return
+        }
 
         let now = Date()
         pruneExpiredKeys()
@@ -97,11 +106,25 @@ actor NotificationEngine {
         for trigger in pending {
             await deliver(trigger: trigger, snapshot: snapshot, now: now)
         }
+
+        if defaults.bool(forKey: AppSettings.predictiveNotificationsEnabledKey) {
+            let predictive = predictiveTracker.observe(
+                snapshot: snapshot,
+                thresholds: thresholds,
+                now: now
+            )
+            for trigger in predictive {
+                await deliverPredictive(trigger: trigger)
+            }
+        } else {
+            predictiveTracker.reset()
+        }
     }
 
     // MARK: - Delivery
 
-    private func deliver(trigger: NotificationTrigger, snapshot: ClaudeUsageSnapshot, now: Date) async
+    private func deliver(trigger: NotificationTrigger, snapshot: ClaudeUsageSnapshot, now: Date)
+        async
     {
         let window: LimitWindow
         switch trigger.scope {
@@ -129,7 +152,8 @@ actor NotificationEngine {
             return
         }
 
-        let refuel = "\(trigger.scope == "session" ? "refills" : "resets") \(resetDescription(trigger.resetAt))"
+        let refuel =
+            "\(trigger.scope == "session" ? "refills" : "resets") \(resetDescription(trigger.resetAt))"
 
         if trigger.level == "critical" {
             guard !hasFired(key: key) else { return }
@@ -155,6 +179,23 @@ actor NotificationEngine {
         }
     }
 
+    private func deliverPredictive(trigger: PredictiveNotificationTrigger) async {
+        let key = PredictiveNotificationPolicy.dedupKey(
+            accountID: trigger.accountID,
+            scope: trigger.scope,
+            resetAt: trigger.resetAt
+        )
+        guard !hasFired(key: key) else { return }
+        let energy = energyName(for: trigger.scope)
+        let estimate = durationDescription(trigger.secondsUntilDepleted)
+        let delivered = await post(
+            id: key,
+            title: "Running hot ⚡",
+            body: "At this pace, your \(energy) may run out in \(estimate), before it refills."
+        )
+        if delivered { markFired(key: key) }
+    }
+
     /// Energy-left ("9%") for a window, the inverse of usage.
     private func leftText(_ window: LimitWindow, now: Date) -> String {
         guard let left = window.percentLeft(asOf: now) else { return "—" }
@@ -169,18 +210,21 @@ actor NotificationEngine {
         }
     }
 
-    private func post(id: String, title: String, body: String, sound: UNNotificationSound? = nil)
-        async -> Bool
-    {
-        await withCheckedContinuation { continuation in
-            let content = UNMutableNotificationContent()
-            content.title = title
-            content.body = body
-            content.sound = sound
-            let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
-            center.add(request) { error in
-                continuation.resume(returning: error == nil)
-            }
+    private func post(
+        id: String, title: String, body: String, sound: UNNotificationSound? = nil,
+        userInfo: [AnyHashable: Any] = [:]
+    ) async -> Bool {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = sound
+        content.userInfo = userInfo
+        let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
+        do {
+            try await center.add(request)
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -247,5 +291,15 @@ actor NotificationEngine {
             return "at \(Self.shortTimeFormatter.string(from: date))"
         }
         return Self.shortDateTimeFormatter.string(from: date)
+    }
+
+    private func durationDescription(_ seconds: TimeInterval) -> String {
+        if seconds < 3600 {
+            return "about \(max(1, Int((seconds / 60).rounded())))m"
+        }
+        if seconds < 24 * 3600 {
+            return "about \(max(1, Int((seconds / 3600).rounded())))h"
+        }
+        return "about \(max(1, Int((seconds / 86400).rounded())))d"
     }
 }

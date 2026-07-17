@@ -1,6 +1,6 @@
 import Foundation
 
-/// Shared contract for all data pipelines (statusline, OAuth API, claude.ai API, etc.)
+/// Shared contract for the statusline, OAuth, and cached-snapshot pipelines.
 public protocol ClaudeMeterPipeline: Sendable {
     func poll(now: Date) async throws -> ParseResult
 }
@@ -15,7 +15,16 @@ public struct CachedSnapshotPipeline: Sendable {
 
     public func poll(now: Date) async throws -> ParseResult {
         guard var snapshot = try? store.readLatest() else {
-            throw CachedSnapshotError.noSnapshot
+            return ParseResult(
+                snapshot: nil,
+                warnings: [],
+                errors: [ParseError(CachedSnapshotError.noSnapshot.localizedDescription)],
+                rawHash: "",
+                parserVersion: "cache-1.0",
+                sourceAttempts: [
+                    SourceAttempt(source: .cache, outcome: .failed, reason: .cacheMissing)
+                ]
+            )
         }
         snapshot.state.isStale = true
         return ParseResult(
@@ -23,7 +32,10 @@ public struct CachedSnapshotPipeline: Sendable {
             warnings: [ParseWarning(field: "cache", message: "Serving cached snapshot")],
             errors: [],
             rawHash: "",
-            parserVersion: snapshot.parserVersion
+            parserVersion: snapshot.parserVersion,
+            sourceAttempts: [
+                SourceAttempt(source: .cache, outcome: .selected, reason: .cachedSnapshot)
+            ]
         )
     }
 }

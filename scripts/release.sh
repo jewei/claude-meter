@@ -216,6 +216,10 @@ cat > "$PROJECT_DIR/appcast.xml" <<XML
 </rss>
 XML
 
+# Fail before changing git state or publishing anything if the signed artifacts,
+# mounted DMG, or appcast metadata do not agree.
+"$SCRIPT_DIR/validate-release.sh" "$APP_PATH" "$DMG_PATH" "$PROJECT_DIR/appcast.xml"
+
 # ── Persist version + promote changelog + commit ──────────────────────────────
 # Bump project.pbxproj only after a successful build. Commit before creating the
 # GitHub release so the tag points at the release commit (appcast + changelog).

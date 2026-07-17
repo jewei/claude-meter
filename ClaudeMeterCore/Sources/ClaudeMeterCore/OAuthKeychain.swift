@@ -51,6 +51,14 @@ public enum KeychainReadResult<Value: Sendable>: Sendable {
     }
 }
 
+/// Attributes-only view of whether Claude Code has a candidate credentials item.
+/// This never reads secret data and is safe to use while rendering Settings.
+public enum KeychainCredentialAvailability: Sendable, Equatable {
+    case available
+    case missing
+    case temporarilyUnavailable
+}
+
 /// Reads and writes the `claudeAiOauth` block inside Claude Code's Keychain entry.
 ///
 /// Claude Code stores credentials under:
@@ -78,6 +86,22 @@ public enum OAuthKeychain: Sendable {
     /// must not drop a source on a transient Keychain lock should branch on this.
     public static func loadResult() -> KeychainReadResult<OAuthCredentials> {
         parseResult(readClaudeCodeCredentials())
+    }
+
+    /// Checks for a Claude Code credentials item without reading its secret value.
+    /// Secret access remains behind an explicit user action in Settings.
+    public static func credentialAvailability() -> KeychainCredentialAvailability {
+        let account = claudeCodeAccount
+        guard !account.isEmpty else { return .missing }
+        #if canImport(Security)
+            switch newestClaudeCodeCredentialRef(account: account) {
+            case .found: return .available
+            case .missing: return .missing
+            case .temporarilyUnavailable, .invalid: return .temporarilyUnavailable
+            }
+        #else
+            return .missing
+        #endif
     }
 
     private static func readClaudeCodeCredentials() -> KeychainReadResult<String> {
@@ -264,7 +288,8 @@ public enum OAuthKeychain: Sendable {
             let attrs: [CFString: Any] = [
                 kSecValueData: data
             ]
-            let status = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
+            let status = KeychainSecurityGateway.update(
+                query: query as CFDictionary, attributes: attrs as CFDictionary)
             if status == errSecSuccess { return true }
             if status == errSecItemNotFound {
                 var addQuery = query
@@ -272,7 +297,7 @@ public enum OAuthKeychain: Sendable {
                 // AfterFirstUnlock (not WhenUnlocked) so the item stays readable
                 // while the screen is locked — the poll loop runs across sleep/wake.
                 addQuery[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-                return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+                return KeychainSecurityGateway.add(query: addQuery as CFDictionary) == errSecSuccess
             }
             return false
         }
@@ -291,7 +316,8 @@ public enum OAuthKeychain: Sendable {
             ]
             applyNoUI(to: &query)
             var result: AnyObject?
-            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            let status = KeychainSecurityGateway.copyMatching(
+                query: query as CFDictionary, result: &result)
             return mapKeychainStatus(status, data: result as? Data)
         }
 
@@ -306,15 +332,34 @@ public enum OAuthKeychain: Sendable {
         private static func readNewestClaudeCodeCredential(account: String)
             -> KeychainReadResult<String>
         {
-            let query: [CFString: Any] = [
+            switch newestClaudeCodeCredentialRef(account: account) {
+            case .found(let persistentRef):
+                return readCredentialData(persistentRef: persistentRef)
+            case .missing:
+                return .missing
+            case .temporarilyUnavailable:
+                return .temporarilyUnavailable
+            case .invalid:
+                return .invalid
+            }
+        }
+
+        /// Finds the newest Claude Code credential using attributes only. Keeping
+        /// this separate lets Settings show availability without touching secrets.
+        private static func newestClaudeCodeCredentialRef(account: String)
+            -> KeychainReadResult<Data>
+        {
+            var query: [CFString: Any] = [
                 kSecClass: kSecClassGenericPassword,
                 kSecAttrAccount: account,
                 kSecReturnAttributes: true,
                 kSecReturnPersistentRef: true,
                 kSecMatchLimit: kSecMatchLimitAll,
             ]
+            applyNoUI(to: &query)
             var result: AnyObject?
-            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            let status = KeychainSecurityGateway.copyMatching(
+                query: query as CFDictionary, result: &result)
             switch status {
             case errSecSuccess: break
             case errSecItemNotFound: return .missing
@@ -335,7 +380,7 @@ public enum OAuthKeychain: Sendable {
             else {
                 return .missing
             }
-            return readCredentialData(persistentRef: ref)
+            return .found(ref)
         }
 
         /// Reads the first present service from `services` (preference order) via
@@ -344,15 +389,17 @@ public enum OAuthKeychain: Sendable {
         private static func readCredential(services: [String], account: String)
             -> KeychainReadResult<String>
         {
-            let query: [CFString: Any] = [
+            var query: [CFString: Any] = [
                 kSecClass: kSecClassGenericPassword,
                 kSecAttrAccount: account,
                 kSecReturnAttributes: true,
                 kSecReturnPersistentRef: true,
                 kSecMatchLimit: kSecMatchLimitAll,
             ]
+            applyNoUI(to: &query)
             var result: AnyObject?
-            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            let status = KeychainSecurityGateway.copyMatching(
+                query: query as CFDictionary, result: &result)
             switch status {
             case errSecSuccess: break
             case errSecItemNotFound: return .missing
@@ -378,7 +425,8 @@ public enum OAuthKeychain: Sendable {
             ]
             applyNoUI(to: &query)
             var result: AnyObject?
-            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            let status = KeychainSecurityGateway.copyMatching(
+                query: query as CFDictionary, result: &result)
             return mapKeychainStatus(status, data: result as? Data)
         }
 
@@ -434,7 +482,43 @@ public enum OAuthKeychain: Sendable {
                 kSecAttrService: service,
                 kSecAttrAccount: account,
             ]
-            SecItemDelete(query as CFDictionary)
+            _ = KeychainSecurityGateway.delete(query: query as CFDictionary)
+        }
+
+        /// All live Security.framework mutations pass through this boundary. Test
+        /// processes fail closed unless explicitly opted in, preventing a unit test
+        /// from reading or changing the developer's real Keychain.
+        private enum KeychainSecurityGateway {
+            private static var allowsLiveAccess: Bool {
+                let environment = ProcessInfo.processInfo.environment
+                if environment["CLAUDE_METER_ALLOW_LIVE_KEYCHAIN_TESTS"] == "1" { return true }
+                if environment["XCTestConfigurationFilePath"] != nil { return false }
+                if Bundle.main.bundleURL.pathExtension == "xctest" { return false }
+                if CommandLine.arguments.first?.contains(".xctest/") == true { return false }
+                return !ProcessInfo.processInfo.processName.lowercased().contains("xctest")
+            }
+
+            static func copyMatching(query: CFDictionary, result: UnsafeMutablePointer<AnyObject?>)
+                -> OSStatus
+            {
+                guard allowsLiveAccess else { return errSecInteractionNotAllowed }
+                return SecItemCopyMatching(query, result)
+            }
+
+            static func update(query: CFDictionary, attributes: CFDictionary) -> OSStatus {
+                guard allowsLiveAccess else { return errSecInteractionNotAllowed }
+                return SecItemUpdate(query, attributes)
+            }
+
+            static func add(query: CFDictionary) -> OSStatus {
+                guard allowsLiveAccess else { return errSecInteractionNotAllowed }
+                return SecItemAdd(query, nil)
+            }
+
+            static func delete(query: CFDictionary) -> OSStatus {
+                guard allowsLiveAccess else { return errSecInteractionNotAllowed }
+                return SecItemDelete(query)
+            }
         }
     #endif
 

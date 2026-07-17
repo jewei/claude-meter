@@ -7,6 +7,7 @@ Concise, non-obvious gotchas. Full behaviour/spec lives in `SPECS.md`.
 ```bash
 xcodebuild -scheme ClaudeMeter -configuration Debug CODE_SIGNING_ALLOWED=NO  # compile check
 swift test --package-path ClaudeMeterCore                                    # core tests
+./scripts/verify-local.sh                                                    # full local gate
 ```
 
 The App Group entitlement needs a real provisioning profile to _run_;
@@ -65,6 +66,7 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 
 ### Keychain reads
 
+- **Settings preflight never reads secrets** — `OAuthKeychain.credentialAvailability()` performs an attributes-only lookup. The first `loadResult()` is behind the user's confirmed Connect action. All `SecItem*` calls use the fail-closed `KeychainSecurityGateway`; test processes receive `errSecInteractionNotAllowed` unless `CLAUDE_METER_ALLOW_LIVE_KEYCHAIN_TESTS=1` is set explicitly.
 - `OAuthKeychain.loadResult()` / `loadManualResult()` return `KeychainReadResult { found / missing / temporarilyUnavailable / invalid }`; `mapKeychainStatus` classifies the `OSStatus` (a locked Keychain → `temporarilyUnavailable`, `errSecAuthFailed` → `invalid`, never `missing` on error). `OAuthPipeline.poll` and `fetchEnrichment` branch on these (prefer in-memory cache on `.temporarilyUnavailable`). `load()`/`loadManual()` remain the `Optional` convenience wrappers.
 - **Hashed service-name fallback** — Claude Code ≈2.1.52+ namespaces the credentials entry per install/config dir as `Claude Code-credentials-<hash>` (a machine can hold several + the legacy unsuffixed one). `readClaudeCodeCredentials` reads the legacy `Claude Code-credentials` first; **only** a genuine `.missing` (not a lock, not a present entry) falls through to `discoverHashedServiceName`, which enumerates generic-password **attributes only** (`kSecReturnAttributes`, no `kSecReturnData` → no Allow/Deny prompt, no `security` subprocess) for `NSUserName()` and reads the entry with the newest `kSecAttrModificationDate` (the live login). Selection logic is the pure, tested `newestHashedService(among:)`. No `dump-keychain` (the reference app's approach — slow/hang-prone; unneeded via Security.framework).
 
@@ -134,9 +136,11 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 
 - **`NotificationEngine` is an actor**; only processes non-stale Claude snapshots; thresholds via `AppGroupConfig.currentThresholds(defaults:)`.
 - **Subagent turn suppression** — Claude Code hook payloads fired inside subagents carry `agent_id`. `SessionEventStore.drain` consumes `Stop` markers with that field but does not emit them, so only the main agent's completed turn posts a "Claude finished" notification. Other subagent events remain actionable: permission notifications and rate-limit/billing `StopFailure`s still surface.
+- **Click-to-terminal routing** — hook marker filenames carry a base64url route suffix captured from `TERM_PROGRAM`, the controlling TTY, and the available client locator. `TerminalFocusRouter` handles notification clicks: Ghostty by cwd, Terminal/iTerm2 by TTY, WezTerm by `WEZTERM_PANE`; Warp activates the running app because it has no public exact-pane API. Stale/absent exact routes fall back to activating an already-running client and must never launch a terminal or open a new window. Ghostty 1.3 exposes cwd but no TTY, so equal-cwd terminals are ambiguous. AppleScript clients require the Automation entitlement + usage description and can show a one-time TCC prompt.
 - **Per-account diffing** — `NotificationPolicy.triggers` diffs the top-level (active-account) window against **that same account's own previous entry** (matched by id in `previous.accounts`), so an active-account switch compares like-for-like instead of two unrelated accounts. A newly-seen active account (no prior entry — a switch out of single-account history) has no baseline, so its current state surfaces once (de-duped). Single-account snapshots (no `accounts`) fall back to the top-level previous (same account). `LimitWindow.percentLeft(asOf:)` lives in **Core** (not `PlayfulTheme`) so this stays UI-independent.
 - **Dedup** is one per `(scope, level, resetsAt-epoch)`; critical suppresses warning. When `resetsAt` is nil, falls back to the start of the next local day. `markFired` only after `UNUserNotificationCenter.add` succeeds. No sound.
 - **Recovered ("refueled")** — a `level: "recovered"` trigger fires when a window the user was previously over (by its **raw** previous severity, so a reset/refill counts) drops back to normal; delivered with the energy voice ("You're refueled! …back to 100%. 🎉"). `NotificationPolicy.evaluate` resolves the *current* window but reads the *raw* previous percent so a reset isn't masked. All copy is energy-left framed.
+- **Predictive depletion is opt-in** — `PredictiveNotificationTracker` requires two consecutive fresh qualifying polls for the same active account, scope, and reset epoch. Stale/nonqualifying polls reset the streak; successful delivery dedups across relaunches with a persisted per-account reset-cycle key. Forecasts only fire while severity is still normal, avoiding duplicate threshold alerts.
 
 ## Widget / App Group
 

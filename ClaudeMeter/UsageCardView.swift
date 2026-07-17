@@ -211,24 +211,9 @@ struct UsageCardView: View {
     }
 
     private func resetDescription(_ date: Date) -> String {
-        guard date > now else { return "Resetting…" }
-        let interval = date.timeIntervalSince(now)
-        // Near-term windows (e.g. the 5-hour session) read better as a countdown;
-        // windows days away read better as an absolute date.
-        if interval >= 24 * 3600 {
-            return "Resets \(Self.dateTimeFormatter.string(from: date))"
-        }
-        if interval < 60 { return "Resets in 1m" }
-        let relative = RunsOutText.durationFormatter.string(from: interval) ?? "soon"
-        return "Resets in \(relative)"
+        guard let phrase = ResetPhrase.spoken(until: date, asOf: now) else { return "Resetting…" }
+        return "Resets \(phrase)"
     }
-
-    private static let dateTimeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.timeStyle = .short
-        f.dateStyle = .medium
-        return f
-    }()
 
     private var accessibilityText: String {
         var parts = ["\(label) usage \(percentText)"]

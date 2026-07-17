@@ -238,10 +238,13 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     /// OAuth-only fields the statusline and claude.ai sources can't provide.
     public struct OAuthEnrichment: Sendable, Equatable {
         public let opus: LimitWindow?
+        public let scopedWeekly: [ScopedLimitWindow]?
         public let extraUsage: ExtraUsage?
         public let plan: String?
 
-        public var isEmpty: Bool { opus == nil && extraUsage == nil && plan == nil }
+        public var isEmpty: Bool {
+            opus == nil && scopedWeekly == nil && extraUsage == nil && plan == nil
+        }
     }
 
     /// Best-effort fetch of the Opus weekly window, extra-usage spend, and plan
@@ -297,6 +300,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         }
         let enrichment = OAuthEnrichment(
             opus: opus,
+            scopedWeekly: scopedWindows(from: usage),
             extraUsage: usage.extraUsage?.model,
             plan: ClaudePlan.displayName(
                 subscriptionType: creds.subscriptionType,
@@ -463,6 +467,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         let sessionWindow = Self.window(from: usage.fiveHour)
         let weekWindow = Self.window(from: usage.sevenDay)
         let opusWindow = usage.sevenDayOpus.map { Self.window(from: $0) }
+        let scoped = Self.scopedWindows(from: usage)
         let extra = usage.extraUsage.map(\.model)
 
         // The binding limit can be any window; aggregate all reported percentages
@@ -483,6 +488,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 currentSession: sessionWindow,
                 currentWeekAllModels: weekWindow,
                 currentWeekOpus: opusWindow,
+                scopedWeekly: scoped,
                 extraUsage: extra
             ),
             state: SnapshotState(status: .ok, severity: severity)
@@ -494,6 +500,16 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     private static func window(from entry: QuotaEntry?) -> LimitWindow {
         guard let entry, let utilization = entry.utilization else { return LimitWindow() }
         return LimitWindow(percentUsed: utilization, resetsAt: parseEpochOrISODate(entry.resetsAt))
+    }
+
+    /// Scoped `seven_day_<scope>` windows with real data; nil-utilization entries
+    /// (empty/unused scopes) are dropped rather than shown as unknown rows.
+    static func scopedWindows(from usage: UsageResponse) -> [ScopedLimitWindow]? {
+        let scoped = usage.scopedWeekly.compactMap { key, entry -> ScopedLimitWindow? in
+            guard entry.utilization != nil else { return nil }
+            return ScopedLimitWindow(id: key, window: Self.window(from: entry))
+        }
+        return scoped.isEmpty ? nil : scoped
     }
 }
 
@@ -519,12 +535,34 @@ internal struct UsageResponse: Decodable {
     /// Weekly Opus-only window — often the binding limit for Max subscribers.
     let sevenDayOpus: QuotaEntry?
     let extraUsage: ExtraUsageEntry?
+    /// Any other `seven_day_<scope>` windows (sonnet, cowork, …), key-sorted.
+    /// Keys with a non-quota shape are skipped rather than failing the decode.
+    let scopedWeekly: [(key: String, entry: QuotaEntry)]
 
-    enum CodingKeys: String, CodingKey {
-        case fiveHour = "five_hour"
-        case sevenDay = "seven_day"
-        case sevenDayOpus = "seven_day_opus"
-        case extraUsage = "extra_usage"
+    private struct DynamicKey: CodingKey {
+        let stringValue: String
+        var intValue: Int? { nil }
+        init(_ string: String) { stringValue = string }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DynamicKey.self)
+        fiveHour = try? container.decodeIfPresent(QuotaEntry.self, forKey: DynamicKey("five_hour"))
+        sevenDay = try? container.decodeIfPresent(QuotaEntry.self, forKey: DynamicKey("seven_day"))
+        sevenDayOpus = try? container.decodeIfPresent(
+            QuotaEntry.self, forKey: DynamicKey("seven_day_opus"))
+        extraUsage = try? container.decodeIfPresent(
+            ExtraUsageEntry.self, forKey: DynamicKey("extra_usage"))
+        let claimed: Set<String> = ["five_hour", "seven_day", "seven_day_opus", "extra_usage"]
+        scopedWeekly = container.allKeys
+            .filter { $0.stringValue.hasPrefix("seven_day_") && !claimed.contains($0.stringValue) }
+            .compactMap { key in
+                ((try? container.decodeIfPresent(QuotaEntry.self, forKey: key)) ?? nil)
+                    .map { (key.stringValue, $0) }
+            }
+            .sorted { $0.0 < $1.0 }
     }
 }
 

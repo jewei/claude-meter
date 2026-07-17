@@ -275,30 +275,7 @@ actor NotificationEngine {
         return status == .authorized || status == .provisional
     }
 
-    private static let shortTimeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.timeStyle = .short
-        f.dateStyle = .none
-        return f
-    }()
-
-    private static let shortDateTimeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.timeStyle = .short
-        f.dateStyle = .short
-        return f
-    }()
-
     private func resetDescription(_ date: Date) -> String {
-        let interval = date.timeIntervalSince(Date())
-        if interval < 3600 {
-            let mins = max(1, Int(interval / 60))
-            return "in \(mins)m"
-        }
-        if Calendar.current.isDateInToday(date) {
-            return "at \(Self.shortTimeFormatter.string(from: date))"
-        }
-        return Self.shortDateTimeFormatter.string(from: date)
+        ResetPhrase.spoken(until: date, asOf: Date()) ?? "soon"
     }
-
 }

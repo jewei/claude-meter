@@ -209,8 +209,22 @@ public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
         now: Date,
         source: CodexUsageSource
     ) throws -> CodexUsage {
-        let primary = Self.window(rateLimits.primary, kind: .primary, rawLabel: nil)
-        let secondary = Self.window(rateLimits.secondary, kind: .secondary, rawLabel: nil)
+        var primary = Self.window(rateLimits.primary, kind: .primary, rawLabel: nil)
+        var secondary = Self.window(rateLimits.secondary, kind: .secondary, rawLabel: nil)
+        // Newer app-servers key windows by limit id (`rateLimitsByLimitId`) and may
+        // omit the positional primary/secondary pair. Bucket by duration: ≤ 24 h is
+        // session-like (unknown duration included — better shown than dropped),
+        // longer is weekly-like; the most-used window per bucket is the binding one.
+        if primary == nil, secondary == nil, let byId = rateLimits.byLimitId, !byId.isEmpty {
+            let windows = byId.sorted { $0.key < $1.key }
+            let mostUsed: ([(String, AppServerRateLimitWindow)]) -> (String, AppServerRateLimitWindow)? = {
+                $0.max { ($0.1.usedPercent ?? -1) < ($1.1.usedPercent ?? -1) }
+            }
+            let sessionLike = mostUsed(windows.filter { ($0.value.windowDurationMins ?? 0) <= 1440 })
+            let weeklyLike = mostUsed(windows.filter { ($0.value.windowDurationMins ?? 0) > 1440 })
+            primary = sessionLike.flatMap { Self.window($0.1, kind: .primary, rawLabel: $0.0) }
+            secondary = weeklyLike.flatMap { Self.window($0.1, kind: .secondary, rawLabel: $0.0) }
+        }
         guard primary != nil || secondary != nil || rateLimits.credits != nil
             || rateLimitResetCredits != nil
         else {
@@ -244,12 +258,15 @@ public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
     struct AppServerRateLimitSnapshot: Decodable, Sendable {
         let primary: AppServerRateLimitWindow?
         let secondary: AppServerRateLimitWindow?
+        let byLimitId: [String: AppServerRateLimitWindow]?
         let credits: AppServerCredits?
         let planType: String?
 
         enum CodingKeys: String, CodingKey {
             case primary
             case secondary
+            case byLimitId = "rateLimitsByLimitId"
+            case byLimitIdSnake = "rate_limits_by_limit_id"
             case credits
             case planType
             case planTypeSnake = "plan_type"
@@ -259,6 +276,11 @@ public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             primary = try? container.decodeIfPresent(AppServerRateLimitWindow.self, forKey: .primary)
             secondary = try? container.decodeIfPresent(AppServerRateLimitWindow.self, forKey: .secondary)
+            byLimitId =
+                (try? container.decodeIfPresent(
+                    [String: AppServerRateLimitWindow].self, forKey: .byLimitId))
+                ?? (try? container.decodeIfPresent(
+                    [String: AppServerRateLimitWindow].self, forKey: .byLimitIdSnake))
             credits = try? container.decodeIfPresent(AppServerCredits.self, forKey: .credits)
             planType = (try? container.decodeIfPresent(String.self, forKey: .planType))
                 ?? (try? container.decodeIfPresent(String.self, forKey: .planTypeSnake))

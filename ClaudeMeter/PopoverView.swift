@@ -255,6 +255,7 @@ struct PopoverView: View {
                     opus: acc.isActive
                         ? (snap.limits.currentWeekOpus ?? acc.limits.currentWeekOpus)
                         : acc.limits.currentWeekOpus,
+                    scoped: acc.isActive ? (snap.limits.scopedWeekly ?? []) : [],
                     isDuplicateLogin: duplicates.contains(acc.id),
                     isLive: acc.isActive && bridgeLive
                 )
@@ -272,6 +273,7 @@ struct PopoverView: View {
                 session: snap.limits.currentSession,
                 week: snap.limits.currentWeekAllModels,
                 opus: snap.limits.currentWeekOpus,
+                scoped: snap.limits.scopedWeekly ?? [],
                 isLive: bridgeLive
             )
         ]
@@ -672,18 +674,11 @@ struct PopoverView: View {
     private func cursorSubtitle(_ usage: CursorUsage) -> String? {
         var parts: [String] = []
         if let spend = usage.spendText { parts.append("\(spend) spent") }
-        if let end = usage.periodEnd, end > now {
-            parts.append("Resets \(Self.cursorDateFormatter.string(from: end))")
+        if let end = usage.periodEnd, let phrase = ResetPhrase.spoken(until: end, asOf: now) {
+            parts.append("Resets \(phrase)")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
-
-    private static let cursorDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .none
-        return f
-    }()
 
     // MARK: - Codex card (usage-based, local to the popover)
 
@@ -739,7 +734,7 @@ struct PopoverView: View {
                     if let expiration = resets.nearestExpiration(after: now) {
                         codexDetailRow(
                             "Next expiry",
-                            value: Self.codexResetExpiryFormatter.string(from: expiration))
+                            value: ResetPhrase.spoken(until: expiration, asOf: now) ?? "soon")
                     }
                 }
             }
@@ -783,25 +778,13 @@ struct PopoverView: View {
                 parts.append("\(formatted) credits")
             }
         }
-        if let reset = usage.primaryWindow?.resetAt, reset > now {
-            parts.append("Resets \(Self.codexDateFormatter.string(from: reset))")
+        if let reset = usage.primaryWindow?.resetAt,
+            let phrase = ResetPhrase.spoken(until: reset, asOf: now)
+        {
+            parts.append("Resets \(phrase)")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
-
-    private static let codexResetExpiryFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .none
-        return f
-    }()
-
-    private static let codexDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .none
-        f.timeStyle = .short
-        return f
-    }()
 
     private static let codexCreditsFormatter: NumberFormatter = {
         let f = NumberFormatter()
@@ -863,18 +846,10 @@ struct PopoverView: View {
                 parts.append(String(format: "On-demand $%.2f", used))
             }
         }
-        if let reset = usage.resetsAt, reset > now {
-            parts.append("Resets \(Self.grokResetText(reset))")
+        if let reset = usage.resetsAt, let phrase = ResetPhrase.spoken(until: reset, asOf: now) {
+            parts.append("Resets \(phrase)")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    /// Weekly resets are usually days away — a bare time ("1:57 PM") reads as
-    /// today. Same-day resets keep the time; anything later shows the date.
-    private static func grokResetText(_ reset: Date) -> String {
-        Calendar.current.isDateInToday(reset)
-            ? codexDateFormatter.string(from: reset)
-            : cursorDateFormatter.string(from: reset)
     }
 
     /// Simple depleting/filling capsule bar with an inner top gloss.

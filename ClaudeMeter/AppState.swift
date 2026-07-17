@@ -763,6 +763,7 @@ final class AppState: ObservableObject {
         _ e: OAuthPipeline.OAuthEnrichment, to snap: inout ClaudeUsageSnapshot
     ) {
         if let opus = e.opus { snap.limits.currentWeekOpus = opus }
+        if let scoped = e.scopedWeekly { snap.limits.scopedWeekly = scoped }
         if let extra = e.extraUsage { snap.limits.extraUsage = extra }
         if let plan = e.plan {
             var account = snap.account ?? AccountInfo()

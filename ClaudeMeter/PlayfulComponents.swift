@@ -159,6 +159,9 @@ struct AccountCardModel: Identifiable {
     var session: LimitWindow
     var week: LimitWindow
     var opus: LimitWindow?
+    /// Scoped weekly windows (`seven_day_sonnet`, …) — display-only rows below
+    /// Opus; they don't influence the card's band or the reset summary.
+    var scoped: [ScopedLimitWindow] = []
     /// Another account shares this one's organization id — same login, one
     /// quota shown twice (see `MultiAccountOAuth.duplicateOrgAccountKeys`).
     var isDuplicateLogin: Bool = false
@@ -291,6 +294,12 @@ struct AccountRingCard: View {
                     let oBand = opus.energyBand(thresholds: thresholds, asOf: now)
                     metricRow("opus", window: opus, band: oBand, kind: .weekly)
                 }
+                ForEach(model.scoped) { scoped in
+                    metricRow(
+                        scoped.displayName.lowercased(), window: scoped.window,
+                        band: scoped.window.energyBand(thresholds: thresholds, asOf: now),
+                        kind: .weekly)
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -328,11 +337,8 @@ struct AccountRingCard: View {
     }
 
     private func resetDetail(_ window: LimitWindow, kind: LimitWindowKind) -> String? {
-        guard let resetsAt = window.resolved(asOf: now).resetsAt, resetsAt > now else { return nil }
-        switch kind {
-        case .session: return shortDuration(until: resetsAt, from: now)
-        case .weekly: return shortResetDate(resetsAt)
-        }
+        guard let resetsAt = window.resolved(asOf: now).resetsAt else { return nil }
+        return ResetPhrase.spoken(until: resetsAt, asOf: now)
     }
 
     private var accessibilityText: String {
@@ -377,6 +383,11 @@ struct AccountBarCard: View {
             if let opus = model.opus {
                 barSection("Weekly Opus", icon: "🧠", window: opus, kind: .weekly)
             }
+            ForEach(model.scoped) { scoped in
+                barSection(
+                    "Weekly \(scoped.displayName)", icon: "📊", window: scoped.window,
+                    kind: .weekly)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
@@ -414,13 +425,10 @@ struct AccountBarCard: View {
     }
 
     private func resetText(_ window: LimitWindow, kind: LimitWindowKind) -> String? {
-        guard let date = window.resolved(asOf: now).resetsAt, date > now else { return nil }
-        switch kind {
-        case .session:
-            return shortDuration(until: date, from: now).map { "Refills in \($0)" }
-        case .weekly:
-            return "Resets \(shortResetDate(date))"
-        }
+        guard let date = window.resolved(asOf: now).resetsAt,
+            let phrase = ResetPhrase.spoken(until: date, asOf: now)
+        else { return nil }
+        return kind == .session ? "Refills \(phrase)" : "Resets \(phrase)"
     }
 }
 
@@ -486,7 +494,7 @@ struct HeroSummary {
         if let low = lowest {
             let word = low.band(thresholds, now) == .low ? "low" : "nearly dry"
             let refill = low.soonestReset(now)
-                .map { " (\(shortDuration(until: $0, from: now) ?? "soon"))" } ?? ""
+                .map { " (\(ResetPhrase.duration(until: $0, asOf: now) ?? "soon"))" } ?? ""
             if fresh == 0 { return "\(low.label) is \(word)\(refill)" }
             let freshWord = fresh == 1 ? "1 fresh" : "\(fresh) fresh"
             return "\(freshWord) · \(low.label) \(word)\(refill)"
@@ -557,34 +565,11 @@ struct HeroView: View {
     }
 }
 
-// MARK: - Shared formatters (created per call — DateFormatter isn't Sendable)
+// MARK: - Shared reset wording
 
-func shortDuration(until date: Date, from now: Date) -> String? {
-    guard date > now else { return nil }
-    let f = DateComponentsFormatter()
-    f.unitsStyle = .abbreviated
-    f.allowedUnits = [.hour, .minute]
-    f.maximumUnitCount = 2
-    f.zeroFormattingBehavior = .dropAll
-    return f.string(from: date.timeIntervalSince(now))
-}
-
-/// "29 Jun" — the calendar date a rolling window resets on (clearer than a bare weekday).
-func shortResetDate(_ date: Date) -> String {
-    let f = DateFormatter()
-    f.dateFormat = "d MMM"
-    return f.string(from: date)
-}
-
-/// "in 3h 12m" for near terms, "Mon 9:00" for distant ones.
+/// "in 3h 12m" / "in 36h" / "in 4 days" — the app-wide `ResetPhrase` rule.
 func describeReset(_ date: Date, now: Date) -> String {
-    let interval = date.timeIntervalSince(now)
-    if interval >= 24 * 3600 {
-        let f = DateFormatter()
-        f.dateFormat = "EEE H:mm"
-        return f.string(from: date)
-    }
-    return "in \(shortDuration(until: date, from: now) ?? "soon")"
+    ResetPhrase.spoken(until: date, asOf: now) ?? "soon"
 }
 
 // MARK: - Activity heatmap grid (GitHub-style punchcard)

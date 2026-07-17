@@ -21,8 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional predictive alerts warn when a fresh two-poll forecast says session or
   weekly energy may run out before reset.
 
+- Scoped weekly limits the OAuth API reports beyond Opus (Sonnet, Cowork, …)
+  now show as extra rows on the active account's card.
+- Codex usage keeps working with newer app-servers that report windows by limit
+  id instead of the positional session/weekly pair.
+
 ### Changed
 
+- Reset times are standardized everywhere: minutes under an hour, hours under
+  48 hours, and whole days beyond that ("resets in 4 days") — never a calendar
+  date like "20 Jul".
 - OAuth setup checks Keychain item attributes passively and reads Claude Code's
   credentials only after explicit consent.
 - A single local verification command now runs Core tests plus unsigned Debug

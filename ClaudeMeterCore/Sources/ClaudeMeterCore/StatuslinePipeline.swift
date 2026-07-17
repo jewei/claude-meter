@@ -70,10 +70,16 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
             )
         }
 
-        // Statusline is stale. Check if the fallback cooldown has elapsed.
+        // Statusline produced nothing. Distinguish "bridge has never written data"
+        // (fresh install, Claude Code not yet run) from "data exists but aged out" —
+        // the diagnostics trail should not claim staleData when there's no data.
+        let skipReason: SourceAttempt.Reason =
+            StatuslineBridge.isDataFresh(maxAge: .infinity) ? .staleData : .noData
+
+        // Check if the fallback cooldown has elapsed.
         if markFallbackPollIfCooldownElapsed(now: now) {
             return try await fallback.poll(now: now).prependingSourceAttempt(
-                SourceAttempt(source: .statusline, outcome: .skipped, reason: .staleData))
+                SourceAttempt(source: .statusline, outcome: .skipped, reason: skipReason))
         }
 
         // Within cooldown window — serve the last cached snapshot as stale.
@@ -93,8 +99,10 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
                 rawHash: "",
                 parserVersion: snap.parserVersion,
                 sourceAttempts: [
-                    SourceAttempt(source: .statusline, outcome: .skipped, reason: .cooldown),
-                    SourceAttempt(source: .cache, outcome: .selected, reason: .cachedSnapshot),
+                    // The real skip cause (stale/no data), then why the cache was
+                    // served instead of falling through to the next tier (cooldown).
+                    SourceAttempt(source: .statusline, outcome: .skipped, reason: skipReason),
+                    SourceAttempt(source: .cache, outcome: .selected, reason: .cooldown),
                 ]
             )
         }
@@ -102,7 +110,7 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
         // No cache either — call fallback unconditionally.
         markFallbackPoll(now: now)
         return try await fallback.poll(now: now).prependingSourceAttempt(
-            SourceAttempt(source: .statusline, outcome: .skipped, reason: .staleData))
+            SourceAttempt(source: .statusline, outcome: .skipped, reason: skipReason))
     }
 
     private func secondsUntilNextFallback(now: Date) -> Int {

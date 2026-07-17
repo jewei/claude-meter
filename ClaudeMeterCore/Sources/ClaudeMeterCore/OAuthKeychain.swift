@@ -489,14 +489,16 @@ public enum OAuthKeychain: Sendable {
         /// processes fail closed unless explicitly opted in, preventing a unit test
         /// from reading or changing the developer's real Keychain.
         private enum KeychainSecurityGateway {
-            private static var allowsLiveAccess: Bool {
+            // Process-constant — cached so every SecItem call doesn't re-bridge the
+            // whole environment dictionary (repo convention, like cached formatters).
+            private static let allowsLiveAccess: Bool = {
                 let environment = ProcessInfo.processInfo.environment
                 if environment["CLAUDE_METER_ALLOW_LIVE_KEYCHAIN_TESTS"] == "1" { return true }
                 if environment["XCTestConfigurationFilePath"] != nil { return false }
                 if Bundle.main.bundleURL.pathExtension == "xctest" { return false }
                 if CommandLine.arguments.first?.contains(".xctest/") == true { return false }
                 return !ProcessInfo.processInfo.processName.lowercased().contains("xctest")
-            }
+            }()
 
             static func copyMatching(query: CFDictionary, result: UnsafeMutablePointer<AnyObject?>)
                 -> OSStatus

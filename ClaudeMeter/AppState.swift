@@ -494,7 +494,9 @@ final class AppState: ObservableObject {
             refreshClaudeCodeVersion(now: now)
 
             if result.isFatal {
-                lastError = result.errors.map(\.message).joined(separator: "; ")
+                lastError = DiagnosticsSanitizer.sanitize(
+                    result.errors.map(\.message).joined(separator: "; "))
+                await notificationEngine.pollFailed()
                 return
             }
 
@@ -537,6 +539,10 @@ final class AppState: ObservableObject {
                 if shouldReloadWidget(previous: previous, current: snap) {
                     WidgetCenter.shared.reloadAllTimelines()
                 }
+            } else {
+                // No snapshot at all — not a fresh reading, so it must not count
+                // toward the predictive tracker's consecutive-poll confirmation.
+                await notificationEngine.pollFailed()
             }
 
             if let apiWarning = result.warnings.first(where: { $0.field == "claude.ai API" }) {
@@ -549,6 +555,7 @@ final class AppState: ObservableObject {
             guard generation == pipelineGeneration, canPoll else { return }
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             lastError = DiagnosticsSanitizer.sanitize(message)
+            await notificationEngine.pollFailed()
         }
     }
 

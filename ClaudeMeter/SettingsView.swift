@@ -352,22 +352,26 @@ private struct OAuthConnectionSection: View {
     }
 
     private func connectAutoDetected() {
-        let creds: OAuthCredentials
-        switch OAuthKeychain.loadResult() {
-        case .found(let found):
-            creds = found
-        case .missing:
-            state = .error("Claude Code credentials were not found in Keychain")
-            return
-        case .temporarilyUnavailable:
-            state = .error("Keychain access is unavailable. Unlock your Mac and try again.")
-            return
-        case .invalid:
-            state = .error("Claude Code credentials in Keychain are invalid")
-            return
-        }
+        // Show progress first and read the Keychain off the MainActor: the read is
+        // securityd IPC that can block on the legacy ACL Allow/Deny prompt, which
+        // would otherwise beachball the whole app (menu bar included) mid-click.
         state = .verifying
         Task {
+            let result = await Task.detached { OAuthKeychain.loadResult() }.value
+            let creds: OAuthCredentials
+            switch result {
+            case .found(let found):
+                creds = found
+            case .missing:
+                state = .error("Claude Code credentials were not found in Keychain")
+                return
+            case .temporarilyUnavailable:
+                state = .error("Keychain access is unavailable. Unlock your Mac and try again.")
+                return
+            case .invalid:
+                state = .error("Claude Code credentials in Keychain are invalid")
+                return
+            }
             do {
                 let (s, w) = try await OAuthPipeline.verify(credentials: creds)
                 oauthSourceEnabled = true

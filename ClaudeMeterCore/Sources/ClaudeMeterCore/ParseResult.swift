@@ -17,7 +17,9 @@ public struct SourceAttempt: Equatable, Sendable {
     public enum Reason: String, Equatable, Sendable {
         case freshData
         case sourceDisabled
+        case notConnected
         case staleData
+        case noData
         case cooldown
         case rateLimited
         case credentialsMissing
@@ -50,8 +52,6 @@ public struct SourceAttempt: Equatable, Sendable {
 }
 
 public struct ParseResult: Sendable {
-    static let maximumSourceAttempts = 8
-
     public let snapshot: ClaudeUsageSnapshot?
     public let warnings: [ParseWarning]
     public let errors: [ParseError]
@@ -75,7 +75,7 @@ public struct ParseResult: Sendable {
         self.errors = errors
         self.rawHash = rawHash
         self.parserVersion = parserVersion
-        self.sourceAttempts = Array(sourceAttempts.prefix(Self.maximumSourceAttempts))
+        self.sourceAttempts = sourceAttempts
     }
 
     func prependingSourceAttempt(_ attempt: SourceAttempt) -> ParseResult {

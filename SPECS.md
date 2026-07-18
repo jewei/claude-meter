@@ -487,7 +487,7 @@ Display rules:
   rolling window: `percentUsed` becomes 0 and `resetsAt` is dropped. Applied in
   `StatuslinePipeline.displayWindow` (so statusline snapshots are stored
   pre-resolved, feeding severity + notifications) and at the view layer
-  (`UsageCardView`, widget `WindowRow`).
+  (account cards, widget `WindowRow`).
 
 Severity:
 
@@ -578,7 +578,7 @@ Rolling-window expiry:
   `resets_at` is. A window whose `resets_at` has passed is expired and reads 0%.
 - `LimitWindow.resolved(asOf:)` encodes this (past reset → `percentUsed: 0`,
   `resetsAt: nil`). It is applied in `StatuslinePipeline.displayWindow` (severity +
-  notifications) and at the view layer (`UsageCardView`, widget `WindowRow`).
+  notifications) and at the view layer (account cards, widget `WindowRow`).
 
 Parsing:
 

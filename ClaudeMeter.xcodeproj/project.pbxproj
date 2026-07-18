@@ -29,7 +29,6 @@
 		A1B2C3D4E5F60718293A4B5C /* AppUpdater.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5D /* AppUpdater.swift */; };
 		C1D2E3F4A5B6C7D8E9F0A1B2 /* PowerMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2D3E4F5A6B7C8D9E0F1A2B3 /* PowerMonitor.swift */; };
 		D1E2F3A4B5C6D7E8F9A0B1C2 /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2E3F4A5B6C7D8E9F0A1B2C3 /* NetworkMonitor.swift */; };
-		6D0A86762E7646A0B0D33439 /* UsageCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 270C84D9D514496BA99A010A /* UsageCardView.swift */; };
 		86A371C31B9048C1BF2F59F8 /* PopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3715D40A5AE0421A91C5BED0 /* PopoverView.swift */; };
 		95F163B0444944EE8CCFFF1F /* ClaudeMeterCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7C7F0222F61B410EB83CB0D4 /* ClaudeMeterCore */; };
 		C7A1B2C3D4E5F60718293A4B /* ClaudeMeterProviders in Frameworks */ = {isa = PBXBuildFile; productRef = C7A1B2C3D4E5F60718293A4C /* ClaudeMeterProviders */; };
@@ -79,7 +78,6 @@
 		C7A1B2C3D4E5F60718293A58 /* OAuthConnectionSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuthConnectionSection.swift; sourceTree = "<group>"; };
 		C7A1B2C3D4E5F60718293A5A /* ProviderReading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderReading.swift; sourceTree = "<group>"; };
 		262C9E3CBCA04E07BB465F9B /* ClaudeMeterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeMeterApp.swift; sourceTree = "<group>"; };
-		270C84D9D514496BA99A010A /* UsageCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageCardView.swift; sourceTree = "<group>"; };
 		3715D40A5AE0421A91C5BED0 /* PopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PopoverView.swift; sourceTree = "<group>"; };
 		40DFAAFE44CF4A3099E08168 /* ClaudeMeter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClaudeMeter.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		698B8E0E53F145B783C464F9 /* NotificationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationEngine.swift; sourceTree = "<group>"; };
@@ -144,7 +142,6 @@
 				C30CB82FB9488E6512B08E66 /* PlayfulComponents.swift */,
 				D39F041AC0894892922A9F90 /* MenuBarLabel.swift */,
 				3715D40A5AE0421A91C5BED0 /* PopoverView.swift */,
-				270C84D9D514496BA99A010A /* UsageCardView.swift */,
 				698B8E0E53F145B783C464F9 /* NotificationEngine.swift */,
 				E1A2B3C4D5E60718293A4B5C /* TerminalFocusRouter.swift */,
 				07DBE9DE99AE4570ABDAA767 /* SettingsView.swift */,
@@ -326,7 +323,6 @@
 				CDD0658EE9F301E3F88CDB39 /* PlayfulComponents.swift in Sources */,
 				53F33AD45698499A81E9BD5D /* MenuBarLabel.swift in Sources */,
 				86A371C31B9048C1BF2F59F8 /* PopoverView.swift in Sources */,
-				6D0A86762E7646A0B0D33439 /* UsageCardView.swift in Sources */,
 				4D61D7AB7BDE4E48BA084D4F /* NotificationEngine.swift in Sources */,
 				F1A2B3C4D5E60718293A4B5C /* TerminalFocusRouter.swift in Sources */,
 				60B15B0A00A24EE9A3EED2B1 /* SettingsView.swift in Sources */,

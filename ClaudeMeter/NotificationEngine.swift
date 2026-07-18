@@ -184,8 +184,6 @@ actor NotificationEngine {
         let key = trigger.dedupKey
         guard !hasFired(key: key) else { return }
         let energy = energyName(for: trigger.scope)
-        // Same formatter as the popover card's forecast line, so both surfaces
-        // describe the same estimate identically.
         let estimate = RunsOutText.formatted(
             trigger.secondsUntilDepleted,
             kind: trigger.scope == "session" ? .session : .weekly
@@ -302,4 +300,30 @@ actor NotificationEngine {
         return Self.shortDateTimeFormatter.string(from: date)
     }
 
+}
+
+private enum RunsOutText {
+    static func formatted(_ seconds: TimeInterval, kind: LimitWindowKind) -> String {
+        let formatter = kind == .weekly ? dayHourFormatter : durationFormatter
+        let text = formatter.string(from: seconds) ?? ""
+        return text.isEmpty ? "under a minute" : text
+    }
+
+    private static let dayHourFormatter: DateComponentsFormatter = {
+        let formatter = DateComponentsFormatter()
+        formatter.unitsStyle = .abbreviated
+        formatter.allowedUnits = [.day, .hour]
+        formatter.maximumUnitCount = 2
+        formatter.zeroFormattingBehavior = .dropAll
+        return formatter
+    }()
+
+    private static let durationFormatter: DateComponentsFormatter = {
+        let formatter = DateComponentsFormatter()
+        formatter.unitsStyle = .abbreviated
+        formatter.allowedUnits = [.hour, .minute]
+        formatter.maximumUnitCount = 2
+        formatter.zeroFormattingBehavior = .dropAll
+        return formatter
+    }()
 }

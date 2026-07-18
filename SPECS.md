@@ -190,8 +190,12 @@ Anatomy (top to bottom):
 - Extra-usage, last-7-days cost, Cursor, and Codex cards follow when present (restyled).
   The Cursor card shows the current plan and the API's optional `Auto + Composer`
   and `API` usage percentages below the authoritative total percentage.
-  The Codex card shows its normalized plan tier plus the authoritative available
-  rate-limit-reset count and the nearest known reset-credit expiry.
+  Codex renders one card per configured `CODEX_HOME`; the implicit default home
+  stays first and Settings can rename accounts or add and remove explicit homes.
+  Cards omit account email. Each card shows its
+  normalized plan tier plus the authoritative available rate-limit-reset count
+  and nearest known reset-credit expiry. Accounts poll independently, so one
+  failed login keeps its last reading without hiding healthy accounts.
   The **last-7-days cost card is tappable** — it flips the popover body to an
   **activity heatmap** (a GitHub-style 7×24 punchcard, Mon–Sun × hour-of-day,
   shaded by message volume) with a **Back** button. The heatmap is scanned on

@@ -624,12 +624,15 @@ private struct DataSettingsTab: View {
                     .foregroundStyle(codexStatus.hasPrefix("Connected") ? .green : .secondary)
                     Text(codexStatus.isEmpty ? "Checking…" : codexStatus)
                 }
-                if let err = appState.codexError {
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                        Text(err)
+                CodexHomesSection(appState: appState)
+                ForEach(appState.codexAccounts) { reading in
+                    if let error = reading.error {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                            Text("\(reading.account.displayName): \(error)")
+                        }
+                        .foregroundStyle(.red)
                     }
-                    .foregroundStyle(.red)
                 }
             }
             .font(.caption)
@@ -940,6 +943,119 @@ private struct ConfigDirAccountsSection: View {
             appState.scheduleRebuildPipeline()
         }
         reload()
+    }
+}
+
+private struct CodexHomesSection: View {
+    let appState: AppState
+    @State private var homes: [String] = []
+    @State private var names: [String: String] = [:]
+    @State private var addError: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(AppSettings.codexAccounts()) { account in
+                HStack(spacing: 12) {
+                    RaisedTile(fill: avatarColorForID(account.id), size: 40, radius: 11) {
+                        Text(accountLetter(account))
+                            .font(PFont.display(17, .bold))
+                            .foregroundStyle(.white)
+                    }
+                    VStack(alignment: .leading, spacing: 5) {
+                        TextField(account.defaultName, text: nameBinding(for: account))
+                            .textFieldStyle(.plain)
+                            .font(PFont.display(15, .semibold))
+                            .foregroundStyle(Color.pfInk)
+                            .help("Display name shown in the popover")
+                        HStack(spacing: 4) {
+                            Image(systemName: "folder").font(.system(size: 9, weight: .semibold))
+                            Text(account.home.path)
+                                .font(.system(size: 11, design: .monospaced))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        .foregroundStyle(Color.pfInkMuted)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Color.pfTrack.opacity(0.7)))
+                    }
+                    Spacer()
+                    if account.isImplicit {
+                        Text("Default")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Button("Remove") { remove(account) }
+                            .buttonStyle(.borderless)
+                    }
+                }
+                .padding(12)
+                .chunkyCard(fill: .pfPopover, radius: 16)
+            }
+            Button("Add Codex home…") { addHome() }
+                .buttonStyle(.borderless)
+            if let addError {
+                Text(addError).foregroundStyle(.red)
+            }
+            Text("Each folder is a separate CODEX_HOME. Accounts keep independent quotas.")
+                .foregroundStyle(.secondary)
+        }
+        .onAppear {
+            homes = AppSettings.configuredCodexHomes
+            names = AppSettings.codexAccountNames
+        }
+    }
+
+    private func nameBinding(for account: CodexAccount) -> Binding<String> {
+        Binding(
+            get: { names[account.id] ?? "" },
+            set: { value in
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty { names.removeValue(forKey: account.id) } else { names[account.id] = value }
+                AppSettings.codexAccountNames = names
+                appState.refreshCodexAccountLabels()
+            })
+    }
+
+    private func accountLetter(_ account: CodexAccount) -> String {
+        let name = names[account.id] ?? account.displayName
+        return String(name.first(where: { $0.isLetter || $0.isNumber }) ?? Character("C")).uppercased()
+    }
+
+    private func addHome() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Add"
+        panel.message = "Choose a Codex home containing auth.json or config.toml."
+        guard panel.runModal() == .OK, let selected = panel.url else { return }
+        let url = selected.standardizedFileURL.resolvingSymlinksInPath()
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: url.appendingPathComponent("auth.json").path)
+            || fileManager.fileExists(atPath: url.appendingPathComponent("config.toml").path)
+        else {
+            addError = "That folder does not look like a Codex home."
+            return
+        }
+        addError = nil
+        let existing = Set(AppSettings.codexAccounts().map(\.id))
+        guard !existing.contains(url.path) else { return }
+        homes.append(url.path)
+        AppSettings.configuredCodexHomes = homes
+        appState.refreshNow()
+    }
+
+    private func remove(_ account: CodexAccount) {
+        homes.removeAll {
+            URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath().path == account.id
+        }
+        AppSettings.configuredCodexHomes = homes
+        names.removeValue(forKey: account.id)
+        AppSettings.codexAccountNames = names
+        appState.refreshNow()
     }
 }
 

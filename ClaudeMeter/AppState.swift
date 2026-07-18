@@ -25,9 +25,7 @@ final class AppState: ObservableObject {
     @Published var cursorUsage: CursorUsage? = nil
     @Published var cursorError: String? = nil
     @Published var cursorLastPolledAt: Date? = nil
-    @Published var codexUsage: CodexUsage? = nil
-    @Published var codexError: String? = nil
-    @Published var codexLastPolledAt: Date? = nil
+    @Published private(set) var codexAccounts: [CodexAccountReading] = []
     @Published var grokUsage: GrokUsage? = nil
     @Published var grokError: String? = nil
     @Published var grokLastPolledAt: Date? = nil
@@ -40,7 +38,6 @@ final class AppState: ObservableObject {
     @Published var usageTrends: UsageTrends? = nil
     @Published var usageTrendsLoading = false
     private let cursorProvider = CursorUsageProvider()
-    private let codexProvider = CodexUsageProvider()
     private let grokProvider = GrokUsageProvider()
 
     var pipeline: any ClaudeMeterPipeline
@@ -275,7 +272,9 @@ final class AppState: ObservableObject {
     }
 
     var codexIsStale: Bool {
-        AppGroupConfig.isSnapshotStale(lastPollAt: codexLastPolledAt)
+        codexAccounts.contains {
+            $0.isStale || ($0.usage != nil && AppGroupConfig.isSnapshotStale(lastPollAt: $0.lastPolledAt))
+        }
     }
 
     var grokIsStale: Bool {
@@ -321,9 +320,18 @@ final class AppState: ObservableObject {
     }
 
     func clearCodexState() {
-        codexUsage = nil
-        codexError = nil
-        codexLastPolledAt = nil
+        codexAccounts = []
+    }
+
+    func refreshCodexAccountLabels() {
+        let names = AppSettings.codexAccountNames
+        codexAccounts = codexAccounts.map { reading in
+            let account = CodexAccount(
+                home: reading.account.home,
+                isImplicit: reading.account.isImplicit,
+                customName: names[reading.id])
+            return CodexAccountReading(account: account, state: reading.state)
+        }
     }
 
     func setGrokSourceEnabled(_ enabled: Bool) {
@@ -595,28 +603,48 @@ final class AppState: ObservableObject {
     /// Codex runs independently of Claude and Cursor so failures never affect
     /// Claude state, menu-bar severity, widget data, or notifications.
     private func pollCodex(generation: Int) async {
-        let provider = codexProvider
         let now = Date()
-        do {
-            let usage = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
-                try await provider.fetchUsage(mode: AppSettings.codexSourceMode, now: now)
+        let previous = Dictionary(uniqueKeysWithValues: codexAccounts.map { ($0.id, $0) })
+        let accounts = AppSettings.codexAccounts()
+        var readings: [CodexAccountReading] = []
+        for batch in accounts.chunked(into: 3) {
+            let results = await withTaskGroup(of: CodexAccountReading.self) { group in
+                for account in batch {
+                    let prior = previous[account.id]
+                    group.addTask {
+                        let provider = CodexUsageProvider(codexHome: account.home)
+                        do {
+                            let usage = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
+                                try await provider.fetchUsage(
+                                    mode: AppSettings.codexSourceMode, now: now)
+                            }
+                            return CodexAccountReading(
+                                account: account, state: .current(usage: usage, polledAt: Date()))
+                        } catch {
+                            let message = DiagnosticsSanitizer.sanitize(
+                                (error as? LocalizedError)?.errorDescription
+                                    ?? error.localizedDescription)
+                            if let usage = prior?.usage, let polledAt = prior?.lastPolledAt {
+                                return CodexAccountReading(
+                                    account: account,
+                                    state: .stale(
+                                        usage: usage, polledAt: polledAt, error: message))
+                            }
+                            return CodexAccountReading(account: account, state: .failed(error: message))
+                        }
+                    }
+                }
+                var batchReadings: [CodexAccountReading] = []
+                for await reading in group {
+                    batchReadings.append(reading)
+                }
+                return batchReadings
             }
-            guard generation == pipelineGeneration,
-                canPoll,
-                AppSettings.codexSourceEnabled
-            else { return }
-            codexUsage = usage
-            codexError = nil
-            codexLastPolledAt = Date()
-        } catch {
-            guard generation == pipelineGeneration,
-                canPoll,
-                AppSettings.codexSourceEnabled
-            else { return }
-            codexError = DiagnosticsSanitizer.sanitize(
-                (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            )
+            readings.append(contentsOf: results)
         }
+        guard generation == pipelineGeneration, canPoll, AppSettings.codexSourceEnabled else { return }
+        let byID = Dictionary(uniqueKeysWithValues: readings.map { ($0.id, $0) })
+        codexAccounts = accounts.compactMap { byID[$0.id] }
     }
 
     /// Grok runs independently of Claude, Cursor, and Codex so failures never
@@ -1062,6 +1090,8 @@ enum AppSettings {
     static let codexSourceEnabledKey = "codexSourceEnabled"
     static let grokSourceEnabledKey = "grokSourceEnabled"
     static let codexSourceModeKey = "codexSourceMode"
+    static let configuredCodexHomesKey = "configuredCodexHomes"
+    static let codexAccountNamesKey = "codexAccountNames"
     static let oauthModeKey = AppGroupConfig.oauthModeKey
 
     static var isActive: Bool {
@@ -1100,6 +1130,32 @@ enum AppSettings {
     static var codexSourceMode: CodexSourceMode {
         get { CodexSourceMode.normalized(UserDefaults.standard.string(forKey: codexSourceModeKey)) }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: codexSourceModeKey) }
+    }
+
+    static var configuredCodexHomes: [String] {
+        get { UserDefaults.standard.stringArray(forKey: configuredCodexHomesKey) ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: configuredCodexHomesKey) }
+    }
+
+    static var codexAccountNames: [String: String] {
+        get { UserDefaults.standard.dictionary(forKey: codexAccountNamesKey) as? [String: String] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: codexAccountNamesKey) }
+    }
+
+    static func codexAccounts(
+        env: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default
+    ) -> [CodexAccount] {
+        let implicitPath = env["CODEX_HOME"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".codex").path
+        let paths = [implicitPath] + configuredCodexHomes
+        let names = codexAccountNames
+        var seen = Set<String>()
+        return paths.enumerated().compactMap { index, path in
+            let url = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+            guard seen.insert(url.path).inserted else { return nil }
+            return CodexAccount(home: url, isImplicit: index == 0, customName: names[url.path])
+        }
     }
 
     // MARK: - Attention (Claude Code hooks)
@@ -1150,5 +1206,61 @@ enum AppSettings {
     private static func boolDefaultingTrue(forKey key: String) -> Bool {
         guard UserDefaults.standard.object(forKey: key) != nil else { return true }
         return UserDefaults.standard.bool(forKey: key)
+    }
+}
+
+struct CodexAccount: Identifiable, Sendable, Equatable {
+    let home: URL
+    let isImplicit: Bool
+    let customName: String?
+
+    var id: String { home.path }
+    var defaultName: String { isImplicit ? "Codex" : home.lastPathComponent }
+    var displayName: String {
+        guard let name = customName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty
+        else { return defaultName }
+        return name
+    }
+}
+
+struct CodexAccountReading: Identifiable, Sendable {
+    enum State: Sendable {
+        case current(usage: CodexUsage, polledAt: Date)
+        case stale(usage: CodexUsage, polledAt: Date, error: String)
+        case failed(error: String)
+    }
+
+    let account: CodexAccount
+    let state: State
+    var id: String { account.id }
+    var usage: CodexUsage? {
+        switch state {
+        case .current(let usage, _), .stale(let usage, _, _): usage
+        case .failed: nil
+        }
+    }
+    var error: String? {
+        switch state {
+        case .current: nil
+        case .stale(_, _, let error), .failed(let error): error
+        }
+    }
+    var lastPolledAt: Date? {
+        switch state {
+        case .current(_, let date), .stale(_, let date, _): date
+        case .failed: nil
+        }
+    }
+    var isStale: Bool {
+        if case .stale = state { return true }
+        return false
+    }
+}
+
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        stride(from: 0, to: count, by: size).map {
+            Array(self[$0..<Swift.min($0 + size, count)])
+        }
     }
 }

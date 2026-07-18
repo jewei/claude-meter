@@ -17,6 +17,17 @@ public final class CodexUsageProvider: @unchecked Sendable {
         self.oauthSource = oauthSource
     }
 
+    public convenience init(codexHome: URL) {
+        var env = ProcessInfo.processInfo.environment
+        env["CODEX_HOME"] = codexHome.path
+        let scopedEnv = env
+        self.init(
+            appServerSource: CodexAppServerSource(env: scopedEnv),
+            oauthSource: CodexDirectOAuthSource(credentialsLoader: {
+                try CodexOAuthCredentialsStore.load(env: scopedEnv)
+            }))
+    }
+
     public func fetchUsage(mode: CodexSourceMode = .auto, now: Date = Date()) async throws -> CodexUsage {
         switch mode {
         case .appServer:

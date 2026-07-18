@@ -74,10 +74,10 @@ struct DiagnosticsView: View {
             }
             if AppSettings.codexSourceEnabled {
                 LabeledContent("Codex mode", value: AppSettings.codexSourceMode.rawValue)
-                LabeledContent(
-                    "Codex", value: appState.codexUsage != nil ? "Connected" : "Not available")
-                if let source = appState.codexUsage?.source.rawValue {
-                    LabeledContent("Codex source", value: source)
+                ForEach(appState.codexAccounts) { reading in
+                    LabeledContent(
+                        reading.account.displayName,
+                        value: reading.usage?.source.rawValue ?? "Not available")
                 }
             }
             if AppSettings.grokSourceEnabled {
@@ -110,13 +110,17 @@ struct DiagnosticsView: View {
                 }
             }
             if AppSettings.codexSourceEnabled {
-                LabeledContent("Codex", value: codexPollTimeText)
-                if let err = appState.codexError {
-                    LabeledContent("Codex error") {
-                        Text(DiagnosticsSanitizer.sanitize(err))
-                            .foregroundStyle(Color.cmCritical)
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
+                ForEach(appState.codexAccounts) { reading in
+                    LabeledContent(
+                        "\(reading.account.displayName) poll",
+                        value: reading.lastPolledAt.map { isoFormatter.string(from: $0) } ?? "Never")
+                    if let err = reading.error {
+                        LabeledContent("\(reading.account.displayName) error") {
+                            Text(DiagnosticsSanitizer.sanitize(err))
+                                .foregroundStyle(Color.cmCritical)
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                        }
                     }
                 }
             }
@@ -175,11 +179,6 @@ struct DiagnosticsView: View {
         return isoFormatter.string(from: date)
     }
 
-    private var codexPollTimeText: String {
-        guard let date = appState.codexLastPolledAt else { return "Never" }
-        return isoFormatter.string(from: date)
-    }
-
     private var grokPollTimeText: String {
         guard let date = appState.grokLastPolledAt else { return "Never" }
         return isoFormatter.string(from: date)
@@ -222,12 +221,17 @@ struct DiagnosticsView: View {
             ]
         }
         if AppSettings.codexSourceEnabled {
-            lines += [
-                "  Codex: \(codexPollTimeText)",
-                "  Codex mode: \(AppSettings.codexSourceMode.rawValue)",
-                "  Codex source: \(appState.codexUsage?.source.rawValue ?? "None")",
-                "  Codex error: \(DiagnosticsSanitizer.sanitize(appState.codexError ?? "None"))",
-            ]
+            lines.append("  Codex mode: \(AppSettings.codexSourceMode.rawValue)")
+            for reading in appState.codexAccounts {
+                let poll = reading.lastPolledAt.map { isoFormatter.string(from: $0) } ?? "Never"
+                lines += [
+                    "  Codex account: \(reading.account.displayName)",
+                    "    Home: \(DiagnosticsSanitizer.sanitize(reading.account.home.path))",
+                    "    Poll: \(poll)",
+                    "    Source: \(reading.usage?.source.rawValue ?? "None")",
+                    "    Error: \(DiagnosticsSanitizer.sanitize(reading.error ?? "None"))",
+                ]
+            }
         }
         if AppSettings.grokSourceEnabled {
             lines += [

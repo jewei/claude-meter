@@ -112,6 +112,15 @@ Poll cadence and the statusline staleness / API-fallback cooldown are all **hard
 
 ## Codex usage (opt-in)
 
+- **Multiple accounts** use one explicit `CODEX_HOME` per account. The ambient
+  `CODEX_HOME` (or `~/.codex`) is implicit; Settings stores additional homes by
+  canonical resolved path and never scans `~/.codex*` because Codex defines no
+  sibling-home naming contract. Settings stores per-path display names; Codex
+  cards deliberately hide email. Each home gets its own provider/App Server
+  process and OAuth read. Polls are bounded and independent; a failed account
+  retains its last reading while healthy accounts update. Popover and diagnostics
+  render per-account state. Codex still never affects menu bar, widget, or
+  notifications.
 - **Provider subprocess env is scrubbed** — `codex app-server` spawns strip `AuthEnv.overrideVariables` (`CODEX_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `ANTHROPIC_*`, Bedrock/Vertex selectors, …) so an env inherited from a terminal launch can't point the read at a different account/provider. Reuse `AuthEnv.scrubbed` for any future provider subprocess.
 - **Reset credits** — `account/rateLimits/read` can return `rateLimitResetCredits`; `availableCount` is authoritative because `credits` may be nil or capped. The Codex card shows that count plus the nearest future `expiresAt` from the returned detail rows. This is display-only; Claude Meter never calls `account/rateLimitResetCredit/consume`.
 - **Plan labels** — app-server `prolite` displays as `Pro 5X`; `pro` displays as `Pro 20X`. `go` and `plus` display as `Go` and `Plus`.

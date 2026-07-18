@@ -103,7 +103,7 @@ struct PopoverView: View {
     }
 
     private var hasCodex: Bool {
-        codexSourceEnabled && appState.codexUsage != nil
+        codexSourceEnabled && appState.codexAccounts.contains { $0.usage != nil }
     }
 
     private var hasGrok: Bool {
@@ -130,7 +130,7 @@ struct PopoverView: View {
             errorState
         } else if cursorSourceEnabled && appState.cursorError != nil {
             cursorErrorState
-        } else if codexSourceEnabled && appState.codexError != nil {
+        } else if codexSourceEnabled && !appState.codexAccounts.isEmpty {
             codexErrorState
         } else if grokSourceEnabled && appState.grokError != nil {
             grokErrorState
@@ -165,9 +165,13 @@ struct PopoverView: View {
                 cursorNotices()
                 cursorCard(cursor)
             }
-            if hasCodex, let codex = appState.codexUsage {
-                codexNotices()
-                codexCard(codex)
+            if codexSourceEnabled {
+                ForEach(appState.codexAccounts) { reading in
+                    codexNotices(reading)
+                    if let usage = reading.usage {
+                        codexCard(usage, account: reading.account)
+                    }
+                }
             }
             if hasGrok, let grok = appState.grokUsage {
                 grokNotices()
@@ -688,17 +692,19 @@ struct PopoverView: View {
     // MARK: - Codex card (usage-based, local to the popover)
 
     @ViewBuilder
-    private func codexNotices() -> some View {
-        if appState.codexError != nil {
+    private func codexNotices(_ reading: CodexAccountReading) -> some View {
+        if let error = reading.error {
             noticeBanner(
-                appState.codexError ?? "Codex refresh failed — showing last known data",
+                "\(reading.account.displayName): \(error)",
                 systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
-        } else if appState.codexIsStale {
-            noticeBanner("Codex data may be outdated", systemImage: "clock.fill", tint: .pfInkMuted)
+        } else if AppGroupConfig.isSnapshotStale(lastPollAt: reading.lastPolledAt) {
+            noticeBanner(
+                "\(reading.account.displayName) data may be outdated",
+                systemImage: "clock.fill", tint: .pfInkMuted)
         }
     }
 
-    private func codexCard(_ usage: CodexUsage) -> some View {
+    private func codexCard(_ usage: CodexUsage, account: CodexAccount) -> some View {
         let primary = usage.primaryWindow
         let percentUsed = primary?.usedPercent
         let displayPercent = primary?.cardDisplayPercent
@@ -709,7 +715,7 @@ struct PopoverView: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(tint)
-                Text("Codex")
+                Text(account.displayName)
                     .font(PFont.display(14, .semibold))
                     .foregroundStyle(Color.pfInk)
                 Spacer()
@@ -982,9 +988,10 @@ struct PopoverView: View {
     }
 
     private var codexErrorState: some View {
-        statusState(
+        let error = appState.codexAccounts.compactMap(\.error).first
+        return statusState(
             emoji: "⚠️", title: "Couldn't read Codex",
-            message: appState.codexError ?? "Install Codex or run `codex login`.",
+            message: error ?? "Install Codex or run `codex login`.",
             primaryTitle: "Open Settings", primary: openSettingsAndCompleteOnboarding)
     }
 
@@ -1179,7 +1186,8 @@ struct PopoverView: View {
             AppSettings.hasClaudeSource
             ? (appState.snapshot?.lastSuccessfulPollAt ?? appState.lastPolledAt) : nil
         let cursorAt = AppSettings.cursorSourceEnabled ? appState.cursorLastPolledAt : nil
-        let codexAt = AppSettings.codexSourceEnabled ? appState.codexLastPolledAt : nil
+        let codexAt = AppSettings.codexSourceEnabled
+            ? appState.codexAccounts.compactMap(\.lastPolledAt).max() : nil
         let grokAt = AppSettings.grokSourceEnabled ? appState.grokLastPolledAt : nil
         guard
             let polledAt = [claudeAt, cursorAt, codexAt, grokAt]

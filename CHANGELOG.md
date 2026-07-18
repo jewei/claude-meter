@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8] - 2026-07-18
+
 ### Added
 
 - Clicking a Claude Attention notification now returns to its originating
@@ -362,7 +364,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.7...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.8...HEAD
+[2.8]: https://github.com/jewei/claude-meter/compare/v2.7...v2.8
 [2.7]: https://github.com/jewei/claude-meter/compare/v2.6...v2.7
 [2.6]: https://github.com/jewei/claude-meter/compare/v2.5.1...v2.6
 [2.5.1]: https://github.com/jewei/claude-meter/compare/v2.3...v2.5.1

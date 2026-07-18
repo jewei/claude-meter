@@ -51,6 +51,52 @@ struct CodexUsageTests {
         #expect(usage.source == .appServer)
     }
 
+    @Test func derivesWindowsFromRateLimitsByLimitIdWhenPositionalPairAbsent() throws {
+        let json = """
+            {
+              "rateLimits": {
+                "planType": "pro",
+                "rateLimitsByLimitId": {
+                  "codex_5h": { "usedPercent": 31, "windowDurationMins": 300, "resetsAt": 1766948068 },
+                  "codex_burst": { "usedPercent": 12, "windowDurationMins": 60 },
+                  "codex_weekly": { "usedPercent": 64, "windowDurationMins": 10080, "resetsAt": 1767407914 }
+                }
+              }
+            }
+            """
+        let response = try JSONDecoder().decode(
+            CodexAppServerRateLimitsResponse.self, from: Data(json.utf8))
+        let usage = try response.usage(
+            account: nil, now: Date(timeIntervalSince1970: 1_751_000_000), source: .appServer)
+
+        // Most-used window per duration bucket wins; the limit id becomes the label.
+        #expect(usage.primaryWindow?.usedPercent == 31)
+        #expect(usage.primaryWindow?.displayLabel == "codex_5h")
+        #expect(usage.secondaryWindow?.usedPercent == 64)
+        #expect(usage.secondaryWindow?.displayLabel == "codex_weekly")
+    }
+
+    @Test func positionalWindowsStillWinOverByLimitId() throws {
+        let json = """
+            {
+              "rateLimits": {
+                "primary": { "usedPercent": 22, "windowDurationMins": 300 },
+                "secondary": { "usedPercent": 43, "windowDurationMins": 10080 },
+                "rateLimitsByLimitId": {
+                  "codex_5h": { "usedPercent": 99, "windowDurationMins": 300 }
+                }
+              }
+            }
+            """
+        let response = try JSONDecoder().decode(
+            CodexAppServerRateLimitsResponse.self, from: Data(json.utf8))
+        let usage = try response.usage(
+            account: nil, now: Date(timeIntervalSince1970: 1_751_000_000), source: .appServer)
+
+        #expect(usage.primaryWindow?.usedPercent == 22)
+        #expect(usage.secondaryWindow?.usedPercent == 43)
+    }
+
     @Test func formatsCurrentPlanNames() {
         let expected = [
             "go": "Go",

@@ -20,7 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attempt trail.
 - Optional predictive alerts warn when a fresh two-poll forecast says session or
   weekly energy may run out before reset.
-
+- Codex can monitor multiple accounts through separate `CODEX_HOME` directories.
+  Each account gets its own card, display name, polling state, and retained last
+  reading when another account fails.
 - Scoped weekly limits the OAuth API reports beyond Opus (Sonnet, Cowork, …)
   now show as extra rows on the active account's card.
 - Codex usage keeps working with newer app-servers that report windows by limit
@@ -31,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reset times are standardized everywhere: minutes under an hour, hours under
   48 hours, and whole days beyond that ("resets in 4 days") — never a calendar
   date like "20 Jul".
+- Codex cards show their reset timing, omit empty credit balances, and no longer
+  include the Trends panel.
 - OAuth setup checks Keychain item attributes passively and reads Claude Code's
   credentials only after explicit consent.
 - A single local verification command now runs Core tests plus unsigned Debug

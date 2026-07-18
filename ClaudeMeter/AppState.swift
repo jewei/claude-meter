@@ -1,5 +1,6 @@
 import AppKit
 import ClaudeMeterCore
+import ClaudeMeterProviders
 import SwiftUI
 import WidgetKit
 
@@ -22,13 +23,9 @@ final class AppState: ObservableObject {
     @Published private(set) var hasEnabledDataSource: Bool
 
     // Cursor is a parallel, optional source (separate billing model from Claude).
-    @Published var cursorUsage: CursorUsage? = nil
-    @Published var cursorError: String? = nil
-    @Published var cursorLastPolledAt: Date? = nil
+    @Published private var cursorReading: ReadingState<CursorUsage>?
     @Published private(set) var codexAccounts: [CodexAccountReading] = []
-    @Published var grokUsage: GrokUsage? = nil
-    @Published var grokError: String? = nil
-    @Published var grokLastPolledAt: Date? = nil
+    @Published private var grokReading: ReadingState<GrokUsage>?
     @Published var costScanPartial = false
     /// Activity heatmap (7×24 message counts), scanned on demand when the user
     /// opens it from the cost card. `nil` until first requested.
@@ -87,6 +84,13 @@ final class AppState: ObservableObject {
     /// While the poll loop isn't running (attention on, no data source), self-heal
     /// the hooks every this-many drain ticks (~60 s at the 2 s cadence).
     private static let attentionSelfHealEveryTicks = 30
+
+    var cursorUsage: CursorUsage? { cursorReading?.value }
+    var cursorError: String? { cursorReading?.error }
+    var cursorLastPolledAt: Date? { cursorReading?.lastPolledAt }
+    var grokUsage: GrokUsage? { grokReading?.value }
+    var grokError: String? { grokReading?.error }
+    var grokLastPolledAt: Date? { grokReading?.lastPolledAt }
 
     var primarySourceWarning: String? {
         lastPollResult?.warnings.first { $0.field == "claude.ai API" }?.message
@@ -264,7 +268,8 @@ final class AppState: ObservableObject {
 
     var codexIsStale: Bool {
         codexAccounts.contains {
-            $0.isStale || ($0.usage != nil && AppGroupConfig.isSnapshotStale(lastPollAt: $0.lastPolledAt))
+            $0.isStale
+                || ($0.usage != nil && AppGroupConfig.isSnapshotStale(lastPollAt: $0.lastPolledAt))
         }
     }
 
@@ -289,9 +294,7 @@ final class AppState: ObservableObject {
     }
 
     func clearCursorState() {
-        cursorUsage = nil
-        cursorError = nil
-        cursorLastPolledAt = nil
+        cursorReading = nil
     }
 
     func setCodexSourceEnabled(_ enabled: Bool) {
@@ -342,9 +345,7 @@ final class AppState: ObservableObject {
     }
 
     func clearGrokState() {
-        grokUsage = nil
-        grokError = nil
-        grokLastPolledAt = nil
+        grokReading = nil
     }
 
     /// Debounced rebuild for source toggles — avoids restarting the poll loop on every flip.
@@ -416,7 +417,8 @@ final class AppState: ObservableObject {
         guard let snap = snapshot else { return nil }
         let pinned = AppGroupConfig.menuBarAccount
         if pinned != "", pinned != "nearest",
-            let acc = snap.accounts?.first(where: { $0.id == pinned }) {
+            let acc = snap.accounts?.first(where: { $0.id == pinned })
+        {
             return acc.limits
         }
         return snap.limits
@@ -448,11 +450,11 @@ final class AppState: ObservableObject {
     private func poll() async {
         guard canPoll else { return }
         refreshConfigBridges()  // self-heal statusline + attention hooks each poll
-        let generation = pipelineGeneration
         guard !isLoading else {
             refreshPending = true
             return
         }
+        let configuration = PollConfiguration(generation: pipelineGeneration)
         isLoading = true
         defer {
             isLoading = false
@@ -463,31 +465,32 @@ final class AppState: ObservableObject {
         }
 
         await withTaskGroup(of: Void.self) { group in
-            if AppSettings.hasClaudeSource {
-                group.addTask { await self.pollClaude(generation: generation) }
+            if configuration.claudeEnabled {
+                group.addTask { await self.pollClaude(configuration: configuration) }
             }
-            if AppSettings.cursorSourceEnabled {
-                group.addTask { await self.pollCursor(generation: generation) }
+            if configuration.cursorEnabled {
+                group.addTask { await self.pollCursor(configuration: configuration) }
             }
-            if AppSettings.codexSourceEnabled {
-                group.addTask { await self.pollCodex(generation: generation) }
+            if configuration.codexEnabled {
+                group.addTask { await self.pollCodex(configuration: configuration) }
             }
-            if AppSettings.grokSourceEnabled {
-                group.addTask { await self.pollGrok(generation: generation) }
+            if configuration.grokEnabled {
+                group.addTask { await self.pollGrok(configuration: configuration) }
             }
         }
     }
 
-    private func pollClaude(generation: Int) async {
+    private func pollClaude(configuration: PollConfiguration) async {
         let pipeline = self.pipeline
         let now = Date()
-        async let serviceStatusTask: Void = refreshServiceStatus(generation: generation)
+        async let serviceStatusTask: Void = refreshServiceStatus(
+            generation: configuration.generation)
         do {
             let result = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
                 try await pipeline.poll(now: now)
             }
             await serviceStatusTask
-            guard generation == pipelineGeneration, canPoll else { return }
+            guard configuration.generation == pipelineGeneration, canPoll else { return }
 
             lastPollResult = result
             refreshClaudeCodeVersion(now: now)
@@ -551,7 +554,7 @@ final class AppState: ObservableObject {
             }
         } catch {
             await serviceStatusTask
-            guard generation == pipelineGeneration, canPoll else { return }
+            guard configuration.generation == pipelineGeneration, canPoll else { return }
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             lastError = DiagnosticsSanitizer.sanitize(message)
             await notificationEngine.pollFailed()
@@ -560,43 +563,45 @@ final class AppState: ObservableObject {
 
     /// Cursor runs independently of the Claude pipeline so a Cursor failure never
     /// affects Claude state (and vice versa).
-    private func pollCursor(generation: Int) async {
+    private func pollCursor(configuration: PollConfiguration) async {
         let provider = cursorProvider
         let now = Date()
         do {
             let usage = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
                 try await provider.fetchUsage(now: now)
             }
-            guard generation == pipelineGeneration,
+            guard configuration.generation == pipelineGeneration,
                 canPoll,
                 AppSettings.cursorSourceEnabled
             else { return }
-            cursorUsage = usage
-            cursorError = nil
-            cursorLastPolledAt = Date()
+            cursorReading = .current(value: usage, polledAt: Date())
         } catch {
-            guard generation == pipelineGeneration,
+            guard configuration.generation == pipelineGeneration,
                 canPoll,
                 AppSettings.cursorSourceEnabled
             else { return }
-            switch error {
-            case CursorError.notDetected, CursorError.unauthorized, CursorError.forbidden:
-                cursorUsage = nil
-            default:
-                break
-            }
-            cursorError = DiagnosticsSanitizer.sanitize(
+            let message = DiagnosticsSanitizer.sanitize(
                 (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             )
+            switch error {
+            case CursorError.notDetected, CursorError.unauthorized, CursorError.forbidden:
+                cursorReading = .failed(error: message, lastPolledAt: cursorLastPolledAt)
+            default:
+                if let usage = cursorUsage, let polledAt = cursorLastPolledAt {
+                    cursorReading = .stale(value: usage, polledAt: polledAt, error: message)
+                } else {
+                    cursorReading = .failed(error: message, lastPolledAt: cursorLastPolledAt)
+                }
+            }
         }
     }
 
     /// Codex runs independently of Claude and Cursor so failures never affect
     /// Claude state, menu-bar severity, widget data, or notifications.
-    private func pollCodex(generation: Int) async {
+    private func pollCodex(configuration: PollConfiguration) async {
         let now = Date()
         let previous = Dictionary(uniqueKeysWithValues: codexAccounts.map { ($0.id, $0) })
-        let accounts = AppSettings.codexAccounts()
+        let accounts = configuration.codexAccounts
         var readings: [CodexAccountReading] = []
         for batch in accounts.chunked(into: 3) {
             let results = await withTaskGroup(of: CodexAccountReading.self) { group in
@@ -607,10 +612,10 @@ final class AppState: ObservableObject {
                         do {
                             let usage = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
                                 try await provider.fetchUsage(
-                                    mode: AppSettings.codexSourceMode, now: now)
+                                    mode: configuration.codexMode, now: now)
                             }
                             return CodexAccountReading(
-                                account: account, state: .current(usage: usage, polledAt: Date()))
+                                account: account, state: .current(value: usage, polledAt: Date()))
                         } catch {
                             let message = DiagnosticsSanitizer.sanitize(
                                 (error as? LocalizedError)?.errorDescription
@@ -619,9 +624,11 @@ final class AppState: ObservableObject {
                                 return CodexAccountReading(
                                     account: account,
                                     state: .stale(
-                                        usage: usage, polledAt: polledAt, error: message))
+                                        value: usage, polledAt: polledAt, error: message))
                             }
-                            return CodexAccountReading(account: account, state: .failed(error: message))
+                            return CodexAccountReading(
+                                account: account,
+                                state: .failed(error: message, lastPolledAt: nil))
                         }
                     }
                 }
@@ -633,35 +640,41 @@ final class AppState: ObservableObject {
             }
             readings.append(contentsOf: results)
         }
-        guard generation == pipelineGeneration, canPoll, AppSettings.codexSourceEnabled else { return }
+        guard configuration.generation == pipelineGeneration,
+            canPoll,
+            AppSettings.codexSourceEnabled
+        else { return }
         let byID = Dictionary(uniqueKeysWithValues: readings.map { ($0.id, $0) })
         codexAccounts = accounts.compactMap { byID[$0.id] }
     }
 
     /// Grok runs independently of Claude, Cursor, and Codex so failures never
     /// affect Claude state, menu-bar severity, widget data, or notifications.
-    private func pollGrok(generation: Int) async {
+    private func pollGrok(configuration: PollConfiguration) async {
         let provider = grokProvider
         let now = Date()
         do {
             let usage = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
                 try await provider.fetchUsage(now: now)
             }
-            guard generation == pipelineGeneration,
+            guard configuration.generation == pipelineGeneration,
                 canPoll,
                 AppSettings.grokSourceEnabled
             else { return }
-            grokUsage = usage
-            grokError = nil
-            grokLastPolledAt = Date()
+            grokReading = .current(value: usage, polledAt: Date())
         } catch {
-            guard generation == pipelineGeneration,
+            guard configuration.generation == pipelineGeneration,
                 canPoll,
                 AppSettings.grokSourceEnabled
             else { return }
-            grokError = DiagnosticsSanitizer.sanitize(
+            let message = DiagnosticsSanitizer.sanitize(
                 (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             )
+            if let usage = grokUsage, let polledAt = grokLastPolledAt {
+                grokReading = .stale(value: usage, polledAt: polledAt, error: message)
+            } else {
+                grokReading = .failed(error: message, lastPolledAt: grokLastPolledAt)
+            }
         }
     }
 
@@ -1021,200 +1034,7 @@ final class AppState: ObservableObject {
     /// label — matching how the popover labels accounts (which strips the `claude-`
     /// prefix / maps `claude` → "default" via `ConfigDirDiscovery.label`).
     static func friendlyAccountName(_ key: String) -> String {
-        AppGroupConfig.accountName(forKey: key) ?? ConfigDirDiscovery.label(forKey: key).friendlyAccountLabel
-    }
-}
-
-extension String {
-    /// "it-oneone" → "It Oneone": replace `-`/`_` with spaces, title-case each word.
-    var friendlyAccountLabel: String {
-        replacingOccurrences(of: "-", with: " ")
-            .replacingOccurrences(of: "_", with: " ")
-            .split(separator: " ")
-            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-            .joined(separator: " ")
-    }
-}
-
-enum AppSettings {
-    static let isActiveKey = "isActive"
-    static let statuslineSourceEnabledKey = "statuslineSourceEnabled"
-    static let oauthSourceEnabledKey = "oauthSourceEnabled"
-    static let cursorSourceEnabledKey = "cursorSourceEnabled"
-    static let codexSourceEnabledKey = "codexSourceEnabled"
-    static let grokSourceEnabledKey = "grokSourceEnabled"
-    static let codexSourceModeKey = "codexSourceMode"
-    static let configuredCodexHomesKey = "configuredCodexHomes"
-    static let codexAccountNamesKey = "codexAccountNames"
-    static let oauthModeKey = AppGroupConfig.oauthModeKey
-
-    static var isActive: Bool {
-        get { UserDefaults.standard.bool(forKey: isActiveKey) }
-        set { UserDefaults.standard.set(newValue, forKey: isActiveKey) }
-    }
-
-    static var statuslineSourceEnabled: Bool {
-        get { boolDefaultingTrue(forKey: statuslineSourceEnabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: statuslineSourceEnabledKey) }
-    }
-
-    static var oauthSourceEnabled: Bool {
-        get { boolDefaultingTrue(forKey: oauthSourceEnabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: oauthSourceEnabledKey) }
-    }
-
-    /// Cursor defaults off — it's an opt-in source with a different billing model.
-    static var cursorSourceEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: cursorSourceEnabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: cursorSourceEnabledKey) }
-    }
-
-    /// Codex defaults off — it is a separate provider card like Cursor.
-    static var codexSourceEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: codexSourceEnabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: codexSourceEnabledKey) }
-    }
-
-    /// Grok defaults off — it is a separate provider card like Cursor and Codex.
-    static var grokSourceEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: grokSourceEnabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: grokSourceEnabledKey) }
-    }
-
-    static var codexSourceMode: CodexSourceMode {
-        get { CodexSourceMode.normalized(UserDefaults.standard.string(forKey: codexSourceModeKey)) }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: codexSourceModeKey) }
-    }
-
-    static var configuredCodexHomes: [String] {
-        get { UserDefaults.standard.stringArray(forKey: configuredCodexHomesKey) ?? [] }
-        set { UserDefaults.standard.set(newValue, forKey: configuredCodexHomesKey) }
-    }
-
-    static var codexAccountNames: [String: String] {
-        get { UserDefaults.standard.dictionary(forKey: codexAccountNamesKey) as? [String: String] ?? [:] }
-        set { UserDefaults.standard.set(newValue, forKey: codexAccountNamesKey) }
-    }
-
-    static func codexAccounts(
-        env: [String: String] = ProcessInfo.processInfo.environment,
-        fileManager: FileManager = .default
-    ) -> [CodexAccount] {
-        let implicitPath = env["CODEX_HOME"].flatMap { $0.isEmpty ? nil : $0 }
-            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".codex").path
-        let paths = [implicitPath] + configuredCodexHomes
-        let names = codexAccountNames
-        var seen = Set<String>()
-        return paths.enumerated().compactMap { index, path in
-            let url = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
-            guard seen.insert(url.path).inserted else { return nil }
-            return CodexAccount(home: url, isImplicit: index == 0, customName: names[url.path])
-        }
-    }
-
-    // MARK: - Attention (Claude Code hooks)
-
-    static let attentionStopEnabledKey = "attentionStopEnabled"
-    static let attentionNotificationEnabledKey = "attentionNotificationEnabled"
-    static let attentionLimitHitEnabledKey = "attentionLimitHitEnabled"
-    static let predictiveNotificationsEnabledKey = "predictiveNotificationsEnabled"
-
-    /// Notify when Claude finishes a turn. Opt-in (installs a `Stop` hook).
-    static var attentionStopEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: attentionStopEnabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: attentionStopEnabledKey) }
-    }
-
-    /// Notify when Claude needs permission or goes idle. Opt-in (`Notification` hook).
-    static var attentionNotificationEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: attentionNotificationEnabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: attentionNotificationEnabledKey) }
-    }
-
-    /// Notify when a turn dies on a rate-limit/billing block. Opt-in (`StopFailure`
-    /// hook) — ground-truth signal that the account hit a limit.
-    static var attentionLimitHitEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: attentionLimitHitEnabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: attentionLimitHitEnabledKey) }
-    }
-
-    /// The hook events the user enabled — drives `HookBridge` install + the watcher.
-    static var enabledAttentionEvents: Set<String> {
-        var events = Set<String>()
-        if attentionStopEnabled { events.insert("Stop") }
-        if attentionNotificationEnabled { events.insert("Notification") }
-        if attentionLimitHitEnabled { events.insert("StopFailure") }
-        return events
-    }
-
-    static var attentionEnabled: Bool { !enabledAttentionEvents.isEmpty }
-
-    static var hasClaudeSource: Bool {
-        statuslineSourceEnabled || oauthSourceEnabled
-    }
-
-    static var hasEnabledDataSource: Bool {
-        hasClaudeSource || cursorSourceEnabled || codexSourceEnabled || grokSourceEnabled
-    }
-
-    private static func boolDefaultingTrue(forKey key: String) -> Bool {
-        guard UserDefaults.standard.object(forKey: key) != nil else { return true }
-        return UserDefaults.standard.bool(forKey: key)
-    }
-}
-
-struct CodexAccount: Identifiable, Sendable, Equatable {
-    let home: URL
-    let isImplicit: Bool
-    let customName: String?
-
-    var id: String { home.path }
-    var defaultName: String { isImplicit ? "Codex" : home.lastPathComponent }
-    var displayName: String {
-        guard let name = customName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty
-        else { return defaultName }
-        return name
-    }
-}
-
-struct CodexAccountReading: Identifiable, Sendable {
-    enum State: Sendable {
-        case current(usage: CodexUsage, polledAt: Date)
-        case stale(usage: CodexUsage, polledAt: Date, error: String)
-        case failed(error: String)
-    }
-
-    let account: CodexAccount
-    let state: State
-    var id: String { account.id }
-    var usage: CodexUsage? {
-        switch state {
-        case .current(let usage, _), .stale(let usage, _, _): usage
-        case .failed: nil
-        }
-    }
-    var error: String? {
-        switch state {
-        case .current: nil
-        case .stale(_, _, let error), .failed(let error): error
-        }
-    }
-    var lastPolledAt: Date? {
-        switch state {
-        case .current(_, let date), .stale(_, let date, _): date
-        case .failed: nil
-        }
-    }
-    var isStale: Bool {
-        if case .stale = state { return true }
-        return false
-    }
-}
-
-private extension Array {
-    func chunked(into size: Int) -> [[Element]] {
-        stride(from: 0, to: count, by: size).map {
-            Array(self[$0..<Swift.min($0 + size, count)])
-        }
+        AppGroupConfig.accountName(forKey: key)
+            ?? ConfigDirDiscovery.label(forKey: key).friendlyAccountLabel
     }
 }

@@ -1,4 +1,5 @@
 import ClaudeMeterCore
+import ClaudeMeterProviders
 import SwiftUI
 
 struct DiagnosticsView: View {

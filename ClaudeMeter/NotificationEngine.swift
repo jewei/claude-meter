@@ -1,4 +1,5 @@
 import ClaudeMeterCore
+import ClaudeMeterProviders
 import UserNotifications
 
 /// Posts local notifications when session or weekly usage crosses severity thresholds.

@@ -36,7 +36,7 @@ Gatekeeper warnings. Updates are delivered automatically via Sparkle.
 
 ```bash
 xcodebuild -scheme ClaudeMeter -configuration Debug CODE_SIGNING_ALLOWED=NO  # compile
-swift test --package-path ClaudeMeterCore                                    # core tests
+swift test --package-path ClaudeMeterCore                                    # core + provider tests
 ```
 
 Running the app requires a provisioning profile (App Group entitlement).

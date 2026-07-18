@@ -15,8 +15,8 @@ Claude Meter is a macOS menu bar app that shows Claude usage-limit percentages.
 - The menu bar item uses `MenuBarExtra` with `.window` style.
 - The main UI is a compact SwiftUI popover.
 - A WidgetKit extension displays the same latest snapshot from the App Group.
-- The core parsing/pipeline/storage code lives in `ClaudeMeterCore`, a Swift
-  package with no AppKit or SwiftUI dependencies.
+- Normalized models, policy, and storage live in `ClaudeMeterCore`; external
+  provider I/O lives in `ClaudeMeterProviders`. Neither imports AppKit or SwiftUI.
 
 The app intentionally focuses on:
 
@@ -343,11 +343,12 @@ button, a divider, "© JEWEI MAK", and the trademark disclaimer.
 
 ### 3.1 Targets/modules
 
-| Component | Target/module                   | Responsibilities                                                                                                |
-| --------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Main app  | `ClaudeMeter` app target        | SwiftUI UI, menu bar, settings, keychain wrapper for claude.ai, Sparkle integration, polling orchestration      |
-| Core      | `ClaudeMeterCore` Swift package | Models, snapshot store, pipelines, statusline bridge, OAuth keychain, API clients, parsing, notification policy |
-| Widget    | `ClaudeMeterWidgetExtension`    | WidgetKit views reading latest snapshot from App Group only                                                     |
+| Component | Target/module                   | Responsibilities                                                                                       |
+| --------- | ------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Main app  | `ClaudeMeter` app target        | SwiftUI UI, menu bar, settings, Sparkle integration, notifications, and polling orchestration          |
+| Core      | `ClaudeMeterCore` Swift package | Normalized models, snapshot store, history, pipeline protocol, display and notification policy         |
+| Providers | `ClaudeMeterProviders` package  | Statusline/OAuth pipelines, Keychain and HTTP boundaries, transcript scans, Codex/Cursor/Grok adapters |
+| Widget    | `ClaudeMeterWidgetExtension`    | WidgetKit views reading latest snapshot from App Group; links Core only                                |
 
 The app's playful design system lives in `PlayfulTheme.swift` (palette, fonts,
 energy semantics, chunky-3D modifiers) and `PlayfulComponents.swift` (activity
@@ -406,10 +407,8 @@ public protocol ClaudeMeterPipeline: Sendable {
 Production pipeline factory builds from bottom to top:
 
 1. Start with `CachedSnapshotPipeline`.
-2. Wrap with `ClaudeAIPipeline` if `claudeAISourceEnabled` and credentials
-   exist.
-3. Wrap with `OAuthPipeline` if `oauthSourceEnabled`.
-4. Wrap with `StatuslinePipeline` if `statuslineSourceEnabled`.
+2. Wrap with `OAuthPipeline` if `oauthSourceEnabled`.
+3. Wrap with `StatuslinePipeline` if `statuslineSourceEnabled`.
 
 Disabled layers are skipped.
 
@@ -954,7 +953,7 @@ Project file:
 
 Swift/concurrency:
 
-- Core package should remain Swift 6 strict-concurrency friendly.
+- Core and Providers should remain Swift 6 strict-concurrency friendly.
 - Formatter singletons like `DateFormatter`, `NumberFormatter`, and
   `ISO8601DateFormatter` are not Sendable. Either create per call or isolate
   behind serial access / `nonisolated(unsafe)` only with a clear invariant.
@@ -966,7 +965,7 @@ Swift/concurrency:
 
 ## 10. Current tests to preserve/extend
 
-Core tests cover:
+Core and provider tests cover:
 
 - Diagnostics sanitizer.
 - Credential validation.

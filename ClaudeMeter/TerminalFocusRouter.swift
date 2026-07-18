@@ -66,21 +66,10 @@ struct AttentionNotificationRoute: Sendable {
             let client = TerminalRoute.Client(rawValue: rawClient)
         else { return nil }
 
-        let program: String
-        switch client {
-        case .ghostty: program = "ghostty"
-        case .terminal: program = "Apple_Terminal"
-        case .iTerm2: program = "iTerm.app"
-        case .wezTerm: program = "WezTerm"
-        case .warp: program = "WarpTerminal"
-        }
-        guard
-            let route = TerminalRoute(
-                termProgram: program,
-                tty: userInfo[Self.ttyKey] as? String,
-                identifier: userInfo[Self.identifierKey] as? String)
-        else { return nil }
-        self.route = route
+        self.route = TerminalRoute(
+            client: client,
+            tty: userInfo[Self.ttyKey] as? String,
+            identifier: userInfo[Self.identifierKey] as? String)
         self.cwd = userInfo[Self.cwdKey] as? String
     }
 }
@@ -99,21 +88,17 @@ enum TerminalFocusRouter {
     /// terminal or creates a new window; it simply becomes a no-op.
     static func focus(_ target: AttentionNotificationRoute) {
         guard let running = runningApplication(for: target.route.client) else { return }
-        if target.route.client == .warp {
-            running.activate(options: [.activateAllWindows])
-            return
-        }
+        // Activate up front: precise focus only selects the right tab/pane *within*
+        // the app. The Ghostty script has no `activate` and `wezterm cli
+        // activate-pane` changes mux-internal focus only, so without this a click
+        // that "succeeds" would leave the terminal behind the frontmost app.
+        running.activate(options: [.activateAllWindows])
+        guard target.route.client != .warp else { return }
 
         let wezTermExecutable = target.route.client == .wezTerm
             ? wezTermCLI(beside: running.executableURL) : nil
-        Task {
-            let focused = await Task.detached(priority: .userInitiated) {
-                focusPrecisely(target, wezTermExecutable: wezTermExecutable)
-            }.value
-            guard !focused, let fallback = runningApplication(for: target.route.client) else {
-                return
-            }
-            fallback.activate(options: [.activateAllWindows])
+        Task.detached(priority: .userInitiated) {
+            _ = focusPrecisely(target, wezTermExecutable: wezTermExecutable)
         }
     }
 
@@ -171,80 +156,107 @@ enum TerminalFocusRouter {
         run("/usr/bin/osascript", arguments: ["-e", source])
     }
 
-    private nonisolated static func run(_ executable: String, arguments: [String]) -> Bool {
+    /// Runs a helper with a bounded wait. A hung osascript (pending Automation
+    /// consent dialog, busy AppleEvent target) must not pin a cooperative-pool
+    /// thread indefinitely — SIGTERM after `timeout`, SIGKILL if it lingers
+    /// (same escalation as `CursorTokenStore`'s sqlite3 runner).
+    private nonisolated static func run(
+        _ executable: String, arguments: [String], timeout: TimeInterval = 10
+    ) -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
+        let finished = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in finished.signal() }
         do {
             try process.run()
-            process.waitUntilExit()
-            return process.terminationStatus == 0
         } catch {
             return false
         }
+        if finished.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            if finished.wait(timeout: .now() + 2) == .timedOut {
+                kill(process.processIdentifier, SIGKILL)
+                _ = finished.wait(timeout: .now() + 1)
+            }
+            return false
+        }
+        return process.terminationStatus == 0
     }
 
     private nonisolated static func ghosttyScript(cwd: String) -> String {
-        let directory = appleScriptLiteral(cwd)
+        // Tolerate a trailing-slash mismatch between the hook's POSIX cwd and
+        // Ghostty's reported working directory (both directions).
+        let normalized = cwd.count > 1 && cwd.hasSuffix("/") ? String(cwd.dropLast()) : cwd
+        let directory = appleScriptLiteral(normalized)
+        // `is running` never launches; `tell` without it would relaunch a terminal
+        // that quit between the click-time check and this script running.
         return """
-            tell application "Ghostty"
-                set targetDirectory to \(directory)
-                repeat with targetWindow in windows
-                    repeat with targetTab in tabs of targetWindow
-                        repeat with targetTerminal in terminals of targetTab
-                            if working directory of targetTerminal is targetDirectory then
-                                focus targetTerminal
-                                return
-                            end if
+            if application "Ghostty" is running then
+                tell application "Ghostty"
+                    set targetDirectory to \(directory)
+                    repeat with targetWindow in windows
+                        repeat with targetTab in tabs of targetWindow
+                            repeat with targetTerminal in terminals of targetTab
+                                set wd to working directory of targetTerminal
+                                if wd is targetDirectory or wd is (targetDirectory & "/") then
+                                    focus targetTerminal
+                                    return
+                                end if
+                            end repeat
                         end repeat
                     end repeat
-                end repeat
-                error "No matching Ghostty terminal" number 1
-            end tell
+                    error "No matching Ghostty terminal" number 1
+                end tell
+            end if
             """
     }
 
     private nonisolated static func terminalScript(tty: String) -> String {
         let targetTTY = appleScriptLiteral(tty)
         return """
-            tell application "Terminal"
-                set wantedTTY to \(targetTTY)
-                repeat with targetWindow in windows
-                    repeat with targetTab in tabs of targetWindow
-                        if tty of targetTab is wantedTTY then
-                            set selected tab of targetWindow to targetTab
-                            set frontmost of targetWindow to true
-                            activate
-                            return
-                        end if
+            if application "Terminal" is running then
+                tell application "Terminal"
+                    set wantedTTY to \(targetTTY)
+                    repeat with targetWindow in windows
+                        repeat with targetTab in tabs of targetWindow
+                            if tty of targetTab is wantedTTY then
+                                set selected tab of targetWindow to targetTab
+                                set frontmost of targetWindow to true
+                                activate
+                                return
+                            end if
+                        end repeat
                     end repeat
-                end repeat
-                error "No matching Terminal tab" number 1
-            end tell
+                    error "No matching Terminal tab" number 1
+                end tell
+            end if
             """
     }
 
     private nonisolated static func iTermScript(tty: String) -> String {
         let targetTTY = appleScriptLiteral(tty)
         return """
-            tell application "iTerm2"
-                set wantedTTY to \(targetTTY)
-                repeat with targetWindow in windows
-                    repeat with targetTab in tabs of targetWindow
-                        repeat with targetSession in sessions of targetTab
-                            if tty of targetSession is wantedTTY then
-                                tell targetSession to select
-                                tell targetTab to select
-                                activate
-                                return
-                            end if
+            if application "iTerm2" is running then
+                tell application "iTerm2"
+                    set wantedTTY to \(targetTTY)
+                    repeat with targetWindow in windows
+                        repeat with targetTab in tabs of targetWindow
+                            repeat with targetSession in sessions of targetTab
+                                if tty of targetSession is wantedTTY then
+                                    tell targetSession to select
+                                    tell targetTab to select
+                                    activate
+                                    return
+                                end if
+                            end repeat
                         end repeat
                     end repeat
-                end repeat
-                error "No matching iTerm2 session" number 1
-            end tell
+                    error "No matching iTerm2 session" number 1
+                end tell
+            end if
             """
     }
 

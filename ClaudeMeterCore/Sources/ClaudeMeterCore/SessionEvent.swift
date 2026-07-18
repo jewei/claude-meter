@@ -18,7 +18,14 @@ public struct TerminalRoute: Sendable, Equatable {
     /// Client-specific locator. Currently this is a WezTerm pane id.
     public let identifier: String?
 
+    public init(client: Client, tty: String?, identifier: String?) {
+        self.client = client
+        self.tty = tty?.nilIfEmpty
+        self.identifier = identifier?.nilIfEmpty
+    }
+
     public init?(termProgram: String, tty: String?, identifier: String?) {
+        let client: Client
         switch termProgram.lowercased() {
         case "ghostty": client = .ghostty
         case "apple_terminal": client = .terminal
@@ -27,8 +34,7 @@ public struct TerminalRoute: Sendable, Equatable {
         case "warpterminal", "warp": client = .warp
         default: return nil
         }
-        self.tty = tty?.nilIfEmpty
-        self.identifier = identifier?.nilIfEmpty
+        self.init(client: client, tty: tty, identifier: identifier)
     }
 
     /// AppleScript terminal APIs expose the full device path.
@@ -44,12 +50,7 @@ public struct TerminalRoute: Sendable, Equatable {
             component.hasPrefix("cmr-")
         else { return nil }
 
-        var encoded = String(component.dropFirst(4))
-            .replacingOccurrences(of: "_", with: "/")
-            .replacingOccurrences(of: "-", with: "+")
-        let remainder = encoded.count % 4
-        if remainder != 0 { encoded += String(repeating: "=", count: 4 - remainder) }
-        guard let data = Data(base64Encoded: encoded),
+        guard let data = Base64URL.decode(String(component.dropFirst(4))),
             let raw = String(data: data, encoding: .utf8)
         else { return nil }
         let fields = raw.split(separator: "\n", omittingEmptySubsequences: false)

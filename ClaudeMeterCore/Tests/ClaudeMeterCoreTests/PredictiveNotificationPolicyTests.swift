@@ -47,16 +47,69 @@ struct PredictiveNotificationPolicyTests {
 
     @Test func dedupKeySeparatesAccounts() {
         let reset = now.addingTimeInterval(3600)
-        let first = PredictiveNotificationPolicy.dedupKey(
-            accountID: "claude", scope: "session", resetAt: reset)
-        let second = PredictiveNotificationPolicy.dedupKey(
-            accountID: "claude-work", scope: "session", resetAt: reset)
+        let first = PredictiveNotificationTrigger(
+            accountID: "claude", scope: "session", resetAt: reset, secondsUntilDepleted: 60
+        ).dedupKey
+        let second = PredictiveNotificationTrigger(
+            accountID: "claude-work", scope: "session", resetAt: reset, secondsUntilDepleted: 60
+        ).dedupKey
 
         #expect(first != second)
         #expect(first.hasPrefix(NotificationPolicy.dedupKeyPrefix))
     }
 
-    private func makeSnapshot(used: Double, resetAt: Date) -> ClaudeUsageSnapshot {
+    @Test func dedupKeyBucketsResetJitter() {
+        let reset = now.addingTimeInterval(3600)
+        let jittered = reset.addingTimeInterval(45)
+        let key = { (date: Date) in
+            PredictiveNotificationTrigger(
+                accountID: "claude", scope: "session", resetAt: date, secondsUntilDepleted: 60
+            ).dedupKey
+        }
+        #expect(key(reset) == key(jittered))
+        #expect(key(reset) != key(reset.addingTimeInterval(3600)))
+    }
+
+    @Test func streakSurvivesResetJitterAcrossPolls() {
+        var tracker = PredictiveNotificationTracker()
+        let reset = now.addingTimeInterval(4 * 3600)
+        let first = makeSnapshot(used: 50, resetAt: reset)
+        let jittered = makeSnapshot(used: 50, resetAt: reset.addingTimeInterval(30))
+
+        #expect(tracker.observe(snapshot: first, now: now).isEmpty)
+        #expect(tracker.observe(snapshot: jittered, now: now.addingTimeInterval(60)).count == 1)
+    }
+
+    @Test func accountIdentityStickyWhenAccountsAbsent() {
+        var tracker = PredictiveNotificationTracker()
+        let reset = now.addingTimeInterval(4 * 3600)
+        // Statusline-tier poll: carries the accounts list with the real key.
+        let statusline = makeSnapshot(
+            used: 50, resetAt: reset, accounts: [makeAccount(id: "claude-work", isActive: true)])
+        // OAuth-tier poll for the same account: accounts == nil.
+        let oauthTier = makeSnapshot(used: 50, resetAt: reset)
+
+        #expect(tracker.observe(snapshot: statusline, now: now).isEmpty)
+        let triggers = tracker.observe(snapshot: oauthTier, now: now.addingTimeInterval(60))
+        #expect(triggers.count == 1)
+        #expect(triggers.first?.accountID == "claude-work")
+    }
+
+    private func makeAccount(id: String, isActive: Bool) -> AccountUsage {
+        AccountUsage(
+            id: id,
+            label: id,
+            limits: LimitInfo(
+                currentSession: LimitWindow(percentUsed: 50, resetsAt: now.addingTimeInterval(3600))
+            ),
+            severity: .normal,
+            isActive: isActive
+        )
+    }
+
+    private func makeSnapshot(
+        used: Double, resetAt: Date, accounts: [AccountUsage]? = nil
+    ) -> ClaudeUsageSnapshot {
         ClaudeUsageSnapshot(
             parserVersion: "test",
             createdAt: now,
@@ -64,7 +117,8 @@ struct PredictiveNotificationPolicyTests {
             limits: LimitInfo(
                 currentSession: LimitWindow(percentUsed: used, resetsAt: resetAt)
             ),
-            state: SnapshotState(status: .ok, severity: .normal)
+            state: SnapshotState(status: .ok, severity: .normal),
+            accounts: accounts
         )
     }
 }

@@ -180,20 +180,28 @@ actor NotificationEngine {
     }
 
     private func deliverPredictive(trigger: PredictiveNotificationTrigger) async {
-        let key = PredictiveNotificationPolicy.dedupKey(
-            accountID: trigger.accountID,
-            scope: trigger.scope,
-            resetAt: trigger.resetAt
-        )
+        let key = trigger.dedupKey
         guard !hasFired(key: key) else { return }
         let energy = energyName(for: trigger.scope)
-        let estimate = durationDescription(trigger.secondsUntilDepleted)
+        // Same formatter as the popover card's forecast line, so both surfaces
+        // describe the same estimate identically.
+        let estimate = RunsOutText.formatted(
+            trigger.secondsUntilDepleted,
+            kind: trigger.scope == "session" ? .session : .weekly
+        )
         let delivered = await post(
             id: key,
             title: "Running hot ⚡",
-            body: "At this pace, your \(energy) may run out in \(estimate), before it refills."
+            body: "At this pace, your \(energy) may run out in about \(estimate), before it refills."
         )
         if delivered { markFired(key: key) }
+    }
+
+    /// Breaks the predictive tracker's "consecutive fresh polls" chain when a poll
+    /// throws, times out, or comes back fatal — those polls never reach `process`,
+    /// and without this the streak would survive arbitrary outage gaps.
+    func pollFailed() {
+        predictiveTracker.reset()
     }
 
     /// Energy-left ("9%") for a window, the inverse of usage.
@@ -293,13 +301,4 @@ actor NotificationEngine {
         return Self.shortDateTimeFormatter.string(from: date)
     }
 
-    private func durationDescription(_ seconds: TimeInterval) -> String {
-        if seconds < 3600 {
-            return "about \(max(1, Int((seconds / 60).rounded())))m"
-        }
-        if seconds < 24 * 3600 {
-            return "about \(max(1, Int((seconds / 3600).rounded())))h"
-        }
-        return "about \(max(1, Int((seconds / 86400).rounded())))d"
-    }
 }

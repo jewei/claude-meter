@@ -32,6 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Turn-finished notifications now ignore subagent completions, so parallel
   workers do not alert before the main Claude turn has finished.
+- Clicking an attention notification now reliably brings Ghostty/WezTerm to the
+  front, never relaunches a terminal that has quit, and a hung focus helper can
+  no longer stall the app's background work.
+- Predictive alerts keep their two-poll confirmation across source-tier
+  switches and reset-time jitter, break the streak when a poll fails, and use
+  the same duration wording as the popover's forecast line.
+- Diagnostics source-attempt labels are truthful: "not connected" is no longer
+  reported as "disabled", and a bridge that never produced data is no longer
+  reported as "stale".
+- Connecting Claude Code in Settings no longer risks freezing the UI while
+  macOS shows a Keychain permission prompt.
 
 ## [2.7] - 2026-07-16
 

@@ -36,7 +36,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     public func poll(now: Date) async throws -> ParseResult {
         let oauthMode = UserDefaults.standard.string(forKey: AppGroupConfig.oauthModeKey) ?? ""
         guard oauthMode == "auto" || oauthMode == "manual" else {
-            return try await fallbackResult(now: now, outcome: .skipped, reason: .sourceDisabled)
+            // The source toggle is ON (or we wouldn't be in the chain) but Connect
+            // was never completed — "disabled" would send the user to the wrong fix.
+            return try await fallbackResult(now: now, outcome: .skipped, reason: .notConnected)
         }
 
         // Honor an active 429 backoff: skip the API and serve the fallback.

@@ -168,13 +168,8 @@ struct UsageCardView: View {
         return "Empty in ~\(formattedRunsOut(seconds, kind: paceKind)) at this rate"
     }
 
-    /// Run-out duration with units suited to the window: a weekly window can be days
-    /// out (day/hour), a session is hours/minutes — so a 2-day projection reads
-    /// "2d 4h", not "52h".
     private func formattedRunsOut(_ seconds: TimeInterval, kind: LimitWindowKind) -> String {
-        let formatter = kind == .weekly ? Self.dayHourFormatter : Self.durationFormatter
-        let text = formatter.string(from: seconds) ?? ""
-        return text.isEmpty ? "under a minute" : text
+        RunsOutText.formatted(seconds, kind: kind)
     }
 
     private var paceColor: Color {
@@ -224,27 +219,9 @@ struct UsageCardView: View {
             return "Resets \(Self.dateTimeFormatter.string(from: date))"
         }
         if interval < 60 { return "Resets in 1m" }
-        let relative = Self.durationFormatter.string(from: interval) ?? "soon"
+        let relative = RunsOutText.durationFormatter.string(from: interval) ?? "soon"
         return "Resets in \(relative)"
     }
-
-    private static let dayHourFormatter: DateComponentsFormatter = {
-        let f = DateComponentsFormatter()
-        f.unitsStyle = .abbreviated
-        f.allowedUnits = [.day, .hour]
-        f.maximumUnitCount = 2
-        f.zeroFormattingBehavior = .dropAll
-        return f
-    }()
-
-    private static let durationFormatter: DateComponentsFormatter = {
-        let f = DateComponentsFormatter()
-        f.unitsStyle = .abbreviated
-        f.allowedUnits = [.hour, .minute]
-        f.maximumUnitCount = 2
-        f.zeroFormattingBehavior = .dropAll
-        return f
-    }()
 
     private static let dateTimeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -265,4 +242,34 @@ struct UsageCardView: View {
         }
         return parts.joined(separator: ", ")
     }
+}
+
+/// Run-out duration formatting shared by the popover card and notifications, so the
+/// same forecast never renders with different precision on the two surfaces. Units
+/// suit the window: a weekly window can be days out (day/hour), a session is
+/// hours/minutes — so a 2-day projection reads "2d 4h", not "52h".
+enum RunsOutText {
+    static func formatted(_ seconds: TimeInterval, kind: LimitWindowKind) -> String {
+        let formatter = kind == .weekly ? dayHourFormatter : durationFormatter
+        let text = formatter.string(from: seconds) ?? ""
+        return text.isEmpty ? "under a minute" : text
+    }
+
+    static let dayHourFormatter: DateComponentsFormatter = {
+        let f = DateComponentsFormatter()
+        f.unitsStyle = .abbreviated
+        f.allowedUnits = [.day, .hour]
+        f.maximumUnitCount = 2
+        f.zeroFormattingBehavior = .dropAll
+        return f
+    }()
+
+    static let durationFormatter: DateComponentsFormatter = {
+        let f = DateComponentsFormatter()
+        f.unitsStyle = .abbreviated
+        f.allowedUnits = [.hour, .minute]
+        f.maximumUnitCount = 2
+        f.zeroFormattingBehavior = .dropAll
+        return f
+    }()
 }

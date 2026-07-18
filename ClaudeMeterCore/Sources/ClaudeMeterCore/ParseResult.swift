@@ -62,7 +62,7 @@ public struct ParseResult: Sendable {
     public var hasUsableSnapshot: Bool { snapshot != nil }
     public var isFatal: Bool { !errors.isEmpty }
 
-    init(
+    public init(
         snapshot: ClaudeUsageSnapshot?,
         warnings: [ParseWarning],
         errors: [ParseError],
@@ -78,7 +78,7 @@ public struct ParseResult: Sendable {
         self.sourceAttempts = sourceAttempts
     }
 
-    func prependingSourceAttempt(_ attempt: SourceAttempt) -> ParseResult {
+    public func prependingSourceAttempt(_ attempt: SourceAttempt) -> ParseResult {
         ParseResult(
             snapshot: snapshot,
             warnings: warnings,

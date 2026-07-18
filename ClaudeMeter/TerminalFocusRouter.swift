@@ -1,5 +1,6 @@
 import AppKit
 import ClaudeMeterCore
+import ClaudeMeterProviders
 import UserNotifications
 
 /// Installs the notification delegate early enough for macOS to deliver click

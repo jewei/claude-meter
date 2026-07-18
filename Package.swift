@@ -15,12 +15,14 @@ let package = Package(
         .executableTarget(
             name: "ClaudeMeter",
             dependencies: [
-                .product(name: "ClaudeMeterCore", package: "ClaudeMeterCore")
+                .product(name: "ClaudeMeterCore", package: "ClaudeMeterCore"),
+                .product(name: "ClaudeMeterProviders", package: "ClaudeMeterCore"),
             ],
             path: "ClaudeMeter",
             exclude: [
                 "Assets.xcassets",
                 "ClaudeMeter.entitlements",
+                "Fonts",
                 "Info.plist",
             ]
         ),

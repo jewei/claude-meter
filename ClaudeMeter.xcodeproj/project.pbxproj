@@ -17,13 +17,22 @@
 		F1A2B3C4D5E60718293A4B5C /* TerminalFocusRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1A2B3C4D5E60718293A4B5C /* TerminalFocusRouter.swift */; };
 		53F33AD45698499A81E9BD5D /* MenuBarLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D39F041AC0894892922A9F90 /* MenuBarLabel.swift */; };
 		60B15B0A00A24EE9A3EED2B1 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07DBE9DE99AE4570ABDAA767 /* SettingsView.swift */; };
+		C7A1B2C3D4E5F60718293A5B /* DataSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A1B2C3D4E5F60718293A5C /* DataSettingsTab.swift */; };
+		C7A1B2C3D4E5F60718293A4F /* AppearanceSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A1B2C3D4E5F60718293A50 /* AppearanceSettingsTab.swift */; };
+		C7A1B2C3D4E5F60718293A51 /* NotificationsSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A1B2C3D4E5F60718293A52 /* NotificationsSettingsTab.swift */; };
+		C7A1B2C3D4E5F60718293A53 /* AdvancedSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A1B2C3D4E5F60718293A54 /* AdvancedSettingsTab.swift */; };
+		C7A1B2C3D4E5F60718293A55 /* AboutSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A1B2C3D4E5F60718293A56 /* AboutSettingsTab.swift */; };
+		C7A1B2C3D4E5F60718293A57 /* OAuthConnectionSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A1B2C3D4E5F60718293A58 /* OAuthConnectionSection.swift */; };
+		C7A1B2C3D4E5F60718293A59 /* ProviderReading.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A1B2C3D4E5F60718293A5A /* ProviderReading.swift */; };
 		69BE2128EB0F41ACBF84F636 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0B0219D0744A52A145A257 /* AppState.swift */; };
+		C7A1B2C3D4E5F60718293A4D /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A1B2C3D4E5F60718293A4E /* AppSettings.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* AppUpdater.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5D /* AppUpdater.swift */; };
 		C1D2E3F4A5B6C7D8E9F0A1B2 /* PowerMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2D3E4F5A6B7C8D9E0F1A2B3 /* PowerMonitor.swift */; };
 		D1E2F3A4B5C6D7E8F9A0B1C2 /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2E3F4A5B6C7D8E9F0A1B2C3 /* NetworkMonitor.swift */; };
 		6D0A86762E7646A0B0D33439 /* UsageCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 270C84D9D514496BA99A010A /* UsageCardView.swift */; };
 		86A371C31B9048C1BF2F59F8 /* PopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3715D40A5AE0421A91C5BED0 /* PopoverView.swift */; };
 		95F163B0444944EE8CCFFF1F /* ClaudeMeterCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7C7F0222F61B410EB83CB0D4 /* ClaudeMeterCore */; };
+		C7A1B2C3D4E5F60718293A4B /* ClaudeMeterProviders in Frameworks */ = {isa = PBXBuildFile; productRef = C7A1B2C3D4E5F60718293A4C /* ClaudeMeterProviders */; };
 		B39A8BBB94F64426BDF7E3C0 /* ClaudeMeterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 262C9E3CBCA04E07BB465F9B /* ClaudeMeterApp.swift */; };
 		B6F53F78A9174898AEA761F3 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5D38012F5D5476997394541 /* DiagnosticsView.swift */; };
 		BA2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidgetBundle.swift */; };
@@ -62,6 +71,13 @@
 /* Begin PBXFileReference section */
 		0749BAC0888B4145ADF40C11 /* ClaudeMeter.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClaudeMeter.entitlements; sourceTree = "<group>"; };
 		07DBE9DE99AE4570ABDAA767 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		C7A1B2C3D4E5F60718293A5C /* DataSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataSettingsTab.swift; sourceTree = "<group>"; };
+		C7A1B2C3D4E5F60718293A50 /* AppearanceSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceSettingsTab.swift; sourceTree = "<group>"; };
+		C7A1B2C3D4E5F60718293A52 /* NotificationsSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationsSettingsTab.swift; sourceTree = "<group>"; };
+		C7A1B2C3D4E5F60718293A54 /* AdvancedSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdvancedSettingsTab.swift; sourceTree = "<group>"; };
+		C7A1B2C3D4E5F60718293A56 /* AboutSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutSettingsTab.swift; sourceTree = "<group>"; };
+		C7A1B2C3D4E5F60718293A58 /* OAuthConnectionSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuthConnectionSection.swift; sourceTree = "<group>"; };
+		C7A1B2C3D4E5F60718293A5A /* ProviderReading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderReading.swift; sourceTree = "<group>"; };
 		262C9E3CBCA04E07BB465F9B /* ClaudeMeterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeMeterApp.swift; sourceTree = "<group>"; };
 		270C84D9D514496BA99A010A /* UsageCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageCardView.swift; sourceTree = "<group>"; };
 		3715D40A5AE0421A91C5BED0 /* PopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PopoverView.swift; sourceTree = "<group>"; };
@@ -77,6 +93,7 @@
 		AB2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeMeterWidget.swift; sourceTree = "<group>"; };
 		AC2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClaudeMeterWidget.entitlements; sourceTree = "<group>"; };
 		AD0B0219D0744A52A145A257 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		C7A1B2C3D4E5F60718293A4E /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		C2D3E4F5A6B7C8D9E0F1A2B3 /* PowerMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerMonitor.swift; sourceTree = "<group>"; };
 		D2E3F4A5B6C7D8E9F0A1B2C3 /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
 		AD2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "ClaudeMeterWidget-Info.plist"; sourceTree = "<group>"; };
@@ -94,6 +111,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				95F163B0444944EE8CCFFF1F /* ClaudeMeterCore in Frameworks */,
+				C7A1B2C3D4E5F60718293A4B /* ClaudeMeterProviders in Frameworks */,
 				BF2F8E1B9C3D5E7F0A1B2C3D /* WidgetKit.framework in Frameworks */,
 				C5D3E4F50617289AC2D3E4F5 /* Sparkle in Frameworks */,
 			);
@@ -116,6 +134,8 @@
 			children = (
 				262C9E3CBCA04E07BB465F9B /* ClaudeMeterApp.swift */,
 				AD0B0219D0744A52A145A257 /* AppState.swift */,
+				C7A1B2C3D4E5F60718293A4E /* AppSettings.swift */,
+				C7A1B2C3D4E5F60718293A5A /* ProviderReading.swift */,
 				A1B2C3D4E5F60718293A4B5D /* AppUpdater.swift */,
 				C2D3E4F5A6B7C8D9E0F1A2B3 /* PowerMonitor.swift */,
 				D2E3F4A5B6C7D8E9F0A1B2C3 /* NetworkMonitor.swift */,
@@ -128,6 +148,12 @@
 				698B8E0E53F145B783C464F9 /* NotificationEngine.swift */,
 				E1A2B3C4D5E60718293A4B5C /* TerminalFocusRouter.swift */,
 				07DBE9DE99AE4570ABDAA767 /* SettingsView.swift */,
+				C7A1B2C3D4E5F60718293A5C /* DataSettingsTab.swift */,
+				C7A1B2C3D4E5F60718293A50 /* AppearanceSettingsTab.swift */,
+				C7A1B2C3D4E5F60718293A52 /* NotificationsSettingsTab.swift */,
+				C7A1B2C3D4E5F60718293A54 /* AdvancedSettingsTab.swift */,
+				C7A1B2C3D4E5F60718293A56 /* AboutSettingsTab.swift */,
+				C7A1B2C3D4E5F60718293A58 /* OAuthConnectionSection.swift */,
 				B5D38012F5D5476997394541 /* DiagnosticsView.swift */,
 				CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */,
 				79FAFFB9B2AADEDB517FE4EF /* Fonts */,
@@ -206,6 +232,7 @@
 			name = ClaudeMeter;
 			packageProductDependencies = (
 				7C7F0222F61B410EB83CB0D4 /* ClaudeMeterCore */,
+				C7A1B2C3D4E5F60718293A4C /* ClaudeMeterProviders */,
 				E4B2C3D5E6F7089AB1C2D3E4 /* Sparkle */,
 			);
 			productName = ClaudeMeter;
@@ -289,6 +316,8 @@
 			files = (
 				B39A8BBB94F64426BDF7E3C0 /* ClaudeMeterApp.swift in Sources */,
 				69BE2128EB0F41ACBF84F636 /* AppState.swift in Sources */,
+				C7A1B2C3D4E5F60718293A4D /* AppSettings.swift in Sources */,
+				C7A1B2C3D4E5F60718293A59 /* ProviderReading.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* AppUpdater.swift in Sources */,
 				C1D2E3F4A5B6C7D8E9F0A1B2 /* PowerMonitor.swift in Sources */,
 				D1E2F3A4B5C6D7E8F9A0B1C2 /* NetworkMonitor.swift in Sources */,
@@ -301,6 +330,12 @@
 				4D61D7AB7BDE4E48BA084D4F /* NotificationEngine.swift in Sources */,
 				F1A2B3C4D5E60718293A4B5C /* TerminalFocusRouter.swift in Sources */,
 				60B15B0A00A24EE9A3EED2B1 /* SettingsView.swift in Sources */,
+				C7A1B2C3D4E5F60718293A5B /* DataSettingsTab.swift in Sources */,
+				C7A1B2C3D4E5F60718293A4F /* AppearanceSettingsTab.swift in Sources */,
+				C7A1B2C3D4E5F60718293A51 /* NotificationsSettingsTab.swift in Sources */,
+				C7A1B2C3D4E5F60718293A53 /* AdvancedSettingsTab.swift in Sources */,
+				C7A1B2C3D4E5F60718293A55 /* AboutSettingsTab.swift in Sources */,
+				C7A1B2C3D4E5F60718293A57 /* OAuthConnectionSection.swift in Sources */,
 				B6F53F78A9174898AEA761F3 /* DiagnosticsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -600,6 +635,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A6DC290B185342ACB5499025 /* XCLocalSwiftPackageReference "ClaudeMeterCore" */;
 			productName = ClaudeMeterCore;
+		};
+		C7A1B2C3D4E5F60718293A4C /* ClaudeMeterProviders */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A6DC290B185342ACB5499025 /* XCLocalSwiftPackageReference "ClaudeMeterCore" */;
+			productName = ClaudeMeterProviders;
 		};
 		DA2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterCore */ = {
 			isa = XCSwiftPackageProductDependency;

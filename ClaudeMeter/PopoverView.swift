@@ -1,5 +1,6 @@
 import AppKit
 import ClaudeMeterCore
+import ClaudeMeterProviders
 import SwiftUI
 
 struct PopoverView: View {

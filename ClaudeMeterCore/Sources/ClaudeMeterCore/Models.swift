@@ -130,7 +130,9 @@ public struct AccountInfo: Codable, Equatable, Sendable {
         self.plan = plan
     }
 
-    var isEmpty: Bool { loginMethod == nil && organization == nil && email == nil && plan == nil }
+    public var isEmpty: Bool {
+        loginMethod == nil && organization == nil && email == nil && plan == nil
+    }
 }
 
 // MARK: - Session

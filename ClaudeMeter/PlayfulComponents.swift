@@ -213,17 +213,36 @@ func avatarColorForID(_ id: String) -> Color {
     return pfAvatarPalette[((h % n) + n) % n]
 }
 
+/// Whether the popover window is actually on screen. The MenuBarExtra `.window`
+/// popover view is retained (hidden) across dismissals, and `TimelineView`
+/// animations keep ticking at display refresh rate in the hidden window —
+/// re-laying-out the whole hierarchy every frame (~20% CPU). Every continuous
+/// animation inside the popover must pause on this flag.
+private struct PopoverVisibleKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    var popoverIsVisible: Bool {
+        get { self[PopoverVisibleKey.self] }
+        set { self[PopoverVisibleKey.self] = newValue }
+    }
+}
+
 /// Pulsing "session open now" marker on the active account's card; static when
 /// Reduce Motion is on.
 struct LiveDot: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.popoverIsVisible) private var popoverIsVisible
 
     var body: some View {
         Group {
             if reduceMotion {
                 Circle().fill(Color.pfEnergyFull).frame(width: 7, height: 7)
             } else {
-                TimelineView(.animation) { context in
+                // 12 fps is plenty for a 1.6 s opacity pulse; paused entirely
+                // while the popover window is hidden.
+                TimelineView(.animation(minimumInterval: 1 / 12, paused: !popoverIsVisible)) { context in
                     let t = context.date.timeIntervalSinceReferenceDate
                     let phase = (sin(t * 2 * .pi / 1.6) + 1) / 2  // 0…1 over 1.6s
                     Circle()

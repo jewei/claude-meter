@@ -79,7 +79,9 @@ struct MenuBarLabel: View {
     }
 
     private func pulsingDot(_ color: Color) -> some View {
-        TimelineView(.animation) { context in
+        // Capped at 12 fps — an uncapped .animation schedule runs the status
+        // item's display link at full refresh rate for a 1.2 s pulse.
+        TimelineView(.animation(minimumInterval: 1 / 12)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let phase = (sin(t * 2 * .pi / 1.2) + 1) / 2  // 0…1 over 1.2s
             Circle()

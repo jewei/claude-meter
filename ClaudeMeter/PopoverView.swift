@@ -14,6 +14,11 @@ struct PopoverView: View {
     @AppStorage(AppGroupConfig.progressionModeKey) private var progressionMode = "left"
     @State private var now = Date()
     @State private var showHeatmap = false
+    // Tracks whether the popover window is on screen (the view is retained,
+    // hidden, across dismissals). Gates the ticker and, via the environment,
+    // every continuous TimelineView animation — otherwise they keep the
+    // display link alive and re-layout the hidden hierarchy every frame.
+    @State private var isVisible = false
 
     private var usageThresholds: UsageThresholds {
         AppState.currentThresholds()
@@ -45,8 +50,11 @@ struct PopoverView: View {
             footerBar
         }
         .background(Color.pfPopover)
-        .onReceive(ticker) { now = $0 }
+        .environment(\.popoverIsVisible, isVisible)
+        .onReceive(ticker) { if isVisible { now = $0 } }
         .onAppear {
+            isVisible = true
+            now = Date()
             skipOnboardingForExistingUsers()
             if needsOnboarding {
                 appState.setActive(false)
@@ -56,6 +64,7 @@ struct PopoverView: View {
         // so reset to the main view on close — otherwise reopening lands on the
         // heatmap and skips onboarding/error/loading branches.
         .onDisappear {
+            isVisible = false
             showHeatmap = false
             // Don't keep burning disk I/O on a heatmap nobody is looking at.
             appState.cancelActivityHeatmapLoad()
@@ -1003,6 +1012,7 @@ struct PopoverView: View {
 
     /// Round refresh button in the header; spins while loading.
     private struct HeaderRefreshButton: View {
+        @Environment(\.popoverIsVisible) private var popoverIsVisible
         let isLoading: Bool
         let isEnabled: Bool
         let action: () -> Void
@@ -1011,7 +1021,9 @@ struct PopoverView: View {
             Button(action: action) {
                 Group {
                     if isLoading {
-                        TimelineView(.animation) { context in
+                        // Background polls set isLoading while the popover is
+                        // hidden — don't spin the display link for nobody.
+                        TimelineView(.animation(paused: !popoverIsVisible)) { context in
                             icon.rotationEffect(.degrees(Self.angle(at: context.date)))
                         }
                     } else {

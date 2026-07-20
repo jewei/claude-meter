@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Closing the popover no longer leaves its animations running in the hidden
+  window. The app could idle at ~20% CPU (High energy impact) whenever a
+  Claude Code session was open or a poll was in flight; it now drops to ~0%
+  with the popover closed. The pulsing session and menu-bar dots also tick at
+  a gentle rate instead of the full display refresh rate.
+
 ## [2.8] - 2026-07-18
 
 ### Added

@@ -232,8 +232,14 @@ struct RaisedButtonStyle: ButtonStyle {
         return configuration.label
             .font(PFont.display(14, .bold))
             .foregroundStyle(.white)
-            .frame(maxWidth: .infinity)
+            .lineLimit(1)
+            // Horizontal padding must be *inside* the flexible frame. Without it
+            // the pill had no side inset at all, and a `.fixedSize()` caller — the
+            // status states all use one — collapsed it to exactly the text width,
+            // so the label sat flush against both edges.
+            .padding(.horizontal, 20)
             .padding(.vertical, 12)
+            .frame(maxWidth: .infinity)
             .background(RoundedRectangle(cornerRadius: radius, style: .continuous).fill(fill))
             .offset(y: pressed ? 2 : 0)
             .background(

@@ -123,6 +123,22 @@ enum AppSettings {
 
     static var attentionEnabled: Bool { !enabledAttentionEvents.isEmpty }
 
+    // MARK: - Popover card expansion
+
+    static let expandedProviderCardsKey = "expandedProviderCards"
+
+    /// Ids of the non-Claude provider cards the user has expanded in the popover.
+    ///
+    /// Stores the *expanded* set rather than the collapsed one so the empty
+    /// default means "all collapsed" — the popover has to fit a 13" screen
+    /// alongside however many Claude accounts someone runs, and each provider
+    /// card's header already carries its headline percentage. Claude account cards
+    /// are never collapsible: they're the point of the app.
+    static var expandedProviderCards: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: expandedProviderCardsKey) ?? []) }
+        set { UserDefaults.standard.set(Array(newValue).sorted(), forKey: expandedProviderCardsKey) }
+    }
+
     static var hasClaudeSource: Bool {
         statuslineSourceEnabled || oauthSourceEnabled
     }

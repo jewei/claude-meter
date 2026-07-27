@@ -3,7 +3,9 @@ import ServiceManagement
 import SwiftUI
 
 struct AdvancedSettingsTab: View {
-    let appState: AppState
+    /// Observed: the pause toggle below reflects `appState.isActive`, which the
+    /// app can also change on its own (onboarding pauses fetching).
+    @ObservedObject var appState: AppState
 
     @AppStorage("launchAtLogin") private var launchAtLogin = false
     @State private var launchAtLoginNeedsApproval = false
@@ -15,6 +17,26 @@ struct AdvancedSettingsTab: View {
             VStack(alignment: .leading, spacing: 18) {
                 sectionHeading("App")
                 VStack(alignment: .leading, spacing: 12) {
+                    // Moved here from the popover footer, which is gone. Pausing is
+                    // a rarely-used but real capability — it stops all polling —
+                    // so it needed a home rather than being dropped outright.
+                    HStack(spacing: 12) {
+                        RaisedTile(fill: Color(hex: "4CC9F0"), size: 40, radius: 11) {
+                            Image(systemName: "pause.fill").font(.system(size: 17, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                        cardText(
+                            "Fetch usage",
+                            "Pause to stop all polling. The menu bar dims and keeps its last reading.")
+                        Spacer(minLength: 8)
+                        Toggle(
+                            "",
+                            isOn: Binding(
+                                get: { appState.isActive },
+                                set: { appState.setActive($0) })
+                        )
+                        .toggleStyle(.switch).labelsHidden()
+                    }
                     HStack(spacing: 12) {
                         RaisedTile(fill: Color(hex: "C77DFF"), size: 40, radius: 11) {
                             Image(systemName: "power").font(.system(size: 17, weight: .bold))

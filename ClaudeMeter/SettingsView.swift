@@ -23,7 +23,7 @@ struct SettingsView: View {
                 case 1: AppearanceSettingsTab(appState: appState)
                 case 2: NotificationsSettingsTab(appState: appState)
                 case 3: AdvancedSettingsTab(appState: appState)
-                default: AboutSettingsTab()
+                default: AboutSettingsTab(appState: appState)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

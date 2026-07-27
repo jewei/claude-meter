@@ -19,9 +19,39 @@ struct PopoverView: View {
     // every continuous TimelineView animation — otherwise they keep the
     // display link alive and re-layout the hidden hierarchy every frame.
     @State private var isVisible = false
+    /// Expanded non-Claude provider cards, mirrored from `AppSettings` so toggling
+    /// re-renders. Empty by default — see `AppSettings.expandedProviderCards`.
+    @State private var expandedCards: Set<String> = AppSettings.expandedProviderCards
 
     private var usageThresholds: UsageThresholds {
         AppState.currentThresholds()
+    }
+
+    // MARK: - Collapsible provider cards
+
+    static let cursorCardID = "cursor"
+    static let grokCardID = "grok"
+    static func codexCardID(_ accountID: String) -> String { "codex:\(accountID)" }
+
+    private func isExpanded(_ id: String) -> Bool { expandedCards.contains(id) }
+
+    private func toggleCard(_ id: String) {
+        withAnimation(.easeInOut(duration: 0.18)) {
+            if expandedCards.contains(id) {
+                expandedCards.remove(id)
+            } else {
+                expandedCards.insert(id)
+            }
+        }
+        AppSettings.expandedProviderCards = expandedCards
+    }
+
+    /// Disclosure chevron for a collapsible card header.
+    private func disclosure(_ expanded: Bool) -> some View {
+        Image(systemName: "chevron.down")
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(Color.pfInkMuted)
+            .rotationEffect(.degrees(expanded ? 0 : -90))
     }
 
     /// `true` when the user chose to display usage instead of energy-left.
@@ -36,18 +66,28 @@ struct PopoverView: View {
     var body: some View {
         VStack(spacing: 0) {
             headerBar
-            if showHeatmap {
-                heatmapBody
-            } else {
-                if appState.updateAvailable {
-                    updateAvailableNotice
+            // The body scrolls under a screen-derived cap. Without this the popover
+            // grows to whatever the content needs, so someone running two Claude
+            // accounts plus Cursor, Codex and Grok runs off the bottom of a 13"
+            // display. Collapsing cards trims the common case; this is what makes
+            // *any* configuration fit.
+            ScrollView(.vertical) {
+                VStack(spacing: 0) {
+                    if showHeatmap {
+                        heatmapBody
+                    } else {
+                        if appState.updateAvailable {
+                            updateAvailableNotice
+                        }
+                        if let status = appState.serviceStatus, status.level.isIncident {
+                            serviceStatusNotice(status)
+                        }
+                        mainContent
+                    }
                 }
-                if let status = appState.serviceStatus, status.level.isIncident {
-                    serviceStatusNotice(status)
-                }
-                mainContent
             }
-            footerBar
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(maxHeight: Self.maxBodyHeight)
         }
         .background(Color.pfPopover)
         .environment(\.popoverIsVisible, isVisible)
@@ -89,17 +129,30 @@ struct PopoverView: View {
                     .font(PFont.body(11, .semibold))
                     .foregroundStyle(Color.pfInkMuted)
                     .monospacedDigit()
-                HeaderRefreshButton(
-                    isLoading: appState.isLoading,
-                    isEnabled: appState.isActive && appState.hasEnabledDataSource
-                ) {
-                    appState.refreshNow()
+            }
+            // Settings and Quit moved up from the footer, which is now gone.
+            // Refresh went with it: `popoverDidOpen()` already refreshes on every
+            // open, so the button only re-did what had just happened.
+            squareButton("gearshape.fill", help: "Settings") {
+                openSettingsAndCompleteOnboarding()
+            }
+            if !needsOnboarding {
+                squareButton("power", help: "Quit Claude Meter") {
+                    NSApplication.shared.terminate(nil)
                 }
             }
         }
         .padding(.horizontal, 15)
         .padding(.top, 14)
         .padding(.bottom, 8)
+    }
+
+    /// Cap for the scrolling body, derived from the screen so a 13" laptop and a
+    /// 27" display each show as much as they can. The popover hangs off the menu
+    /// bar, so leave room for it plus this view's own header.
+    private static var maxBodyHeight: CGFloat {
+        let screen = NSScreen.main?.visibleFrame.height ?? 800
+        return max(320, screen - 140)
     }
 
     // MARK: - Main content
@@ -371,42 +424,32 @@ struct PopoverView: View {
         .help("View activity heatmap")
     }
 
+    /// Single summary row. The per-model breakdown used to live here and was the
+    /// tallest non-account card in the popover; the total is the number people
+    /// come for, and the card is still the way into the activity heatmap — the
+    /// only other entry point (`activityEntryCard`) appears solely when there's no
+    /// cost data at all, so this must not become a plain label.
     private func costCard(_ models: [ModelUsage]) -> some View {
         let total = models.reduce(0.0) { $0 + ($1.costUsd ?? 0) }
-        let rows = models.filter { ($0.costUsd ?? 0) >= 0.005 }.prefix(4)
         return Button(action: openHeatmap) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 7) {
-                    Text("💸").font(.system(size: 13))
-                    Text("Last 7 days")
-                        .font(PFont.display(14, .semibold))
-                        .foregroundStyle(Color.pfInk)
-                    if appState.costScanPartial {
-                        Text("partial")
-                            .font(PFont.body(10, .semibold))
-                            .foregroundStyle(Color.pfInkMuted)
-                    }
-                    Spacer()
-                    Text(Self.usd(total))
-                        .font(PFont.display(14, .bold))
-                        .foregroundStyle(Color.pfInk)
-                        .monospacedDigit()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .bold))
+            HStack(spacing: 7) {
+                Text("💸").font(.system(size: 13))
+                Text("Last 7 days")
+                    .font(PFont.display(14, .semibold))
+                    .foregroundStyle(Color.pfInk)
+                if appState.costScanPartial {
+                    Text("partial")
+                        .font(PFont.body(10, .semibold))
                         .foregroundStyle(Color.pfInkMuted)
                 }
-                ForEach(rows, id: \.name) { model in
-                    HStack {
-                        Text(model.displayName)
-                            .font(PFont.body(12, .semibold))
-                            .foregroundStyle(Color.pfInkMuted)
-                        Spacer()
-                        Text(Self.usd(model.costUsd ?? 0))
-                            .font(PFont.body(12, .semibold))
-                            .foregroundStyle(Color.pfInkMuted)
-                            .monospacedDigit()
-                    }
-                }
+                Spacer()
+                Text(Self.usd(total))
+                    .font(PFont.display(14, .bold))
+                    .foregroundStyle(Color.pfInk)
+                    .monospacedDigit()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.pfInkMuted)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 13)
@@ -509,45 +552,56 @@ struct PopoverView: View {
     private func cursorCard(_ usage: CursorUsage) -> some View {
         let band = EnergyBand(severity: usageThresholds.severity(for: usage.percentUsed))
         let tint: Color = band == .full ? .pfEnergyFull : band.color
+        let expanded = isExpanded(Self.cursorCardID)
         return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 7) {
-                Image("CursorLogo").resizable().scaledToFit().frame(width: 15, height: 15)
-                Text("Cursor")
-                    .font(PFont.display(14, .semibold))
-                    .foregroundStyle(Color.pfInk)
-                Spacer()
-                Text(usage.clampedPercent.map { "\(Int($0.rounded()))%" } ?? "—")
-                    .font(PFont.display(14, .bold))
-                    .foregroundStyle(band == .full ? Color.pfInk : tint)
-                    .monospacedDigit()
+            Button { toggleCard(Self.cursorCardID) } label: {
+                HStack(spacing: 7) {
+                    Image("CursorLogo").resizable().scaledToFit().frame(width: 15, height: 15)
+                    Text("Cursor")
+                        .font(PFont.display(14, .semibold))
+                        .foregroundStyle(Color.pfInk)
+                    disclosure(expanded)
+                    Spacer()
+                    Text(usage.clampedPercent.map { "\(Int($0.rounded()))%" } ?? "—")
+                        .font(PFont.display(14, .bold))
+                        .foregroundStyle(band == .full ? Color.pfInk : tint)
+                        .monospacedDigit()
+                }
+                .contentShape(Rectangle())
             }
-            if let planName = usage.displayPlanName {
-                HStack {
-                    Text("Current plan")
+            .buttonStyle(.plain)
+            .help(expanded ? "Hide Cursor details" : "Show Cursor details")
+            // The headline percent and bar stay visible when collapsed — that's
+            // what makes collapsing safe as the default.
+            EnergyBar(fraction: (usage.clampedPercent ?? 0) / 100, color: tint, height: 12)
+            if expanded {
+                if let planName = usage.displayPlanName {
+                    HStack {
+                        Text("Current plan")
+                            .font(PFont.body(11, .semibold))
+                            .foregroundStyle(Color.pfInkMuted)
+                        Spacer()
+                        Text(planName)
+                            .font(PFont.body(11, .bold))
+                            .foregroundStyle(Color.pfInk)
+                    }
+                }
+                if usage.clampedAutoPercent != nil || usage.clampedAPIPercent != nil {
+                    Divider().overlay(Color.pfCardBorder)
+                    VStack(spacing: 7) {
+                        if let percent = usage.clampedAutoPercent {
+                            cursorUsageRow("Auto + Composer", percent: percent)
+                        }
+                        if let percent = usage.clampedAPIPercent {
+                            cursorUsageRow("API", percent: percent)
+                        }
+                    }
+                }
+                if let subtitle = cursorSubtitle(usage) {
+                    Text(subtitle)
                         .font(PFont.body(11, .semibold))
                         .foregroundStyle(Color.pfInkMuted)
-                    Spacer()
-                    Text(planName)
-                        .font(PFont.body(11, .bold))
-                        .foregroundStyle(Color.pfInk)
                 }
-            }
-            EnergyBar(fraction: (usage.clampedPercent ?? 0) / 100, color: tint, height: 12)
-            if usage.clampedAutoPercent != nil || usage.clampedAPIPercent != nil {
-                Divider().overlay(Color.pfCardBorder)
-                VStack(spacing: 7) {
-                    if let percent = usage.clampedAutoPercent {
-                        cursorUsageRow("Auto + Composer", percent: percent)
-                    }
-                    if let percent = usage.clampedAPIPercent {
-                        cursorUsageRow("API", percent: percent)
-                    }
-                }
-            }
-            if let subtitle = cursorSubtitle(usage) {
-                Text(subtitle)
-                    .font(PFont.body(11, .semibold))
-                    .foregroundStyle(Color.pfInkMuted)
             }
         }
         .padding(.horizontal, 14)
@@ -606,49 +660,59 @@ struct PopoverView: View {
         let displayPercent = primary?.cardDisplayPercent
         let band = EnergyBand(severity: usageThresholds.severity(for: percentUsed))
         let tint: Color = band == .full ? .pfEnergyFull : band.color
+        let cardID = Self.codexCardID(account.id)
+        let expanded = isExpanded(cardID)
         return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 7) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(tint)
-                Text(account.displayName)
-                    .font(PFont.display(14, .semibold))
-                    .foregroundStyle(Color.pfInk)
-                Spacer()
-                Text(displayPercent.map { "\(Int($0.rounded()))%" } ?? "—")
-                    .font(PFont.display(14, .bold))
-                    .foregroundStyle(band == .full ? Color.pfInk : tint)
-                    .monospacedDigit()
-            }
-            if let planName = usage.displayPlanName {
-                HStack {
-                    Text("Current plan")
-                        .font(PFont.body(11, .semibold))
-                        .foregroundStyle(Color.pfInkMuted)
-                    Spacer()
-                    Text(planName)
-                        .font(PFont.body(11, .bold))
+            Button { toggleCard(cardID) } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(tint)
+                    Text(account.displayName)
+                        .font(PFont.display(14, .semibold))
                         .foregroundStyle(Color.pfInk)
+                    disclosure(expanded)
+                    Spacer()
+                    Text(displayPercent.map { "\(Int($0.rounded()))%" } ?? "—")
+                        .font(PFont.display(14, .bold))
+                        .foregroundStyle(band == .full ? Color.pfInk : tint)
+                        .monospacedDigit()
                 }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .help(expanded ? "Hide \(account.displayName) details" : "Show \(account.displayName) details")
             EnergyBar(fraction: (displayPercent ?? 0) / 100, color: tint, height: 12)
-            if let resets = usage.rateLimitResets {
-                Divider().overlay(Color.pfCardBorder)
-                VStack(spacing: 5) {
-                    codexDetailRow(
-                        "Usage resets",
-                        value: "\(resets.availableCount) available")
-                    if let expiration = resets.nearestExpiration(after: now) {
-                        codexDetailRow(
-                            "Next expiry",
-                            value: ResetPhrase.spoken(until: expiration, asOf: now) ?? "soon")
+            if expanded {
+                if let planName = usage.displayPlanName {
+                    HStack {
+                        Text("Current plan")
+                            .font(PFont.body(11, .semibold))
+                            .foregroundStyle(Color.pfInkMuted)
+                        Spacer()
+                        Text(planName)
+                            .font(PFont.body(11, .bold))
+                            .foregroundStyle(Color.pfInk)
                     }
                 }
-            }
-            if let subtitle = codexSubtitle(usage) {
-                Text(subtitle)
-                    .font(PFont.body(11, .semibold))
-                    .foregroundStyle(Color.pfInkMuted)
+                if let resets = usage.rateLimitResets {
+                    Divider().overlay(Color.pfCardBorder)
+                    VStack(spacing: 5) {
+                        codexDetailRow(
+                            "Usage resets",
+                            value: "\(resets.availableCount) available")
+                        if let expiration = resets.nearestExpiration(after: now) {
+                            codexDetailRow(
+                                "Next expiry",
+                                value: ResetPhrase.spoken(until: expiration, asOf: now) ?? "soon")
+                        }
+                    }
+                }
+                if let subtitle = codexSubtitle(usage) {
+                    Text(subtitle)
+                        .font(PFont.body(11, .semibold))
+                        .foregroundStyle(Color.pfInkMuted)
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -716,22 +780,29 @@ struct PopoverView: View {
     private func grokCard(_ usage: GrokUsage) -> some View {
         let band = EnergyBand(severity: usageThresholds.severity(for: usage.usedPercent))
         let tint: Color = band == .full ? .pfEnergyFull : band.color
+        let expanded = isExpanded(Self.grokCardID)
         return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 7) {
-                Image(systemName: "atom")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(tint)
-                Text("Grok")
-                    .font(PFont.display(14, .semibold))
-                    .foregroundStyle(Color.pfInk)
-                Spacer()
-                Text("\(Int(usage.cardDisplayPercent.rounded()))%")
-                    .font(PFont.display(14, .bold))
-                    .foregroundStyle(band == .full ? Color.pfInk : tint)
-                    .monospacedDigit()
+            Button { toggleCard(Self.grokCardID) } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "atom")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(tint)
+                    Text("Grok")
+                        .font(PFont.display(14, .semibold))
+                        .foregroundStyle(Color.pfInk)
+                    disclosure(expanded)
+                    Spacer()
+                    Text("\(Int(usage.cardDisplayPercent.rounded()))%")
+                        .font(PFont.display(14, .bold))
+                        .foregroundStyle(band == .full ? Color.pfInk : tint)
+                        .monospacedDigit()
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .help(expanded ? "Hide Grok details" : "Show Grok details")
             EnergyBar(fraction: usage.cardDisplayPercent / 100, color: tint, height: 12)
-            if let subtitle = grokSubtitle(usage) {
+            if expanded, let subtitle = grokSubtitle(usage) {
                 Text(subtitle)
                     .font(PFont.body(11, .semibold))
                     .foregroundStyle(Color.pfInkMuted)
@@ -933,79 +1004,6 @@ struct PopoverView: View {
 
     // MARK: - Footer
 
-    private var footerBar: some View {
-        HStack(spacing: 9) {
-            if needsOnboarding {
-                Spacer()
-                squareButton("gearshape.fill", help: "Settings") {
-                    openSettingsAndCompleteOnboarding()
-                }
-            } else {
-                if let version = appState.snapshot?.source.cliVersion {
-                    versionLink(version)
-                }
-                Spacer(minLength: 6)
-
-                squareButton(
-                    appState.isActive ? "pause.fill" : "play.fill",
-                    help: appState.isActive ? "Pause fetching" : "Resume fetching",
-                    tint: appState.isActive ? .pfInkMuted : .pfEnergyFull
-                ) {
-                    appState.setActive(!appState.isActive)
-                }
-                squareButton("gearshape.fill", help: "Settings") {
-                    openSettingsAndCompleteOnboarding()
-                }
-                squareButton("power", help: "Quit Claude Meter") {
-                    NSApplication.shared.terminate(nil)
-                }
-            }
-        }
-        .padding(.horizontal, 15)
-        .padding(.top, 4)
-        .padding(.bottom, 14)
-    }
-
-    /// Claude Code version (from the statusline payload), linking to the changelog.
-    /// Turns amber when a newer version is published, otherwise stays muted.
-    private func versionLink(_ version: String) -> some View {
-        let outdated = claudeCodeUpdateAvailable(current: version)
-        return Button {
-            if let url = URL(
-                string: "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md")
-            {
-                NSWorkspace.shared.open(url)
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text("Claude Code v\(version)")
-                    .font(PFont.body(11, .semibold))
-                // Glyph changes too, so "outdated" isn't signalled by color alone
-                // (colorblind / VoiceOver users get the cue without the amber).
-                Image(systemName: outdated ? "arrow.up.circle.fill" : "arrow.up.right")
-                    .font(.system(size: outdated ? 9 : 8, weight: .bold))
-            }
-            .foregroundStyle(outdated ? Color.warningTint : Color.pfInkMuted)
-        }
-        .buttonStyle(.plain)
-        .help(
-            outdated
-                ? "Update available\(appState.latestClaudeCodeVersion.map { " · v\($0)" } ?? "") — view changelog"
-                : "View Claude Code changelog")
-        .accessibilityLabel(
-            outdated
-                ? "Claude Code v\(version), update available\(appState.latestClaudeCodeVersion.map { ", latest v\($0)" } ?? "")"
-                : "Claude Code v\(version)")
-        .accessibilityHint("Opens the Claude Code changelog")
-    }
-
-    /// Whether the running Claude Code (`current`) is behind the latest published
-    /// version. False while the latest version is still unknown.
-    private func claudeCodeUpdateAvailable(current: String) -> Bool {
-        guard let latest = appState.latestClaudeCodeVersion else { return false }
-        return ClaudeCodeVersionCheck.isOutdated(current: current, latest: latest)
-    }
-
     private func squareButton(
         _ symbol: String, help: String, tint: Color = .pfInkMuted, action: @escaping () -> Void
     ) -> some View {
@@ -1020,45 +1018,6 @@ struct PopoverView: View {
         .help(help)
     }
 
-    /// Round refresh button in the header; spins while loading.
-    private struct HeaderRefreshButton: View {
-        @Environment(\.popoverIsVisible) private var popoverIsVisible
-        let isLoading: Bool
-        let isEnabled: Bool
-        let action: () -> Void
-
-        var body: some View {
-            Button(action: action) {
-                Group {
-                    if isLoading {
-                        // Background polls set isLoading while the popover is
-                        // hidden — don't spin the display link for nobody.
-                        TimelineView(.animation(paused: !popoverIsVisible)) { context in
-                            icon.rotationEffect(.degrees(Self.angle(at: context.date)))
-                        }
-                    } else {
-                        icon
-                    }
-                }
-                .frame(width: 28, height: 28)
-                .background(Circle().fill(Color.pfCard))
-                .overlay(Circle().strokeBorder(Color.pfPopoverBorder, lineWidth: 2))
-            }
-            .buttonStyle(.plain)
-            .help("Refresh")
-            .disabled(isLoading || !isEnabled)
-        }
-
-        private var icon: some View {
-            Image(systemName: "arrow.clockwise")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(Color.pfInkMuted)
-        }
-
-        private static func angle(at date: Date) -> Double {
-            date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1) * 360
-        }
-    }
 
     private var updatedText: String {
         let claudeAt =

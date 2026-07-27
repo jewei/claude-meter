@@ -251,10 +251,15 @@ struct RaisedButtonStyle: ButtonStyle {
 /// callers pass `nil` (no badge) for statusline-only accounts.
 struct PlanBadge: View {
     let plan: String
+    /// Show the plan exactly as its provider names it instead of normalizing to
+    /// Claude's tier vocabulary. Codex distinguishes "Pro 5X" from "Pro 20X" and
+    /// has tiers Claude doesn't (Plus, Go, Business) — collapsing those to "PRO"
+    /// would state something false about the account.
+    var verbatim: Bool = false
 
     var body: some View {
         let s = Self.style(for: plan)
-        Text(s.text)
+        Text(verbatim ? plan.uppercased() : s.text)
             .font(PFont.display(10, .bold))
             .foregroundStyle(s.fg)
             .padding(.horizontal, 8)
@@ -268,7 +273,10 @@ struct PlanBadge: View {
         if p.contains("max") { return (.pfPlanMaxFG, .pfPlanMaxBG, "MAX") }
         if p.contains("enterprise") { return (.pfPlanMaxFG, .pfPlanMaxBG, "ENTERPRISE") }
         if p.contains("team") { return (.pfPlanProFG, .pfPlanProBG, "TEAM") }
+        if p.contains("business") { return (.pfPlanProFG, .pfPlanProBG, "BUSINESS") }
         if p.contains("pro") { return (.pfPlanProFG, .pfPlanProBG, "PRO") }
+        // Codex tiers that have no Claude equivalent; paid, so they read as Pro.
+        if p.contains("plus") || p.contains("go") { return (.pfPlanProFG, .pfPlanProBG, "PLUS") }
         if p.contains("free") { return (.pfPlanFreeFG, .pfPlanFreeBG, "FREE") }
         return (.pfPlanFreeFG, .pfPlanFreeBG, plan.uppercased())
     }

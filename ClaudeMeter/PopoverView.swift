@@ -56,23 +56,18 @@ struct PopoverView: View {
         AppSettings.expandedProviderCards = expandedCards
     }
 
-    /// Codex's mark. Prefers a `CodexLogo` image asset when one is present in the
-    /// catalog — same pattern as `CursorLogo` — and falls back to a neutral code
-    /// glyph. Deliberately *not* severity-tinted: the percentage beside it already
-    /// carries that, and a red-tinted star read as an alert rather than a brand.
-    @ViewBuilder
+    /// Codex's mark. The asset is an even-odd SVG — the `>` and `—` are cutouts,
+    /// not white fill — so template rendering keeps them and the logo follows the
+    /// ink colour into dark mode. Deliberately *not* severity-tinted: the
+    /// percentage beside it already carries that, and a red-tinted glyph read as
+    /// an alert rather than a brand.
     private var codexMark: some View {
-        if NSImage(named: "CodexLogo") != nil {
-            Image("CodexLogo")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 15, height: 15)
-        } else {
-            Image(systemName: "chevron.left.forwardslash.chevron.right")
-                .font(.system(size: 11, weight: .black))
-                .foregroundStyle(Color.pfInk)
-                .frame(width: 15, height: 15)
-        }
+        Image("CodexLogo")
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .frame(width: 15, height: 15)
+            .foregroundStyle(Color.pfInk)
     }
 
     /// Disclosure chevron for a collapsible card header.
@@ -613,8 +608,11 @@ struct PopoverView: View {
                     Text("Cursor")
                         .font(PFont.display(14, .semibold))
                         .foregroundStyle(Color.pfInk)
+                    if let planName = usage.displayPlanName {
+                        PlanBadge(plan: planName, verbatim: true)
+                    }
                     disclosure(expanded)
-                    Spacer()
+                    Spacer(minLength: 4)
                     Text(usage.clampedPercent.map { "\(Int($0.rounded()))%" } ?? "—")
                         .font(PFont.display(14, .bold))
                         .foregroundStyle(band == .full ? Color.pfInk : tint)
@@ -624,21 +622,15 @@ struct PopoverView: View {
             }
             .buttonStyle(.plain)
             .help(expanded ? "Hide Cursor details" : "Show Cursor details")
-            // The headline percent and bar stay visible when collapsed — that's
-            // what makes collapsing safe as the default.
+            // Percent, bar and reset timing all stay visible when collapsed —
+            // that's what makes collapsing safe as the default.
             EnergyBar(fraction: (usage.clampedPercent ?? 0) / 100, color: tint, height: 12)
+            if let subtitle = cursorSubtitle(usage) {
+                Text(subtitle)
+                    .font(PFont.body(11, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+            }
             if expanded {
-                if let planName = usage.displayPlanName {
-                    HStack {
-                        Text("Current plan")
-                            .font(PFont.body(11, .semibold))
-                            .foregroundStyle(Color.pfInkMuted)
-                        Spacer()
-                        Text(planName)
-                            .font(PFont.body(11, .bold))
-                            .foregroundStyle(Color.pfInk)
-                    }
-                }
                 if usage.clampedAutoPercent != nil || usage.clampedAPIPercent != nil {
                     Divider().overlay(Color.pfCardBorder)
                     VStack(spacing: 7) {
@@ -649,11 +641,6 @@ struct PopoverView: View {
                             cursorUsageRow("API", percent: percent)
                         }
                     }
-                }
-                if let subtitle = cursorSubtitle(usage) {
-                    Text(subtitle)
-                        .font(PFont.body(11, .semibold))
-                        .foregroundStyle(Color.pfInkMuted)
                 }
             }
         }
@@ -722,8 +709,15 @@ struct PopoverView: View {
                     Text(account.displayName)
                         .font(PFont.display(14, .semibold))
                         .foregroundStyle(Color.pfInk)
+                        .lineLimit(1)
+                    // The plan the provider actually reports, beside the name the
+                    // user gave the account — so a card labelled "Codex Pro 5X"
+                    // that is really on Plus says so at a glance.
+                    if let planName = usage.displayPlanName {
+                        PlanBadge(plan: planName, verbatim: true)
+                    }
                     disclosure(expanded)
-                    Spacer()
+                    Spacer(minLength: 4)
                     Text(displayPercent.map { "\(Int($0.rounded()))%" } ?? "—")
                         .font(PFont.display(14, .bold))
                         .foregroundStyle(band == .full ? Color.pfInk : tint)
@@ -734,18 +728,14 @@ struct PopoverView: View {
             .buttonStyle(.plain)
             .help(expanded ? "Hide \(account.displayName) details" : "Show \(account.displayName) details")
             EnergyBar(fraction: (displayPercent ?? 0) / 100, color: tint, height: 12)
+            // Reset timing stays visible when collapsed — one line, and without it
+            // a red "93%" tells you you're nearly out but not when it comes back.
+            if let subtitle = codexSubtitle(usage) {
+                Text(subtitle)
+                    .font(PFont.body(11, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+            }
             if expanded {
-                if let planName = usage.displayPlanName {
-                    HStack {
-                        Text("Current plan")
-                            .font(PFont.body(11, .semibold))
-                            .foregroundStyle(Color.pfInkMuted)
-                        Spacer()
-                        Text(planName)
-                            .font(PFont.body(11, .bold))
-                            .foregroundStyle(Color.pfInk)
-                    }
-                }
                 if let resets = usage.rateLimitResets {
                     Divider().overlay(Color.pfCardBorder)
                     VStack(spacing: 5) {
@@ -758,11 +748,6 @@ struct PopoverView: View {
                                 value: ResetPhrase.spoken(until: expiration, asOf: now) ?? "soon")
                         }
                     }
-                }
-                if let subtitle = codexSubtitle(usage) {
-                    Text(subtitle)
-                        .font(PFont.body(11, .semibold))
-                        .foregroundStyle(Color.pfInkMuted)
                 }
             }
         }
@@ -853,7 +838,7 @@ struct PopoverView: View {
             .buttonStyle(.plain)
             .help(expanded ? "Hide Grok details" : "Show Grok details")
             EnergyBar(fraction: usage.cardDisplayPercent / 100, color: tint, height: 12)
-            if expanded, let subtitle = grokSubtitle(usage) {
+            if let subtitle = grokSubtitle(usage) {
                 Text(subtitle)
                     .font(PFont.body(11, .semibold))
                     .foregroundStyle(Color.pfInkMuted)

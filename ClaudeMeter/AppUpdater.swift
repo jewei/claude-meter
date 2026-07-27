@@ -93,11 +93,9 @@ final class AppUpdater {
                 // Keep the app activatable while our Settings window is open —
                 // dropping an LSUIElement app to .accessory with a visible window
                 // strands it without Cmd-Tab focus. Sparkle's own windows are
-                // closing at this point; match ours by title.
-                let settingsOpen = NSApp.windows.contains {
-                    $0.isVisible && $0.title == "Claude Meter — Settings"
-                }
-                if !settingsOpen { NSApp.setActivationPolicy(.accessory) }
+                // closing at this point; ours is found by title, via the single
+                // constant that also sets it (see SettingsWindowAccessor).
+                if !isSettingsWindowVisible() { NSApp.setActivationPolicy(.accessory) }
             }
         }
     }

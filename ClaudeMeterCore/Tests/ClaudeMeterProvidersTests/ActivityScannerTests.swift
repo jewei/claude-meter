@@ -177,3 +177,33 @@ struct ActivityScannerTests {
         #expect(map.total == 1)  // only the recent one
     }
 }
+
+@Suite("ActivityHeatmap shape")
+struct ActivityHeatmapShapeTests {
+    /// The grid view subscripts `counts[0..<7][0..<24]` directly and this
+    /// initializer is public, so a malformed grid would crash the popover rather
+    /// than degrade. Normalizing here makes that impossible.
+    @Test func normalizesRaggedInputToSevenByTwentyFour() {
+        let ragged = ActivityHeatmap(
+            counts: [[1, 2], [], Array(repeating: 9, count: 40)],
+            total: 3, isPartial: false, daysCovered: 1)
+
+        #expect(ragged.counts.count == 7)
+        #expect(ragged.counts.allSatisfy { $0.count == 24 })
+        // Present values survive, gaps are zero-filled, excess is dropped.
+        #expect(ragged.counts[0][0] == 1)
+        #expect(ragged.counts[0][1] == 2)
+        #expect(ragged.counts[0][2] == 0)
+        #expect(ragged.counts[1].allSatisfy { $0 == 0 })
+        #expect(ragged.counts[2][23] == 9)
+        #expect(ragged.counts[6].allSatisfy { $0 == 0 })
+    }
+
+    @Test func wellFormedGridIsUnchanged() {
+        var grid = Array(repeating: Array(repeating: 0, count: 24), count: 7)
+        grid[3][11] = 7
+        let map = ActivityHeatmap(counts: grid, total: 7, isPartial: false, daysCovered: 1)
+        #expect(map.counts == grid)
+        #expect(map.peak == 7)
+    }
+}

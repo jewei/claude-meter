@@ -90,10 +90,6 @@ final class AppState: ObservableObject {
     var grokError: String? { grokReading?.error }
     var grokLastPolledAt: Date? { grokReading?.lastPolledAt }
 
-    var primarySourceWarning: String? {
-        lastPollResult?.warnings.first { $0.field == "claude.ai API" }?.message
-    }
-
     /// Credential problem on the OAuth tier, when there is one the user should
     /// see. Only surfaced while OAuth is actually configured — the tier is
     /// skipped silently otherwise, and a warning would be noise.
@@ -573,11 +569,10 @@ final class AppState: ObservableObject {
                 await notificationEngine.pollFailed()
             }
 
-            if let apiWarning = result.warnings.first(where: { $0.field == "claude.ai API" }) {
-                lastError = apiWarning.message
-            } else {
-                lastError = nil
-            }
+            // A successful poll clears the error. (This used to also promote a
+            // "claude.ai API" parser warning into `lastError`; that tier was
+            // removed in 2026-06 and nothing emits the field any more.)
+            lastError = nil
         } catch {
             await serviceStatusTask
             guard configuration.generation == pipelineGeneration, canPoll else { return }

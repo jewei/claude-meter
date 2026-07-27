@@ -308,17 +308,16 @@ struct AccountRingCard: View {
                         .foregroundStyle(Color.pfInkMuted)
                         .lineLimit(1)
                 }
-                metricRow("5-hr", window: model.session, band: sBand, kind: .session)
-                metricRow("week", window: model.week, band: wBand, kind: .weekly)
+                metricRow("5-hr", window: model.session, band: sBand)
+                metricRow("week", window: model.week, band: wBand)
                 if let opus = model.opus {
                     let oBand = opus.energyBand(thresholds: thresholds, asOf: now)
-                    metricRow("opus", window: opus, band: oBand, kind: .weekly)
+                    metricRow("opus", window: opus, band: oBand)
                 }
                 ForEach(model.scoped) { scoped in
                     metricRow(
                         scoped.displayName.lowercased(), window: scoped.window,
-                        band: scoped.window.energyBand(thresholds: thresholds, asOf: now),
-                        kind: .weekly)
+                        band: scoped.window.energyBand(thresholds: thresholds, asOf: now))
                 }
             }
         }
@@ -335,7 +334,7 @@ struct AccountRingCard: View {
 
     @ViewBuilder
     private func metricRow(
-        _ label: String, window: LimitWindow, band: EnergyBand, kind: LimitWindowKind
+        _ label: String, window: LimitWindow, band: EnergyBand
     ) -> some View {
         HStack(spacing: 6) {
             EnergyDot(color: band.color)
@@ -346,7 +345,7 @@ struct AccountRingCard: View {
                 .font(PFont.display(11, .heavy))
                 .foregroundStyle(window.percentLeft(asOf: now) == nil ? Color.pfInkMuted : band.color)
                 .monospacedDigit()
-            if let detail = resetDetail(window, kind: kind) {
+            if let detail = resetDetail(window) {
                 Text("· \(detail)")
                     .font(PFont.body(11, .semibold))
                     .foregroundStyle(Color.pfInkMuted)
@@ -356,7 +355,9 @@ struct AccountRingCard: View {
         }
     }
 
-    private func resetDetail(_ window: LimitWindow, kind: LimitWindowKind) -> String? {
+    /// Ring rows show the bare phrase for every window kind — unlike the bar
+    /// card, which prefixes "Refills"/"Resets" and therefore does need the kind.
+    private func resetDetail(_ window: LimitWindow) -> String? {
         guard let resetsAt = window.resolved(asOf: now).resetsAt else { return nil }
         return ResetPhrase.spoken(until: resetsAt, asOf: now)
     }
@@ -511,6 +512,11 @@ struct HeroSummary {
         let lowest = models
             .filter { $0.band(thresholds, now) != .full && $0.band(thresholds, now) != .unknown }
             .min(by: { $0.minLeft(now) < $1.minLeft(now) })
+        // No account has a reading yet. Unknown accounts are excluded from both
+        // `fresh` and `lowest`, so without this the all-unknown case fell through
+        // to "All N accounts fresh" — asserting full quota on the exact evidence
+        // that says we know nothing, under a "Warming up" headline.
+        if fresh == 0 && lowest == nil { return "Warming up…" }
         if let low = lowest {
             let word = low.band(thresholds, now) == .low ? "low" : "nearly dry"
             let refill = low.soonestReset(now)
@@ -519,6 +525,8 @@ struct HeroSummary {
             let freshWord = fresh == 1 ? "1 fresh" : "\(fresh) fresh"
             return "\(freshWord) · \(low.label) \(word)\(refill)"
         }
+        // Reached only when every account read `.full`; anything unknown was
+        // caught above, so this can't overstate what we know.
         return "All \(models.count) accounts fresh 🎉"
     }
 

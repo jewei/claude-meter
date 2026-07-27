@@ -242,7 +242,15 @@ private func ringsBlock(_ snap: ClaudeUsageSnapshot, _ entry: ClaudeMeterEntry, 
     let usage = AppGroupConfig.progressionMode() == "used"
     let session = snap.limits.currentSession
     let week = snap.limits.currentWeekAllModels
-    let lefts = [percentLeft(session, asOf: now), percentLeft(week, asOf: now)].compactMap { $0 }
+    // Opus counts toward the headline number even though it has no ring of its
+    // own. It is frequently the binding limit on Max, and every other surface
+    // (menu-bar severity, `bindingDisplayPercent`) includes it — leaving it out
+    // let the centre read 55 while the Opus row directly below said 4%.
+    let lefts = [
+        percentLeft(session, asOf: now),
+        percentLeft(week, asOf: now),
+        snap.limits.currentWeekOpus.flatMap { percentLeft($0, asOf: now) },
+    ].compactMap { $0 }
     let center: String
     if let minLeft = lefts.min() {
         center = "\(Int((usage ? 100 - minLeft : minLeft).rounded()))"
@@ -321,10 +329,14 @@ private struct WidgetHeader: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Color.wLow)
             } else if showUpdated, let pollAt = entry.snapshot?.lastSuccessfulPollAt {
-                let diff = Int(entry.date.timeIntervalSince(pollAt))
-                Text(diff < 60 ? "Updated \(max(0, diff))s ago" : "Updated \(diff / 60)m ago")
+                // `.relative` ticks on its own. Computing the delta against
+                // `entry.date` froze it at render time, so a widget drawn as
+                // "Updated 4s ago" still said 4s a quarter-hour later — the
+                // timeline holds one entry for up to 15 minutes.
+                Text(pollAt, style: .relative)
                     .font(WFont.body(10, .semibold))
                     .foregroundStyle(Color.wInkMuted)
+                    .monospacedDigit()
             }
         }
     }

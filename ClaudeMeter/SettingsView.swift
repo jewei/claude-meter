@@ -66,16 +66,28 @@ struct SettingsView: View {
 }
 
 private struct SettingsWindowAccessor: NSViewRepresentable {
+    /// Also read by `AppUpdater`, which must not drop an LSUIElement app to
+    /// `.accessory` while this window is open (that strands it without Cmd-Tab).
+    /// It can only find the window by title, so the string lives here once
+    /// instead of being repeated at the match site.
+    static let windowTitle = "Claude Meter — Settings"
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async {
             view.window?.level = .floating
-            view.window?.title = "Claude Meter — Settings"
+            view.window?.title = Self.windowTitle
         }
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async { nsView.window?.title = "Claude Meter — Settings" }
+        DispatchQueue.main.async { nsView.window?.title = Self.windowTitle }
     }
+}
+
+/// Whether the Settings window is currently on screen.
+@MainActor
+func isSettingsWindowVisible() -> Bool {
+    NSApp.windows.contains { $0.isVisible && $0.title == SettingsWindowAccessor.windowTitle }
 }

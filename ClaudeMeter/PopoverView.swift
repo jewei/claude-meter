@@ -293,9 +293,7 @@ struct PopoverView: View {
 
     @ViewBuilder
     private func claudeNotices(_ snap: ClaudeUsageSnapshot) -> some View {
-        if let apiWarning = appState.primarySourceWarning {
-            noticeBanner(apiWarning, systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
-        } else if appState.lastError != nil {
+        if appState.lastError != nil {
             noticeBanner(pollErrorText, systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
         }
         // A dead Claude Code sign-in otherwise fails silently — every OAuth error

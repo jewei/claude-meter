@@ -17,7 +17,6 @@ struct DiagnosticsView: View {
                 warningsSection
             }
             .formStyle(.grouped)
-            .onAppear {}
 
             Divider()
 
@@ -77,7 +76,7 @@ struct DiagnosticsView: View {
                 LabeledContent("Codex mode", value: AppSettings.codexSourceMode.rawValue)
                 ForEach(appState.codexAccounts) { reading in
                     LabeledContent(
-                        reading.account.displayName,
+                        DiagnosticsSanitizer.sanitize(reading.account.displayName),
                         value: reading.usage?.source.rawValue ?? "Not available")
                 }
             }
@@ -113,10 +112,10 @@ struct DiagnosticsView: View {
             if AppSettings.codexSourceEnabled {
                 ForEach(appState.codexAccounts) { reading in
                     LabeledContent(
-                        "\(reading.account.displayName) poll",
+                        "\(DiagnosticsSanitizer.sanitize(reading.account.displayName)) poll",
                         value: reading.lastPolledAt.map { isoFormatter.string(from: $0) } ?? "Never")
                     if let err = reading.error {
-                        LabeledContent("\(reading.account.displayName) error") {
+                        LabeledContent("\(DiagnosticsSanitizer.sanitize(reading.account.displayName)) error") {
                             Text(DiagnosticsSanitizer.sanitize(err))
                                 .foregroundStyle(Color.cmCritical)
                                 .font(.system(.caption, design: .monospaced))
@@ -189,7 +188,6 @@ struct DiagnosticsView: View {
         let parserVersion = appState.snapshot?.parserVersion ?? ""
         if parserVersion.hasPrefix("statusline") { return "Statusline bridge" }
         if parserVersion.hasPrefix("oauth") { return "OAuth usage API" }
-        if parserVersion.hasPrefix("claude-ai") { return "claude.ai API" }
         return "Cached snapshot"
     }
 
@@ -226,7 +224,7 @@ struct DiagnosticsView: View {
             for reading in appState.codexAccounts {
                 let poll = reading.lastPolledAt.map { isoFormatter.string(from: $0) } ?? "Never"
                 lines += [
-                    "  Codex account: \(reading.account.displayName)",
+                    "  Codex account: \(DiagnosticsSanitizer.sanitize(reading.account.displayName))",
                     "    Home: \(DiagnosticsSanitizer.sanitize(reading.account.home.path))",
                     "    Poll: \(poll)",
                     "    Source: \(reading.usage?.source.rawValue ?? "None")",

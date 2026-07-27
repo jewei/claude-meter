@@ -275,8 +275,12 @@ struct PlanBadge: View {
         if p.contains("team") { return (.pfPlanProFG, .pfPlanProBG, "TEAM") }
         if p.contains("business") { return (.pfPlanProFG, .pfPlanProBG, "BUSINESS") }
         if p.contains("pro") { return (.pfPlanProFG, .pfPlanProBG, "PRO") }
-        // Codex tiers that have no Claude equivalent; paid, so they read as Pro.
-        if p.contains("plus") || p.contains("go") { return (.pfPlanProFG, .pfPlanProBG, "PLUS") }
+        // Codex tiers with no Claude equivalent; paid, so they take the Pro
+        // palette but keep their own label. `go` is matched exactly rather than
+        // by substring — "go" appears inside plenty of words, and plan strings
+        // can be arbitrary user-typed overrides (`AppGroupConfig.accountPlans`).
+        if p.contains("plus") { return (.pfPlanProFG, .pfPlanProBG, "PLUS") }
+        if p == "go" { return (.pfPlanProFG, .pfPlanProBG, "GO") }
         if p.contains("free") { return (.pfPlanFreeFG, .pfPlanFreeBG, "FREE") }
         return (.pfPlanFreeFG, .pfPlanFreeBG, plan.uppercased())
     }

@@ -18,8 +18,15 @@ public struct ActivityHeatmap: Sendable, Equatable {
     /// Distinct calendar days that had any activity (for a "data from Nd" label).
     public let daysCovered: Int
 
+    /// Normalizes `counts` to exactly 7×24, padding short rows/columns with zero
+    /// and dropping any excess. The grid view indexes `counts[0..<7][0..<24]`
+    /// directly, and this initializer is public — enforcing the shape here means a
+    /// malformed grid can't crash the popover.
     public init(counts: [[Int]], total: Int, isPartial: Bool, daysCovered: Int) {
-        self.counts = counts
+        self.counts = (0..<7).map { day in
+            let row = day < counts.count ? counts[day] : []
+            return (0..<24).map { hour in hour < row.count ? row[hour] : 0 }
+        }
         self.total = total
         self.isPartial = isPartial
         self.daysCovered = daysCovered

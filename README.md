@@ -5,7 +5,7 @@ session and weekly limits as playful, color-coded **energy rings**, across every
 account, with optional notifications.
 
 <p align="center">
-  <img src="assets/claude-meter-screenshot-2.8.jpg" alt="Claude Meter screenshot showing Claude and Cursor usage cards" width="600">
+  <img src="assets/claude-meter-screenshot-2.10.jpg" alt="Claude Meter popover showing two Claude accounts as energy rings, a 7-day cost summary, and collapsed Cursor and Codex cards" width="600">
 </p>
 
 ## Features

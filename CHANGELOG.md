@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The widget's headline number now accounts for the weekly Opus limit.** It was
+  computed from the session and all-models weekly windows only, so on a Max plan
+  the rings could read 55 while the Opus row right beneath said 4%.
+- **The popover no longer claims your accounts are full before it has data.**
+  With no readings yet it said "All 2 accounts fresh" under a "Warming up"
+  headline; it now says it's still warming up.
+- **Copy Sanitized Diagnostics** no longer includes Codex account display names
+  verbatim. The name is free text, so anyone who names an account after its email
+  was pasting that address into a report meant to be safe to share.
+- A Codex **Go** plan is labelled Go rather than Plus.
+- The widget's "updated" time ticks instead of freezing at whatever it read when
+  the widget was last redrawn.
+
 ## [2.10] - 2026-07-27
 
 ### Added

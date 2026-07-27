@@ -22,14 +22,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   token used to blank the menu-bar percentage and grey the status dot, even
   though Claude data was arriving normally. Cursor issues now stay on Cursor's
   own card, matching how the menu bar has always been documented to behave.
+- **Less background work while idle.** The widget no longer rebuilds its
+  timeline every minute when nothing has changed, the local cost cache writes to
+  disk far less often, and the Anthropic service-status and Cursor sign-in
+  checks are cached instead of repeating on every poll.
+
+### Removed
+
+- The unused usage-history recording. It sampled your limits every poll and
+  wrote them to disk, but nothing in the app ever displayed the data. Its file
+  is deleted automatically on first launch.
 
 ### Fixed
 
 - **Connecting Claude Code could leave the OAuth source permanently stuck.** If
   the stored token happened to be expired at the moment you pressed Connect,
   setup reported success but every later refresh failed, and the source stayed
-  dead until Claude Code refreshed its own credentials. The same fault could
-  appear after the app had been running for a while. Both paths are fixed.
+  dead until Claude Code next refreshed its own credentials. The same fault
+  could also appear after the app had been running for a while. Both paths are
+  fixed. If you are already stuck, this update prevents it recurring but cannot
+  revive the spent credential — run `claude login` once and the app picks up the
+  refreshed token automatically.
 - **The wrong account could hold the menu bar.** With two or more Claude Code
   windows open on one account, that account looked continuously active and
   outranked the account you were actually working in. The meter now tracks real
@@ -49,19 +62,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cursor credentials are read through the system Keychain API instead of a
   command-line helper, so the read can no longer trigger a blocking permission
   dialog.
-
-### Performance
-
-- The widget no longer rebuilds its timeline every minute when nothing has
-  changed, the local cost cache writes to disk far less often, and checks for
-  Anthropic's service status and Cursor's sign-in state are cached instead of
-  repeating on every poll. Less disk and network churn while idle.
-
-### Removed
-
-- The unused usage-history recording. It sampled your limits every poll and
-  wrote them to disk, but nothing in the app ever displayed the data. Its file
-  is deleted automatically on first launch.
 
 ## [2.8.1] - 2026-07-20
 

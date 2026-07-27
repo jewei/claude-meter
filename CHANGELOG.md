@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10] - 2026-07-27
+
 ### Added
 
 - **Claude Meter now tells you when your Claude Code sign-in has a problem.**
@@ -464,7 +466,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.9...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.10...HEAD
+[2.10]: https://github.com/jewei/claude-meter/compare/v2.9...v2.10
 [2.9]: https://github.com/jewei/claude-meter/compare/v2.8...v2.9
 [2.8.1]: https://github.com/jewei/claude-meter/compare/v2.8...v2.8.1
 [2.8]: https://github.com/jewei/claude-meter/compare/v2.7...v2.8

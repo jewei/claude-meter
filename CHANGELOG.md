@@ -11,6 +11,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Turning off the Statusline source now uninstalls its bridge.** Previously
+  the snippet stayed in every account's `settings.json` and Claude Code kept
+  writing session files indefinitely, with no way to undo it from the app.
+  Disabling the source now removes the snippet and clears the captured session
+  data; your own statusline command is preserved.
+- **A Cursor problem no longer affects the Claude reading.** An expired Cursor
+  token used to blank the menu-bar percentage and grey the status dot, even
+  though Claude data was arriving normally. Cursor issues now stay on Cursor's
+  own card, matching how the menu bar has always been documented to behave.
+
+### Fixed
+
+- **Connecting Claude Code could leave the OAuth source permanently stuck.** If
+  the stored token happened to be expired at the moment you pressed Connect,
+  setup reported success but every later refresh failed, and the source stayed
+  dead until Claude Code refreshed its own credentials. The same fault could
+  appear after the app had been running for a while. Both paths are fixed.
+- **The wrong account could hold the menu bar.** With two or more Claude Code
+  windows open on one account, that account looked continuously active and
+  outranked the account you were actually working in. The meter now tracks real
+  API activity per session.
+- **Codex fell back to its second source far too rarely.** When the Codex CLI
+  was installed but its app-server failed — a timeout, or a version that no
+  longer answers — the card showed an error instead of reading your usage
+  directly. It now falls back whenever the app-server can't answer.
+- **Cost estimates could silently understate spend.** If the live price list
+  omitted a model's cache rates, those tokens were priced at zero — and cache
+  traffic is the bulk of Claude Code usage. Missing rates now fall back to
+  Anthropic's standard ratios.
+- **Rate-limit backoff could end early**, letting the app retry sooner than the
+  API asked. `Retry-After` deadlines expressed as a date are now honored too.
+- A Claude account reached through a non-default config directory now keeps the
+  display name and plan you assigned it when there's no live session.
+- Cursor credentials are read through the system Keychain API instead of a
+  command-line helper, so the read can no longer trigger a blocking permission
+  dialog.
+
+### Performance
+
+- The widget no longer rebuilds its timeline every minute when nothing has
+  changed, the local cost cache writes to disk far less often, and checks for
+  Anthropic's service status and Cursor's sign-in state are cached instead of
+  repeating on every poll. Less disk and network churn while idle.
+
+### Removed
+
+- The unused usage-history recording. It sampled your limits every poll and
+  wrote them to disk, but nothing in the app ever displayed the data. Its file
+  is deleted automatically on first launch.
+
 ## [2.8.1] - 2026-07-20
 
 ### Fixed

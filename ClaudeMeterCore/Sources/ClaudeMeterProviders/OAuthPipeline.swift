@@ -66,7 +66,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         if creds.isExpired {
             guard OAuthRefreshGate.shouldAttempt(refreshToken: creds.refreshToken, now: now) else {
                 return try await fallbackResult(
-                    now: now, outcome: .skipped, reason: .refreshDeferred)
+                    now: now, outcome: .skipped,
+                    reason: OAuthRefreshGate.deferredReason(
+                        refreshToken: creds.refreshToken, now: now))
             }
             let refreshed: OAuthCredentials
             do {
@@ -106,7 +108,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             }
             guard OAuthRefreshGate.shouldAttempt(refreshToken: creds.refreshToken, now: now) else {
                 return try await fallbackResult(
-                    now: now, outcome: .skipped, reason: .refreshDeferred)
+                    now: now, outcome: .skipped,
+                    reason: OAuthRefreshGate.deferredReason(
+                        refreshToken: creds.refreshToken, now: now))
             }
             let refreshed: OAuthCredentials
             do {
@@ -689,13 +693,36 @@ enum OAuthRefreshGate {
     static let baseTransientBackoff: TimeInterval = 5 * 60
     static let maxTransientBackoff: TimeInterval = 6 * 60 * 60
 
-    /// Whether a refresh of `refreshToken` may be attempted as of `now`.
-    static func shouldAttempt(refreshToken: String, now: Date) -> Bool {
+    /// Why a refresh is (or isn't) allowed right now. The distinction matters to
+    /// the UI: a dead token needs the user to re-authenticate Claude Code, while a
+    /// transient backoff resolves on its own.
+    enum Availability: Equatable {
+        case allowed
+        /// This exact refresh token was rejected as `invalid_grant`. Only a new
+        /// stored token reopens the gate.
+        case tokenRejected
+        /// Exponential backoff after transient failures.
+        case backingOff
+    }
+
+    static func availability(refreshToken: String, now: Date) -> Availability {
         lock.lock()
         defer { lock.unlock() }
-        if deadRefreshToken == refreshToken { return false }
-        if let until = transientBlockedUntil, now < until { return false }
-        return true
+        if deadRefreshToken == refreshToken { return .tokenRejected }
+        if let until = transientBlockedUntil, now < until { return .backingOff }
+        return .allowed
+    }
+
+    /// Whether a refresh of `refreshToken` may be attempted as of `now`.
+    static func shouldAttempt(refreshToken: String, now: Date) -> Bool {
+        availability(refreshToken: refreshToken, now: now) == .allowed
+    }
+
+    /// The attempt reason to report when a refresh is skipped — so diagnostics and
+    /// the popover can distinguish "sign-in is dead" from "we're backing off".
+    static func deferredReason(refreshToken: String, now: Date) -> SourceAttempt.Reason {
+        availability(refreshToken: refreshToken, now: now) == .tokenRejected
+            ? .refreshRejected : .refreshDeferred
     }
 
     static func recordSuccess() {

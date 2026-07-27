@@ -69,7 +69,7 @@ public enum JournalReader {
         f.formatOptions = [.withInternetDateTime]
         return f
     }()
-    private nonisolated(unsafe) static let legacyTimestampFormatters: [DateFormatter] = {
+    private static let legacyTimestampFormatters: [DateFormatter] = {
         [
             "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
             "yyyy-MM-dd'T'HH:mm:ssZ",
@@ -83,7 +83,7 @@ public enum JournalReader {
             return f
         }
     }()
-    private nonisolated(unsafe) static let dayFormatter: DateFormatter = {
+    private static let dayFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
         f.locale = Locale(identifier: "en_US_POSIX")

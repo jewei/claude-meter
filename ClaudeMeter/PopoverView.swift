@@ -195,6 +195,16 @@ struct PopoverView: View {
         } else if appState.lastError != nil {
             noticeBanner(pollErrorText, systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
         }
+        // A dead Claude Code sign-in otherwise fails silently — every OAuth error
+        // falls through to the next source, so the numbers just quietly stop
+        // moving and the cause is visible only in Diagnostics.
+        if let issue = appState.oauthCredentialIssue {
+            noticeBanner(
+                issue.displayText,
+                systemImage: issue.needsUserAction
+                    ? "key.slash.fill" : "clock.arrow.circlepath",
+                tint: issue.needsUserAction ? .pfEnergyLow : .pfInkMuted)
+        }
         if appState.isStale {
             noticeBanner("Data may be stale", systemImage: "clock.fill", tint: .pfInkMuted)
         }

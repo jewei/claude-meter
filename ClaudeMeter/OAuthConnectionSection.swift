@@ -15,7 +15,9 @@ private enum OAuthSetupState: Equatable {
 }
 
 struct OAuthConnectionSection: View {
-    let appState: AppState
+    /// Observed, not a plain `let`: the credential notice below is driven by
+    /// `lastPollResult`, so this view has to re-render when a poll lands.
+    @ObservedObject var appState: AppState
 
     @AppStorage(AppSettings.oauthSourceEnabledKey) private var oauthSourceEnabled = true
     @AppStorage(AppSettings.oauthModeKey) private var oauthMode = ""
@@ -84,6 +86,20 @@ struct OAuthConnectionSection: View {
             }
 
         case .connectedAuto, .connectedManual:
+            // `state` is set when the user connects and never revisited, so a
+            // credential that dies later still reads "Connected". Surface the live
+            // poll result here too — this is the screen someone opens to fix it.
+            if let issue = appState.oauthCredentialIssue {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: issue.needsUserAction
+                        ? "exclamationmark.triangle.fill" : "clock.arrow.circlepath")
+                        .foregroundStyle(issue.needsUserAction ? .orange : .secondary)
+                    Text(issue.displayText)
+                        .font(.caption)
+                        .foregroundStyle(issue.needsUserAction ? .primary : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             if isConnected {
                 Button {
                     reauthenticate()

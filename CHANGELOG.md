@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Claude Meter now tells you when your Claude Code sign-in has a problem.**
+  Previously an expired or revoked sign-in failed silently — the app fell back to
+  other sources and the numbers simply stopped moving, with the cause visible
+  only in Diagnostics. The popover and Settings now name the problem and the fix
+  (usually `claude login`). Transient states such as a locked Keychain are shown
+  in a quieter style, since they clear on their own.
+
 ## [2.9] - 2026-07-27
 
 ### Changed

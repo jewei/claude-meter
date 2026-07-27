@@ -209,6 +209,33 @@ struct OAuthPipelineTests {
                 .refreshToken == "R_theirs")
     }
 
+    /// A skipped refresh must say *why*. A rejected token needs `claude login`;
+    /// a transient backoff clears itself — the popover shows different copy and a
+    /// different tone for each, so collapsing both onto `refreshDeferred` would
+    /// tell a signed-out user to sit and wait.
+    @Test func deferredReasonDistinguishesDeadTokenFromBackoff() {
+        OAuthRefreshGate.resetForTesting()
+        defer { OAuthRefreshGate.resetForTesting() }
+        let now = Date()
+
+        // Open gate → nothing is deferred.
+        #expect(OAuthRefreshGate.availability(refreshToken: "R", now: now) == .allowed)
+
+        // Transient failure → backing off, and reported as such.
+        OAuthRefreshGate.recordTransient(now: now)
+        #expect(OAuthRefreshGate.availability(refreshToken: "R", now: now) == .backingOff)
+        #expect(OAuthRefreshGate.deferredReason(refreshToken: "R", now: now) == .refreshDeferred)
+
+        // Terminal rejection of that exact token → reported as rejected...
+        OAuthRefreshGate.recordTerminal(refreshToken: "R")
+        #expect(OAuthRefreshGate.availability(refreshToken: "R", now: now) == .tokenRejected)
+        #expect(OAuthRefreshGate.deferredReason(refreshToken: "R", now: now) == .refreshRejected)
+
+        // ...but a *different* stored token reopens the gate, which is how
+        // re-authenticating in Claude Code recovers with no manual reset.
+        #expect(OAuthRefreshGate.availability(refreshToken: "R2", now: now) == .allowed)
+    }
+
     @Test func rateLimitBackoffIsNeverShortened() {
         let now = Date()
         // A 429 asking for ten minutes.

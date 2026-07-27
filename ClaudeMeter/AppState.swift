@@ -94,6 +94,16 @@ final class AppState: ObservableObject {
         lastPollResult?.warnings.first { $0.field == "claude.ai API" }?.message
     }
 
+    /// Credential problem on the OAuth tier, when there is one the user should
+    /// see. Only surfaced while OAuth is actually configured — the tier is
+    /// skipped silently otherwise, and a warning would be noise.
+    var oauthCredentialIssue: OAuthCredentialIssue? {
+        guard AppSettings.oauthSourceEnabled,
+            let attempts = lastPollResult?.sourceAttempts
+        else { return nil }
+        return OAuthCredentialIssue.from(sourceAttempts: attempts)
+    }
+
     /// Per-account usage rows for accounts other than the active one (for the
     /// popover's multi-account section). Empty for the common single-account case.
     var otherAccounts: [AccountUsage] {

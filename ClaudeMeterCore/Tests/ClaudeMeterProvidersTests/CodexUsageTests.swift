@@ -250,6 +250,45 @@ struct CodexUsageTests {
         #expect(oauth.fetchCount == 1)
     }
 
+    /// The app-server is installed (so `isAvailable()` passes) but its RPC fails.
+    /// This is the common real-world failure — a codex build whose `app-server`
+    /// subcommand is missing or slow — and it must still reach the OAuth source,
+    /// which reads `auth.json` over HTTPS and is unaffected by the CLI.
+    @Test func providerAutoFallsBackWhenAppServerFailsMidFetch() async throws {
+        let appServer = StubCodexSource(
+            usage: Self.usage(source: .appServer),
+            availability: true,
+            fetchError: CodexUsageError.rpcTimedOut("initialize"))
+        let oauth = StubCodexSource(
+            usage: Self.usage(source: .directOAuth),
+            availability: true)
+        let provider = CodexUsageProvider(appServerSource: appServer, oauthSource: oauth)
+
+        let usage = try await provider.fetchUsage(mode: .auto)
+
+        #expect(usage.source == .directOAuth)
+        #expect(appServer.fetchCount == 1)
+        #expect(oauth.fetchCount == 1)
+    }
+
+    /// When the fallback can't help either, the *app-server's* error is what
+    /// surfaces — it names the actual problem the user can act on.
+    @Test func providerReportsAppServerErrorWhenOAuthAlsoFails() async {
+        let appServer = StubCodexSource(
+            usage: Self.usage(source: .appServer),
+            availability: true,
+            fetchError: CodexUsageError.rpcFailed("boom"))
+        let oauth = StubCodexSource(
+            usage: Self.usage(source: .directOAuth),
+            availability: false,
+            unavailableError: CodexOAuthCredentialsError.notFound)
+        let provider = CodexUsageProvider(appServerSource: appServer, oauthSource: oauth)
+
+        await #expect(throws: CodexUsageError.rpcFailed("boom")) {
+            try await provider.fetchUsage(mode: .auto)
+        }
+    }
+
     @Test func providerKeepsMostUsefulFailureWhenBothSourcesUnavailable() async {
         let appServer = StubCodexSource(
             usage: Self.usage(source: .appServer),
@@ -353,16 +392,21 @@ struct CodexUsageTests {
         let usage: CodexUsage
         let availability: Bool
         let unavailableError: Error
+        /// Simulates a source that is present but fails mid-fetch (RPC timeout,
+        /// malformed response, …) rather than one that reports itself unavailable.
+        let fetchError: Error?
         var fetchCount = 0
 
         init(
             usage: CodexUsage,
             availability: Bool,
-            unavailableError: Error = CodexUsageError.noUsageData)
+            unavailableError: Error = CodexUsageError.noUsageData,
+            fetchError: Error? = nil)
         {
             self.usage = usage
             self.availability = availability
             self.unavailableError = unavailableError
+            self.fetchError = fetchError
         }
 
         func isAvailable() async -> Bool {
@@ -372,6 +416,7 @@ struct CodexUsageTests {
         func fetchUsage(now _: Date) async throws -> CodexUsage {
             fetchCount += 1
             guard availability else { throw unavailableError }
+            if let fetchError { throw fetchError }
             return usage
         }
     }

@@ -64,8 +64,12 @@ struct ModelsDevPricingTests {
         let catalog = try #require(ModelsDevPricing.parseCatalog(from: data))
         #expect(catalog["claude-opus-4-5"]?.input == 5)
         #expect(catalog["claude-opus-4-5"]?.cacheWrite == 6.25)
-        // cache fields default to 0 when absent.
-        #expect(catalog["claude-haiku-4-5"]?.cacheRead == 0)
+        // Absent cache fields derive Anthropic's list conventions (read = 0.1×
+        // input, 5m write = 1.25× input) rather than defaulting to 0 — a catalog
+        // hit replaces the family rate outright, so a zero would silently erase
+        // the largest component of Claude Code cost.
+        #expect(catalog["claude-haiku-4-5"]?.cacheRead == 0.1)
+        #expect(catalog["claude-haiku-4-5"]?.cacheWrite == 1.25)
         // Zero-priced entries are dropped.
         #expect(catalog["free-model"] == nil)
     }

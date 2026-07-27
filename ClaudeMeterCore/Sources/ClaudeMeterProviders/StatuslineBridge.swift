@@ -121,29 +121,44 @@ public enum StatuslineBridge: Sendable {
         try uninstall(configDirs: [defaultConfigDir])
     }
 
-    /// Removes the bridge snippet from each config dir's `settings.json` and
-    /// deletes the per-session data directory.
-    public static func uninstall(configDirs: [URL]) throws {
+    /// Removes the bridge snippet from each config dir's `settings.json`, returning
+    /// whether anything changed. Idempotent: a second call over already-clean dirs
+    /// writes nothing and returns `false`, so this is safe to run on every reconcile.
+    ///
+    /// Touches only the given config dirs. Purging the captured session data is a
+    /// separate, explicit step (`purgeSessionData`) — exactly like `HookBridge`,
+    /// and for the same reason: it keeps this operation off the real
+    /// `~/.claude-meter` when called from tests.
+    @discardableResult
+    public static func uninstall(configDirs: [URL]) throws -> Bool {
         var firstError: Error?
+        var didChange = false
         for dir in configDirs {
             let settingsPath = dir.appendingPathComponent("settings.json")
             guard FileManager.default.fileExists(atPath: settingsPath.path) else { continue }
             do {
-                try uninstallOne(settingsPath: settingsPath)
+                if try uninstallOne(settingsPath: settingsPath) { didChange = true }
             } catch {
                 if firstError == nil { firstError = error }
             }
         }
-        try? FileManager.default.removeItem(at: sessionsDir)
-        try? FileManager.default.removeItem(at: statuslineFilePath)
         if let firstError { throw firstError }
+        return didChange
     }
 
-    private static func uninstallOne(settingsPath: URL) throws {
+    /// Deletes the captured session payloads. Call only from the app, after
+    /// `uninstall` reports that a snippet was actually removed.
+    public static func purgeSessionData() {
+        try? FileManager.default.removeItem(at: sessionsDir)
+        try? FileManager.default.removeItem(at: statuslineFilePath)
+    }
+
+    @discardableResult
+    private static func uninstallOne(settingsPath: URL) throws -> Bool {
         var settings = try readSettings(at: settingsPath)
         let currentCmd = statusLineCommand(in: settings)
         let restored = strippedOfAnyBridge(from: currentCmd)
-        guard restored != currentCmd else { return }
+        guard restored != currentCmd else { return false }
 
         if restored.isEmpty {
             settings.removeValue(forKey: "statusLine")
@@ -151,6 +166,7 @@ public enum StatuslineBridge: Sendable {
             setStatusLineCommand(restored, in: &settings)
         }
         try writeSettings(settings, at: settingsPath)
+        return true
     }
 
     // MARK: - Freshness check
@@ -249,6 +265,17 @@ public enum StatuslineBridge: Sendable {
         public let codeLinesRemoved: Int?
         public let cliVersion: String?
         public let capturedAt: Date
+        /// Order-independent fingerprint of *every* session file in this account:
+        /// each session's cost / API-duration / line counters, keyed by session id
+        /// and sorted. Drives active-account detection.
+        ///
+        /// The display fields above (`totalCostUsd`, `codeLines…`) come from
+        /// whichever file `mergePayloads` saw last, and the bridge rewrites every
+        /// open session's file once a second — so with two concurrent windows on one
+        /// account those values flip between polls with no real API activity. Using
+        /// them as the activity signal made such an account look perpetually active
+        /// and permanently win active-account selection over the one being typed in.
+        public let activityFingerprint: String
 
         public init(
             fiveHour: RateLimitWindow?,
@@ -264,7 +291,8 @@ public enum StatuslineBridge: Sendable {
             codeLinesAdded: Int?,
             codeLinesRemoved: Int?,
             cliVersion: String?,
-            capturedAt: Date
+            capturedAt: Date,
+            activityFingerprint: String? = nil
         ) {
             self.fiveHour = fiveHour
             self.sevenDay = sevenDay
@@ -280,6 +308,31 @@ public enum StatuslineBridge: Sendable {
             self.codeLinesRemoved = codeLinesRemoved
             self.cliVersion = cliVersion
             self.capturedAt = capturedAt
+            self.activityFingerprint =
+                activityFingerprint
+                ?? Self.sessionFingerprint(
+                    sessionId: sessionId, totalCostUsd: totalCostUsd,
+                    totalApiDurationMs: totalApiDurationMs, codeLinesAdded: codeLinesAdded,
+                    codeLinesRemoved: codeLinesRemoved)
+        }
+
+        /// One session's contribution to the account fingerprint. Fields that only
+        /// move on a real API call; stable while a session sits idle even as its
+        /// file is rewritten every second.
+        static func sessionFingerprint(
+            sessionId: String?,
+            totalCostUsd: Double?,
+            totalApiDurationMs: Double?,
+            codeLinesAdded: Int?,
+            codeLinesRemoved: Int?
+        ) -> String {
+            [
+                sessionId ?? "-",
+                totalCostUsd.map { "\($0)" } ?? "-",
+                totalApiDurationMs.map { "\($0)" } ?? "-",
+                codeLinesAdded.map { "\($0)" } ?? "-",
+                codeLinesRemoved.map { "\($0)" } ?? "-",
+            ].joined(separator: ",")
         }
     }
 
@@ -378,6 +431,10 @@ public enum StatuslineBridge: Sendable {
         let sevenDay = mostRecentWindow(payloads.compactMap(\.sevenDay))
         let sevenDayOpus = mostRecentWindow(payloads.compactMap(\.sevenDayOpus))
 
+        // Fingerprint every session, sorted, so the account's activity signal is
+        // independent of which file happened to be written most recently.
+        let fingerprint = payloads.map(\.activityFingerprint).sorted().joined(separator: ";")
+
         return StatuslinePayload(
             fiveHour: fiveHour,
             sevenDay: sevenDay,
@@ -392,7 +449,8 @@ public enum StatuslineBridge: Sendable {
             codeLinesAdded: base.codeLinesAdded,
             codeLinesRemoved: base.codeLinesRemoved,
             cliVersion: base.cliVersion,
-            capturedAt: base.capturedAt
+            capturedAt: base.capturedAt,
+            activityFingerprint: fingerprint
         )
     }
 

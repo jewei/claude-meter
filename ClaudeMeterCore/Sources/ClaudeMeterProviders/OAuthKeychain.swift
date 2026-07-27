@@ -289,7 +289,7 @@ public enum OAuthKeychain: Sendable {
             let attrs: [CFString: Any] = [
                 kSecValueData: data
             ]
-            let status = KeychainSecurityGateway.update(
+            let status = KeychainGateway.update(
                 query: query as CFDictionary, attributes: attrs as CFDictionary)
             if status == errSecSuccess { return true }
             if status == errSecItemNotFound {
@@ -298,7 +298,7 @@ public enum OAuthKeychain: Sendable {
                 // AfterFirstUnlock (not WhenUnlocked) so the item stays readable
                 // while the screen is locked — the poll loop runs across sleep/wake.
                 addQuery[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-                return KeychainSecurityGateway.add(query: addQuery as CFDictionary) == errSecSuccess
+                return KeychainGateway.add(query: addQuery as CFDictionary) == errSecSuccess
             }
             return false
         }
@@ -315,9 +315,9 @@ public enum OAuthKeychain: Sendable {
                 kSecReturnData: true,
                 kSecMatchLimit: kSecMatchLimitOne,
             ]
-            applyNoUI(to: &query)
+            KeychainGateway.applyNoUI(to: &query)
             var result: AnyObject?
-            let status = KeychainSecurityGateway.copyMatching(
+            let status = KeychainGateway.copyMatching(
                 query: query as CFDictionary, result: &result)
             return mapKeychainStatus(status, data: result as? Data)
         }
@@ -357,9 +357,9 @@ public enum OAuthKeychain: Sendable {
                 kSecReturnPersistentRef: true,
                 kSecMatchLimit: kSecMatchLimitAll,
             ]
-            applyNoUI(to: &query)
+            KeychainGateway.applyNoUI(to: &query)
             var result: AnyObject?
-            let status = KeychainSecurityGateway.copyMatching(
+            let status = KeychainGateway.copyMatching(
                 query: query as CFDictionary, result: &result)
             switch status {
             case errSecSuccess: break
@@ -397,9 +397,9 @@ public enum OAuthKeychain: Sendable {
                 kSecReturnPersistentRef: true,
                 kSecMatchLimit: kSecMatchLimitAll,
             ]
-            applyNoUI(to: &query)
+            KeychainGateway.applyNoUI(to: &query)
             var result: AnyObject?
-            let status = KeychainSecurityGateway.copyMatching(
+            let status = KeychainGateway.copyMatching(
                 query: query as CFDictionary, result: &result)
             switch status {
             case errSecSuccess: break
@@ -424,38 +424,12 @@ public enum OAuthKeychain: Sendable {
                 kSecValuePersistentRef: persistentRef,
                 kSecReturnData: true,
             ]
-            applyNoUI(to: &query)
+            KeychainGateway.applyNoUI(to: &query)
             var result: AnyObject?
-            let status = KeychainSecurityGateway.copyMatching(
+            let status = KeychainGateway.copyMatching(
                 query: query as CFDictionary, result: &result)
             return mapKeychainStatus(status, data: result as? Data)
         }
-
-        /// Attaches a non-interactive policy so a Keychain read can never surface an
-        /// Allow/Deny prompt. Critical because `Claude Code-credentials` is owned by
-        /// another app (Claude Code), where a bare read can prompt; with this a
-        /// locked/forbidden item returns `errSecInteractionNotAllowed` →
-        /// `.temporarilyUnavailable` cleanly.
-        private static func applyNoUI(to query: inout [CFString: Any]) {
-            let context = LAContext()
-            context.interactionNotAllowed = true
-            query[kSecUseAuthenticationContext] = context
-            // On macOS `interactionNotAllowed` alone can still surface the legacy
-            // prompt; the UI-fail policy is what actually suppresses it. Resolve the
-            // (deprecated) constant at runtime to avoid a compile-time deprecation.
-            query[kSecUseAuthenticationUI] = noUIFailPolicy as CFString
-        }
-
-        private static let noUIFailPolicy: String = {
-            let path = "/System/Library/Frameworks/Security.framework/Security"
-            guard let handle = dlopen(path, RTLD_NOW) else { return "u_AuthUIF" }
-            defer { dlclose(handle) }
-            guard let symbol = dlsym(handle, "kSecUseAuthenticationUIFail") else {
-                return "u_AuthUIF"
-            }
-            let ptr = symbol.assumingMemoryBound(to: CFString?.self)
-            return (ptr.pointee as String?) ?? "u_AuthUIF"
-        }()
 
         /// Pure mapping of a Keychain read status to a result (exposed for tests).
         static func mapKeychainStatus(_ status: OSStatus, data: Data?) -> KeychainReadResult<String>
@@ -483,46 +457,9 @@ public enum OAuthKeychain: Sendable {
                 kSecAttrService: service,
                 kSecAttrAccount: account,
             ]
-            _ = KeychainSecurityGateway.delete(query: query as CFDictionary)
+            _ = KeychainGateway.delete(query: query as CFDictionary)
         }
 
-        /// All live Security.framework mutations pass through this boundary. Test
-        /// processes fail closed unless explicitly opted in, preventing a unit test
-        /// from reading or changing the developer's real Keychain.
-        private enum KeychainSecurityGateway {
-            // Process-constant — cached so every SecItem call doesn't re-bridge the
-            // whole environment dictionary (repo convention, like cached formatters).
-            private static let allowsLiveAccess: Bool = {
-                let environment = ProcessInfo.processInfo.environment
-                if environment["CLAUDE_METER_ALLOW_LIVE_KEYCHAIN_TESTS"] == "1" { return true }
-                if environment["XCTestConfigurationFilePath"] != nil { return false }
-                if Bundle.main.bundleURL.pathExtension == "xctest" { return false }
-                if CommandLine.arguments.first?.contains(".xctest/") == true { return false }
-                return !ProcessInfo.processInfo.processName.lowercased().contains("xctest")
-            }()
-
-            static func copyMatching(query: CFDictionary, result: UnsafeMutablePointer<AnyObject?>)
-                -> OSStatus
-            {
-                guard allowsLiveAccess else { return errSecInteractionNotAllowed }
-                return SecItemCopyMatching(query, result)
-            }
-
-            static func update(query: CFDictionary, attributes: CFDictionary) -> OSStatus {
-                guard allowsLiveAccess else { return errSecInteractionNotAllowed }
-                return SecItemUpdate(query, attributes)
-            }
-
-            static func add(query: CFDictionary) -> OSStatus {
-                guard allowsLiveAccess else { return errSecInteractionNotAllowed }
-                return SecItemAdd(query, nil)
-            }
-
-            static func delete(query: CFDictionary) -> OSStatus {
-                guard allowsLiveAccess else { return errSecInteractionNotAllowed }
-                return SecItemDelete(query)
-            }
-        }
     #endif
 
     @discardableResult

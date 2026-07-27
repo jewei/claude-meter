@@ -881,9 +881,12 @@ final class AppState: ObservableObject {
         current: ClaudeUsageSnapshot
     ) -> Bool {
         guard let previous else { return true }
+        // Deliberately NOT comparing `lastSuccessfulPollAt`: on the statusline tier
+        // that's the bridge file's mtime, which the snippet advances every second,
+        // so including it made this always true and burned a WidgetKit timeline
+        // reload every poll (~1440/day) even when nothing on screen changed.
         return previous.limits != current.limits
             || previous.state.severity != current.state.severity
-            || previous.lastSuccessfulPollAt != current.lastSuccessfulPollAt
     }
 
     // MARK: - Pipeline factory
@@ -937,8 +940,16 @@ final class AppState: ObservableObject {
             guard !Task.isCancelled else { return }
             let dirs = accounts.map(\.configDir)
             do {
+                // Reconcile, don't just install: turning the source off must take the
+                // snippet back out of every settings.json, or Claude Code keeps
+                // writing session files forever with no in-app way to undo it.
+                // (Matches how `HookBridge.install` reconciles to the enabled set.)
                 if statuslineOn {
                     try StatuslineBridge.install(configDirs: dirs)
+                } else if try StatuslineBridge.uninstall(configDirs: dirs) {
+                    // Only on the reconcile that actually removed a snippet — the
+                    // purge is separate so `uninstall` stays off ~/.claude-meter.
+                    StatuslineBridge.purgeSessionData()
                 }
                 // Reconcile hooks on enabled accounts (install enabled events, remove
                 // the rest). Disabled accounts keep their snippet — like the

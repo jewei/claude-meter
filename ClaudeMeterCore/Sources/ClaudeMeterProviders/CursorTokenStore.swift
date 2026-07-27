@@ -23,8 +23,17 @@ public enum CursorTokenStore {
     }
 
     private static let sqlite3Path = "/usr/bin/sqlite3"
-    private static let securityPath = "/usr/bin/security"
     private static let processTimeoutSeconds: TimeInterval = 10
+
+    /// Memoized `detect()` result, keyed on the state DB's mtime + size.
+    ///
+    /// `detect()` runs on every Cursor poll (once a minute), and each call spawns
+    /// `sqlite3` against a `globalStorage/state.vscdb` that can be tens of MB.
+    /// Cursor's stored credentials only change when the user signs in or the app
+    /// rotates them — both of which touch the file — so the stamp is a sound key.
+    private static let cacheLock = NSLock()
+    private static nonisolated(unsafe) var cachedDetection:
+        (stamp: String, credentials: CursorCredentials?)?
 
     private static let stateKeys = [
         "cursorAuth/accessToken",
@@ -36,8 +45,47 @@ public enum CursorTokenStore {
     // MARK: - Detection
 
     /// Best-effort detection of Cursor credentials. Returns nil when Cursor isn't
-    /// installed / signed in.
+    /// installed / signed in. Memoized against the state DB's mtime + size so a
+    /// 60 s poll loop doesn't spawn `sqlite3` every cycle for unchanged data.
     public static func detect() -> CursorCredentials? {
+        let stamp = stateDBStamp()
+        if let stamp, let cached = readCachedDetection(stamp: stamp) { return cached }
+        let credentials = detectUncached()
+        if let stamp { storeCachedDetection(stamp: stamp, credentials: credentials) }
+        return credentials
+    }
+
+    /// Identity of the state DB's current contents; `nil` when it doesn't exist
+    /// (in which case we never cache — the Keychain fallback is the only source
+    /// and has no cheap change signal).
+    private static func stateDBStamp() -> String? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: stateDBPath),
+            let modDate = attrs[.modificationDate] as? Date
+        else { return nil }
+        let size = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
+        return "\(modDate.timeIntervalSince1970)|\(size)"
+    }
+
+    private static func readCachedDetection(stamp: String) -> CursorCredentials?? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        guard let cachedDetection, cachedDetection.stamp == stamp else { return nil }
+        return .some(cachedDetection.credentials)
+    }
+
+    private static func storeCachedDetection(stamp: String, credentials: CursorCredentials?) {
+        cacheLock.lock()
+        cachedDetection = (stamp, credentials)
+        cacheLock.unlock()
+    }
+
+    static func resetDetectionCacheForTesting() {
+        cacheLock.lock()
+        cachedDetection = nil
+        cacheLock.unlock()
+    }
+
+    private static func detectUncached() -> CursorCredentials? {
         let values = readStateValues(stateKeys)
         var access = values["cursorAuth/accessToken"]
         var refresh = values["cursorAuth/refreshToken"]
@@ -111,11 +159,17 @@ public enum CursorTokenStore {
         readStateValues([key])[key]
     }
 
+    /// Reads a Cursor-owned Keychain item through the shared no-UI gateway.
+    ///
+    /// Deliberately *not* `/usr/bin/security find-generic-password -w`: that is a
+    /// secret read with no non-interactive policy, so an item whose ACL doesn't
+    /// list this app raises the legacy Allow/Deny dialog and blocks the subprocess
+    /// until the user answers — and it sidesteps the fail-closed test gateway,
+    /// letting a unit test touch the developer's real login Keychain. Same policy
+    /// `OAuthKeychain` applies to Claude Code's items.
     private static func keychainValue(service: String) -> String? {
-        guard let output = run(securityPath, ["find-generic-password", "-s", service, "-w"]) else {
-            return nil
-        }
-        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value = KeychainGateway.readGenericPassword(service: service) else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : unquoteStoredValue(trimmed)
     }
 

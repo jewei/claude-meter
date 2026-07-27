@@ -334,14 +334,16 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
 
     /// Fields that tick on real API activity; stable while a session is idle (even
     /// as its file is rewritten every second). Any change marks the account active.
+    ///
+    /// Uses `activityFingerprint` — every session's counters, sorted — rather than
+    /// the merged payload's own cost/duration/line fields. Those come from
+    /// whichever session file was written last, which alternates between concurrent
+    /// windows on the same account every poll; keying activity off them made an
+    /// idle two-window account permanently outrank the one actually in use.
     static func activitySignature(_ p: StatuslineBridge.StatuslinePayload) -> String {
-        let cost: String = p.totalCostUsd.map { "\($0)" } ?? "-"
-        let api: String = p.totalApiDurationMs.map { "\($0)" } ?? "-"
         let five: String = (p.fiveHour?.usedPercentage).map { "\($0)" } ?? "-"
         let seven: String = (p.sevenDay?.usedPercentage).map { "\($0)" } ?? "-"
-        let added: String = p.codeLinesAdded.map { "\($0)" } ?? "-"
-        let removed: String = p.codeLinesRemoved.map { "\($0)" } ?? "-"
-        return [cost, api, five, seven, added, removed].joined(separator: "|")
+        return [p.activityFingerprint, five, seven].joined(separator: "|")
     }
 
     private func activeAccountKey(

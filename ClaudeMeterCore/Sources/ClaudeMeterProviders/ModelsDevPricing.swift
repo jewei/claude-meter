@@ -92,14 +92,27 @@ public enum ModelsDevPricing {
             guard let cost = model.cost, let input = cost.input, let output = cost.output,
                 input > 0, output > 0
             else { continue }
+            // Never default a missing cache rate to 0. A catalog hit *replaces* the
+            // family rate outright, and cache reads/writes dominate Claude Code
+            // token volume — so a models.dev entry that lists input/output but
+            // omits the cache fields would silently collapse that model's estimated
+            // spend with no warning. Derive Anthropic's list conventions instead
+            // (5m write = 1.25× input, read = 0.1× input), mirroring how
+            // `Rate.resolvedCacheWrite1h` derives the 1 h tier.
             rates[id.lowercased()] = ModelPricing.Rate(
                 input: input,
                 output: output,
-                cacheRead: cost.cacheRead ?? 0,
-                cacheWrite: cost.cacheWrite ?? 0
+                cacheRead: positive(cost.cacheRead) ?? input * 0.1,
+                cacheWrite: positive(cost.cacheWrite) ?? input * 1.25
             )
         }
         return isPlausible(rates) ? rates : nil
+    }
+
+    /// Treats an absent *or* zero rate as "not published" — upstream uses both.
+    private static func positive(_ value: Double?) -> Double? {
+        guard let value, value > 0 else { return nil }
+        return value
     }
 
     /// Guards against a malformed/partial upstream response replacing good prices.

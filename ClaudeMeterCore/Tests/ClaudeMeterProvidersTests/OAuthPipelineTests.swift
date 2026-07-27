@@ -164,6 +164,88 @@ struct OAuthPipelineTests {
         #expect(resolved?.accessToken == "source-access")
     }
 
+    /// The in-memory chain must survive its own access token expiring. After an
+    /// auto refresh the Keychain still holds the *consumed* refresh token; falling
+    /// back to it once the cache aged out produced `invalid_grant`, which
+    /// terminally gated the account until Claude Code rewrote the entry itself.
+    @Test func expiredCacheStillBeatsOlderExpiredKeychain() {
+        OAuthPipeline.clearCachedCredentials()
+        defer { OAuthPipeline.clearCachedCredentials() }
+
+        let now = Date()
+        // Keychain: the pre-refresh credential. Its refresh token was consumed.
+        let staleKeychain = OAuthCredentials(
+            accessToken: "old", refreshToken: "R_consumed",
+            expiresAt: now.addingTimeInterval(-7200))
+        // Cache: the rotated credential, whose access token has *also* now expired
+        // — but it carries the only refresh token Anthropic still honors.
+        let expiredCache = OAuthCredentials(
+            accessToken: "newer", refreshToken: "R_live",
+            expiresAt: now.addingTimeInterval(-60))
+        OAuthPipeline.setCachedCredentialsForTesting(expiredCache, oauthMode: "auto")
+
+        #expect(
+            OAuthPipeline.credentials(from: .found(staleKeychain), oauthMode: "auto")?
+                .refreshToken == "R_live")
+    }
+
+    /// The converse: once Claude Code refreshes its own entry, that credential is
+    /// newer than anything we cached and must win.
+    @Test func newerKeychainBeatsOlderCache() {
+        OAuthPipeline.clearCachedCredentials()
+        defer { OAuthPipeline.clearCachedCredentials() }
+
+        let now = Date()
+        let cached = OAuthCredentials(
+            accessToken: "ours", refreshToken: "R_ours",
+            expiresAt: now.addingTimeInterval(600))
+        let refreshedByClaudeCode = OAuthCredentials(
+            accessToken: "theirs", refreshToken: "R_theirs",
+            expiresAt: now.addingTimeInterval(3600))
+        OAuthPipeline.setCachedCredentialsForTesting(cached, oauthMode: "auto")
+
+        #expect(
+            OAuthPipeline.credentials(from: .found(refreshedByClaudeCode), oauthMode: "auto")?
+                .refreshToken == "R_theirs")
+    }
+
+    @Test func rateLimitBackoffIsNeverShortened() {
+        let now = Date()
+        // A 429 asking for ten minutes.
+        OAuthPipeline.recordRateLimit(retryAfter: now.addingTimeInterval(600), now: now)
+        // A second 429 with no header would default to 60 s — it must not win.
+        OAuthPipeline.recordRateLimit(retryAfter: nil, now: now)
+        #expect(OAuthPipeline.isRateLimited(now: now.addingTimeInterval(120)))
+
+        // A genuinely longer window still extends the block.
+        OAuthPipeline.recordRateLimit(retryAfter: now.addingTimeInterval(1800), now: now)
+        #expect(OAuthPipeline.isRateLimited(now: now.addingTimeInterval(900)))
+
+        // And an elapsed block clears.
+        #expect(!OAuthPipeline.isRateLimited(now: now.addingTimeInterval(3600)))
+    }
+
+    @Test func retryAfterParsesHTTPDate() throws {
+        let now = Date(timeIntervalSince1970: 784_111_777)  // 1994-11-06T08:49:37Z
+        let url = try #require(URL(string: "https://api.anthropic.com"))
+        let response = try #require(
+            HTTPURLResponse(
+                url: url, statusCode: 429, httpVersion: nil,
+                headerFields: ["Retry-After": "Sun, 06 Nov 1994 08:51:37 GMT"]))
+        let date = try #require(OAuthPipeline.retryAfterDate(from: response, now: now))
+        #expect(abs(date.timeIntervalSince(now) - 120) < 1)
+    }
+
+    @Test func retryAfterIgnoresPastHTTPDate() throws {
+        let now = Date(timeIntervalSince1970: 784_111_777)
+        let url = try #require(URL(string: "https://api.anthropic.com"))
+        let response = try #require(
+            HTTPURLResponse(
+                url: url, statusCode: 429, httpVersion: nil,
+                headerFields: ["Retry-After": "Sun, 06 Nov 1994 08:47:37 GMT"]))
+        #expect(OAuthPipeline.retryAfterDate(from: response, now: now) == nil)
+    }
+
     @Test func freshCacheBeatsExpiredKeychain() {
         OAuthPipeline.clearCachedCredentials()
         defer { OAuthPipeline.clearCachedCredentials() }

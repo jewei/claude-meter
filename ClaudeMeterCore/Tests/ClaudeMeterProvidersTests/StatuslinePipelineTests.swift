@@ -44,6 +44,73 @@ struct StatuslinePipelineDisplayWindowTests {
     }
 }
 
+@Suite("StatuslinePipeline.activitySignature")
+struct StatuslineActivitySignatureTests {
+    private func payload(
+        session: String, cost: Double, capturedAt: TimeInterval
+    ) -> StatuslineBridge.StatuslinePayload {
+        StatuslineBridge.StatuslinePayload(
+            fiveHour: StatuslineBridge.RateLimitWindow(usedPercentage: 30, resetsAt: nil),
+            sevenDay: StatuslineBridge.RateLimitWindow(usedPercentage: 40, resetsAt: nil),
+            sessionId: session, sessionName: nil, cwd: nil, modelId: nil,
+            modelDisplayName: nil, totalCostUsd: cost, totalApiDurationMs: cost * 100,
+            codeLinesAdded: 1, codeLinesRemoved: 0, cliVersion: nil,
+            capturedAt: Date(timeIntervalSince1970: capturedAt))
+    }
+
+    /// Two idle sessions on one account. The bridge rewrites both files every
+    /// second, so whichever is "newest" alternates between polls — and with it the
+    /// merged payload's `totalCostUsd`. The activity signature must not move,
+    /// otherwise the account looks perpetually active and permanently wins
+    /// active-account selection over the one actually being used.
+    @Test func signatureIsStableWhenTheMergeBaseFlips() throws {
+        let a = payload(session: "A", cost: 1.5, capturedAt: 100)
+        let b = payload(session: "B", cost: 9.9, capturedAt: 200)
+
+        let bNewest = try #require(StatuslineBridge.mergePayloads([a, b]))
+        let aNewest = try #require(
+            StatuslineBridge.mergePayloads([
+                payload(session: "A", cost: 1.5, capturedAt: 300), b,
+            ]))
+
+        // The display field genuinely differs (it comes from the newest file)...
+        #expect(bNewest.totalCostUsd == 9.9)
+        #expect(aNewest.totalCostUsd == 1.5)
+        // ...but the activity signal does not.
+        #expect(
+            StatuslinePipeline.activitySignature(bNewest)
+                == StatuslinePipeline.activitySignature(aNewest))
+    }
+
+    /// Real API activity in *any* session still moves the signature.
+    @Test func signatureMovesWhenASessionSpends() throws {
+        let before = try #require(
+            StatuslineBridge.mergePayloads([
+                payload(session: "A", cost: 1.5, capturedAt: 100),
+                payload(session: "B", cost: 9.9, capturedAt: 200),
+            ]))
+        let after = try #require(
+            StatuslineBridge.mergePayloads([
+                payload(session: "A", cost: 1.75, capturedAt: 100),
+                payload(session: "B", cost: 9.9, capturedAt: 200),
+            ]))
+        #expect(
+            StatuslinePipeline.activitySignature(before)
+                != StatuslinePipeline.activitySignature(after))
+    }
+
+    /// Ordering of the discovered files must not matter.
+    @Test func signatureIsOrderIndependent() throws {
+        let a = payload(session: "A", cost: 1.5, capturedAt: 100)
+        let b = payload(session: "B", cost: 9.9, capturedAt: 200)
+        let forward = try #require(StatuslineBridge.mergePayloads([a, b]))
+        let reversed = try #require(StatuslineBridge.mergePayloads([b, a]))
+        #expect(
+            StatuslinePipeline.activitySignature(forward)
+                == StatuslinePipeline.activitySignature(reversed))
+    }
+}
+
 @Suite("StatuslinePipeline.eligibleGroups")
 struct StatuslinePipelineEligibleGroupsTests {
     private func payload(five: Double?) -> StatuslineBridge.StatuslinePayload {

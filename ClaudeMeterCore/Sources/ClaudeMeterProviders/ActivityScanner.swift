@@ -219,8 +219,14 @@ public final class ActivityCache: @unchecked Sendable {
         let scan: FileScan
     }
 
+    /// LRU cap, mirroring `CostUsageCache`. Entries hold a bucket dictionary for
+    /// each file's whole history and are never invalidated by deletion, so without
+    /// a bound this grows for the life of a menu-bar process that runs for weeks.
+    static let maxEntries = 2048
+
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
+    private var accessOrder: [String] = []
 
     public init() {}
 
@@ -231,13 +237,24 @@ public final class ActivityCache: @unchecked Sendable {
             entry.modDate == modDate,
             entry.fileSize == fileSize
         else { return nil }
+        touchLocked(path)
         return entry.scan
     }
 
     func store(path: String, modDate: Date, fileSize: UInt64, scan: FileScan) {
         lock.lock()
+        defer { lock.unlock() }
         entries[path] = Entry(modDate: modDate, fileSize: fileSize, scan: scan)
-        lock.unlock()
+        touchLocked(path)
+        while accessOrder.count > Self.maxEntries, let oldest = accessOrder.first {
+            accessOrder.removeFirst()
+            entries.removeValue(forKey: oldest)
+        }
+    }
+
+    private func touchLocked(_ path: String) {
+        if let index = accessOrder.firstIndex(of: path) { accessOrder.remove(at: index) }
+        accessOrder.append(path)
     }
 }
 

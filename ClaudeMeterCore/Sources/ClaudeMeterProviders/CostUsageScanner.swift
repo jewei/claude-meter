@@ -73,8 +73,11 @@ public struct CostUsageScanner: Sendable {
         }
 
         // Persist the (possibly updated) per-file cache so the next launch resumes
-        // instead of re-parsing every transcript from scratch.
-        cache.flush()
+        // instead of re-parsing every transcript from scratch. Rate-limited: any
+        // active session dirties the cache every poll, and a flush re-encodes every
+        // resident entry — at the 2048-entry cap that was megabytes of atomic write
+        // per minute for a cache whose only job is to avoid a cold-start re-parse.
+        cache.flushIfDue(now: now)
         return aggregate(byDayModel, isPartial: isPartial)
     }
 
@@ -506,6 +509,7 @@ public final class CostUsageCache: @unchecked Sendable {
     private var accessOrder: [String] = []
     private var didLoad: Bool
     private var dirty = false
+    private var lastFlushAt: Date?
 
     /// In-memory only (used by tests); no disk I/O. Use `shared` for the persisted cache.
     public init() {
@@ -555,12 +559,29 @@ public final class CostUsageCache: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Minimum wall-clock gap between disk flushes. Losing up to this much cache
+    /// progress to a crash costs one incremental re-parse, which is cheap; writing
+    /// the whole cache every 60 s poll is not.
+    static let minFlushInterval: TimeInterval = 10 * 60
+
     /// Writes the cache to disk if anything changed since the last flush.
     func flush() {
         lock.lock()
         defer { lock.unlock() }
         guard dirty, let url = persistenceURL else { return }
         persistLocked(to: url)
+        dirty = false
+    }
+
+    /// Flushes at most once per `minFlushInterval`. The first flush of a process
+    /// always goes through, so a short-lived run still persists its work.
+    func flushIfDue(now: Date) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard dirty, let url = persistenceURL else { return }
+        if let last = lastFlushAt, now.timeIntervalSince(last) < Self.minFlushInterval { return }
+        persistLocked(to: url)
+        lastFlushAt = now
         dirty = false
     }
 

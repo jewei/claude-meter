@@ -112,6 +112,10 @@ final class CodexAppServerClient: @unchecked Sendable {
     private let stderrPipe = Pipe()
     private let stdoutLineStream: AsyncStream<Data>
     private let stdoutLineContinuation: AsyncStream<Data>.Continuation
+    /// Guards `nextID`. The class is `@unchecked Sendable` and `request` is async,
+    /// so nothing stops two overlapping calls; sharing an id would let the response
+    /// matcher hand one caller the other's payload.
+    private let idLock = NSLock()
     private var nextID = 1
     private let startupTimeout: TimeInterval
     private let requestTimeout: TimeInterval
@@ -204,8 +208,7 @@ final class CodexAppServerClient: @unchecked Sendable {
         params: [String: Any] = [:],
         timeout: TimeInterval
     ) async throws -> [String: Any] {
-        let id = nextID
-        nextID += 1
+        let id = claimRequestID()
         try sendPayload(["id": id, "method": method, "params": params])
         let wrapped = try await withTimeout(seconds: timeout, method: method) {
             while true {
@@ -241,6 +244,14 @@ final class CodexAppServerClient: @unchecked Sendable {
             group.cancelAll()
             return result
         }
+    }
+
+    private func claimRequestID() -> Int {
+        idLock.lock()
+        defer { idLock.unlock() }
+        let id = nextID
+        nextID += 1
+        return id
     }
 
     private func sendNotification(method: String) throws {

@@ -242,7 +242,8 @@ struct OAuthConnectionSection: View {
                 return
             }
             do {
-                let (session, week) = try await OAuthPipeline.verify(credentials: credentials)
+                let (session, week) = try await OAuthPipeline.verify(
+                    credentials: credentials, oauthMode: "auto")
                 oauthSourceEnabled = true
                 oauthMode = "auto"
                 testResult = "Session \(Int(session))%  ·  Week \(Int(week))%"
@@ -266,7 +267,8 @@ struct OAuthConnectionSection: View {
                 guard let credentials = OAuthKeychain.loadManual() else {
                     throw URLError(.badServerResponse)
                 }
-                let (session, week) = try await OAuthPipeline.verify(credentials: credentials)
+                let (session, week) = try await OAuthPipeline.verify(
+                    credentials: credentials, oauthMode: "manual")
                 oauthSourceEnabled = true
                 oauthMode = "manual"
                 testResult = "Session \(Int(session))%  ·  Week \(Int(week))%"

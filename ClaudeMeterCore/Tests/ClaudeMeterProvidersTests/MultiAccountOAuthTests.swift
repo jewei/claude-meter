@@ -203,6 +203,46 @@ extension MultiAccountOAuthTests {
             accounts: accounts)
     }
 
+    /// A lone *non-default* account needs an entry so the popover keys the user's
+    /// name/plan overrides by its real account key. Without one, the popover's
+    /// single-account fallback labels everything `claude` and the overrides
+    /// silently don't apply.
+    @Test func mergeSurfacesLoneNonDefaultAccount() {
+        let snap = Self.statuslineSnapshot(accounts: nil)
+        let merged = MultiAccountOAuth.merge(
+            readings: [Self.reading(key: "claude-work", org: "org-1")], into: snap, now: Date())
+
+        let accounts = try? #require(merged.accounts)
+        #expect(accounts?.count == 1)
+        #expect(accounts?.first?.id == "claude-work")
+        #expect(accounts?.first?.isActive == true)
+        // Top-level fields stay untouched — the merge never rewrites them.
+        #expect(merged.limits.currentSession.percentUsed == 50)
+    }
+
+    /// A lone *default* account keeps `accounts == nil` so `current.json` stays
+    /// byte-identical to the historical single-account shape.
+    @Test func mergeLeavesLoneDefaultAccountUnlisted() {
+        let snap = Self.statuslineSnapshot(accounts: nil)
+        let merged = MultiAccountOAuth.merge(
+            readings: [Self.reading(key: "claude", org: "org-1")], into: snap, now: Date())
+        #expect(merged.accounts == nil)
+    }
+
+    /// `fetchAll` is public and maps 1:1 over a caller-supplied account list, so a
+    /// duplicate key must degrade rather than trap the app mid-poll.
+    @Test func mergeToleratesDuplicateAccountKeys() {
+        let snap = Self.statuslineSnapshot(accounts: nil)
+        let merged = MultiAccountOAuth.merge(
+            readings: [
+                Self.reading(key: "claude-work", org: "org-1", session: 11),
+                Self.reading(key: "claude-work", org: "org-2", session: 22),
+            ],
+            into: snap, now: Date())
+        #expect(merged.accounts?.count == 1)
+        #expect(merged.accounts?.first?.limits.currentSession.percentUsed == 11)
+    }
+
     @Test func mergeFillsExistingAccountGaps() {
         let existing = AccountUsage(
             id: "claude-work", label: "work",

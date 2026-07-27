@@ -63,6 +63,11 @@ extension MultiAccountOAuth {
     ) async -> [OAuthAccountReading] {
         var readings: [OAuthAccountReading] = []
         for account in accounts {
+            // Cooperative cancellation: `Timeout.run` abandons this task on expiry,
+            // and the blanket `catch { continue }` below would otherwise swallow the
+            // CancellationError and keep issuing bearer-carrying requests for every
+            // remaining account long after the caller stopped waiting.
+            if Task.isCancelled { break }
             if OAuthPipeline.isRateLimited(now: now) { break }
             let dirPath = OAuthKeychain.standardizedConfigDirPath(account.configDir.path)
             let isDefault = account.id == "claude"
@@ -145,7 +150,10 @@ extension MultiAccountOAuth {
         now: Date
     ) -> ClaudeUsageSnapshot {
         guard !readings.isEmpty else { return snapshot }
-        var byKey = Dictionary(uniqueKeysWithValues: readings.map { ($0.accountKey, $0) })
+        // `uniquingKeysWith`, not `uniqueKeysWithValues`: `fetchAll` is public and
+        // maps 1:1 over a caller-supplied account list, so a duplicate account key
+        // (two config dirs sharing a basename) would otherwise trap mid-poll.
+        var byKey = Dictionary(readings.map { ($0.accountKey, $0) }, uniquingKeysWith: { a, _ in a })
         var snap = snapshot
 
         if var accounts = snap.accounts, !accounts.isEmpty {
@@ -162,11 +170,27 @@ extension MultiAccountOAuth {
             return snap
         }
 
-        // No accounts list: only materialize one for a real multi-account picture
-        // (a lone default account keeps `current.json` byte-identical).
-        guard readings.count >= 2 else { return snap }
-        let activeKey = byKey["claude"] != nil ? "claude" : readings[0].accountKey
-        let accounts = readings.map { reading in
+        // No accounts list. Work from the deduped set — `AccountUsage` is
+        // `Identifiable`, so two entries sharing an id would break the popover's
+        // ForEach, and two readings for one key are one account anyway.
+        let deduped = byKey.values.sorted { $0.accountKey < $1.accountKey }
+
+        // A lone *non-default* account still needs an entry so the popover can key
+        // the user's name/plan overrides by its account key — without one the
+        // single-account fallback labels everything `claude` and the overrides
+        // silently don't apply. (Mirrors `StatuslinePipeline.buildSnapshot`.) A lone
+        // default `claude` account keeps `accounts == nil` so `current.json` stays
+        // byte-identical to the historical shape.
+        guard deduped.count >= 2 else {
+            if let only = deduped.first, only.accountKey != "claude" {
+                var account = newAccount(from: only, now: now)
+                account.isActive = true
+                snap.accounts = [account]
+            }
+            return snap
+        }
+        let activeKey = byKey["claude"] != nil ? "claude" : deduped[0].accountKey
+        let accounts = deduped.map { reading in
             var account = newAccount(from: reading, now: now)
             account.isActive = reading.accountKey == activeKey
             return account

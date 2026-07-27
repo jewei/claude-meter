@@ -29,6 +29,36 @@ struct GrokAuthTests {
         #expect(creds.expiresAt != nil)
     }
 
+    /// With several candidate entries the pick must be deterministic — selecting
+    /// by Dictionary order would silently swap the bearer (possibly the account)
+    /// between launches, since Swift seeds hash order per process.
+    @Test func picksDeterministicallyAmongMultipleEntries() throws {
+        let json = """
+            {"https://auth.x.ai::ccc":{"key":"third"},
+             "https://auth.x.ai::aaa":{"key":"first"},
+             "https://auth.x.ai::bbb":{"key":"second"}}
+            """
+        for _ in 0..<25 {
+            let url = try writeAuth(json)
+            let creds = try GrokAuthStore.load(
+                authPath: url, now: Date(timeIntervalSince1970: 1_783_140_000))
+            #expect(creds.bearer == "first")
+        }
+    }
+
+    @Test func fallbackEntryIsAlsoDeterministic() throws {
+        let json = """
+            {"https://zzz.example/scope":{"key":"zzz"},
+             "https://aaa.example/scope":{"key":"aaa"}}
+            """
+        for _ in 0..<25 {
+            let url = try writeAuth(json)
+            let creds = try GrokAuthStore.load(
+                authPath: url, now: Date(timeIntervalSince1970: 1_783_140_000))
+            #expect(creds.bearer == "aaa")
+        }
+    }
+
     /// The auth.x.ai OIDC entry (SuperGrok/X Premium) wins over the legacy
     /// accounts.x.ai session entry.
     @Test func prefersAuthXaiOverLegacyEntry() throws {

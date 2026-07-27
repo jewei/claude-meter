@@ -53,7 +53,7 @@ struct MenuBarLabel: View {
     private var statusBadge: some View {
         if !appState.isActive {
             EmptyView()
-        } else if appState.isStale {
+        } else if appState.claudeIsStale {
             dot(Color.secondary)
         } else if appState.severity == .overLimit {
             tappedOutBadge
@@ -113,7 +113,11 @@ struct MenuBarLabel: View {
     private var leftText: String? {
         // Hide the number when stale so a stale energy % isn't mistaken for fresh
         // (the gray status dot still shows). Paused hides it too.
-        guard appState.isActive, !appState.isStale else { return nil }
+        //
+        // `claudeIsStale`, not `isStale`: the latter ORs in Cursor staleness, so a
+        // Cursor token expiring would blank the *Claude* percentage and gray the dot
+        // indefinitely — contradicting the Claude-only rule this file documents.
+        guard appState.isActive, !appState.claudeIsStale else { return nil }
         _ = menuBarAccountPin  // re-render the label when the pinned account changes
         let now = Date()
         // Cursor is intentionally excluded — the menu bar reflects Claude only, and

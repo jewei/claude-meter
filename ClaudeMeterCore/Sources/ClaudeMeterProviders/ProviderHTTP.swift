@@ -58,15 +58,37 @@ public struct HTTPRetryPolicy: Sendable {
     }
 
     /// Backoff before the next attempt: `Retry-After` when present, else exponential.
-    func delay(attempt: Int, retryAfter: String?) -> TimeInterval {
-        if let raw = retryAfter?.trimmingCharacters(in: .whitespacesAndNewlines),
-            let seconds = TimeInterval(raw), seconds >= 0
-        {
+    func delay(attempt: Int, retryAfter: String?, now: Date = Date()) -> TimeInterval {
+        if let seconds = Self.retryAfterSeconds(retryAfter, now: now), seconds >= 0 {
             return min(seconds, maxDelay)
         }
         guard baseDelay > 0 else { return 0 }
         return min(baseDelay * pow(2, Double(max(0, attempt))), maxDelay)
     }
+
+    /// Seconds to wait per a `Retry-After` header, in either RFC 9110 form:
+    /// delta-seconds (`120`) or an HTTP-date (`Sun, 06 Nov 1994 08:49:37 GMT`).
+    /// Negative results are possible for a past HTTP-date; callers decide whether
+    /// to clamp or ignore. `nil` when absent or unparseable.
+    ///
+    /// The single parser for the whole module — `OAuthPipeline.retryAfterDate`
+    /// delegates here so the retry path and the 429 gate can't diverge.
+    static func retryAfterSeconds(_ raw: String?, now: Date = Date()) -> TimeInterval? {
+        guard let value = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty
+        else { return nil }
+        if let seconds = TimeInterval(value) { return seconds }
+        guard let date = httpDateFormatter.date(from: value) else { return nil }
+        return date.timeIntervalSince(now)
+    }
+
+    // Read-only after creation; see the formatter-caching note in `JournalReader`.
+    private static let httpDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE',' dd MMM yyyy HH':'mm':'ss zzz"
+        return formatter
+    }()
 }
 
 /// Shared transport backed by a redirect-guarded, cookie-less ephemeral session.

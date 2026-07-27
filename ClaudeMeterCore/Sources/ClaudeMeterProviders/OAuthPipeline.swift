@@ -177,14 +177,16 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     ) -> OAuthCredentials? {
         switch result {
         case .found(let creds):
-            // Prefer a non-expired in-memory credential over an expired Keychain one.
-            // After an (in-memory-only) auto refresh the Keychain still holds the old
-            // refresh token, which Anthropic may have rotated/invalidated — using it
-            // would fail and terminally gate. The cache carries the live token. When
-            // Claude Code refreshes the Keychain itself, that entry is non-expired and
-            // still wins.
-            if creds.isExpired,
-                let cached = OAuthSharedState.cachedCredentials(for: oauthMode), !cached.isExpired
+            // Prefer the in-memory credential whenever it is *newer* than the
+            // Keychain's. After an (in-memory-only) auto refresh the Keychain still
+            // holds the old refresh token, which Anthropic has rotated — using it
+            // fails with `invalid_grant` and terminally gates the account. Comparing
+            // expiry (rather than "is the cache still valid") keeps the refreshed
+            // chain alive once the cached *access* token itself expires: the cached
+            // credential still carries the only live refresh token. When Claude Code
+            // refreshes its own Keychain entry, that entry is newer and wins.
+            if let cached = OAuthSharedState.cachedCredentials(for: oauthMode),
+                cached.expiresAt > creds.expiresAt
             {
                 return cached
             }
@@ -209,12 +211,24 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     // MARK: - Settings verification
 
-    public static func verify(credentials: OAuthCredentials) async throws -> (
-        sessionPct: Double, weekPct: Double
-    ) {
+    /// Verifies credentials by calling the usage API once, refreshing first when
+    /// they're expired. `oauthMode` names the slot the rotated credential is cached
+    /// under — required, because Anthropic rotates the refresh token on every
+    /// refresh: dropping the rotated one here would leave the Keychain holding a
+    /// consumed token, so the very next poll would `invalid_grant` and terminally
+    /// gate the account moments after a "successful" Connect.
+    public static func verify(credentials: OAuthCredentials, oauthMode: String = "auto")
+        async throws -> (sessionPct: Double, weekPct: Double)
+    {
         var creds = credentials
         if creds.isExpired {
             creds = try await coalescedRefresh(creds)
+            OAuthRefreshGate.recordSuccess()
+            OAuthSharedState.setCachedCredentials(creds, for: oauthMode)
+            if oauthMode == "manual" {
+                OAuthKeychain.saveManual(
+                    accessToken: creds.accessToken, refreshToken: creds.refreshToken)
+            }
         }
         let (data, http) = try await transport.send(usageRequest(token: creds.accessToken))
         guard http.statusCode == 200 else {
@@ -443,21 +457,16 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     /// doesn't reject an unrecognized client. Version is best-effort insurance.
     static let userAgent = "claude-code/2.1.0"
 
-    /// Parses a `Retry-After` header (delta-seconds or HTTP-date). Returns the
-    /// absolute time to resume, or `nil` when absent/unparseable.
+    /// Absolute time to resume from a `Retry-After` header, or `nil` when absent,
+    /// unparseable, or in the past. Delegates to the transport's single parser so
+    /// the two `Retry-After` readers in this module can't drift apart.
     static func retryAfterDate(from response: HTTPURLResponse, now: Date) -> Date? {
         guard
-            let raw = (response.value(forHTTPHeaderField: "Retry-After"))?
-                .trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty
+            let seconds = HTTPRetryPolicy.retryAfterSeconds(
+                response.value(forHTTPHeaderField: "Retry-After"), now: now),
+            seconds >= 0
         else { return nil }
-        if let seconds = TimeInterval(raw), seconds >= 0 {
-            return now.addingTimeInterval(seconds)
-        }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "EEE',' dd MMM yyyy HH':'mm':'ss zzz"
-        return formatter.date(from: raw)
+        return now.addingTimeInterval(seconds)
     }
 
     // MARK: - Snapshot builder
@@ -630,8 +639,13 @@ private enum OAuthSharedState {
 
     static func recordRateLimit(retryAfter: Date?, now: Date) {
         lock.lock()
-        blockedUntil = retryAfter ?? now.addingTimeInterval(60)
-        lock.unlock()
+        defer { lock.unlock() }
+        let candidate = retryAfter ?? now.addingTimeInterval(60)
+        // Never shorten an active backoff. The gate is process-wide, so a second
+        // 429 carrying no `Retry-After` (default 60 s) must not undo a longer
+        // window an earlier response explicitly asked us to wait out.
+        if let existing = blockedUntil, existing > candidate { return }
+        blockedUntil = candidate
     }
 
     static func cachedCredentials(for oauthMode: String) -> OAuthCredentials? {

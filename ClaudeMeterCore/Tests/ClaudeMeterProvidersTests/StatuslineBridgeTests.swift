@@ -246,6 +246,39 @@ struct StatuslineBridgeTests {
         #expect(try command(in: dirB) == StatuslineBridge.bridgeSnippet + " | my.sh")
     }
 
+    /// Turning the statusline source off must take the snippet back out of every
+    /// config dir — otherwise Claude Code keeps writing session files forever with
+    /// no in-app way to undo it. Reconciling runs on every poll, so the second call
+    /// must be a no-op rather than repeated writes.
+    @Test func uninstallRestoresUserCommandAndIsIdempotent() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let owned = base.appendingPathComponent("owned", isDirectory: true)
+        let shared = base.appendingPathComponent("shared", isDirectory: true)
+        try fm.createDirectory(at: owned, withIntermediateDirectories: true)
+        try fm.createDirectory(at: shared, withIntermediateDirectories: true)
+        try Data(#"{"statusLine":{"type":"command","command":"my.sh"}}"#.utf8)
+            .write(to: shared.appendingPathComponent("settings.json"))
+        defer { try? fm.removeItem(at: base) }
+
+        try StatuslineBridge.install(configDirs: [owned, shared])
+        #expect(try StatuslineBridge.uninstall(configDirs: [owned, shared]))
+
+        func settings(in dir: URL) throws -> [String: Any] {
+            let data = try Data(contentsOf: dir.appendingPathComponent("settings.json"))
+            return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        }
+        // We owned the whole command in `owned`, so the key goes away entirely.
+        #expect(try settings(in: owned)["statusLine"] == nil)
+        // The user's own command survives in `shared`.
+        let restored = try #require(
+            (try settings(in: shared)["statusLine"] as? [String: Any])?["command"] as? String)
+        #expect(restored == "my.sh")
+
+        // Already clean → nothing to do, nothing written.
+        #expect(try StatuslineBridge.uninstall(configDirs: [owned, shared]) == false)
+    }
+
     @Test func installSkipsInvalidSettingsButStillInstallsOthers() throws {
         let fm = FileManager.default
         let base = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)

@@ -64,12 +64,18 @@ public enum GrokAuthStore {
 
     /// Top-level keys are OIDC scope identifiers. Prefer the auth.x.ai OIDC
     /// entry (SuperGrok/X Premium) over the legacy accounts.x.ai session.
+    ///
+    /// Candidates are selected in sorted key order, never Dictionary order: with
+    /// two `https://auth.x.ai::<client-id>` entries (or several unrecognized
+    /// scopes in the fallback) an unordered pick would silently choose a different
+    /// bearer — possibly a different account — on each launch.
     static func preferredEntry(in object: [String: Any]) -> [String: Any]? {
         let entries = object.compactMapValues { $0 as? [String: Any] }
-        if let oidc = entries.first(where: { $0.key.hasPrefix("https://auth.x.ai") })?.value {
-            return oidc
+        let keys = entries.keys.sorted()
+        if let oidcKey = keys.first(where: { $0.hasPrefix("https://auth.x.ai") }) {
+            return entries[oidcKey]
         }
         if let legacy = entries["https://accounts.x.ai/sign-in"] { return legacy }
-        return entries.values.first
+        return keys.first.flatMap { entries[$0] }
     }
 }

@@ -173,6 +173,8 @@ struct PopoverView: View {
                     .foregroundStyle(Color.pfInkMuted)
                     .monospacedDigit()
                     .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .help("Last updated")
             }
             // Settings and Quit moved up from the footer, which is now gone.
             // Refresh went with it: `popoverDidOpen()` already refreshes on every
@@ -1070,11 +1072,15 @@ struct PopoverView: View {
         else {
             return "Not yet polled"
         }
+        // No "Updated " prefix: the header is width-bound at 360pt once the title
+        // is held to one line, and the prefix was ~55pt that pushed this label into
+        // truncation ("Updated 12s a…"). A bare relative time is unambiguous beside
+        // a live meter, and the label carries a tooltip.
         let elapsed = Int(now.timeIntervalSince(polledAt))
-        if elapsed < 5 { return "Just updated" }
-        if elapsed < 60 { return "Updated \(elapsed)s ago" }
+        if elapsed < 5 { return "Just now" }
+        if elapsed < 60 { return "\(elapsed)s ago" }
         let mins = elapsed / 60
-        return "Updated \(mins)m ago"
+        return "\(mins)m ago"
     }
 
     // MARK: - Onboarding helpers

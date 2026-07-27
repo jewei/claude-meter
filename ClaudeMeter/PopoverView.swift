@@ -3,6 +3,14 @@ import ClaudeMeterCore
 import ClaudeMeterProviders
 import SwiftUI
 
+/// Carries the scrolling body's measured content height up to `PopoverView`.
+private struct ContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 struct PopoverView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.openSettings) private var openSettings
@@ -22,6 +30,8 @@ struct PopoverView: View {
     /// Expanded non-Claude provider cards, mirrored from `AppSettings` so toggling
     /// re-renders. Empty by default — see `AppSettings.expandedProviderCards`.
     @State private var expandedCards: Set<String> = AppSettings.expandedProviderCards
+    /// Measured height of the scrolling body's content — see the `.frame` on it.
+    @State private var contentHeight: CGFloat = 0
 
     private var usageThresholds: UsageThresholds {
         AppState.currentThresholds()
@@ -44,6 +54,25 @@ struct PopoverView: View {
             }
         }
         AppSettings.expandedProviderCards = expandedCards
+    }
+
+    /// Codex's mark. Prefers a `CodexLogo` image asset when one is present in the
+    /// catalog — same pattern as `CursorLogo` — and falls back to a neutral code
+    /// glyph. Deliberately *not* severity-tinted: the percentage beside it already
+    /// carries that, and a red-tinted star read as an alert rather than a brand.
+    @ViewBuilder
+    private var codexMark: some View {
+        if NSImage(named: "CodexLogo") != nil {
+            Image("CodexLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 15, height: 15)
+        } else {
+            Image(systemName: "chevron.left.forwardslash.chevron.right")
+                .font(.system(size: 11, weight: .black))
+                .foregroundStyle(Color.pfInk)
+                .frame(width: 15, height: 15)
+        }
     }
 
     /// Disclosure chevron for a collapsible card header.
@@ -85,9 +114,24 @@ struct PopoverView: View {
                         mainContent
                     }
                 }
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: ContentHeightKey.self, value: proxy.size.height)
+                    }
+                )
             }
             .scrollBounceBehavior(.basedOnSize)
-            .frame(maxHeight: Self.maxBodyHeight)
+            .onPreferenceChange(ContentHeightKey.self) { height in
+                contentHeight = height
+            }
+            // An explicit height, not just a cap. A ScrollView has no definite
+            // ideal height, so the menu-bar window — which sizes itself to its
+            // content — had nothing to size against and settled far shorter than
+            // the content or the cap. Measuring the content and pinning the frame
+            // makes the popover exactly as tall as it needs, up to the screen cap,
+            // and only then scrolls.
+            .frame(height: min(max(contentHeight, 120), Self.maxBodyHeight))
         }
         .background(Color.pfPopover)
         .environment(\.popoverIsVisible, isVisible)
@@ -120,24 +164,29 @@ struct PopoverView: View {
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(.white)
             }
+            // Never wrap: the title reads as the app's name, and "Claude / Meter"
+            // over two lines pushed the whole header to double height.
             Text("Claude Meter")
                 .font(PFont.display(18, .semibold))
                 .foregroundStyle(Color.pfInk)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
             Spacer(minLength: 6)
             if !needsOnboarding {
                 Text(updatedText)
                     .font(PFont.body(11, .semibold))
                     .foregroundStyle(Color.pfInkMuted)
                     .monospacedDigit()
+                    .lineLimit(1)
             }
             // Settings and Quit moved up from the footer, which is now gone.
             // Refresh went with it: `popoverDidOpen()` already refreshes on every
             // open, so the button only re-did what had just happened.
-            squareButton("gearshape.fill", help: "Settings") {
+            squareButton("gearshape.fill", help: "Settings", size: 28) {
                 openSettingsAndCompleteOnboarding()
             }
             if !needsOnboarding {
-                squareButton("power", help: "Quit Claude Meter") {
+                squareButton("power", help: "Quit Claude Meter", size: 28) {
                     NSApplication.shared.terminate(nil)
                 }
             }
@@ -148,11 +197,15 @@ struct PopoverView: View {
     }
 
     /// Cap for the scrolling body, derived from the screen so a 13" laptop and a
-    /// 27" display each show as much as they can. The popover hangs off the menu
-    /// bar, so leave room for it plus this view's own header.
+    /// 27" display each show as much as they can.
+    ///
+    /// `visibleFrame` already excludes the menu bar and Dock, so only a small
+    /// margin plus this view's own header is subtracted — the popover is allowed
+    /// to use essentially the full height available to it. `NSScreen.main` can be
+    /// nil for an `LSUIElement` app with no key window, hence the fallback.
     private static var maxBodyHeight: CGFloat {
-        let screen = NSScreen.main?.visibleFrame.height ?? 800
-        return max(320, screen - 140)
+        let screen = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame.height ?? 900
+        return max(560, screen - 72)
     }
 
     // MARK: - Main content
@@ -665,9 +718,7 @@ struct PopoverView: View {
         return VStack(alignment: .leading, spacing: 8) {
             Button { toggleCard(cardID) } label: {
                 HStack(spacing: 7) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(tint)
+                    codexMark
                     Text(account.displayName)
                         .font(PFont.display(14, .semibold))
                         .foregroundStyle(Color.pfInk)
@@ -1005,16 +1056,17 @@ struct PopoverView: View {
     // MARK: - Footer
 
     private func squareButton(
-        _ symbol: String, help: String, tint: Color = .pfInkMuted, action: @escaping () -> Void
+        _ symbol: String, help: String, tint: Color = .pfInkMuted, size: CGFloat = 40,
+        action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 15, weight: .bold))
+                .font(.system(size: size * 0.42, weight: .bold))
                 .foregroundStyle(tint)
-                .frame(width: 40, height: 40)
+                .frame(width: size, height: size)
         }
         .buttonStyle(.plain)
-        .chunkyCard(radius: 12)
+        .chunkyCard(radius: size * 0.3)
         .help(help)
     }
 

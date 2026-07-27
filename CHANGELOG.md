@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9] - 2026-07-27
+
 ### Changed
 
 - **Turning off the Statusline source now uninstalls its bridge.** Previously
@@ -426,7 +428,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.8.1...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.9...HEAD
+[2.9]: https://github.com/jewei/claude-meter/compare/v2.8...v2.9
 [2.8.1]: https://github.com/jewei/claude-meter/compare/v2.8...v2.8.1
 [2.8]: https://github.com/jewei/claude-meter/compare/v2.7...v2.8
 [2.7]: https://github.com/jewei/claude-meter/compare/v2.6...v2.7

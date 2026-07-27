@@ -19,6 +19,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only in Diagnostics. The popover and Settings now name the problem and the fix
   (usually `claude login`). Transient states such as a locked Keychain are shown
   in a quieter style, since they clear on their own.
+- **Cursor, Codex and Grok cards collapse.** Collapsed still shows the provider,
+  its plan, the percentage, the bar and when it resets — everything you open the
+  app to check — while the breakdown rows hide. What you expand is remembered.
+- **A proper Codex logo**, replacing the star that could look like a warning.
+
+### Changed
+
+- **The popover fits on a laptop screen.** It used to grow to whatever its
+  contents needed, so running two Claude accounts alongside Cursor and a couple
+  of Codex accounts ran off the bottom of a 13" display. It now sizes to its
+  content up to what the screen can show, and scrolls beyond that — so any
+  combination of accounts and providers fits.
+  - **Provider cards start collapsed after this update.** If you preferred
+    Cursor's or Codex's full breakdown, one click on the card reopens it and it
+    stays that way.
+  - **Last 7 days** is a single line with the total. It's still the way into the
+    activity heatmap.
+  - **The footer is gone.** Settings and Quit moved to the top of the popover.
+- **Each provider's plan now sits beside its name** as a badge, the way Claude
+  accounts already showed Max and Pro. Codex plans are shown exactly as Codex
+  reports them, so a Pro 5X account and a Plus account no longer both read as
+  "Pro" — if the name you gave an account disagrees with its actual plan, you can
+  now see that without expanding the card.
+- **Pause moved to Settings → Advanced**, and the Claude Code version moved to
+  **Settings → About**, where the "update available" flag still appears.
+- **The refresh button is gone.** Opening the popover already refreshes, so the
+  button only repeated what had just happened.
 
 ## [2.9] - 2026-07-27
 

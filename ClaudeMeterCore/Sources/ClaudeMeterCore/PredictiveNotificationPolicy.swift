@@ -18,10 +18,10 @@ public struct PredictiveNotificationTrigger: Equatable, Sendable {
         self.secondsUntilDepleted = secondsUntilDepleted
     }
 
-    /// Persisted dedup key. The reset epoch is bucketed (5 min, matching
-    /// `UsageHistoryStore.resetBucket`) so jittery `resets_at` values for the same
-    /// window — e.g. the statusline and OAuth tiers rounding differently — can't
-    /// re-fire the same forecast under a fresh key.
+    /// Persisted dedup key. The reset epoch is bucketed (see
+    /// `PredictiveNotificationTracker.resetBucket`) so jittery `resets_at` values
+    /// for the same window — e.g. the statusline and OAuth tiers rounding
+    /// differently — can't re-fire the same forecast under a fresh key.
     public var dedupKey: String {
         let encodedAccount = Base64URL.encode(Data(accountID.utf8))
         let epoch = PredictiveNotificationTracker.bucketedEpoch(resetAt)
@@ -54,8 +54,22 @@ public struct PredictiveNotificationTracker: Sendable {
         previousQualifiers.removeAll()
     }
 
+    /// Width of the reset-time bucket. The same window's `resets_at` arrives with
+    /// slightly different rounding depending on which tier reported it, so raw
+    /// timestamps would look like distinct cycles — wiping the two-poll streak, or
+    /// re-firing an already-delivered forecast under a fresh dedup key.
+    static let resetBucket: TimeInterval = 5 * 60
+
+    /// Rounds a reset timestamp to the nearest `resetBucket` so jittery values from
+    /// the same cycle compare equal.
+    static func bucketedReset(_ date: Date?) -> Date? {
+        guard let date else { return nil }
+        let secs = (date.timeIntervalSinceReferenceDate / resetBucket).rounded() * resetBucket
+        return Date(timeIntervalSinceReferenceDate: secs)
+    }
+
     static func bucketedEpoch(_ date: Date) -> Int {
-        Int((UsageHistoryStore.bucketedReset(date) ?? date).timeIntervalSince1970)
+        Int((bucketedReset(date) ?? date).timeIntervalSince1970)
     }
 
     public mutating func observe(

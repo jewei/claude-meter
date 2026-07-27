@@ -1028,6 +1028,14 @@ product behavior.
 - `history.sqlite`.
 - History retention setting (`historyRetentionDays`).
 - sqlite3 linker dependency.
+- `UsageHistoryStore` / `usage-history.jsonl` (removed 2026-07-27). A later,
+  lighter re-attempt at retained history: it sampled each account's windows on
+  every poll but no surface ever read it back, so it was pure maintenance cost
+  (JSONL format, 56-day retention, compaction, a 20k-sample cap). Its 5-minute
+  reset bucketing was load-bearing for predictive-notification dedup and moved to
+  `PredictiveNotificationTracker.bucketedReset`. `AppState` deletes the orphaned
+  file once on launch. Rebuilding "you're usually at X% by now" means restarting
+  collection from zero — accept that before re-adding a collector with no UI.
 
 ### 11.4 Removed legacy CLI stack
 
@@ -1036,7 +1044,7 @@ The following were removed from the package (previously kept for tests/previews 
 - `StatsCachePipeline`, `StatsCacheReader`, `SnapshotPipeline`
 - `ClaudeOutputParser`, `CommandRunner`, `CLIPathDetector`, `ANSIStripper`, `TokenParser`, `ResetTimeParser`
 
-`JournalReader` remains in production: `ClaudeAIPipeline` uses it for cosmetic message-count labels on the claude.ai tier.
+`JournalReader` remains in production, but as **statics only** — timestamp/day-string helpers and the `transcriptFiles` walk used by `CostUsageScanner`/`ActivityScanner`. Its message-count instance side went with `ClaudeAIPipeline` (§11 note above) and was deleted outright once nothing referenced it.
 
 ---
 

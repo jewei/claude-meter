@@ -70,6 +70,23 @@ struct PredictiveNotificationPolicyTests {
         #expect(key(reset) != key(reset.addingTimeInterval(3600)))
     }
 
+    /// Pins the bucket width itself. `bucketedReset` moved here when the unused
+    /// usage-history store was deleted, so this is now the only place it lives —
+    /// widening the bucket would start collapsing genuinely distinct reset cycles
+    /// onto one dedup key and silently swallow a real forecast.
+    @Test func resetBucketRoundsToFiveMinutes() {
+        // Exactly on a bucket boundary: 800_000_100 is a multiple of 300.
+        let base = Date(timeIntervalSinceReferenceDate: 800_000_100)
+        let bucketed = { PredictiveNotificationTracker.bucketedReset($0) }
+
+        // Anything inside ±2.5 min collapses onto the same bucket...
+        #expect(bucketed(base.addingTimeInterval(60)) == bucketed(base))
+        #expect(bucketed(base.addingTimeInterval(-60)) == bucketed(base))
+        // ...and the next bucket is distinct.
+        #expect(bucketed(base.addingTimeInterval(300)) != bucketed(base))
+        #expect(bucketed(nil) == nil)
+    }
+
     @Test func streakSurvivesResetJitterAcrossPolls() {
         var tracker = PredictiveNotificationTracker()
         let reset = now.addingTimeInterval(4 * 3600)

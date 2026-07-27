@@ -46,6 +46,7 @@ Running the app requires a provisioning profile (App Group entitlement).
 - `SPECS.md` — full specification
 - `AGENTS.md` — development notes
 - `DESIGN.md` — UI design system and tokens
+- `docs/agents/` — conventions for coding agents (issue tracker, triage labels, domain docs)
 
 ## License
 

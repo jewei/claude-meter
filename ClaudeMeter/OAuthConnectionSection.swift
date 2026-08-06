@@ -94,7 +94,7 @@ struct OAuthConnectionSection: View {
                     Image(systemName: issue.needsUserAction
                         ? "exclamationmark.triangle.fill" : "clock.arrow.circlepath")
                         .foregroundStyle(issue.needsUserAction ? .orange : .secondary)
-                    Text(issue.displayText)
+                    Text(issue.displayText(retryAt: appState.oauthRetryAt))
                         .font(.caption)
                         .foregroundStyle(issue.needsUserAction ? .primary : .secondary)
                         .fixedSize(horizontal: false, vertical: true)

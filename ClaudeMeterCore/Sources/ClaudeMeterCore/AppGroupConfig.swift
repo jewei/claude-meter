@@ -7,6 +7,10 @@ public enum AppGroupConfig {
     public static let warningThresholdKey = "warningThresholdPercent"
     public static let criticalThresholdKey = "criticalThresholdPercent"
     public static let staleAfterSecondsKey = "staleAfterSeconds"
+    /// How old a snapshot may get before the UI calls it stale, absent a user
+    /// override. Named because it is also a *ceiling* on how long any tier may
+    /// serve a cached snapshot — see `StatuslinePipeline.fallbackCooldown`.
+    public static let defaultStaleAfterSeconds: Double = 180
     public static let oauthModeKey = "oauthMode"
 
     /// Extra Claude config dirs (`CLAUDE_CONFIG_DIR` accounts) the user added by
@@ -164,7 +168,7 @@ public enum AppGroupConfig {
             forKey: staleAfterSecondsKey,
             shared: shared,
             defaults: defaults,
-            fallback: 180
+            fallback: defaultStaleAfterSeconds
         )
         return now.timeIntervalSince(polledAt) > threshold
     }

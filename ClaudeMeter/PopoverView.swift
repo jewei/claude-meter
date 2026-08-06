@@ -301,7 +301,7 @@ struct PopoverView: View {
         // moving and the cause is visible only in Diagnostics.
         if let issue = appState.oauthCredentialIssue {
             noticeBanner(
-                issue.displayText,
+                issue.displayText(retryAt: appState.oauthRetryAt, now: now),
                 systemImage: issue.needsUserAction
                     ? "key.slash.fill" : "clock.arrow.circlepath",
                 tint: issue.needsUserAction ? .pfEnergyLow : .pfInkMuted)

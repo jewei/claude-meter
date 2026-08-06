@@ -447,3 +447,36 @@ struct OAuthRefreshGateStateTests {
         }
     }
 }
+
+/// The 429 deadline the UI reads to render its countdown.
+@Suite("OAuth rate-limit deadline", .serialized)
+struct OAuthRateLimitDeadlineTests {
+    @Test func reportsAnActiveDeadlineAndNothingOtherwise() {
+        let now = Date()
+        OAuthPipeline.clearRateLimitForTesting()
+        defer { OAuthPipeline.clearRateLimitForTesting() }
+
+        #expect(OAuthPipeline.rateLimitedUntil(now: now) == nil)
+
+        let until = now.addingTimeInterval(600)
+        OAuthPipeline.recordRateLimit(retryAfter: until, now: now)
+        #expect(OAuthPipeline.rateLimitedUntil(now: now) == until)
+        // Past the deadline there is nothing to report.
+        #expect(OAuthPipeline.rateLimitedUntil(now: until.addingTimeInterval(1)) == nil)
+    }
+
+    /// Reading the deadline must not clear the gate — `isRateLimited` mutates as a
+    /// side effect, and a UI read happening to land after expiry shouldn't be what
+    /// reopens the pipeline's own bookkeeping.
+    @Test func readingTheDeadlineDoesNotMutateTheGate() {
+        let now = Date()
+        OAuthPipeline.clearRateLimitForTesting()
+        defer { OAuthPipeline.clearRateLimitForTesting() }
+
+        let until = now.addingTimeInterval(600)
+        OAuthPipeline.recordRateLimit(retryAfter: until, now: now)
+        _ = OAuthPipeline.rateLimitedUntil(now: until.addingTimeInterval(1))
+        // Still armed for a caller asking about the original window.
+        #expect(OAuthPipeline.isRateLimited(now: now))
+    }
+}

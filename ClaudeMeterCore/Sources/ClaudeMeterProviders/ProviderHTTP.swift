@@ -59,7 +59,7 @@ public struct HTTPRetryPolicy: Sendable {
 
     /// Backoff before the next attempt: `Retry-After` when present, else exponential.
     func delay(attempt: Int, retryAfter: String?, now: Date = Date()) -> TimeInterval {
-        if let seconds = Self.retryAfterSeconds(retryAfter, now: now), seconds >= 0 {
+        if let seconds = Self.retryAfterSeconds(retryAfter, now: now) {
             return min(seconds, maxDelay)
         }
         guard baseDelay > 0 else { return 0 }
@@ -68,17 +68,24 @@ public struct HTTPRetryPolicy: Sendable {
 
     /// Seconds to wait per a `Retry-After` header, in either RFC 9110 form:
     /// delta-seconds (`120`) or an HTTP-date (`Sun, 06 Nov 1994 08:49:37 GMT`).
-    /// Negative results are possible for a past HTTP-date; callers decide whether
-    /// to clamp or ignore. `nil` when absent or unparseable.
+    /// `nil` when absent, unparseable, **or non-positive** — every caller wants
+    /// "no usable directive, fall back to my own default" in that case.
+    ///
+    /// Rejecting `<= 0` is load-bearing, not tidiness: `/api/oauth/usage` has been
+    /// observed returning `Retry-After: 0` while continuing to 429. Taken at face
+    /// value that means "no backoff" — it would open `OAuthSharedState`'s gate
+    /// immediately (`blockedUntil = now`) instead of the intended 60 s, and turn a
+    /// `.transient` retry into a tight loop. A past HTTP-date is the same story.
     ///
     /// The single parser for the whole module — `OAuthPipeline.retryAfterDate`
     /// delegates here so the retry path and the 429 gate can't diverge.
     static func retryAfterSeconds(_ raw: String?, now: Date = Date()) -> TimeInterval? {
         guard let value = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty
         else { return nil }
-        if let seconds = TimeInterval(value) { return seconds }
+        if let seconds = TimeInterval(value) { return seconds > 0 ? seconds : nil }
         guard let date = httpDateFormatter.date(from: value) else { return nil }
-        return date.timeIntervalSince(now)
+        let delta = date.timeIntervalSince(now)
+        return delta > 0 ? delta : nil
     }
 
     // Read-only after creation; see the formatter-caching note in `JournalReader`.

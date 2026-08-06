@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Claude Meter now backs off properly when Anthropic rate-limits it.** The usage
+  API has been seen answering "too many requests" with a retry delay of zero while
+  still refusing to serve — which we took at face value and kept asking, instead of
+  waiting the intended minute. A useless delay is now ignored in favour of our own.
+- **A rejected sign-in no longer shadows a good one.** After a failed token refresh
+  while filling in Opus and extra-usage details, the dead credential stayed cached
+  and outranked the fresh one Claude Code had written, so signing in again didn't
+  always take effect until you restarted the app.
 - **The widget's headline number now accounts for the weekly Opus limit.** It was
   computed from the session and all-models weekly windows only, so on a Max plan
   the rings could read 55 while the Opus row right beneath said 4%.

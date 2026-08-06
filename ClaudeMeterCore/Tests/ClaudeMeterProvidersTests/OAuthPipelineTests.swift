@@ -263,6 +263,27 @@ struct OAuthPipelineTests {
         #expect(abs(date.timeIntervalSince(now) - 120) < 1)
     }
 
+    /// A `Retry-After: 0` on a 429 must not be read as "retry immediately". Left
+    /// unguarded it produced `blockedUntil == now`, which `isRateLimited` clears on
+    /// sight — silently disabling the process-wide gate for `poll`, `fetchEnrichment`
+    /// and `MultiAccountOAuth` alike. `nil` here means `recordRateLimit` applies its
+    /// 60 s default instead.
+    @Test func zeroRetryAfterFallsBackToDefaultBackoff() throws {
+        let now = Date()
+        let url = try #require(URL(string: "https://api.anthropic.com"))
+        let response = try #require(
+            HTTPURLResponse(
+                url: url, statusCode: 429, httpVersion: nil,
+                headerFields: ["Retry-After": "0"]))
+        #expect(OAuthPipeline.retryAfterDate(from: response, now: now) == nil)
+
+        OAuthPipeline.recordRateLimit(
+            retryAfter: OAuthPipeline.retryAfterDate(from: response, now: now), now: now)
+        // The gate is armed for the 60 s default, not open.
+        #expect(OAuthPipeline.isRateLimited(now: now.addingTimeInterval(30)))
+        #expect(!OAuthPipeline.isRateLimited(now: now.addingTimeInterval(61)))
+    }
+
     @Test func retryAfterIgnoresPastHTTPDate() throws {
         let now = Date(timeIntervalSince1970: 784_111_777)
         let url = try #require(URL(string: "https://api.anthropic.com"))

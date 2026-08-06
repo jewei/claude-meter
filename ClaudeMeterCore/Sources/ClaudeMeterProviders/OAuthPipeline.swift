@@ -290,9 +290,11 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 refreshed = try await coalescedRefresh(creds)
             } catch OAuthError.refreshRejected {
                 OAuthRefreshGate.recordTerminal(refreshToken: creds.refreshToken)
+                OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
                 return nil
             } catch {
                 OAuthRefreshGate.recordTransient(now: now)
+                OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
                 return nil
             }
             OAuthRefreshGate.recordSuccess()
@@ -467,8 +469,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     static func retryAfterDate(from response: HTTPURLResponse, now: Date) -> Date? {
         guard
             let seconds = HTTPRetryPolicy.retryAfterSeconds(
-                response.value(forHTTPHeaderField: "Retry-After"), now: now),
-            seconds >= 0
+                response.value(forHTTPHeaderField: "Retry-After"), now: now)
         else { return nil }
         return now.addingTimeInterval(seconds)
     }

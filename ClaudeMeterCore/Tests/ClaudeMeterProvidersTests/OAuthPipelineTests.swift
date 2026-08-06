@@ -318,44 +318,132 @@ struct OAuthPipelineTests {
     }
 }
 
-// Serialized: the gate is process-wide static state, so parallel cases would race.
-@Suite("OAuthRefreshGate", .serialized)
-struct OAuthRefreshGateTests {
-    private let now = Date(timeIntervalSince1970: 1_782_269_456)
+/// Fails every request with a canned status and body — enough to drive the token
+/// refresh to either of its two failure classifications without a network.
+private struct FailingTransport: HTTPTransport {
+    let status: Int
+    let body: String
 
-    @Test("invalid_grant body is terminal, other failures are not") func classify() throws {
-        let dead = try #require(#"{"error":"invalid_grant"}"#.data(using: .utf8))
-        #expect(OAuthPipeline.isInvalidGrant(data: dead, status: 400))
-        #expect(OAuthPipeline.isInvalidGrant(data: dead, status: 401))
-        // Only auth-class statuses count.
-        #expect(!OAuthPipeline.isInvalidGrant(data: dead, status: 500))
-        let other = try #require(#"{"error":"server_error"}"#.data(using: .utf8))
-        #expect(!OAuthPipeline.isInvalidGrant(data: other, status: 400))
-        #expect(!OAuthPipeline.isInvalidGrant(data: Data(), status: 400))
+    func send(_ request: URLRequest, retry _: HTTPRetryPolicy) async throws -> (
+        Data, HTTPURLResponse
+    ) {
+        let http = HTTPURLResponse(
+            url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+        return (Data(body.utf8), http)
+    }
+}
+
+/// Both nested suites mutate `OAuthRefreshGate`'s process-wide static state.
+///
+/// `.serialized` on a *suite* only orders that suite's own cases — sibling suites
+/// still run concurrently — so two separate serialized suites touching the gate
+/// race: one calling `resetForTesting()` mid-flight clears a backoff the other is
+/// asserting on. Applying the trait to a *parent* is what makes it recursive, so
+/// the children also run one at a time.
+@Suite("OAuth refresh gate state", .serialized)
+struct OAuthRefreshGateStateTests {
+
+    @Suite("OAuthRefreshGate")
+    struct GateTests {
+        private let now = Date(timeIntervalSince1970: 1_782_269_456)
+
+        @Test("invalid_grant body is terminal, other failures are not") func classify() throws {
+            let dead = try #require(#"{"error":"invalid_grant"}"#.data(using: .utf8))
+            #expect(OAuthPipeline.isInvalidGrant(data: dead, status: 400))
+            #expect(OAuthPipeline.isInvalidGrant(data: dead, status: 401))
+            // Only auth-class statuses count.
+            #expect(!OAuthPipeline.isInvalidGrant(data: dead, status: 500))
+            let other = try #require(#"{"error":"server_error"}"#.data(using: .utf8))
+            #expect(!OAuthPipeline.isInvalidGrant(data: other, status: 400))
+            #expect(!OAuthPipeline.isInvalidGrant(data: Data(), status: 400))
+        }
+
+        @Test("Terminal blocks the dead token but reopens for a new one") func terminal() {
+            OAuthRefreshGate.resetForTesting()
+            defer { OAuthRefreshGate.resetForTesting() }
+            #expect(OAuthRefreshGate.shouldAttempt(refreshToken: "dead", now: now))
+            OAuthRefreshGate.recordTerminal(refreshToken: "dead")
+            #expect(!OAuthRefreshGate.shouldAttempt(refreshToken: "dead", now: now))
+            // Re-auth yields a different refresh token → gate reopens automatically.
+            #expect(OAuthRefreshGate.shouldAttempt(refreshToken: "fresh", now: now))
+        }
+
+        @Test("Transient backs off then expires; success clears it") func transient() {
+            OAuthRefreshGate.resetForTesting()
+            defer { OAuthRefreshGate.resetForTesting() }
+            OAuthRefreshGate.recordTransient(now: now)
+            #expect(!OAuthRefreshGate.shouldAttempt(refreshToken: "t", now: now))
+            // Still blocked within the base backoff, allowed after it elapses.
+            let withinBackoff = now.addingTimeInterval(OAuthRefreshGate.baseTransientBackoff - 1)
+            #expect(!OAuthRefreshGate.shouldAttempt(refreshToken: "t", now: withinBackoff))
+            let afterBackoff = now.addingTimeInterval(OAuthRefreshGate.baseTransientBackoff + 1)
+            #expect(OAuthRefreshGate.shouldAttempt(refreshToken: "t", now: afterBackoff))
+            OAuthRefreshGate.recordTransient(now: now)
+            OAuthRefreshGate.recordSuccess()
+            #expect(OAuthRefreshGate.shouldAttempt(refreshToken: "t", now: now))
+        }
     }
 
-    @Test("Terminal blocks the dead token but reopens for a new one") func terminal() {
-        OAuthRefreshGate.resetForTesting()
-        defer { OAuthRefreshGate.resetForTesting() }
-        #expect(OAuthRefreshGate.shouldAttempt(refreshToken: "dead", now: now))
-        OAuthRefreshGate.recordTerminal(refreshToken: "dead")
-        #expect(!OAuthRefreshGate.shouldAttempt(refreshToken: "dead", now: now))
-        // Re-auth yields a different refresh token → gate reopens automatically.
-        #expect(OAuthRefreshGate.shouldAttempt(refreshToken: "fresh", now: now))
-    }
+    /// `fetchEnrichment` must clear the in-memory credential on *every* refresh
+    /// failure, exactly as `poll` does.
+    ///
+    /// Why it matters: `credentials(from:)` deliberately prefers whichever
+    /// credential carries the later `expiresAt`, and `OAuthRefreshGate` reopens by
+    /// *token identity*. A dead credential left resident therefore outranks the
+    /// fresh entry Claude Code writes on `claude login`, and the gate stays shut
+    /// against the good token until the app is relaunched.
+    @Suite("OAuth enrichment credential cache")
+    struct EnrichmentCacheTests {
+        /// Drives `fetchEnrichment` with an expired cached credential and a
+        /// transport that fails the refresh, then reports whether that credential
+        /// is still resident afterwards.
+        private func residentCredentialAfterFailedRefresh(
+            status: Int, body: String
+        ) async -> OAuthCredentials? {
+            let defaults = UserDefaults.standard
+            let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)
+            defaults.set("auto", forKey: AppGroupConfig.oauthModeKey)
+            OAuthPipeline.clearCachedCredentials()
+            OAuthPipeline.clearRateLimitForTesting()
+            OAuthRefreshGate.resetForTesting()
+            OAuthPipeline.setTransportForTesting(FailingTransport(status: status, body: body))
+            defer {
+                OAuthPipeline.setTransportForTesting(nil)
+                OAuthPipeline.clearCachedCredentials()
+                OAuthRefreshGate.resetForTesting()
+                if let previousMode {
+                    defaults.set(previousMode, forKey: AppGroupConfig.oauthModeKey)
+                } else {
+                    defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
+                }
+            }
 
-    @Test("Transient backs off then expires; success clears it") func transient() {
-        OAuthRefreshGate.resetForTesting()
-        defer { OAuthRefreshGate.resetForTesting() }
-        OAuthRefreshGate.recordTransient(now: now)
-        #expect(!OAuthRefreshGate.shouldAttempt(refreshToken: "t", now: now))
-        // Still blocked within the base backoff, allowed after it elapses.
-        let withinBackoff = now.addingTimeInterval(OAuthRefreshGate.baseTransientBackoff - 1)
-        #expect(!OAuthRefreshGate.shouldAttempt(refreshToken: "t", now: withinBackoff))
-        let afterBackoff = now.addingTimeInterval(OAuthRefreshGate.baseTransientBackoff + 1)
-        #expect(OAuthRefreshGate.shouldAttempt(refreshToken: "t", now: afterBackoff))
-        OAuthRefreshGate.recordTransient(now: now)
-        OAuthRefreshGate.recordSuccess()
-        #expect(OAuthRefreshGate.shouldAttempt(refreshToken: "t", now: now))
+            // An already-expired credential sitting in the cache. Under test the
+            // Keychain read is fail-closed (`.temporarilyUnavailable`), so
+            // `credentials(from:)` resolves to exactly this one — the same path a
+            // locked Keychain takes in production.
+            let dead = OAuthCredentials(
+                accessToken: "dead-access",
+                refreshToken: "dead-refresh-\(UUID().uuidString)",
+                expiresAt: Date().addingTimeInterval(-3600)
+            )
+            OAuthPipeline.setCachedCredentialsForTesting(dead, oauthMode: "auto")
+
+            let enrichment = await OAuthPipeline.fetchEnrichment()
+            #expect(enrichment == nil)
+            return OAuthPipeline.credentials(from: .temporarilyUnavailable, oauthMode: "auto")
+        }
+
+        @Test func rejectedRefreshClearsTheCachedCredential() async {
+            let resident = await residentCredentialAfterFailedRefresh(
+                status: 400, body: #"{"error":"invalid_grant"}"#)
+            #expect(resident == nil)
+        }
+
+        @Test func transientRefreshFailureAlsoClearsTheCachedCredential() async {
+            let resident = await residentCredentialAfterFailedRefresh(
+                status: 500, body: #"{"error":"server_error"}"#)
+            #expect(resident == nil)
+        }
     }
 }

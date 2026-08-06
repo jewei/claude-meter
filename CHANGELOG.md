@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Claude Meter's own test suite could read the login Keychain.** A safeguard
+  meant to block Keychain access from tests only recognised one of the two ways
+  Apple's tooling runs them, so the checks a developer runs locally were reaching
+  real credentials instead of being refused. Ships in no released build and never
+  affected the app itself — the safeguard now detects both.
+
 - **Claude Meter now backs off properly when Anthropic rate-limits it.** The usage
   API has been seen answering "too many requests" with a retry delay of zero while
   still refusing to serve — which we took at face value and kept asking, instead of

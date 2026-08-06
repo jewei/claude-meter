@@ -70,6 +70,33 @@ struct HTTPRetryPolicyTests {
         #expect(policy.delay(attempt: 2, retryAfter: nil) == 4)
         #expect(policy.delay(attempt: 9, retryAfter: nil) == 8)  // capped
     }
+
+    /// `/api/oauth/usage` has been observed answering a 429 with `Retry-After: 0`
+    /// while continuing to reject. Taken literally that means "no backoff", which
+    /// turns a retry into a tight loop — a non-positive directive must read as
+    /// "absent" so the caller falls back to its own default.
+    @Test func nonPositiveRetryAfterIsTreatedAsAbsent() {
+        #expect(HTTPRetryPolicy.retryAfterSeconds("0") == nil)
+        #expect(HTTPRetryPolicy.retryAfterSeconds("-5") == nil)
+        #expect(HTTPRetryPolicy.retryAfterSeconds(" 0 ") == nil)
+        #expect(HTTPRetryPolicy.retryAfterSeconds("5") == 5)
+    }
+
+    @Test func zeroRetryAfterFallsBackToExponentialBackoff() {
+        let policy = HTTPRetryPolicy(maxRetries: 5, baseDelay: 1, maxDelay: 8)
+        #expect(policy.delay(attempt: 0, retryAfter: "0") == 1)
+        #expect(policy.delay(attempt: 2, retryAfter: "0") == 4)
+        #expect(policy.delay(attempt: 0, retryAfter: "-30") == 1)
+    }
+
+    @Test func pastHTTPDateIsTreatedAsAbsent() {
+        let now = Date(timeIntervalSince1970: 784_111_777)  // 1994-11-06T08:49:37Z
+        #expect(
+            HTTPRetryPolicy.retryAfterSeconds("Sun, 06 Nov 1994 08:47:37 GMT", now: now) == nil)
+        let future = HTTPRetryPolicy.retryAfterSeconds(
+            "Sun, 06 Nov 1994 08:51:37 GMT", now: now)
+        #expect(abs((future ?? 0) - 120) < 1)
+    }
 }
 
 /// Demonstrates the testability win: a client can be driven against canned

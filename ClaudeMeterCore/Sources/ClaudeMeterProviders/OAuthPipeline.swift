@@ -18,7 +18,11 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     // Requests go through the shared redirect-guarded transport (no cookies, 10 s
     // timeout) so a Bearer token can't leak across an off-origin redirect.
-    private static let transport: any HTTPTransport = ProviderHTTPClient.shared
+    //
+    // Computed rather than stored so tests can substitute a stub (see
+    // `setTransportForTesting`). Production always resolves to
+    // `ProviderHTTPClient.shared` — the override is nil unless a test sets it.
+    private static var transport: any HTTPTransport { OAuthSharedState.transport() }
 
     private static let oauthClientId = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
     private static let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
@@ -213,6 +217,17 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         OAuthSharedState.setCachedCredentials(credentials, for: oauthMode)
     }
 
+    /// Substitutes the HTTP transport for the whole module. Pass `nil` to restore
+    /// the shared client — always do so in a `defer`, since the override is
+    /// process-wide and would otherwise leak into unrelated tests.
+    static func setTransportForTesting(_ transport: (any HTTPTransport)?) {
+        OAuthSharedState.setTransportOverride(transport)
+    }
+
+    static func clearRateLimitForTesting() {
+        OAuthSharedState.clearRateLimit()
+    }
+
     // MARK: - Settings verification
 
     /// Verifies credentials by calling the usage API once, refreshing first when
@@ -290,9 +305,11 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 refreshed = try await coalescedRefresh(creds)
             } catch OAuthError.refreshRejected {
                 OAuthRefreshGate.recordTerminal(refreshToken: creds.refreshToken)
+                OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
                 return nil
             } catch {
                 OAuthRefreshGate.recordTransient(now: now)
+                OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
                 return nil
             }
             OAuthRefreshGate.recordSuccess()
@@ -467,8 +484,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     static func retryAfterDate(from response: HTTPURLResponse, now: Date) -> Date? {
         guard
             let seconds = HTTPRetryPolicy.retryAfterSeconds(
-                response.value(forHTTPHeaderField: "Retry-After"), now: now),
-            seconds >= 0
+                response.value(forHTTPHeaderField: "Retry-After"), now: now)
         else { return nil }
         return now.addingTimeInterval(seconds)
     }
@@ -629,6 +645,7 @@ private enum OAuthSharedState {
     private static let lock = NSLock()
     private static nonisolated(unsafe) var blockedUntil: Date?
     private static nonisolated(unsafe) var cachedCredsByMode: [String: OAuthCredentials] = [:]
+    private static nonisolated(unsafe) var transportOverride: (any HTTPTransport)?
 
     static func isRateLimited(now: Date) -> Bool {
         lock.lock()
@@ -671,6 +688,29 @@ private enum OAuthSharedState {
     static func clearCachedCredentials() {
         lock.lock()
         cachedCredsByMode.removeAll()
+        lock.unlock()
+    }
+
+    /// Transport used by every OAuth request. `nil` override — the production
+    /// case — resolves to the shared redirect-guarded client; tests substitute a
+    /// stub so the refresh and usage paths can be exercised without a network.
+    static func transport() -> any HTTPTransport {
+        lock.lock()
+        defer { lock.unlock() }
+        return transportOverride ?? ProviderHTTPClient.shared
+    }
+
+    static func setTransportOverride(_ transport: (any HTTPTransport)?) {
+        lock.lock()
+        transportOverride = transport
+        lock.unlock()
+    }
+
+    /// Clears the 429 gate. Test-only: production reopens it by elapsing
+    /// `blockedUntil`, never by fiat.
+    static func clearRateLimit() {
+        lock.lock()
+        blockedUntil = nil
         lock.unlock()
     }
 }

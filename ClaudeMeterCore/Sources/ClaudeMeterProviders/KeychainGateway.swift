@@ -27,11 +27,34 @@ enum KeychainGateway {
         private static let allowsLiveAccess: Bool = {
             let environment = ProcessInfo.processInfo.environment
             if environment["CLAUDE_METER_ALLOW_LIVE_KEYCHAIN_TESTS"] == "1" { return true }
+            // A loaded test framework is the one signal that survives every runner
+            // shape. The heuristics below it are all launch-dependent and every one
+            // of them misses `swift test`: swift-testing runs in a *shared* helper
+            // (`swiftpm-testing-helper`) whose process name, `Bundle.main`, and
+            // argv[0] all belong to the toolchain, not to a `.xctest` bundle — so
+            // the gate silently opened and the suite read the real Keychain.
+            if testFrameworkIsLoaded() { return false }
             if environment["XCTestConfigurationFilePath"] != nil { return false }
             if Bundle.main.bundleURL.pathExtension == "xctest" { return false }
             if CommandLine.arguments.first?.contains(".xctest/") == true { return false }
             return !ProcessInfo.processInfo.processName.lowercased().contains("xctest")
         }()
+
+        /// Whether XCTest or swift-testing is loaded into this process.
+        ///
+        /// Checked against the dynamic loader rather than the environment because
+        /// the image list reflects what is *actually* linked, independent of how
+        /// the runner was invoked. Both frameworks ship as `…/XCTest.framework/…/XCTest`
+        /// and `…/Testing.framework/…/Testing`, so an exact trailing component match
+        /// is tight enough not to catch application code.
+        private static func testFrameworkIsLoaded() -> Bool {
+            for index in 0..<_dyld_image_count() {
+                guard let raw = _dyld_get_image_name(index) else { continue }
+                let name = String(cString: raw)
+                if name.hasSuffix("/XCTest") || name.hasSuffix("/Testing") { return true }
+            }
+            return false
+        }
 
         static func copyMatching(query: CFDictionary, result: UnsafeMutablePointer<AnyObject?>)
             -> OSStatus

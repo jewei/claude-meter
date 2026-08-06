@@ -19,7 +19,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Echoed so a runner-image bump that changes the toolchain is obvious in
       # the log rather than showing up as a mystery compile error. The widget

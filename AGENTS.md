@@ -13,6 +13,10 @@ swift test --package-path ClaudeMeterCore                                    # c
 The App Group entitlement needs a real provisioning profile to _run_;
 `CODE_SIGNING_ALLOWED=NO` is enough to _compile_.
 
+CI (`.github/workflows/ci.yml`, push + PR on `main`) runs **`verify-local.sh` itself**
+rather than restating the steps — keep it that way so the two can't drift. Add a new
+check to the script, not to the workflow.
+
 ---
 
 ## Architecture

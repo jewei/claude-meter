@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A new push to the same branch supersedes the run in flight.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Tests + Debug/Release build
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Echoed so a runner-image bump that changes the toolchain is obvious in
+      # the log rather than showing up as a mystery compile error. The widget
+      # needs the macOS 26 SDK (`Widget`/`WidgetBundle` live in SwiftUI there).
+      - name: Toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+          sw_vers
+
+      # The same gate developers run locally — deliberately invoked as a script
+      # rather than restated here, so CI and `verify-local.sh` cannot drift.
+      # Signing is disabled inside it: the App Group entitlement needs a real
+      # provisioning profile to *run*, but not to *compile*.
+      - name: Verify
+        run: ./scripts/verify-local.sh

@@ -38,17 +38,20 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         self.thresholds = thresholds
     }
 
-    public func poll(now: Date) async throws -> ParseResult {
+    /// `kind` changes nothing here — it is forwarded to the fallback only. The 429
+    /// gate below protects Anthropic, not our request budget, so a user-initiated
+    /// refresh must not be able to jump it.
+    public func poll(now: Date, kind: RefreshKind = .background) async throws -> ParseResult {
         let oauthMode = UserDefaults.standard.string(forKey: AppGroupConfig.oauthModeKey) ?? ""
         guard oauthMode == "auto" || oauthMode == "manual" else {
             // The source toggle is ON (or we wouldn't be in the chain) but Connect
             // was never completed — "disabled" would send the user to the wrong fix.
-            return try await fallbackResult(now: now, outcome: .skipped, reason: .notConnected)
+            return try await fallbackResult(kind: kind, now: now, outcome: .skipped, reason: .notConnected)
         }
 
         // Honor an active 429 backoff: skip the API and serve the fallback.
         if OAuthSharedState.isRateLimited(now: now) {
-            return try await fallbackResult(now: now, outcome: .skipped, reason: .rateLimited)
+            return try await fallbackResult(kind: kind, now: now, outcome: .skipped, reason: .rateLimited)
         }
 
         let keychainResult =
@@ -63,14 +66,14 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             case .invalid: reason = .credentialsInvalid
             case .found: reason = .credentialsInvalid
             }
-            return try await fallbackResult(now: now, outcome: .skipped, reason: reason)
+            return try await fallbackResult(kind: kind, now: now, outcome: .skipped, reason: reason)
         }
 
         var didRefresh = false
         if creds.isExpired {
             guard OAuthRefreshGate.shouldAttempt(refreshToken: creds.refreshToken, now: now) else {
                 return try await fallbackResult(
-                    now: now, outcome: .skipped,
+                    kind: kind, now: now, outcome: .skipped,
                     reason: OAuthRefreshGate.deferredReason(
                         refreshToken: creds.refreshToken, now: now))
             }
@@ -81,12 +84,12 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 OAuthRefreshGate.recordTerminal(refreshToken: creds.refreshToken)
                 OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
                 return try await fallbackResult(
-                    now: now, outcome: .failed, reason: .refreshRejected)
+                    kind: kind, now: now, outcome: .failed, reason: .refreshRejected)
             } catch {
                 OAuthRefreshGate.recordTransient(now: now)
                 OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
                 return try await fallbackResult(
-                    now: now, outcome: .failed, reason: .refreshFailed)
+                    kind: kind, now: now, outcome: .failed, reason: .refreshFailed)
             }
             OAuthRefreshGate.recordSuccess()
             didRefresh = true
@@ -108,11 +111,11 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             // won't be fixed by an immediate second refresh).
             guard !didRefresh else {
                 return try await fallbackResult(
-                    now: now, outcome: .failed, reason: .unauthorized)
+                    kind: kind, now: now, outcome: .failed, reason: .unauthorized)
             }
             guard OAuthRefreshGate.shouldAttempt(refreshToken: creds.refreshToken, now: now) else {
                 return try await fallbackResult(
-                    now: now, outcome: .skipped,
+                    kind: kind, now: now, outcome: .skipped,
                     reason: OAuthRefreshGate.deferredReason(
                         refreshToken: creds.refreshToken, now: now))
             }
@@ -123,12 +126,12 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 OAuthRefreshGate.recordTerminal(refreshToken: creds.refreshToken)
                 OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
                 return try await fallbackResult(
-                    now: now, outcome: .failed, reason: .refreshRejected)
+                    kind: kind, now: now, outcome: .failed, reason: .refreshRejected)
             } catch {
                 OAuthRefreshGate.recordTransient(now: now)
                 OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
                 return try await fallbackResult(
-                    now: now, outcome: .failed, reason: .refreshFailed)
+                    kind: kind, now: now, outcome: .failed, reason: .refreshFailed)
             }
             OAuthRefreshGate.recordSuccess()
             OAuthSharedState.setCachedCredentials(refreshed, for: oauthMode)
@@ -145,19 +148,20 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 return result
             }
             return try await fallbackResult(
-                now: now, outcome: .failed, reason: .unauthorized)
+                kind: kind, now: now, outcome: .failed, reason: .unauthorized)
         } catch {
             return try await fallbackResult(
-                now: now, outcome: .failed, reason: Self.attemptReason(for: error))
+                kind: kind, now: now, outcome: .failed, reason: Self.attemptReason(for: error))
         }
     }
 
     private func fallbackResult(
+        kind: RefreshKind,
         now: Date,
         outcome: SourceAttempt.Outcome,
         reason: SourceAttempt.Reason
     ) async throws -> ParseResult {
-        try await fallback.poll(now: now).prependingSourceAttempt(
+        try await fallback.poll(now: now, kind: kind).prependingSourceAttempt(
             SourceAttempt(source: .oauth, outcome: outcome, reason: reason))
     }
 

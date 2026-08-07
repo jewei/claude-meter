@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Opening Claude Meter always fetches fresh figures.** Between checks the app
+  serves its last reading, so opening the popover could show numbers up to two
+  minutes old, marked stale. Opening it now counts as asking, and fetches — while
+  background checks stay throttled, so this doesn't mean more traffic.
+
 ### Added
 
 - **Claude Meter now says when Anthropic is throttling it.** A rate-limited usage

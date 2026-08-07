@@ -226,3 +226,113 @@ struct StatuslineFallbackCooldownTests {
         #expect(StatuslinePipeline.fallbackCooldown > 60)
     }
 }
+
+private func stubSnapshot() -> ClaudeUsageSnapshot {
+    ClaudeUsageSnapshot(
+        parserVersion: "stub-1.0",
+        createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+        source: SourceInfo(cliPath: "/stub", command: "stub"),
+        limits: LimitInfo(),
+        state: SnapshotState(status: .ok, severity: .normal)
+    )
+}
+
+/// Counts how often the next tier was actually reached.
+private final class CountingPipeline: ClaudeMeterPipeline, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _calls = 0
+    private var _kinds: [RefreshKind] = []
+
+    var calls: Int { lock.withLock { _calls } }
+    var kinds: [RefreshKind] { lock.withLock { _kinds } }
+
+    func poll(now: Date, kind: RefreshKind) async throws -> ParseResult {
+        lock.withLock {
+            _calls += 1
+            _kinds.append(kind)
+        }
+        return ParseResult(
+            snapshot: stubSnapshot(),
+            warnings: [], errors: [], rawHash: "", parserVersion: "stub-1.0",
+            sourceAttempts: [SourceAttempt(source: .oauth, outcome: .selected, reason: .freshData)]
+        )
+    }
+}
+
+/// The API-fallback cooldown exists to spare the OAuth API on idle cycles, so a
+/// user who is actually looking should not be served up to `fallbackCooldown` of
+/// stale cache. Driven against an empty temp sessions root: on a dev machine the
+/// real `~/.claude-meter` usually has a live session, which would make tier 1 win
+/// and never reach this path.
+@Suite("Interactive refresh bypasses the fallback cooldown")
+struct InteractiveRefreshTests {
+    private func makePipeline() throws -> (StatuslinePipeline, CountingPipeline, URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cm-interactive-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = SnapshotStore(directory: root)
+        // A cached snapshot must exist, or the cooldown branch falls through to
+        // "no cache — call fallback unconditionally" and proves nothing.
+        try store.writeLatest(stubSnapshot())
+        let next = CountingPipeline()
+        let pipeline = StatuslinePipeline(
+            fallback: next,
+            store: store,
+            sessionsRootOverride: root.appendingPathComponent("sessions")
+        )
+        return (pipeline, next, root)
+    }
+
+    @Test func backgroundPollsAreThrottledButInteractiveOnesAreNot() async throws {
+        let (pipeline, next, root) = try makePipeline()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date()
+
+        // First background poll opens the window and reaches the next tier.
+        _ = try await pipeline.poll(now: now, kind: .background)
+        #expect(next.calls == 1)
+
+        // A second one inside the window is served from cache.
+        _ = try await pipeline.poll(now: now.addingTimeInterval(5), kind: .background)
+        #expect(next.calls == 1)
+
+        // The user opens the popover — that must fetch, not serve cache.
+        _ = try await pipeline.poll(now: now.addingTimeInterval(10), kind: .interactive)
+        #expect(next.calls == 2)
+        #expect(next.kinds.last == .interactive)
+    }
+
+    /// The bypass still *marks* the window. Otherwise an interactive refresh would
+    /// leave the following background poll free to fire immediately, turning one
+    /// popover open into two API calls.
+    @Test func anInteractiveRefreshResetsTheWindow() async throws {
+        let (pipeline, next, root) = try makePipeline()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date()
+
+        _ = try await pipeline.poll(now: now, kind: .interactive)
+        #expect(next.calls == 1)
+
+        _ = try await pipeline.poll(now: now.addingTimeInterval(5), kind: .background)
+        #expect(next.calls == 1)
+
+        // ...and it opens again once the cooldown genuinely elapses.
+        _ = try await pipeline.poll(
+            now: now.addingTimeInterval(StatuslinePipeline.fallbackCooldown + 1),
+            kind: .background)
+        #expect(next.calls == 2)
+    }
+
+    /// `poll(now:)` is the convenience the scheduled loop uses; it must not
+    /// accidentally carry interactive semantics.
+    @Test func theConvenienceOverloadIsBackground() async throws {
+        let (pipeline, next, root) = try makePipeline()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date()
+
+        _ = try await pipeline.poll(now: now)
+        _ = try await pipeline.poll(now: now.addingTimeInterval(5))
+        #expect(next.calls == 1)
+        #expect(next.kinds == [.background])
+    }
+}

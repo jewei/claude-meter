@@ -1,8 +1,29 @@
 import Foundation
 
+/// Why a poll is happening.
+///
+/// Only throttles that exist to spare an *external API* on idle cycles may treat
+/// these differently — never correctness rules. A `.interactive` poll must not be
+/// able to skip a 429 backoff, for instance: that one protects the server, not our
+/// bandwidth.
+public enum RefreshKind: Sendable, Equatable {
+    /// The scheduled poll loop, or any refresh nobody is waiting on.
+    case background
+    /// The user is looking right now — they opened the popover, or asked for a
+    /// refresh explicitly. Worth spending a request on.
+    case interactive
+}
+
 /// Shared contract for the statusline, OAuth, and cached-snapshot pipelines.
 public protocol ClaudeMeterPipeline: Sendable {
-    func poll(now: Date) async throws -> ParseResult
+    func poll(now: Date, kind: RefreshKind) async throws -> ParseResult
+}
+
+extension ClaudeMeterPipeline {
+    /// Convenience for callers with no particular urgency — notably the poll loop.
+    public func poll(now: Date) async throws -> ParseResult {
+        try await poll(now: now, kind: .background)
+    }
 }
 
 /// Terminal fallback: serves the last persisted snapshot marked stale.
@@ -13,7 +34,8 @@ public struct CachedSnapshotPipeline: Sendable {
         self.store = store
     }
 
-    public func poll(now: Date) async throws -> ParseResult {
+    /// Reads from disk, so there is nothing for `kind` to change here.
+    public func poll(now: Date, kind _: RefreshKind = .background) async throws -> ParseResult {
         guard var snapshot = try? store.readLatest() else {
             return ParseResult(
                 snapshot: nil,

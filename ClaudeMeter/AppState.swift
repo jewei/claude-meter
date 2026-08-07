@@ -100,6 +100,10 @@ final class AppState: ObservableObject {
         return OAuthCredentialIssue.from(sourceAttempts: attempts)
     }
 
+    /// When an active OAuth 429 backoff lifts, for the `.rateLimited` notice's
+    /// countdown. `nil` whenever we aren't throttled.
+    var oauthRetryAt: Date? { OAuthPipeline.rateLimitedUntil() }
+
     /// Per-account usage rows for accounts other than the active one (for the
     /// popover's multi-account section). Empty for the common single-account case.
     var otherAccounts: [AccountUsage] {

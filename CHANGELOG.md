@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Claude Meter now says when Anthropic is throttling it.** A rate-limited usage
+  check used to look identical to the app being broken — the numbers just stopped
+  moving, with the cause buried in Diagnostics. The popover and Settings now name
+  it and count down to the retry ("retrying in 48m"), in the quieter style used
+  for problems that clear on their own.
+
+### Changed
+
+- **Fewer usage checks when you aren't in a Claude Code session.** With no live
+  session the app was querying Anthropic every minute for figures that move over
+  hours and days, which risks being rate-limited for the trouble. It now checks
+  every two minutes — still well inside the window before data is marked stale.
+
 ### Fixed
 
 - **Claude Meter's own test suite could read the login Keychain.** A safeguard

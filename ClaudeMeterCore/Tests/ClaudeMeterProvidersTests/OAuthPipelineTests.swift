@@ -448,6 +448,140 @@ struct OAuthRefreshGateStateTests {
     }
 }
 
+/// Model-scoped weekly windows are migrating from dedicated `seven_day_<model>`
+/// fields into the generic `limits` array, and the flat fields have been observed
+/// going null as that happens. Without a fallback the Opus weekly window — often
+/// the binding limit on Max — would silently vanish from severity, the menu bar,
+/// notifications and the widget, with no error anywhere.
+@Suite("Scoped weekly limits from limits[]")
+struct ScopedLimitsArrayTests {
+    private func decode(_ json: String) throws -> UsageResponse {
+        try JSONDecoder().decode(UsageResponse.self, from: #require(json.data(using: .utf8)))
+    }
+
+    @Test func fillsOpusWhenTheFlatFieldIsAbsent() throws {
+        let usage = try decode(
+            """
+            {"five_hour":{"utilization":10.0},"seven_day":{"utilization":20.0},
+             "limits":[{"kind":"weekly_scoped","percent":88.0,
+                        "resets_at":"2026-08-10T07:00:00Z",
+                        "scope":{"model":{"display_name":"Opus 4.5"}}}]}
+            """)
+        #expect(usage.sevenDayOpus?.utilization == 88.0)
+        #expect(usage.sevenDayOpus?.resetsAt == "2026-08-10T07:00:00Z")
+        // It fed the Opus slot, so it must not *also* appear as a scoped row.
+        #expect(!usage.scopedWeekly.contains { $0.key == "seven_day_opus" })
+    }
+
+    @Test func fillsOpusWhenTheFlatFieldIsExplicitlyNull() throws {
+        let usage = try decode(
+            """
+            {"seven_day_opus":null,
+             "limits":[{"kind":"weekly_scoped","percent":42.0,
+                        "scope":{"model":{"display_name":"Opus 4.5"}}}]}
+            """)
+        #expect(usage.sevenDayOpus?.utilization == 42.0)
+    }
+
+    /// The flat field is authoritative while it still exists — `limits` only fills
+    /// gaps, so today's working path cannot regress.
+    @Test func theFlatFieldWinsOverTheArray() throws {
+        let usage = try decode(
+            """
+            {"seven_day_opus":{"utilization":11.0},
+             "limits":[{"kind":"weekly_scoped","percent":99.0,
+                        "scope":{"model":{"display_name":"Opus 4.5"}}}]}
+            """)
+        #expect(usage.sevenDayOpus?.utilization == 11.0)
+    }
+
+    @Test func addsScopedModelsThatHaveNoFlatField() throws {
+        let usage = try decode(
+            """
+            {"seven_day_sonnet":{"utilization":34.0},
+             "limits":[{"kind":"weekly_scoped","percent":7.5,
+                        "scope":{"model":{"display_name":"Fable 5"}}}]}
+            """)
+        #expect(usage.scopedWeekly.map(\.key) == ["seven_day_fable", "seven_day_sonnet"])
+        #expect(usage.scopedWeekly.first { $0.key == "seven_day_fable" }?.entry.utilization == 7.5)
+    }
+
+    /// A model present in both forms must be listed once, from the flat field.
+    @Test func doesNotDuplicateAModelAlreadyCoveredByAFlatField() throws {
+        let usage = try decode(
+            """
+            {"seven_day_sonnet":{"utilization":34.0},
+             "limits":[{"kind":"weekly_scoped","percent":99.0,
+                        "scope":{"model":{"display_name":"Sonnet 4.5"}}}]}
+            """)
+        #expect(usage.scopedWeekly.map(\.key) == ["seven_day_sonnet"])
+        #expect(usage.scopedWeekly.first?.entry.utilization == 34.0)
+    }
+
+    /// `session` / `weekly_all` mirror `five_hour` / `seven_day`; folding them into
+    /// scoped rows would double-report the same quota.
+    @Test func ignoresNonModelScopedKinds() throws {
+        let usage = try decode(
+            """
+            {"limits":[{"kind":"weekly","percent":50.0},
+                       {"kind":"session","percent":60.0},
+                       {"kind":"weekly_all","percent":70.0}]}
+            """)
+        #expect(usage.scopedWeekly.isEmpty)
+        #expect(usage.sevenDayOpus == nil)
+    }
+
+    @Test func skipsEntriesMissingAModelNameOrPercent() throws {
+        let usage = try decode(
+            """
+            {"limits":[{"kind":"weekly_scoped","percent":50.0},
+                       {"kind":"weekly_scoped","percent":50.0,"scope":{"model":{}}},
+                       {"kind":"weekly_scoped","scope":{"model":{"display_name":"Opus 4.5"}}},
+                       {"kind":"weekly_scoped","percent":50.0,
+                        "scope":{"model":{"display_name":""}}}]}
+            """)
+        #expect(usage.scopedWeekly.isEmpty)
+        #expect(usage.sevenDayOpus == nil)
+    }
+
+    /// A duplicated model must resolve deterministically, or the popover row would
+    /// flip between polls.
+    @Test func firstEntryWinsForADuplicatedModel() throws {
+        let usage = try decode(
+            """
+            {"limits":[{"kind":"weekly_scoped","percent":1.0,
+                        "scope":{"model":{"display_name":"Fable 5"}}},
+                       {"kind":"weekly_scoped","percent":2.0,
+                        "scope":{"model":{"display_name":"Fable 5"}}}]}
+            """)
+        #expect(usage.scopedWeekly.map(\.key) == ["seven_day_fable"])
+        #expect(usage.scopedWeekly.first?.entry.utilization == 1.0)
+    }
+
+    /// A malformed or absent array must not take the rest of the response down.
+    @Test func toleratesAMalformedOrAbsentArray() throws {
+        #expect(try decode(#"{"seven_day":{"utilization":20.0},"limits":"nope"}"#).sevenDay?
+            .utilization == 20.0)
+        #expect(try decode(#"{"seven_day":{"utilization":20.0}}"#).sevenDay?.utilization == 20.0)
+        #expect(try decode(#"{"seven_day":{"utilization":20.0},"limits":[]}"#).scopedWeekly.isEmpty)
+    }
+
+    /// End to end: a model that exists only in `limits[]` must survive the mapping
+    /// into display windows, not just the decode.
+    @Test func aMigratedScopedModelReachesTheMappedWindows() throws {
+        let usage = try decode(
+            """
+            {"limits":[{"kind":"weekly_scoped","percent":7.5,
+                        "resets_at":"2026-08-10T07:00:00Z",
+                        "scope":{"model":{"display_name":"Fable 5"}}}]}
+            """)
+        let scoped = try #require(OAuthPipeline.scopedWindows(from: usage))
+        #expect(scoped.map(\.id) == ["seven_day_fable"])
+        #expect(scoped.first?.window.percentUsed == 7.5)
+        #expect(scoped.first?.displayName == "Fable")
+    }
+}
+
 /// The 429 deadline the UI reads to render its countdown.
 @Suite("OAuth rate-limit deadline", .serialized)
 struct OAuthRateLimitDeadlineTests {

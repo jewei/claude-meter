@@ -588,18 +588,88 @@ internal struct UsageResponse: Decodable {
         let container = try decoder.container(keyedBy: DynamicKey.self)
         fiveHour = try? container.decodeIfPresent(QuotaEntry.self, forKey: DynamicKey("five_hour"))
         sevenDay = try? container.decodeIfPresent(QuotaEntry.self, forKey: DynamicKey("seven_day"))
-        sevenDayOpus = try? container.decodeIfPresent(
-            QuotaEntry.self, forKey: DynamicKey("seven_day_opus"))
         extraUsage = try? container.decodeIfPresent(
             ExtraUsageEntry.self, forKey: DynamicKey("extra_usage"))
+
+        // Model-scoped weekly windows are migrating from dedicated
+        // `seven_day_<model>` fields to entries in the generic `limits` array, and
+        // the flat fields have been observed going null as that happens. Derive the
+        // same `(key, entry)` shape from `limits` so the rest of the pipeline —
+        // `opusWindow`, `scopedWindows`, enrichment — needs no knowledge of which
+        // form the server used. Flat fields always win; `limits` only fills gaps.
+        let derived = Self.scopedEntriesFromLimits(
+            (try? container.decodeIfPresent([LimitEntry].self, forKey: DynamicKey("limits"))) ?? nil)
+
+        let flatOpus = try? container.decodeIfPresent(
+            QuotaEntry.self, forKey: DynamicKey("seven_day_opus"))
+        sevenDayOpus = flatOpus ?? derived["seven_day_opus"]
+
         let claimed: Set<String> = ["five_hour", "seven_day", "seven_day_opus", "extra_usage"]
-        scopedWeekly = container.allKeys
+        let flatScoped = container.allKeys
             .filter { $0.stringValue.hasPrefix("seven_day_") && !claimed.contains($0.stringValue) }
             .compactMap { key in
                 ((try? container.decodeIfPresent(QuotaEntry.self, forKey: key)) ?? nil)
                     .map { (key.stringValue, $0) }
             }
+        let flatKeys = Set(flatScoped.map(\.0)).union(claimed)
+        scopedWeekly = (flatScoped + derived.filter { !flatKeys.contains($0.key) }.map { ($0, $1) })
             .sorted { $0.0 < $1.0 }
+    }
+
+    /// Folds `limits[]` down to the `seven_day_<model>` keys the rest of the
+    /// pipeline already speaks.
+    ///
+    /// Only `weekly_scoped` entries carry a model; `session` / `weekly_all` kinds
+    /// mirror `five_hour` / `seven_day` and are skipped (extend here if those flat
+    /// fields ever go null too). The key is the **first word** of the display name
+    /// lowercased — "Opus 4.5" → `seven_day_opus` — so a migrated Opus window lands
+    /// on exactly the key the flat field used.
+    private static func scopedEntriesFromLimits(_ limits: [LimitEntry]?) -> [String: QuotaEntry] {
+        var result: [String: QuotaEntry] = [:]
+        for entry in limits ?? [] {
+            guard entry.kind == "weekly_scoped",
+                let word = entry.scope?.model?.displayName?
+                    .split(separator: " ").first?.lowercased(),
+                !word.isEmpty,
+                let percent = entry.percent
+            else { continue }
+            // First entry wins, so a duplicated model can't flip between polls.
+            let key = "seven_day_\(word)"
+            if result[key] == nil {
+                result[key] = QuotaEntry(utilization: percent, resetsAt: entry.resetsAt)
+            }
+        }
+        return result
+    }
+}
+
+/// Entry in the newer generic `limits` array. Model-scoped weekly windows appear
+/// here as `kind: "weekly_scoped"` with the model under `scope`, rather than as a
+/// dedicated `seven_day_<model>` field.
+internal struct LimitEntry: Decodable {
+    let kind: String?
+    /// Percent **used** — same scale and direction as `QuotaEntry.utilization`.
+    let percent: Double?
+    let resetsAt: String?
+    let scope: LimitScope?
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case percent
+        case resetsAt = "resets_at"
+        case scope
+    }
+}
+
+internal struct LimitScope: Decodable {
+    let model: LimitScopeModel?
+}
+
+internal struct LimitScopeModel: Decodable {
+    let displayName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case displayName = "display_name"
     }
 }
 

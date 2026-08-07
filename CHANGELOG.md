@@ -28,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Your Opus weekly limit won't disappear when Anthropic changes how it reports
+  it.** Model-specific weekly limits are moving to a new field in the usage API,
+  and the old one has been seen going empty during the switch. Claude Meter now
+  reads both, so on a Max plan the Opus limit — usually the one that actually
+  binds — keeps driving the menu bar, alerts and widget instead of quietly
+  vanishing. Limits for models it hasn't seen before now show up too.
+
 - **Claude Meter's own test suite could read the login Keychain.** A safeguard
   meant to block Keychain access from tests only recognised one of the two ways
   Apple's tooling runs them, so the checks a developer runs locally were reaching

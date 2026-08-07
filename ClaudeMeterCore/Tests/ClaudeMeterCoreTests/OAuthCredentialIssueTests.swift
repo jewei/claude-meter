@@ -44,13 +44,40 @@ struct OAuthCredentialIssueTests {
     /// warning them would be noise.
     @Test func ignoresDeliberateAndUnactionableStates() {
         for reason: SourceAttempt.Reason in [
-            .notConnected, .sourceDisabled, .rateLimited, .networkError, .requestFailed,
+            .notConnected, .sourceDisabled, .networkError, .requestFailed,
             .invalidResponse,
         ] {
             #expect(
                 OAuthCredentialIssue.from(sourceAttempts: attempts(reason)) == nil,
                 "\(reason) should not raise a credential notice")
         }
+    }
+
+    /// Throttling is the one un-actionable state we *do* surface: a 429 can carry
+    /// an hour-long `Retry-After`, and an hour of frozen numbers with no
+    /// explanation is indistinguishable from a broken app.
+    @Test func surfacesThrottlingInTheInformationalTone() {
+        let issue = OAuthCredentialIssue.from(sourceAttempts: attempts(.rateLimited))
+        #expect(issue == .rateLimited)
+        #expect(issue?.needsUserAction == false)
+    }
+
+    @Test func throttleNoticeCountsDownWhenADeadlineIsKnown() {
+        let now = Date()
+        let text = OAuthCredentialIssue.rateLimited.displayText(
+            retryAt: now.addingTimeInterval(48 * 60), now: now)
+        #expect(text.contains("48m"))
+        #expect(!text.contains("shortly"))
+    }
+
+    /// No deadline, or one already elapsed, must not invent a time.
+    @Test func throttleNoticeDegradesWithoutAUsableDeadline() {
+        let now = Date()
+        #expect(OAuthCredentialIssue.rateLimited.displayText(now: now).contains("shortly"))
+        #expect(
+            OAuthCredentialIssue.rateLimited
+                .displayText(retryAt: now.addingTimeInterval(-60), now: now)
+                .contains("shortly"))
     }
 
     @Test func ignoresASuccessfulOAuthPoll() {

@@ -355,6 +355,13 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         OAuthSharedState.recordRateLimit(retryAfter: retryAfter, now: now)
     }
 
+    /// When an active 429 backoff lifts, or `nil` when we aren't throttled.
+    /// Read-only — unlike `isRateLimited(now:)` this never clears an elapsed
+    /// gate, so the UI can poll it without mutating pipeline state.
+    public static func rateLimitedUntil(now: Date = Date()) -> Date? {
+        OAuthSharedState.blockedUntilIfActive(now: now)
+    }
+
     /// Builds the authenticated GET for the usage API (shared header setup).
     static func usageRequest(token: String) -> URLRequest {
         var request = URLRequest(url: usageURL)
@@ -774,6 +781,16 @@ private enum OAuthSharedState {
         lock.lock()
         transportOverride = transport
         lock.unlock()
+    }
+
+    /// The active backoff deadline, or `nil` when none is in force. Deliberately
+    /// non-mutating (`isRateLimited` clears an elapsed gate as a side effect), so
+    /// a UI read can't disturb the pipeline's own bookkeeping.
+    static func blockedUntilIfActive(now: Date) -> Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let until = blockedUntil, now < until else { return nil }
+        return until
     }
 
     /// Clears the 429 gate. Test-only: production reopens it by elapsing

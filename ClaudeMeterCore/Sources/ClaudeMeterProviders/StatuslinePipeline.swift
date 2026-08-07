@@ -3,8 +3,8 @@ import Foundation
 
 /// Primary pipeline that reads Claude Code's own rate-limit data via the statusline bridge.
 ///
-/// Fallback order when stale (rate-limited to once per minute): statusline bridge,
-/// OAuth usage API, then the last cached snapshot.
+/// Fallback order when stale (rate-limited — see `fallbackCooldown`): statusline
+/// bridge, OAuth usage API, then the last cached snapshot.
 public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     private let fallback: any ClaudeMeterPipeline
@@ -28,7 +28,25 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     private var _lastActiveKey: String?
 
     private let stalenessThreshold: TimeInterval = 60
-    private let fallbackCooldown: TimeInterval = 60
+
+    /// How long to serve the cached snapshot before calling the next tier again
+    /// once the bridge has gone stale.
+    ///
+    /// This governs how hard we lean on `/api/oauth/usage`, which is undocumented
+    /// and throttles aggressively — a 429 there has been seen carrying an
+    /// hour-long `Retry-After`. At the poll cadence (60 s) a matching 60 s cooldown
+    /// meant *every* poll reached the API whenever no Claude Code session was
+    /// live — ~60 calls/hour to learn numbers that move on 5-hour and 7-day
+    /// timescales.
+    ///
+    /// **Ceiling: this must stay below `AppGroupConfig.staleAfterSeconds` (180 s).**
+    /// While the cooldown holds, the cached snapshot keeps its original
+    /// `lastSuccessfulPollAt`, so a cooldown at or above the staleness threshold
+    /// would park the UI in "Data may be stale" for part of every cycle. Going
+    /// meaningfully higher needs a user-initiated bypass first (opening the
+    /// popover currently calls `refreshNow`, which lands on this same gate and
+    /// would just serve the cache).
+    static let fallbackCooldown: TimeInterval = 120
 
     public init(
         fallback: any ClaudeMeterPipeline,
@@ -116,14 +134,14 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
 
     private func secondsUntilNextFallback(now: Date) -> Int {
         guard let last = stateQueue.sync(execute: { lastFallbackPollAt }) else { return 0 }
-        let remaining = fallbackCooldown - now.timeIntervalSince(last)
+        let remaining = Self.fallbackCooldown - now.timeIntervalSince(last)
         return max(0, Int(remaining.rounded()))
     }
 
     private func markFallbackPollIfCooldownElapsed(now: Date) -> Bool {
         stateQueue.sync {
             let cooldownElapsed =
-                lastFallbackPollAt.map { now.timeIntervalSince($0) >= fallbackCooldown } ?? true
+                lastFallbackPollAt.map { now.timeIntervalSince($0) >= Self.fallbackCooldown } ?? true
             if cooldownElapsed {
                 lastFallbackPollAt = now
             }

@@ -21,13 +21,17 @@ public enum OAuthCredentialIssue: String, Sendable, Equatable, CaseIterable {
     case keychainLocked
     /// Backing off after transient refresh failures; recovers on its own.
     case retrying
+    /// Anthropic is throttling us (HTTP 429). Nothing to fix — but without a
+    /// notice, a multi-minute `Retry-After` looks exactly like the app being
+    /// broken: the numbers simply stop moving.
+    case rateLimited
 
     /// `true` when the user has to do something; `false` for states that clear
     /// themselves. Callers use this to pick an alarming vs. informational tone.
     public var needsUserAction: Bool {
         switch self {
         case .signedOut, .signInExpired, .corrupt: return true
-        case .keychainLocked, .retrying: return false
+        case .keychainLocked, .retrying, .rateLimited: return false
         }
     }
 
@@ -39,7 +43,11 @@ public enum OAuthCredentialIssue: String, Sendable, Equatable, CaseIterable {
     /// only be replaced by Claude Code writing a new one. Disconnecting in Settings
     /// clears our in-memory cache but leaves the dead token in the Keychain, so it
     /// would not help — don't reword these toward the app's own controls.
-    public var displayText: String {
+    /// - Parameter retryAt: when the throttle lifts, for `.rateLimited` only.
+    ///   Phrased through `ResetPhrase` like every other wait in the app, so a
+    ///   throttle reads in the same units as a window reset. Omitted or already
+    ///   elapsed → the sentence degrades to "shortly" rather than inventing a time.
+    public func displayText(retryAt: Date? = nil, now: Date = Date()) -> String {
         switch self {
         case .signedOut:
             "Claude Code isn't signed in — run `claude login` to restore Opus and plan details"
@@ -51,13 +59,25 @@ public enum OAuthCredentialIssue: String, Sendable, Equatable, CaseIterable {
             "Keychain is locked — unlock your Mac to refresh Opus and plan details"
         case .retrying:
             "Retrying the Claude Code sign-in…"
+        case .rateLimited:
+            if let retryAt, let phrase = ResetPhrase.spoken(until: retryAt, asOf: now) {
+                "Anthropic is rate-limiting usage checks — retrying \(phrase)"
+            } else {
+                "Anthropic is rate-limiting usage checks — retrying shortly"
+            }
         }
     }
 
     /// Classifies the OAuth step of a poll. Returns `nil` when OAuth succeeded,
-    /// wasn't configured, or failed for a reason the user can't act on (network,
-    /// rate limiting, a server error) — those are the pipeline's job to retry,
-    /// not the user's problem to solve.
+    /// wasn't configured, or failed for a reason that resolves itself within a
+    /// poll or two (network blip, server error) — those are the pipeline's job to
+    /// retry, not the user's problem to solve.
+    ///
+    /// `rateLimited` is the exception among the un-actionable reasons: a 429 can
+    /// carry an hour-long `Retry-After`, and a full hour of frozen numbers with no
+    /// explanation is indistinguishable from a broken app. It surfaces in the
+    /// informational tone (`needsUserAction == false`) — naming the cause, not
+    /// asking for a fix.
     ///
     /// `notConnected` and `sourceDisabled` are deliberately excluded: the user
     /// chose those, so a warning would be noise.
@@ -72,8 +92,9 @@ public enum OAuthCredentialIssue: String, Sendable, Equatable, CaseIterable {
         case .credentialsInvalid: return .corrupt
         case .credentialsUnavailable: return .keychainLocked
         case .refreshDeferred, .refreshFailed: return .retrying
+        case .rateLimited: return .rateLimited
         case .freshData, .sourceDisabled, .notConnected, .staleData, .noData, .cooldown,
-            .rateLimited, .networkError, .invalidResponse, .requestFailed, .cachedSnapshot,
+            .networkError, .invalidResponse, .requestFailed, .cachedSnapshot,
             .cacheMissing:
             return nil
         }

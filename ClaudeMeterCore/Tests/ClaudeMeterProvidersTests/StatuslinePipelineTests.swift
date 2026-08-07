@@ -207,3 +207,22 @@ struct StatuslinePipelineSelectActiveTests {
         #expect(active == "claude-it")
     }
 }
+
+@Suite("Statusline fallback cooldown")
+struct StatuslineFallbackCooldownTests {
+    /// The cooldown throttles how often a stale bridge lets us reach the OAuth
+    /// usage API — but while it holds, the cached snapshot keeps its original
+    /// `lastSuccessfulPollAt`. At or above the staleness threshold the UI would
+    /// therefore sit in "Data may be stale" for part of every cycle, so raising
+    /// the cooldown past it needs a user-initiated bypass first. Asserted rather
+    /// than left as a comment because both numbers are easy to tune in isolation.
+    @Test func staysBelowTheStalenessThreshold() {
+        #expect(StatuslinePipeline.fallbackCooldown < AppGroupConfig.defaultStaleAfterSeconds)
+    }
+
+    /// A cooldown at or under the poll cadence is the same as no cooldown at all —
+    /// every poll would reach the API.
+    @Test func exceedsThePollCadence() {
+        #expect(StatuslinePipeline.fallbackCooldown > 60)
+    }
+}

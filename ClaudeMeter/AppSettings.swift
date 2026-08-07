@@ -171,6 +171,9 @@ struct CodexAccount: Identifiable, Sendable, Equatable {
 /// cycle therefore sees the same source selection, account list, and Codex mode.
 struct PollConfiguration: Sendable {
     let generation: Int
+    /// Whether anyone is waiting on this cycle. Only the statusline tier's
+    /// API-fallback cooldown reads it — never a correctness rule.
+    let refreshKind: RefreshKind
     let claudeEnabled: Bool
     let cursorEnabled: Bool
     let codexEnabled: Bool
@@ -178,8 +181,9 @@ struct PollConfiguration: Sendable {
     let codexMode: CodexSourceMode
     let codexAccounts: [CodexAccount]
 
-    init(generation: Int) {
+    init(generation: Int, refreshKind: RefreshKind = .background) {
         self.generation = generation
+        self.refreshKind = refreshKind
         claudeEnabled = AppSettings.hasClaudeSource
         cursorEnabled = AppSettings.cursorSourceEnabled
         codexEnabled = AppSettings.codexSourceEnabled

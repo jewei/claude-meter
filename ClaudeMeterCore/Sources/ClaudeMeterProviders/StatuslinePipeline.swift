@@ -15,6 +15,12 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     /// `claude` account is never droppable). Injected at construction; a Settings
     /// toggle rebuilds the pipeline with a fresh set.
     private let disabledAccountKeys: Set<String>
+    /// Bridge session root, injectable so the tier-selection logic can be tested
+    /// against a temp dir instead of whatever `~/.claude-meter` happens to hold —
+    /// on a dev machine a live Claude Code session makes tier 1 always win.
+    /// `nil` uses the real location. Mirrors `StatuslineBridge.readDataGrouped`'s
+    /// own testable-core seam.
+    private let sessionsRootOverride: URL?
     private let stateQueue = DispatchQueue(label: "com.jewei.claudemeter.statusline-pipeline.state")
     private var lastFallbackPollAt: Date? = nil
     /// Per-account activity tracker: a payload "signature" (cost/usage fields that
@@ -52,24 +58,26 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
         fallback: any ClaudeMeterPipeline,
         store: SnapshotStore,
         thresholds: UsageThresholds = .default,
-        disabledAccountKeys: Set<String> = []
+        disabledAccountKeys: Set<String> = [],
+        sessionsRootOverride: URL? = nil
     ) {
         self.fallback = fallback
         self.store = store
         self.thresholds = thresholds
         self.disabledAccountKeys = disabledAccountKeys
+        self.sessionsRootOverride = sessionsRootOverride
         // Seed the active account from the last snapshot so a relaunch/rebuild keeps
         // the right account instead of momentarily resetting to a key/recency winner.
         self._lastActiveKey =
             (try? store.readLatest())?.accounts?.first(where: { $0.isActive })?.id
     }
 
-    public func poll(now: Date) async throws -> ParseResult {
+    public func poll(now: Date, kind: RefreshKind = .background) async throws -> ParseResult {
         // Primary: use the statusline bridge while any account is fresh. Group by
         // account so separate rate-limit buckets are never blended; the snapshot's
         // top-level fields mirror the most-recently-active account.
         let groups = Self.eligibleGroups(
-            StatuslineBridge.readDataGrouped(maxAge: stalenessThreshold),
+            readGroups(maxAge: stalenessThreshold),
             disabled: disabledAccountKeys
         )
         if !groups.isEmpty {
@@ -93,11 +101,22 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
         // (fresh install, Claude Code not yet run) from "data exists but aged out" —
         // the diagnostics trail should not claim staleData when there's no data.
         let skipReason: SourceAttempt.Reason =
-            StatuslineBridge.isDataFresh(maxAge: .infinity) ? .staleData : .noData
+            hasAnyData ? .staleData : .noData
+
+        // The cooldown exists to spare the OAuth API on idle cycles, so someone
+        // actually looking is exactly the case it should yield to: opening the
+        // popover shows live data rather than up to `fallbackCooldown` of cache.
+        // It still *marks* the poll, so an interactive refresh resets the window
+        // instead of leaving the next background poll free to fire immediately.
+        if kind == .interactive {
+            markFallbackPoll(now: now)
+            return try await fallback.poll(now: now, kind: kind).prependingSourceAttempt(
+                SourceAttempt(source: .statusline, outcome: .skipped, reason: skipReason))
+        }
 
         // Check if the fallback cooldown has elapsed.
         if markFallbackPollIfCooldownElapsed(now: now) {
-            return try await fallback.poll(now: now).prependingSourceAttempt(
+            return try await fallback.poll(now: now, kind: kind).prependingSourceAttempt(
                 SourceAttempt(source: .statusline, outcome: .skipped, reason: skipReason))
         }
 
@@ -128,8 +147,25 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
 
         // No cache either — call fallback unconditionally.
         markFallbackPoll(now: now)
-        return try await fallback.poll(now: now).prependingSourceAttempt(
+        return try await fallback.poll(now: now, kind: kind).prependingSourceAttempt(
             SourceAttempt(source: .statusline, outcome: .skipped, reason: skipReason))
+    }
+
+    private func readGroups(maxAge: TimeInterval) -> [String: StatuslineBridge.StatuslinePayload] {
+        guard let root = sessionsRootOverride else {
+            return StatuslineBridge.readDataGrouped(maxAge: maxAge)
+        }
+        return StatuslineBridge.readDataGrouped(
+            sessionsRoot: root, legacyFile: nil, maxAge: maxAge)
+    }
+
+    /// Has the bridge ever written anything, at any age — distinguishes "stale" from
+    /// "never ran" in the diagnostics trail.
+    private var hasAnyData: Bool {
+        guard sessionsRootOverride != nil else {
+            return StatuslineBridge.isDataFresh(maxAge: .infinity)
+        }
+        return !readGroups(maxAge: .infinity).isEmpty
     }
 
     private func secondsUntilNextFallback(now: Date) -> Int {

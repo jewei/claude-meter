@@ -42,6 +42,11 @@ final class AppState: ObservableObject {
     private var rebuildDebounceTask: Task<Void, Never>?
     private var pipelineGeneration = 0
     private var refreshPending = false
+    /// Intent of a refresh that arrived mid-poll. `.interactive` sticks until the
+    /// deferred poll consumes it — otherwise opening the popover during a poll
+    /// (likely, at a 60 s cadence) would silently downgrade to `.background` and
+    /// serve cache, which is the exact case the bypass exists for.
+    private var pendingRefreshKind: RefreshKind = .background
     /// False until the first successful in-session poll. The first poll's
     /// `previous` is the persisted snapshot, which must not seed notifications
     /// (e.g. a "refueled" for a window that reset while the app was quit).
@@ -258,18 +263,25 @@ final class AppState: ObservableObject {
         appUpdater.checkForUpdates()
     }
 
-    func refreshNow() {
+    /// - Parameter kind: `.interactive` when the user is waiting on the result, so
+    ///   the statusline tier's API-fallback cooldown yields rather than serving up
+    ///   to `fallbackCooldown` of cache. Wake and reconnect deliberately stay
+    ///   `.background`: after either, the cooldown has almost always elapsed on its
+    ///   own, so the bypass would buy nothing and only widen how often we can be
+    ///   made to call out.
+    func refreshNow(kind: RefreshKind = .background) {
         guard canPoll else { return }
         if isLoading {
             refreshPending = true
+            if kind == .interactive { pendingRefreshKind = .interactive }
             return
         }
-        Task { await poll() }
+        Task { await poll(kind: kind) }
     }
 
     func popoverDidOpen() {
         isPopoverOpen = true
-        refreshNow()
+        refreshNow(kind: .interactive)
     }
 
     func popoverDidClose() {
@@ -415,6 +427,7 @@ final class AppState: ObservableObject {
         AppSettings.isActive = active
         isActive = active
         refreshPending = false
+        pendingRefreshKind = .background
         if active {
             rebuildPipeline()
         } else {
@@ -474,20 +487,24 @@ final class AppState: ObservableObject {
         AppGroupConfig.currentThresholds()
     }
 
-    private func poll() async {
+    private func poll(kind: RefreshKind = .background) async {
         guard canPoll else { return }
         refreshConfigBridges()  // self-heal statusline + attention hooks each poll
         guard !isLoading else {
             refreshPending = true
+            if kind == .interactive { pendingRefreshKind = .interactive }
             return
         }
-        let configuration = PollConfiguration(generation: pipelineGeneration)
+        let configuration = PollConfiguration(
+            generation: pipelineGeneration, refreshKind: kind)
         isLoading = true
         defer {
             isLoading = false
             if refreshPending {
                 refreshPending = false
-                Task { await poll() }
+                let pending = pendingRefreshKind
+                pendingRefreshKind = .background
+                Task { await poll(kind: pending) }
             }
         }
 
@@ -514,7 +531,7 @@ final class AppState: ObservableObject {
             generation: configuration.generation)
         do {
             let result = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
-                try await pipeline.poll(now: now)
+                try await pipeline.poll(now: now, kind: configuration.refreshKind)
             }
             await serviceStatusTask
             guard configuration.generation == pipelineGeneration, canPoll else { return }

@@ -279,15 +279,26 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     // MARK: - Enrichment
 
-    /// OAuth-only fields the statusline source cannot provide.
+    /// A complete observation of the OAuth-only fields the statusline source cannot
+    /// provide. A non-`nil` enrichment means the request succeeded, so optional
+    /// fields that are `nil` must clear older values. `fetchEnrichment` reserves its
+    /// outer `nil` for "no new observation" (disabled, unavailable, or failed).
     public struct OAuthEnrichment: Sendable, Equatable {
         public let opus: LimitWindow?
         public let scopedWeekly: [ScopedLimitWindow]?
         public let extraUsage: ExtraUsage?
         public let plan: String?
 
-        public var isEmpty: Bool {
-            opus == nil && scopedWeekly == nil && extraUsage == nil && plan == nil
+        public init(
+            opus: LimitWindow?,
+            scopedWeekly: [ScopedLimitWindow]?,
+            extraUsage: ExtraUsage?,
+            plan: String?
+        ) {
+            self.opus = opus
+            self.scopedWeekly = scopedWeekly
+            self.extraUsage = extraUsage
+            self.plan = plan
         }
     }
 
@@ -326,7 +337,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             return LimitWindow(percentUsed: u, resetsAt: parseEpochOrISODate(entry.resetsAt))
                 .resolved(asOf: now)
         }
-        let enrichment = OAuthEnrichment(
+        return OAuthEnrichment(
             opus: opus,
             scopedWeekly: scopedWindows(from: usage),
             extraUsage: usage.extraUsage?.model,
@@ -335,7 +346,6 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 rateLimitTier: creds.rateLimitTier
             )
         )
-        return enrichment.isEmpty ? nil : enrichment
     }
 
     /// Backoff bridge for the multi-account fetcher (`OAuthSharedState` is private).

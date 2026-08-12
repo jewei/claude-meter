@@ -105,7 +105,9 @@ in `limits[]`; unknown/null windows degrade without failing the whole response. 
 usage minor units are scaled by the response's decimal places.
 
 Statusline does not provide Opus, scoped limits, extra usage, or plan. OAuth enrichment
-fills those fields without replacing fresher statusline session/weekly windows.
+replaces those fields without touching fresher statusline session/weekly windows. A
+successful enrichment is a complete observation: absent optional fields clear older
+values. An unavailable or failed fetch produces no observation and keeps the cached one.
 
 Multi-account OAuth runs only in auto mode and never refreshes secondary-account tokens.
 It reads each config directory's namespaced credential plus local account identity, fetches

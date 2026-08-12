@@ -813,16 +813,21 @@ final class AppState: ObservableObject {
         return cachedAccountReadings
     }
 
-    private static func apply(
+    static func apply(
         _ e: OAuthPipeline.OAuthEnrichment, to snap: inout ClaudeUsageSnapshot
     ) {
-        if let opus = e.opus { snap.limits.currentWeekOpus = opus }
-        if let scoped = e.scopedWeekly { snap.limits.scopedWeekly = scoped }
-        if let extra = e.extraUsage { snap.limits.extraUsage = extra }
-        if let plan = e.plan {
-            var account = snap.account ?? AccountInfo()
-            account.plan = plan
-            snap.account = account
+        // Enrichment is a complete successful observation, not a sparse patch.
+        // Replacing optionals lets the API explicitly remove a limit that existed
+        // in an earlier response; a failed fetch never reaches this method.
+        snap.limits.currentWeekOpus = e.opus
+        snap.limits.scopedWeekly = e.scopedWeekly
+        snap.limits.extraUsage = e.extraUsage
+
+        if var account = snap.account {
+            account.plan = e.plan
+            snap.account = account.isEmpty ? nil : account
+        } else if let plan = e.plan {
+            snap.account = AccountInfo(plan: plan)
         }
     }
 

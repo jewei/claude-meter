@@ -70,6 +70,39 @@ struct AppLogicTests {
         #expect(Array(1...7).chunked(into: 3) == [[1, 2, 3], [4, 5, 6], [7]])
     }
 
+    @MainActor
+    @Test("Successful empty OAuth enrichment clears stale optional fields")
+    func emptyOAuthEnrichmentClearsStaleValues() {
+        var snapshot = ClaudeUsageSnapshot(
+            parserVersion: "test",
+            createdAt: Date(timeIntervalSince1970: 100),
+            source: SourceInfo(cliPath: "statusline", command: "read"),
+            account: AccountInfo(email: "person@example.com", plan: "Max"),
+            limits: LimitInfo(
+                currentWeekOpus: LimitWindow(percentUsed: 81),
+                scopedWeekly: [
+                    ScopedLimitWindow(
+                        id: "seven_day_sonnet", window: LimitWindow(percentUsed: 42))
+                ],
+                extraUsage: ExtraUsage(isEnabled: true, usedCredits: 500)
+            ),
+            state: SnapshotState(status: .ok, severity: .normal)
+        )
+        let enrichment = OAuthPipeline.OAuthEnrichment(
+            opus: nil,
+            scopedWeekly: nil,
+            extraUsage: nil,
+            plan: nil
+        )
+
+        AppState.apply(enrichment, to: &snapshot)
+
+        #expect(snapshot.limits.currentWeekOpus == nil)
+        #expect(snapshot.limits.scopedWeekly == nil)
+        #expect(snapshot.limits.extraUsage == nil)
+        #expect(snapshot.account == AccountInfo(email: "person@example.com"))
+    }
+
     @Test("Energy bar pace marker stays centered and inside the track")
     func energyBarPaceMarker() {
         #expect(energyBarMarkerOffset(width: 100, expectedFraction: -1) == 0)

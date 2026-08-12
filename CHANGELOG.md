@@ -11,6 +11,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.12] - 2026-08-12
+
+### Changed
+
+- **Claude Meter stays responsive when shared snapshot storage stalls.** Snapshot
+  reads and writes now have bounded waits and fail fast after a timeout, so a
+  wedged App Group container cannot freeze polling or consume another blocked
+  thread on every cycle.
+- **Fresh quota data no longer waits for Anthropic's service-status page.** The
+  advisory status check now runs independently and coalesces overlapping refreshes,
+  so a slow status request cannot delay the authoritative usage reading.
+- **Claude Meter gives memory back under system pressure.** Rebuildable cost and
+  activity caches are released when macOS asks, while the last persisted cost
+  checkpoint remains available for future launches.
+
+### Fixed
+
+- **OAuth-only details now have their own freshness state.** If refreshing Opus,
+  scoped limits, extra usage or plan details fails, the last good values remain
+  visible but are clearly marked stale in the popover and Diagnostics. A successful
+  response can also remove limits that Anthropic no longer reports instead of
+  leaving old values behind.
+- **Misbehaving provider helpers can no longer grow memory without bound.** Output
+  captured from Codex and Cursor subprocesses is capped and continuously drained,
+  preventing oversized or unterminated responses from wedging the helper path.
+
 ## [2.11] - 2026-08-12
 
 ### Added
@@ -543,7 +569,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.11...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.12...HEAD
+[2.12]: https://github.com/jewei/claude-meter/compare/v2.11...v2.12
 [2.11]: https://github.com/jewei/claude-meter/compare/v2.10...v2.11
 [2.10]: https://github.com/jewei/claude-meter/compare/v2.9...v2.10
 [2.9]: https://github.com/jewei/claude-meter/compare/v2.8...v2.9

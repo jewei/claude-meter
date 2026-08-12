@@ -11,15 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **Opening Claude Meter always fetches fresh figures.** Between checks the app
-  serves its last reading, so opening the popover could show numbers up to two
-  minutes old, marked stale. Opening it now counts as asking, and fetches — while
-  background checks stay throttled, so this doesn't mean more traffic.
+## [2.11] - 2026-08-12
 
 ### Added
 
+- **Account cards now show whether usage is on pace.** Bar cards include a subtle
+  marker for where usage would be at the current point in the window; both card
+  styles say how far ahead or behind that pace you are. The marker mirrors when
+  switching between energy-left and usage views, and pace never changes alert
+  colors or thresholds.
 - **Claude Meter now says when Anthropic is throttling it.** A rate-limited usage
   check used to look identical to the app being broken — the numbers just stopped
   moving, with the cause buried in Diagnostics. The popover and Settings now name
@@ -28,13 +28,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Opening Claude Meter always fetches fresh figures.** Between checks the app
+  serves its last reading, so opening the popover could show numbers up to two
+  minutes old, marked stale. Opening it now counts as asking, and fetches — while
+  background checks stay throttled, so this doesn't mean more traffic.
 - **Fewer usage checks when you aren't in a Claude Code session.** With no live
   session the app was querying Anthropic every minute for figures that move over
   hours and days, which risks being rate-limited for the trouble. It now checks
   every two minutes — still well inside the window before data is marked stale.
+- **Multi-account failures are easier to diagnose.** One account failing no longer
+  hides why while healthy accounts update; Claude Meter preserves the previous
+  reading as stale and reports the account-specific failure in Diagnostics.
 
 ### Fixed
 
+- **Alerts no longer fire retroactively when Claude Meter launches.** The first
+  successful reading establishes a baseline instead of treating an already-high
+  usage level as a threshold crossing that happened while the app was closed.
 - **Your Opus weekly limit won't disappear when Anthropic changes how it reports
   it.** Model-specific weekly limits are moving to a new field in the usage API,
   and the old one has been seen going empty during the switch. Claude Meter now
@@ -56,6 +66,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while filling in Opus and extra-usage details, the dead credential stayed cached
   and outranked the fresh one Claude Code had written, so signing in again didn't
   always take effect until you restarted the app.
+- **OAuth connection errors are no longer silently ignored.** Explicit connect,
+  save and disconnect actions now surface Keychain write failures, while Settings
+  can still check credential availability without reading the secret itself.
+- **Local cost and activity totals are more resilient.** Rewritten transcripts,
+  incomplete final lines, unreadable account roots and duplicate events across
+  discovered roots no longer silently distort the result; partial scans are
+  identified instead of replacing the union with zero.
+- **The widget refreshes when data becomes stale**, rather than waiting for its
+  next ordinary timeline update to change the stale indicator.
 - **The widget's headline number now accounts for the weekly Opus limit.** It was
   computed from the session and all-models weekly windows only, so on a Max plan
   the rings could read 55 while the Opus row right beneath said 4%.
@@ -524,7 +543,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.10...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.11...HEAD
+[2.11]: https://github.com/jewei/claude-meter/compare/v2.10...v2.11
 [2.10]: https://github.com/jewei/claude-meter/compare/v2.9...v2.10
 [2.9]: https://github.com/jewei/claude-meter/compare/v2.8...v2.9
 [2.8.1]: https://github.com/jewei/claude-meter/compare/v2.8...v2.8.1

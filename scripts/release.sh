@@ -256,8 +256,8 @@ RELEASE_COMMIT="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
 # not exist yet.
 
 STAGING_BRANCH="release-staging/$TAG"
-echo "▶ Staging release commit on origin/$STAGING_BRANCH…"
-git -C "$PROJECT_DIR" push origin "$RELEASE_COMMIT:refs/heads/$STAGING_BRANCH"
+echo "▶ Staging release commit on origin/${STAGING_BRANCH}…"
+git -C "$PROJECT_DIR" push origin "${RELEASE_COMMIT}:refs/heads/${STAGING_BRANCH}"
 
 # ── GitHub Release ────────────────────────────────────────────────────────────
 # Publish the signed asset before updating `main`. The tag points at the release
@@ -279,7 +279,7 @@ echo "▶ Publishing release commit to main…"
 git -C "$PROJECT_DIR" push origin HEAD:main
 
 echo "▶ Removing staging branch…"
-git -C "$PROJECT_DIR" push origin --delete "$STAGING_BRANCH"
+git -C "$PROJECT_DIR" push origin --delete "${STAGING_BRANCH}"
 
 echo ""
 echo "✓ Released Claude Meter $VERSION"

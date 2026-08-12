@@ -156,7 +156,10 @@ last 30 days, Monday at index zero, deduping message identity within each file. 
 derived from the normalized grid. Cache identity includes timezone.
 
 Both scanners use bounded, constant-time LRU caches. Cost cache is persisted and
-rate-limited; activity cache is in memory only.
+rate-limited; activity cache is in memory only. On macOS memory-pressure warnings, the
+app drops both rebuildable in-memory caches and asks malloc to release free pages off-main.
+The last flushed cost-cache file remains intact, but the current process repopulates only
+files touched by later scans instead of immediately reloading the whole disk cache.
 
 ## 5. Optional providers
 

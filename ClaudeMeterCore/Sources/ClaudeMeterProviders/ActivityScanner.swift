@@ -277,6 +277,19 @@ public final class ActivityCache: @unchecked Sendable {
             entries.removeValue(forKey: oldest)
         }
     }
+
+    /// Drops rebuildable heatmap entries under system memory pressure. The cache
+    /// is intentionally in-memory-only, so later heatmap opens repopulate it from
+    /// transcripts without changing the published grid or any persisted data.
+    @discardableResult
+    public func trimMemory() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        let removed = entries.count
+        entries.removeAll(keepingCapacity: false)
+        accessCounter = 0
+        return removed
+    }
 }
 
 // MARK: - JSON shapes (minimal — only what activity bucketing needs)

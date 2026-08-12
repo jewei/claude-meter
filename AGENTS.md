@@ -66,6 +66,8 @@ Poll cadence and statusline staleness are **hardcoded 60 s** (not user settings)
 
 `NetworkMonitor` (app target; `Network`/`NWPathMonitor` — never in Core) is the connectivity analogue: it fires `onReconnect → refreshNow()` on a lost→regained transition (`wasSatisfied` guard, hops from the monitor's background queue to `@MainActor`), so a Wi-Fi drop / network switch / VPN flap refreshes immediately instead of waiting out the interval. Like `PowerMonitor`, it's skipped by `AppState.init(pipeline:)`.
 
+`MemoryPressureMonitor` (app target; `DispatchSourceMemoryPressure`) listens for warning/critical pressure on a utility queue, hops to `@MainActor`, trims the shared `CostUsageCache` and `ActivityCache`, then calls `malloc_zone_pressure_relief` off-main. Both trims are correctness-neutral: activity is rebuilt on demand; cost drops unflushed performance-only progress but preserves its last disk checkpoint and deliberately does **not** reload all persisted entries in the same process (later scans repopulate only touched files). It is skipped by `AppState.init(pipeline:)`, like the other system monitors.
+
 ### Networking — `ProviderHTTP.swift`
 
 - **All** provider HTTP goes through `ProviderHTTPClient.shared` (a `HTTPTransport`): one cookie-less ephemeral session (10 s) behind `RedirectGuardDelegate`, which drops any redirect that isn't same-origin HTTPS — credentials (`Bearer`/`Cookie`) must never be replayed off-origin or downgraded. OAuth and status clients all use it.

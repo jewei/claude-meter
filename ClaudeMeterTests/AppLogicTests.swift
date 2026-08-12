@@ -177,6 +177,25 @@ struct AppLogicTests {
     }
 
     @MainActor
+    @Test("Memory pressure invokes rebuildable cache trimming")
+    func memoryPressureTrimsCaches() {
+        var trimCalls = 0
+        let expected = MemoryPressureTrimSummary(costEntries: 12, activityEntries: 7)
+        let monitor = MemoryPressureMonitor(
+            trimCaches: {
+                trimCalls += 1
+                return expected
+            },
+            releaseFreeMallocPages: {})
+
+        let result = monitor.handleMemoryPressureForTesting()
+
+        #expect(trimCalls == 1)
+        #expect(result == expected)
+        #expect(result.total == 19)
+    }
+
+    @MainActor
     @Test("Advisory service refresh is coalesced and publishes independently")
     func serviceStatusRefreshIsIndependent() async {
         let fetcher = SuspendedStatusFetcher()

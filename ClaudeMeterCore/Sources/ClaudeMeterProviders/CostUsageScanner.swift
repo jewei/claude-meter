@@ -531,6 +531,24 @@ public final class CostUsageCache: @unchecked Sendable {
         dirty = false
     }
 
+    /// Drops rebuildable in-memory entries under system memory pressure while
+    /// leaving the last flushed disk cache intact for a future process. We do not
+    /// immediately reload that file in this process: doing so on the next poll
+    /// would undo the relief. Active-window files repopulate lazily as they are
+    /// scanned; losing unflushed cache progress affects performance, never totals.
+    @discardableResult
+    public func trimMemory() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        let removed = entries.count
+        entries.removeAll(keepingCapacity: false)
+        accessRanks.removeAll(keepingCapacity: false)
+        accessCounter = 0
+        didLoad = true
+        dirty = false
+        return removed
+    }
+
     private func touchLocked(_ path: String) {
         accessCounter &+= 1
         accessRanks[path] = accessCounter

@@ -64,6 +64,7 @@ final class AppState: ObservableObject {
     private var didPollInSession = false
     private var powerMonitor: PowerMonitor?
     private var networkMonitor: NetworkMonitor?
+    private var memoryPressureMonitor: MemoryPressureMonitor?
     private var lastOAuthEnrichmentAttemptAt: Date?
     @Published private var oauthEnrichmentReading: ReadingState<OAuthPipeline.OAuthEnrichment>?
     private var lastAccountsFetchAt: Date?
@@ -217,6 +218,9 @@ final class AppState: ObservableObject {
             self?.refreshNow()
         }
         self.networkMonitor = network
+        let memoryPressure = MemoryPressureMonitor()
+        memoryPressure.start()
+        self.memoryPressureMonitor = memoryPressure
         startPolling()
         Task { await notificationEngine.requestAuthorizationIfNeeded() }
     }

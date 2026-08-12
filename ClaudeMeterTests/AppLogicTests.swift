@@ -103,6 +103,71 @@ struct AppLogicTests {
         #expect(snapshot.account == AccountInfo(email: "person@example.com"))
     }
 
+    @MainActor
+    @Test("OAuth enrichment keeps observation time across failure and recovery")
+    func oauthEnrichmentLifecycle() {
+        let firstObservation = Date(timeIntervalSince1970: 100)
+        let failedAttempt = Date(timeIntervalSince1970: 200)
+        let recoveredObservation = Date(timeIntervalSince1970: 300)
+        let initialValue = OAuthPipeline.OAuthEnrichment(
+            opus: LimitWindow(percentUsed: 81),
+            scopedWeekly: nil,
+            extraUsage: nil,
+            plan: "Max"
+        )
+        let recoveredValue = OAuthPipeline.OAuthEnrichment(
+            opus: nil,
+            scopedWeekly: nil,
+            extraUsage: nil,
+            plan: nil
+        )
+
+        let current = AppState.updatedOAuthEnrichmentReading(
+            previous: nil,
+            result: .success(initialValue),
+            now: firstObservation
+        )
+        #expect(current.value == initialValue)
+        #expect(current.lastPolledAt == firstObservation)
+        #expect(current.error == nil)
+        #expect(!current.isStale)
+
+        let stale = AppState.updatedOAuthEnrichmentReading(
+            previous: current,
+            result: .unavailable(.networkError),
+            now: failedAttempt
+        )
+        #expect(stale.value == initialValue)
+        #expect(stale.lastPolledAt == firstObservation)
+        #expect(stale.error == SourceAttempt.Reason.networkError.rawValue)
+        #expect(stale.isStale)
+
+        let recovered = AppState.updatedOAuthEnrichmentReading(
+            previous: stale,
+            result: .success(recoveredValue),
+            now: recoveredObservation
+        )
+        #expect(recovered.value == recoveredValue)
+        #expect(recovered.lastPolledAt == recoveredObservation)
+        #expect(recovered.error == nil)
+        #expect(!recovered.isStale)
+    }
+
+    @MainActor
+    @Test("OAuth enrichment failure without a cache is failed, not stale")
+    func oauthEnrichmentInitialFailure() {
+        let failed = AppState.updatedOAuthEnrichmentReading(
+            previous: nil,
+            result: .unavailable(.credentialsUnavailable),
+            now: Date(timeIntervalSince1970: 200)
+        )
+
+        #expect(failed.value == nil)
+        #expect(failed.lastPolledAt == nil)
+        #expect(failed.error == SourceAttempt.Reason.credentialsUnavailable.rawValue)
+        #expect(!failed.isStale)
+    }
+
     @Test("Energy bar pace marker stays centered and inside the track")
     func energyBarPaceMarker() {
         #expect(energyBarMarkerOffset(width: 100, expectedFraction: -1) == 0)

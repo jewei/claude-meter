@@ -317,6 +317,11 @@ struct PopoverView: View {
                 systemImage: issue.needsUserAction
                     ? "key.slash.fill" : "clock.arrow.circlepath",
                 tint: issue.needsUserAction ? .pfEnergyLow : .pfInkMuted)
+        } else if appState.oauthEnrichmentIsStale {
+            noticeBanner(
+                "OAuth details may be outdated — showing last known values",
+                systemImage: "clock.fill",
+                tint: .pfInkMuted)
         }
         if appState.claudeIsStale || snap.state.isStale {
             noticeBanner("Data may be stale", systemImage: "clock.fill", tint: .pfInkMuted)

@@ -44,6 +44,10 @@ final class AppState: ObservableObject {
     /// Advisory service status is intentionally detached from the authoritative
     /// usage poll. A slow Statuspage request must never delay fresh quota data.
     private let serviceStatusFetcher: @Sendable () async -> ServiceStatus?
+    /// Auxiliary OAuth-only fields have their own lifecycle because a fresh
+    /// statusline snapshot short-circuits the main OAuth fallback tier.
+    private let oauthEnrichmentFetcher:
+        @Sendable (Date) async -> OAuthPipeline.OAuthEnrichmentFetchResult
     private var serviceStatusRefreshTask: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
     private var rebuildDebounceTask: Task<Void, Never>?
@@ -60,8 +64,8 @@ final class AppState: ObservableObject {
     private var didPollInSession = false
     private var powerMonitor: PowerMonitor?
     private var networkMonitor: NetworkMonitor?
-    private var lastOAuthEnrichmentAt: Date?
-    private var cachedOAuthEnrichment: OAuthPipeline.OAuthEnrichment?
+    private var lastOAuthEnrichmentAttemptAt: Date?
+    @Published private var oauthEnrichmentReading: ReadingState<OAuthPipeline.OAuthEnrichment>?
     private var lastAccountsFetchAt: Date?
     private var cachedAccountReadings: [OAuthAccountReading] = []
     @Published private(set) var accountOAuthFailures:
@@ -103,6 +107,18 @@ final class AppState: ObservableObject {
     var grokUsage: GrokUsage? { grokReading?.value }
     var grokError: String? { grokReading?.error }
     var grokLastPolledAt: Date? { grokReading?.lastPolledAt }
+    var oauthEnrichmentIsStale: Bool {
+        snapshot?.source.cliPath != "api.anthropic.com"
+            && oauthEnrichmentReading?.isStale == true
+    }
+    var oauthEnrichmentError: String? {
+        guard snapshot?.source.cliPath != "api.anthropic.com" else { return nil }
+        return oauthEnrichmentReading?.error
+    }
+    var oauthEnrichmentLastPolledAt: Date? {
+        guard snapshot?.source.cliPath != "api.anthropic.com" else { return nil }
+        return oauthEnrichmentReading?.lastPolledAt
+    }
 
     /// Credential problem on the OAuth tier, when there is one the user should
     /// see. Only surfaced while OAuth is actually configured — the tier is
@@ -175,6 +191,9 @@ final class AppState: ObservableObject {
         let appUpdater = AppUpdater(startingUpdater: true)
         self.appUpdater = appUpdater
         self.serviceStatusFetcher = { await AnthropicStatusClient().fetch() }
+        self.oauthEnrichmentFetcher = { now in
+            await OAuthPipeline.fetchEnrichmentResult(now: now)
+        }
         self.pipeline = AppState.makePipeline(store: store)
         // Self is fully initialized from here on.
         self.snapshot = try? store.readLatest()
@@ -207,7 +226,12 @@ final class AppState: ObservableObject {
         initialSnapshot: ClaudeUsageSnapshot? = nil,
         serviceStatusFetcher: @escaping @Sendable () async -> ServiceStatus? = {
             await AnthropicStatusClient().fetch()
-        }
+        },
+        oauthEnrichmentFetcher:
+            @escaping @Sendable (Date) async ->
+            OAuthPipeline.OAuthEnrichmentFetchResult = { now in
+                await OAuthPipeline.fetchEnrichmentResult(now: now)
+            }
     ) {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ClaudeMeter-AppState-(UUID().uuidString)", isDirectory: true)
@@ -218,6 +242,7 @@ final class AppState: ObservableObject {
         let appUpdater = AppUpdater(startingUpdater: false)
         self.appUpdater = appUpdater
         self.serviceStatusFetcher = serviceStatusFetcher
+        self.oauthEnrichmentFetcher = oauthEnrichmentFetcher
         self.pipeline = pipeline
         self.snapshot = initialSnapshot
         self.lastPolledAt = initialSnapshot?.lastSuccessfulPollAt
@@ -406,8 +431,8 @@ final class AppState: ObservableObject {
 
     func rebuildPipeline() {
         pipelineGeneration += 1
-        lastOAuthEnrichmentAt = nil
-        cachedOAuthEnrichment = nil
+        lastOAuthEnrichmentAttemptAt = nil
+        oauthEnrichmentReading = nil
         lastAccountsFetchAt = nil
         cachedAccountReadings = []
         accountOAuthFailures = [:]
@@ -749,18 +774,42 @@ final class AppState: ObservableObject {
     ) async -> OAuthPipeline.OAuthEnrichment? {
         guard AppSettings.oauthSourceEnabled,
             snap.source.cliPath != "api.anthropic.com"
-        else { return nil }
-        if let lastOAuthEnrichmentAt,
-            now.timeIntervalSince(lastOAuthEnrichmentAt) < Self.oauthEnrichmentIntervalSeconds
+        else {
+            lastOAuthEnrichmentAttemptAt = nil
+            oauthEnrichmentReading = nil
+            return nil
+        }
+        if let lastOAuthEnrichmentAttemptAt,
+            now.timeIntervalSince(lastOAuthEnrichmentAttemptAt)
+                < Self.oauthEnrichmentIntervalSeconds
         {
-            return cachedOAuthEnrichment
+            return oauthEnrichmentReading?.value
         }
-        lastOAuthEnrichmentAt = now
-        if let enrichment = await OAuthPipeline.fetchEnrichment(now: now) {
-            cachedOAuthEnrichment = enrichment
-            return enrichment
+        lastOAuthEnrichmentAttemptAt = now
+        let result = await oauthEnrichmentFetcher(now)
+        oauthEnrichmentReading = Self.updatedOAuthEnrichmentReading(
+            previous: oauthEnrichmentReading,
+            result: result,
+            now: now
+        )
+        return oauthEnrichmentReading?.value
+    }
+
+    static func updatedOAuthEnrichmentReading(
+        previous: ReadingState<OAuthPipeline.OAuthEnrichment>?,
+        result: OAuthPipeline.OAuthEnrichmentFetchResult,
+        now: Date
+    ) -> ReadingState<OAuthPipeline.OAuthEnrichment> {
+        switch result {
+        case .success(let enrichment):
+            return .current(value: enrichment, polledAt: now)
+        case .unavailable(let reason):
+            let error = reason.rawValue
+            if let value = previous?.value, let observedAt = previous?.lastPolledAt {
+                return .stale(value: value, polledAt: observedAt, error: error)
+            }
+            return .failed(error: error, lastPolledAt: previous?.lastPolledAt)
         }
-        return cachedOAuthEnrichment
     }
 
     /// Per-account OAuth readings for every discovered config dir (multi-account

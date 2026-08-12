@@ -106,6 +106,19 @@ struct DiagnosticsView: View {
                         .textSelection(.enabled)
                 }
             }
+            if appState.oauthEnrichmentLastPolledAt != nil
+                || appState.oauthEnrichmentError != nil
+            {
+                LabeledContent("OAuth details", value: oauthEnrichmentPollTimeText)
+                if let err = appState.oauthEnrichmentError {
+                    LabeledContent("OAuth details error") {
+                        Text(DiagnosticsSanitizer.sanitize(err))
+                            .foregroundStyle(Color.cmCritical)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                }
+            }
             if AppSettings.cursorSourceEnabled {
                 LabeledContent("Cursor", value: cursorPollTimeText)
                 if let err = appState.cursorError {
@@ -190,6 +203,12 @@ struct DiagnosticsView: View {
         return isoFormatter.string(from: date)
     }
 
+    private var oauthEnrichmentPollTimeText: String {
+        guard let date = appState.oauthEnrichmentLastPolledAt else { return "Never" }
+        let suffix = appState.oauthEnrichmentIsStale ? " (stale)" : ""
+        return isoFormatter.string(from: date) + suffix
+    }
+
     private var grokPollTimeText: String {
         guard let date = appState.grokLastPolledAt else { return "Never" }
         return isoFormatter.string(from: date)
@@ -224,6 +243,14 @@ struct DiagnosticsView: View {
             "  Claude: \(claudePollTimeText)",
             "  Claude error: \(DiagnosticsSanitizer.sanitize(appState.lastError ?? "None"))",
         ]
+        if appState.oauthEnrichmentLastPolledAt != nil
+            || appState.oauthEnrichmentError != nil
+        {
+            lines += [
+                "  OAuth details: \(oauthEnrichmentPollTimeText)",
+                "  OAuth details error: \(DiagnosticsSanitizer.sanitize(appState.oauthEnrichmentError ?? "None"))",
+            ]
+        }
         if AppSettings.cursorSourceEnabled {
             lines += [
                 "  Cursor: \(cursorPollTimeText)",

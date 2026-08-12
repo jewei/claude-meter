@@ -72,13 +72,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             ? OAuthKeychain.loadManualResult()
             : OAuthKeychain.loadResult()
         guard var creds = Self.credentials(from: keychainResult, oauthMode: mode.rawValue) else {
-            let reason: SourceAttempt.Reason
-            switch keychainResult {
-            case .missing: reason = .credentialsMissing
-            case .temporarilyUnavailable: reason = .credentialsUnavailable
-            case .invalid: reason = .credentialsInvalid
-            case .found: reason = .credentialsInvalid
-            }
+            let reason = Self.keychainFailureReason(keychainResult)
             return try await fallbackResult(kind: kind, now: now, outcome: .skipped, reason: reason)
         }
 
@@ -302,50 +296,93 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         }
     }
 
+    /// Typed result for the auxiliary enrichment request. Unlike the optional
+    /// convenience API, this retains why no new observation was available so the
+    /// app can mark a cached enrichment stale without marking the primary
+    /// statusline snapshot stale too.
+    public enum OAuthEnrichmentFetchResult: Sendable, Equatable {
+        case success(OAuthEnrichment)
+        case unavailable(SourceAttempt.Reason)
+    }
+
     /// Best-effort fetch of the Opus weekly window, extra-usage spend, and plan
     /// from the OAuth usage API — used to enrich a snapshot produced by another
     /// source (e.g. the statusline bridge, which omits these). Returns `nil` when
     /// OAuth isn't configured or the call fails; never throws.
     public static func fetchEnrichment(now: Date = Date()) async -> OAuthEnrichment? {
+        guard case .success(let enrichment) = await fetchEnrichmentResult(now: now) else {
+            return nil
+        }
+        return enrichment
+    }
+
+    /// Detailed enrichment fetch used by lifecycle-aware callers. A successful
+    /// response remains `.success` even when every optional field is absent: that
+    /// is an explicit empty observation, not a failure.
+    public static func fetchEnrichmentResult(
+        now: Date = Date()
+    ) async -> OAuthEnrichmentFetchResult {
         let oauthMode = UserDefaults.standard.string(forKey: AppGroupConfig.oauthModeKey) ?? ""
-        guard let mode = ClaudeOAuthMode(rawValue: oauthMode) else { return nil }
-        guard !OAuthSharedState.isRateLimited(now: now) else { return nil }
+        guard let mode = ClaudeOAuthMode(rawValue: oauthMode) else {
+            return .unavailable(.notConnected)
+        }
+        guard !OAuthSharedState.isRateLimited(now: now) else {
+            return .unavailable(.rateLimited)
+        }
         let keychainResult =
             mode == .manual
             ? OAuthKeychain.loadManualResult()
             : OAuthKeychain.loadResult()
         guard var creds = credentials(from: keychainResult, oauthMode: oauthMode) else {
-            return nil
+            return .unavailable(keychainFailureReason(keychainResult))
         }
         if creds.isExpired(asOf: now) {
-            guard case .ready(let refreshed) = await refreshCredentials(creds, mode: mode, now: now)
-            else { return nil }
-            creds = OAuthCredentials(
-                accessToken: refreshed.accessToken,
-                refreshToken: refreshed.refreshToken,
-                expiresAt: refreshed.expiresAt,
-                subscriptionType: creds.subscriptionType,
-                rateLimitTier: creds.rateLimitTier
-            )
+            switch await refreshCredentials(creds, mode: mode, now: now) {
+            case .ready(let refreshed):
+                creds = OAuthCredentials(
+                    accessToken: refreshed.accessToken,
+                    refreshToken: refreshed.refreshToken,
+                    expiresAt: refreshed.expiresAt,
+                    subscriptionType: creds.subscriptionType,
+                    rateLimitTier: creds.rateLimitTier
+                )
+            case .deferred(let reason), .failed(let reason):
+                return .unavailable(reason)
+            }
             OAuthSharedState.setCachedCredentials(creds, for: mode.rawValue)
         }
-        guard let usage = try? await requestUsage(token: creds.accessToken, now: now) else {
-            return nil
+        let usage: UsageResponse
+        do {
+            usage = try await requestUsage(token: creds.accessToken, now: now)
+        } catch {
+            return .unavailable(attemptReason(for: error))
         }
         let opus = usage.sevenDayOpus.flatMap { entry -> LimitWindow? in
             guard let u = entry.utilization else { return nil }
             return LimitWindow(percentUsed: u, resetsAt: parseEpochOrISODate(entry.resetsAt))
                 .resolved(asOf: now)
         }
-        return OAuthEnrichment(
-            opus: opus,
-            scopedWeekly: scopedWindows(from: usage),
-            extraUsage: usage.extraUsage?.model,
-            plan: ClaudePlan.displayName(
-                subscriptionType: creds.subscriptionType,
-                rateLimitTier: creds.rateLimitTier
+        return .success(
+            OAuthEnrichment(
+                opus: opus,
+                scopedWeekly: scopedWindows(from: usage),
+                extraUsage: usage.extraUsage?.model,
+                plan: ClaudePlan.displayName(
+                    subscriptionType: creds.subscriptionType,
+                    rateLimitTier: creds.rateLimitTier
+                )
             )
         )
+    }
+
+    private static func keychainFailureReason(
+        _ result: KeychainReadResult<OAuthCredentials>
+    ) -> SourceAttempt.Reason {
+        switch result {
+        case .missing: .credentialsMissing
+        case .temporarilyUnavailable: .credentialsUnavailable
+        case .invalid, .found: .credentialsInvalid
+        }
     }
 
     /// Backoff bridge for the multi-account fetcher (`OAuthSharedState` is private).

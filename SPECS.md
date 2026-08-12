@@ -108,6 +108,10 @@ Statusline does not provide Opus, scoped limits, extra usage, or plan. OAuth enr
 replaces those fields without touching fresher statusline session/weekly windows. A
 successful enrichment is a complete observation: absent optional fields clear older
 values. An unavailable or failed fetch produces no observation and keeps the cached one.
+The auxiliary fetch has its own coherent reading lifecycle (`current` / `stale` /
+`failed`) because a fresh statusline result bypasses the main OAuth fallback trail. A
+failed refresh preserves the last successful observation timestamp, marks only the
+OAuth details stale in the popover, and records its typed reason in Diagnostics.
 
 Multi-account OAuth runs only in auto mode and never refreshes secondary-account tokens.
 It reads each config directory's namespaced credential plus local account identity, fetches

@@ -8,6 +8,23 @@ import Testing
 // credentials map), so running them in parallel races on shared global state.
 @Suite("OAuthPipeline", .serialized)
 struct OAuthPipelineTests {
+    @Test func enrichmentRetainsWhyNoObservationWasAvailable() async {
+        let defaults = UserDefaults.standard
+        let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)
+        defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
+        defer {
+            if let previousMode {
+                defaults.set(previousMode, forKey: AppGroupConfig.oauthModeKey)
+            } else {
+                defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
+            }
+        }
+
+        let result = await OAuthPipeline.fetchEnrichmentResult()
+
+        #expect(result == .unavailable(.notConnected))
+    }
+
     @Test func decodesUsageResponseWithExtraFields() throws {
         let json = """
             {"five_hour":{"utilization":81.0,"resets_at":"2026-06-23T11:30:00.462328+00:00","limit_dollars":null,"used_dollars":null,"remaining_dollars":null},"seven_day":{"utilization":61.0,"resets_at":"2026-06-27T07:00:00.462348+00:00","limit_dollars":null,"used_dollars":null,"remaining_dollars":null},"seven_day_oauth_apps":null,"limits":[],"spend":{},"extra_usage":{"is_enabled":false}}

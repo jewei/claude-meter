@@ -68,6 +68,31 @@ final class SnapshotStoreTests {
         #expect(try store.readLatest() == nil)
     }
 
+    @Test("A wedged filesystem operation trips a per-store circuit breaker")
+    func boundedIOTimeout() throws {
+        let io = BoundedSnapshotIO()
+        let started = Date()
+
+        #expect(throws: SnapshotStoreIOError.self) {
+            try io.perform(operation: "test", timeout: 0.02) {
+                Thread.sleep(forTimeInterval: 0.5)
+                return true
+            }
+        }
+        #expect(Date().timeIntervalSince(started) < 0.25)
+
+        do {
+            _ = try io.perform(operation: "test", timeout: 1) {
+                return true
+            }
+            Issue.record("expected the circuit breaker to reject later I/O")
+        } catch let error as SnapshotStoreIOError {
+            #expect(error == .disabledAfterTimeout)
+        } catch {
+            Issue.record("expected SnapshotStoreIOError, got \(error)")
+        }
+    }
+
     @Test("Overwrites an existing snapshot atomically")
     func overwrite() throws {
         let store = try makeStore()

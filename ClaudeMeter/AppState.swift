@@ -41,6 +41,10 @@ final class AppState: ObservableObject {
     /// its own directory prevents parallel runs from sharing `current.json`.
     private let ephemeralStoreDirectory: URL?
     private let appUpdater: AppUpdater
+    /// Advisory service status is intentionally detached from the authoritative
+    /// usage poll. A slow Statuspage request must never delay fresh quota data.
+    private let serviceStatusFetcher: @Sendable () async -> ServiceStatus?
+    private var serviceStatusRefreshTask: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
     private var rebuildDebounceTask: Task<Void, Never>?
     private var pipelineGeneration = 0
@@ -170,6 +174,7 @@ final class AppState: ObservableObject {
         self.hasEnabledDataSource = AppSettings.hasEnabledDataSource
         let appUpdater = AppUpdater(startingUpdater: true)
         self.appUpdater = appUpdater
+        self.serviceStatusFetcher = { await AnthropicStatusClient().fetch() }
         self.pipeline = AppState.makePipeline(store: store)
         // Self is fully initialized from here on.
         self.snapshot = try? store.readLatest()
@@ -197,7 +202,13 @@ final class AppState: ObservableObject {
         Task { await notificationEngine.requestAuthorizationIfNeeded() }
     }
 
-    init(pipeline: any ClaudeMeterPipeline, initialSnapshot: ClaudeUsageSnapshot? = nil) {
+    init(
+        pipeline: any ClaudeMeterPipeline,
+        initialSnapshot: ClaudeUsageSnapshot? = nil,
+        serviceStatusFetcher: @escaping @Sendable () async -> ServiceStatus? = {
+            await AnthropicStatusClient().fetch()
+        }
+    ) {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ClaudeMeter-AppState-(UUID().uuidString)", isDirectory: true)
         self.store = SnapshotStore(directory: directory)
@@ -206,6 +217,7 @@ final class AppState: ObservableObject {
         self.hasEnabledDataSource = true
         let appUpdater = AppUpdater(startingUpdater: false)
         self.appUpdater = appUpdater
+        self.serviceStatusFetcher = serviceStatusFetcher
         self.pipeline = pipeline
         self.snapshot = initialSnapshot
         self.lastPolledAt = initialSnapshot?.lastSuccessfulPollAt
@@ -214,6 +226,7 @@ final class AppState: ObservableObject {
 
     deinit {
         pollTask?.cancel()
+        serviceStatusRefreshTask?.cancel()
         rebuildDebounceTask?.cancel()
         configRefreshTask?.cancel()
         attentionTask?.cancel()
@@ -520,13 +533,11 @@ final class AppState: ObservableObject {
     private func pollClaude(configuration: PollConfiguration) async {
         let pipeline = self.pipeline
         let now = Date()
-        async let serviceStatusTask: Void = refreshServiceStatus(
-            generation: configuration.generation)
+        scheduleServiceStatusRefresh(generation: configuration.generation)
         do {
             let result = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
                 try await pipeline.poll(now: now, kind: configuration.refreshKind)
             }
-            await serviceStatusTask
             guard configuration.generation == pipelineGeneration, canPoll else { return }
 
             lastPollResult = result
@@ -587,7 +598,6 @@ final class AppState: ObservableObject {
             // through the sanitized source-attempt trail.
             lastError = nil
         } catch {
-            await serviceStatusTask
             guard configuration.generation == pipelineGeneration, canPoll else { return }
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             lastError = DiagnosticsSanitizer.sanitize(message)
@@ -712,14 +722,22 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Refreshes Anthropic service status off-main. Advisory only — failures clear
-    /// to `nil` so a status outage never masks usage data.
-    private func refreshServiceStatus(generation: Int) async {
-        let status = await Task.detached(priority: .utility) {
-            await AnthropicStatusClient().fetch()
-        }.value
-        guard generation == pipelineGeneration, canPoll else { return }
-        serviceStatus = status
+    /// Starts one best-effort Anthropic status refresh without joining it to the
+    /// authoritative usage task. Repeated interactive polls coalesce while the
+    /// advisory request is in flight.
+    func scheduleServiceStatusRefresh(generation: Int) {
+        guard serviceStatusRefreshTask == nil else { return }
+        let fetch = serviceStatusFetcher
+        serviceStatusRefreshTask = Task { [weak self] in
+            let status = await fetch()
+            guard let self else { return }
+            defer { self.serviceStatusRefreshTask = nil }
+            guard !Task.isCancelled,
+                generation == self.pipelineGeneration,
+                self.canPoll
+            else { return }
+            self.serviceStatus = status
+        }
     }
 
     /// Fetches OAuth-only enrichment (Opus window, extra usage, plan) when the

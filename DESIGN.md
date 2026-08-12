@@ -112,14 +112,16 @@ Per-window status line (left side, colored by band):
 | Low        | "Half a tank" · "Getting low" · "Running on fumes soon"  |
 | Empty      | "Almost dry — easy now" · "Tapped out"                    |
 
-Hero (combined health) state machine — overall = **worst** account's band:
+Hero state follows the **active** account's band. Its subtitle may call out the
+lowest other account, while the menu-bar dot remains the all-account nearest-limit
+signal:
 
 | Overall | Emoji | Headline             | Subline pattern                                   | Hero colors |
 | ------- | ----- | -------------------- | ------------------------------------------------- | ----------- |
-| Full    | 🚀    | "You're cruising"    | "{n} accounts fresh · {worst}'s low ({refill})" or "All tanks full" | green hero  |
-| Low     | ⛽    | "Pace yourself"      | "{worst} is getting low · refills in {refill}"    | orange hero |
-| Empty   | 🪫    | "Almost tapped out"  | "{worst} is nearly dry · refills in {refill}"     | red hero    |
-| Tapped  | 🥵    | "Take a breather"    | "{worst} is out · back in {refill}. Touch grass 🌱"| red hero    |
+| Full    | 🚀    | "You're cruising"    | Active account healthy; optionally flag a lower other account | green hero  |
+| Low     | ⛽    | "Pace yourself"      | Active account is getting low and its refill phrase | orange hero |
+| Empty   | 🪫    | "Almost tapped out"  | Active account is nearly dry and its refill phrase | red hero    |
+| Tapped  | 🥵    | "Take a breather"    | Active account is out and its refill phrase | red hero    |
 
 Single account collapses the subline to that account's own status ("Refills in 3h 12m").
 
@@ -174,12 +176,13 @@ capsule overlay at the top of the fill.
 
 ## Popover Anatomy
 
-Width **360pt** (was 320). Background `popover-bg`, radius 22, border `popover-border` 2pt. Internal
-padding 15, vertical gap 12. Scrolls when accounts overflow (~max height 560).
+Width **360pt**. Background `popover-bg`, radius 22, border `popover-border` 2pt.
+Internal padding is 15pt. The body uses a screen-derived height cap and scrolls
+when accounts/providers overflow.
 
 ```
 ┌──────────────────────────────────────────────┐
-│ [⚡] Claude Usage          Updated 2m ago  (⟳) │  Header
+│ [⚡] Claude Meter       2m ago       (⚙) (⏻) │  Header
 │ ┌──────────────────────────────────────────┐ │
 │ │ (🚀)  You're cruising                      │ │  Hero (combined health)
 │ │       2 accounts fresh · buildbot low (1h) │ │
@@ -197,16 +200,15 @@ padding 15, vertical gap 12. Scrolls when accounts overflow (~max height 560).
 │ ┌──────────────────────────────────────────┐ │  Cost card (tap → heatmap)
 │ │ 💸 Last 7 days              $75.68      ›  │ │
 │ └──────────────────────────────────────────┘ │
-│ Claude Code v2.1.0 ↗     (⏸) ( ⚙ ) (⏻)        │  Footer
 └──────────────────────────────────────────────┘
 ```
 
 ### Header
 - Left: 30×30 raised header icon (radius 9, `energy-full` fill, white ⚡/bolt.fill) + "Claude Usage"
   Fredoka 600/18 `ink`.
-- Right: "Updated 2m ago" Nunito 600/11 `ink-muted` + 28×28 white circle refresh button (border
-  `popover-border`, bottom 3pt), `⟳`/`arrow.clockwise`, spins while loading.
-- The active-account toggle (pause/resume) moves to the footer/settings to keep the header clean.
+- Right: compact relative update time plus 28×28 Settings and Quit buttons. Opening
+  the popover already triggers an interactive refresh, so no redundant refresh
+  control is shown. Pause/resume lives in Settings.
 
 ### Hero
 State-driven per the table above. Layout: 46×46 white circle (border = hero-border) holding the
@@ -230,7 +232,7 @@ Chunky card, flex row, gap 14.
   - Subtitle (Nunito 700/11 `ink-muted`): email when known, else nothing (or the config-dir key).
   - 5-hr row: 9×9 rounded dot (band color) · "5-hr" (Nunito 700/11 `ink`) · "78%" (Fredoka 800/11
     band color) · "· 3h 12m" (Nunito 600/11 `ink-muted`).
-  - week row: same, "· Mon".
+  - week row: same, followed by a shared `ResetPhrase` duration such as "· 4d".
 
 **Per-account data reality:** label, 5-hr %, week %, reset/refill exist for every account. Email,
 plan badge, and weekly-Opus are OAuth-only → present only on the active account. Never fabricate
@@ -239,7 +241,7 @@ them; the card degrades gracefully (name + rings + two rows).
 ### Energy-bar card (alt — Frame A, keep available)
 Same card; replaces rings with two stacked rows, each: icon (⚡/📅) + label + "78% left", a 14pt
 depleting capsule bar (band color, inner top gloss), and a phrase/reset row. Document but ship rings
-as default; a future setting can switch.
+as the default. Appearance → Account cards switches between rings and bars.
 
 ### Cost card → activity heatmap
 The "Last 7 days" cost card is **tappable** (chevron affordance): it flips the popover body to a
@@ -249,11 +251,10 @@ hour (empty = `track`). Weekday labels at left, a 6-hour axis below, and a "Less
 **Back** button returns to the main view. Data is scanned on demand from local transcripts (last 30
 days, local time); shows "Scanning…" / "No activity" placeholders.
 
-### Footer
-- The **Claude Code version** (e.g. "Claude Code v2.1.0 ↗") on the left, linking to the changelog;
-  hidden when unavailable. (The old "＋ Add account" button was removed — adding an account lives in
-  Settings, reached via the gear.)
-- Chunky square buttons on the right: pause/resume, settings (⚙), and quit (⏻).
+### Version placement
+The **Claude Code version** (for example, "Claude Code v2.1.0 ↗") appears in the
+cost section and links to the changelog when available. There is no footer and no
+Add Account button; account management and pause/resume live in Settings.
 
 ---
 

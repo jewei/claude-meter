@@ -7,6 +7,33 @@ import Testing
 @Suite("Codex usage")
 struct CodexUsageTests {
 
+    @Test func boundedProcessCaptureRejectsOverflowInsteadOfReturningATruncatedPrefix() {
+        let capture = BoundedProcessOutputCapture(maxBytes: 4)
+        capture.append(Data("ab".utf8))
+        #expect(capture.data == Data("ab".utf8))
+
+        capture.append(Data("cde".utf8))
+        #expect(capture.data == nil)
+
+        capture.append(Data("f".utf8))
+        #expect(capture.data == nil)
+    }
+
+    @Test func boundedLineBufferHandlesSplitLinesAndRejectsAnOversizedTail() {
+        let buffer = BoundedProcessLineBuffer(maxBytes: 4)
+        let first = buffer.appendAndDrainLines(Data("ab\nc".utf8))
+        #expect(first.lines == [Data("ab".utf8)])
+        #expect(!first.exceededLimit)
+
+        let second = buffer.appendAndDrainLines(Data("d\n".utf8))
+        #expect(second.lines == [Data("cd".utf8)])
+        #expect(!second.exceededLimit)
+
+        let overflow = buffer.appendAndDrainLines(Data("abcde".utf8))
+        #expect(overflow.lines.isEmpty)
+        #expect(overflow.exceededLimit)
+    }
+
     @Test func mapsAppServerRateLimitsToEnergyWindows() throws {
         let json = """
             {

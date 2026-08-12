@@ -106,6 +106,8 @@ public final class CodexAppServerSource: CodexUsageSourceFetching, @unchecked Se
 }
 
 final class CodexAppServerClient: @unchecked Sendable {
+    private static let maxBufferedMessages = 16
+
     private struct JSONMessage: @unchecked Sendable {
         let value: [String: Any]
     }
@@ -134,7 +136,11 @@ final class CodexAppServerClient: @unchecked Sendable {
         self.startupTimeout = startupTimeout
         self.requestTimeout = requestTimeout
         var continuation: AsyncStream<Data>.Continuation!
-        self.stdoutLineStream = AsyncStream { continuation = $0 }
+        self.stdoutLineStream = AsyncStream(
+            bufferingPolicy: .bufferingNewest(
+                Self.maxBufferedMessages
+            )
+        ) { continuation = $0 }
         self.stdoutLineContinuation = continuation
 
         process.executableURL = URL(fileURLWithPath: executable)
@@ -176,25 +182,8 @@ final class CodexAppServerClient: @unchecked Sendable {
     }
 
     private func installReaders() {
-        final class LineBuffer: @unchecked Sendable {
-            private let lock = NSLock()
-            private var buffer = Data()
-            func append(_ data: Data) -> [Data] {
-                lock.lock()
-                defer { lock.unlock() }
-                buffer.append(data)
-                var lines: [Data] = []
-                while let newline = buffer.firstIndex(of: 0x0A) {
-                    let line = Data(buffer[..<newline])
-                    buffer.removeSubrange(...newline)
-                    if !line.isEmpty { lines.append(line) }
-                }
-                return lines
-            }
-        }
-
         let continuation = stdoutLineContinuation
-        let buffer = LineBuffer()
+        let buffer = BoundedProcessLineBuffer()
         stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty {
@@ -202,7 +191,13 @@ final class CodexAppServerClient: @unchecked Sendable {
                 continuation.finish()
                 return
             }
-            for line in buffer.append(data) { continuation.yield(line) }
+            let result = buffer.appendAndDrainLines(data)
+            guard !result.exceededLimit else {
+                handle.readabilityHandler = nil
+                continuation.finish()
+                return
+            }
+            for line in result.lines { continuation.yield(line) }
         }
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             if handle.availableData.isEmpty { handle.readabilityHandler = nil }

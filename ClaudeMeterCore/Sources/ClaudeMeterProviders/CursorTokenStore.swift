@@ -201,31 +201,21 @@ public enum CursorTokenStore {
         // Drain both pipes on their own queues *concurrently with the child*, so a
         // child that emits more than the ~64 KB pipe buffer can't block on write and
         // wedge waitUntilExit() (a deadlock the post-exit read pattern is prone to).
-        // readDataToEndOfFile() returns when the child closes its end on exit.
-        final class CapturedData: @unchecked Sendable {
-            private let lock = NSLock()
-            private var data = Data()
-            func set(_ value: Data) {
-                lock.lock()
-                data = value
-                lock.unlock()
-            }
-            var value: Data {
-                lock.lock()
-                defer { lock.unlock() }
-                return data
-            }
-        }
-        let outBuffer = CapturedData()
+        // Keep draining after stdout exceeds its budget, but reject the result.
+        let outBuffer = BoundedProcessOutputCapture()
         let drainGroup = DispatchGroup()
         drainGroup.enter()
         DispatchQueue.global(qos: .utility).async {
-            outBuffer.set(stdout.fileHandleForReading.readDataToEndOfFile())
+            while true {
+                let chunk = stdout.fileHandleForReading.availableData
+                guard !chunk.isEmpty else { break }
+                outBuffer.append(chunk)
+            }
             drainGroup.leave()
         }
         drainGroup.enter()
         DispatchQueue.global(qos: .utility).async {
-            _ = stderr.fileHandleForReading.readDataToEndOfFile()
+            while !stderr.fileHandleForReading.availableData.isEmpty {}
             drainGroup.leave()
         }
 
@@ -237,6 +227,10 @@ public enum CursorTokenStore {
             do {
                 try process.run()
             } catch {
+                // No child inherited the pipe write ends, so close our copies to
+                // release the already-started drain workers.
+                try? stdout.fileHandleForWriting.close()
+                try? stderr.fileHandleForWriting.close()
                 return
             }
             process.waitUntilExit()
@@ -253,6 +247,7 @@ public enum CursorTokenStore {
         guard box.status == 0 else { return nil }
         // The child has exited, so both pipes are at EOF; wait for the drains to flush.
         drainGroup.wait()
-        return String(data: outBuffer.value, encoding: .utf8)
+        guard let data = outBuffer.data else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 }

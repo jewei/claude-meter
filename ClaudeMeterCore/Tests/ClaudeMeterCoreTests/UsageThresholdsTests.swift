@@ -22,10 +22,4 @@ struct UsageThresholdsTests {
         #expect(t.severity(for: 75) == .warning)
         #expect(t.severity(for: 92) == .critical)
     }
-
-    @Test("UsageSeverity.from delegates to thresholds")
-    func fromPercent() {
-        let t = UsageThresholds(warning: 60, critical: 85)
-        #expect(UsageSeverity.from(percent: 65, thresholds: t) == .warning)
-    }
 }

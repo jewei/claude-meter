@@ -25,10 +25,12 @@ struct CodexUsageTests {
               }
             }
             """
-        let response = try JSONDecoder().decode(CodexAppServerRateLimitsResponse.self, from: Data(json.utf8))
+        let response = try JSONDecoder().decode(
+            CodexAppServerRateLimitsResponse.self, from: Data(json.utf8))
         let now = Date(timeIntervalSince1970: 1_751_000_000)
         let usage = try response.usage(
-            account: CodexAppServerAccount(email: "alpha@example.com", plan: nil, authMode: .chatGPT),
+            account: CodexAppServerAccount(
+                email: "alpha@example.com", plan: nil, authMode: .chatGPT),
             now: now,
             source: .appServer)
 
@@ -95,6 +97,23 @@ struct CodexUsageTests {
 
         #expect(usage.primaryWindow?.usedPercent == 22)
         #expect(usage.secondaryWindow?.usedPercent == 43)
+    }
+
+    @Test func keyedWindowsFillOnlyMissingPositionalWindow() throws {
+        let json = """
+            {"rateLimits":{
+              "primary":{"usedPercent":22,"windowDurationMins":300},
+              "rateLimitsByLimitId":{
+                "codex_5h":{"usedPercent":99,"windowDurationMins":300},
+                "codex_weekly":{"usedPercent":64,"windowDurationMins":10080}
+              }
+            }}
+            """
+        let response = try JSONDecoder().decode(
+            CodexAppServerRateLimitsResponse.self, from: Data(json.utf8))
+        let usage = try response.usage(account: nil, now: Date(), source: .appServer)
+        #expect(usage.primaryWindow?.usedPercent == 22)
+        #expect(usage.secondaryWindow?.usedPercent == 64)
     }
 
     @Test func formatsCurrentPlanNames() {
@@ -193,6 +212,17 @@ struct CodexUsageTests {
         let apiKeyJSON = #"{"OPENAI_API_KEY":"sk-test"}"#
         #expect(throws: CodexOAuthCredentialsError.apiKeyOnly) {
             try CodexOAuthCredentialsStore.parse(data: Data(apiKeyJSON.utf8))
+        }
+    }
+
+    @Test func unreadableOAuthCredentialPathMapsToDomainError() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let authDirectory = home.appendingPathComponent("auth.json")
+        try FileManager.default.createDirectory(
+            at: authDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        #expect(throws: CodexOAuthCredentialsError.unreadable) {
+            try CodexOAuthCredentialsStore.load(env: ["CODEX_HOME": home.path])
         }
     }
 
@@ -316,7 +346,8 @@ struct CodexUsageTests {
               "requiresOpenaiAuth": false
             }
             """
-        let response = try JSONDecoder().decode(CodexAppServerAccountResponse.self, from: Data(json.utf8))
+        let response = try JSONDecoder().decode(
+            CodexAppServerAccountResponse.self, from: Data(json.utf8))
 
         #expect(response.account.email == "beta@example.com")
         #expect(response.account.plan == "plus")
@@ -331,7 +362,8 @@ struct CodexUsageTests {
 
         let executable = tempDir.appendingPathComponent("codex")
         try "#!/bin/sh\nexit 0\n".write(to: executable, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: executable.path)
 
         let resolved = CodexCLILocator.resolve(env: ["CODEX_CLI_PATH": executable.path])
 
@@ -367,9 +399,14 @@ struct CodexUsageTests {
 
         #expect(usage.source == .directOAuth)
         #expect(usage.primaryWindow?.usedPercent == 12)
-        #expect(transport.lastRequest?.url?.absoluteString == "https://chatgpt.com/backend-api/wham/usage")
-        #expect(transport.lastRequest?.value(forHTTPHeaderField: "Authorization") == "Bearer access-token")
-        #expect(transport.lastRequest?.value(forHTTPHeaderField: "ChatGPT-Account-Id") == "account-id")
+        #expect(
+            transport.lastRequest?.url?.absoluteString
+                == "https://chatgpt.com/backend-api/wham/usage")
+        #expect(
+            transport.lastRequest?.value(forHTTPHeaderField: "Authorization")
+                == "Bearer access-token")
+        #expect(
+            transport.lastRequest?.value(forHTTPHeaderField: "ChatGPT-Account-Id") == "account-id")
     }
 
     private static func usage(source: CodexUsageSource) -> CodexUsage {
@@ -401,8 +438,8 @@ struct CodexUsageTests {
             usage: CodexUsage,
             availability: Bool,
             unavailableError: Error = CodexUsageError.noUsageData,
-            fetchError: Error? = nil)
-        {
+            fetchError: Error? = nil
+        ) {
             self.usage = usage
             self.availability = availability
             self.unavailableError = unavailableError

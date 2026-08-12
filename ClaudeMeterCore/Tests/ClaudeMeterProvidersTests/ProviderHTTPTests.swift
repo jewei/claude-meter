@@ -52,7 +52,8 @@ struct HTTPRetryPolicyTests {
 
     @Test func doesNotRetryNonIdempotentOrExhausted() {
         #expect(!HTTPRetryPolicy.transient.shouldRetry(attempt: 0, method: "POST", status: 503))
-        #expect(!HTTPRetryPolicy.transient.shouldRetry(attempt: 1, method: "GET", status: 503))  // maxRetries=1
+        // `transient` allows one retry, so attempt 1 is exhausted.
+        #expect(!HTTPRetryPolicy.transient.shouldRetry(attempt: 1, method: "GET", status: 503))
         #expect(!HTTPRetryPolicy.transient.shouldRetry(attempt: 0, method: "GET", status: 404))
         #expect(!HTTPRetryPolicy.none.shouldRetry(attempt: 0, method: "GET", status: 429))
     }
@@ -96,6 +97,16 @@ struct HTTPRetryPolicyTests {
         let future = HTTPRetryPolicy.retryAfterSeconds(
             "Sun, 06 Nov 1994 08:51:37 GMT", now: now)
         #expect(abs((future ?? 0) - 120) < 1)
+    }
+
+    @Test func nonFiniteDelaysAreSanitized() {
+        let infinite = HTTPRetryPolicy(maxRetries: 1, baseDelay: .infinity, maxDelay: .infinity)
+        #expect(infinite.baseDelay == 0)
+        #expect(infinite.maxDelay == 0)
+        #expect(infinite.delay(attempt: 0, retryAfter: nil) == 0)
+
+        let nan = HTTPRetryPolicy(maxRetries: 1, baseDelay: .nan, maxDelay: 8)
+        #expect(nan.baseDelay == 0)
     }
 }
 

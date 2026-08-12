@@ -84,6 +84,14 @@ struct DiagnosticsView: View {
                 LabeledContent(
                     "Grok", value: appState.grokUsage != nil ? "Connected" : "Not available")
             }
+            ForEach(appState.accountOAuthFailures.keys.sorted(), id: \.self) { accountKey in
+                if let failure = appState.accountOAuthFailures[accountKey] {
+                    LabeledContent("\(AppState.friendlyAccountName(accountKey)) OAuth") {
+                        Text(accountOAuthFailureText(failure))
+                            .foregroundStyle(Color.cmCritical)
+                    }
+                }
+            }
         }
     }
 
@@ -113,9 +121,12 @@ struct DiagnosticsView: View {
                 ForEach(appState.codexAccounts) { reading in
                     LabeledContent(
                         "\(DiagnosticsSanitizer.sanitize(reading.account.displayName)) poll",
-                        value: reading.lastPolledAt.map { isoFormatter.string(from: $0) } ?? "Never")
+                        value: reading.lastPolledAt.map { isoFormatter.string(from: $0) } ?? "Never"
+                    )
                     if let err = reading.error {
-                        LabeledContent("\(DiagnosticsSanitizer.sanitize(reading.account.displayName)) error") {
+                        LabeledContent(
+                            "\(DiagnosticsSanitizer.sanitize(reading.account.displayName)) error"
+                        ) {
                             Text(DiagnosticsSanitizer.sanitize(err))
                                 .foregroundStyle(Color.cmCritical)
                                 .font(.system(.caption, design: .monospaced))
@@ -238,6 +249,12 @@ struct DiagnosticsView: View {
                 "  Grok error: \(DiagnosticsSanitizer.sanitize(appState.grokError ?? "None"))",
             ]
         }
+        for accountKey in appState.accountOAuthFailures.keys.sorted() {
+            guard let failure = appState.accountOAuthFailures[accountKey] else { continue }
+            lines.append(
+                "  \(AppState.friendlyAccountName(accountKey)) OAuth: \(accountOAuthFailureText(failure))"
+            )
+        }
         lines += [""]
 
         if let attempts = appState.lastPollResult?.sourceAttempts, !attempts.isEmpty {
@@ -267,5 +284,20 @@ struct DiagnosticsView: View {
         }
 
         return lines.joined(separator: "\n")
+    }
+
+    private func accountOAuthFailureText(
+        _ failure: MultiAccountOAuth.AccountFetchFailure
+    ) -> String {
+        switch failure {
+        case .credentialsMissing: "Credentials missing"
+        case .credentialsUnavailable: "Keychain unavailable"
+        case .credentialsInvalid: "Credentials invalid"
+        case .credentialsExpired: "Credentials expired"
+        case .unauthorized: "Unauthorized"
+        case .rateLimited: "Rate limited"
+        case .invalidResponse: "Invalid response"
+        case .requestFailed: "Request failed"
+        }
     }
 }

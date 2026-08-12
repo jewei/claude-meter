@@ -37,6 +37,9 @@ final class AppState: ObservableObject {
     var pipeline: any ClaudeMeterPipeline
     let notificationEngine = NotificationEngine()
     private let store: SnapshotStore
+    /// Present only for the dependency-injected initializer. Keeping each test in
+    /// its own directory prevents parallel runs from sharing `current.json`.
+    private let ephemeralStoreDirectory: URL?
     private let appUpdater: AppUpdater
     private var pollTask: Task<Void, Never>?
     private var rebuildDebounceTask: Task<Void, Never>?
@@ -57,6 +60,8 @@ final class AppState: ObservableObject {
     private var cachedOAuthEnrichment: OAuthPipeline.OAuthEnrichment?
     private var lastAccountsFetchAt: Date?
     private var cachedAccountReadings: [OAuthAccountReading] = []
+    @Published private(set) var accountOAuthFailures:
+        [String: MultiAccountOAuth.AccountFetchFailure] = [:]
     /// In-flight statusline-bridge install task; cancelled and replaced on each
     /// refresh so rapid source/account toggles don't pile up or race.
     private var configRefreshTask: Task<Void, Never>?
@@ -132,7 +137,8 @@ final class AppState: ObservableObject {
                     create: false)
             else { return }
             try? FileManager.default.removeItem(
-                at: base
+                at:
+                    base
                     .appendingPathComponent("ClaudeMeter", isDirectory: true)
                     .appendingPathComponent("usage-history.jsonl"))
         }
@@ -159,6 +165,7 @@ final class AppState: ObservableObject {
         AppState.removeLegacyUsageHistory()
         let store = AppState.makeStore()
         self.store = store
+        self.ephemeralStoreDirectory = nil
         self.isActive = AppSettings.isActive
         self.hasEnabledDataSource = AppSettings.hasEnabledDataSource
         let appUpdater = AppUpdater(startingUpdater: true)
@@ -191,7 +198,10 @@ final class AppState: ObservableObject {
     }
 
     init(pipeline: any ClaudeMeterPipeline, initialSnapshot: ClaudeUsageSnapshot? = nil) {
-        self.store = SnapshotStore(directory: FileManager.default.temporaryDirectory)
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ClaudeMeter-AppState-(UUID().uuidString)", isDirectory: true)
+        self.store = SnapshotStore(directory: directory)
+        self.ephemeralStoreDirectory = directory
         self.isActive = true
         self.hasEnabledDataSource = true
         let appUpdater = AppUpdater(startingUpdater: false)
@@ -207,6 +217,9 @@ final class AppState: ObservableObject {
         rebuildDebounceTask?.cancel()
         configRefreshTask?.cancel()
         attentionTask?.cancel()
+        if let ephemeralStoreDirectory {
+            try? FileManager.default.removeItem(at: ephemeralStoreDirectory)
+        }
     }
 
     func startPolling() {
@@ -317,19 +330,7 @@ final class AppState: ObservableObject {
     }
 
     func setCursorSourceEnabled(_ enabled: Bool) {
-        hasEnabledDataSource = AppSettings.hasEnabledDataSource
-        if enabled {
-            if isActive { startPolling() }
-        } else {
-            pipelineGeneration += 1
-            clearCursorState()
-            if canPoll {
-                // Claude sources may still be enabled.
-            } else {
-                stopPolling()
-                isLoading = false
-            }
-        }
+        optionalSourceSettingDidChange(enabled: enabled, clearState: clearCursorState)
     }
 
     func clearCursorState() {
@@ -337,19 +338,7 @@ final class AppState: ObservableObject {
     }
 
     func setCodexSourceEnabled(_ enabled: Bool) {
-        hasEnabledDataSource = AppSettings.hasEnabledDataSource
-        if enabled {
-            if isActive { startPolling() }
-        } else {
-            pipelineGeneration += 1
-            clearCodexState()
-            if canPoll {
-                // Claude/Cursor sources may still be enabled.
-            } else {
-                stopPolling()
-                isLoading = false
-            }
-        }
+        optionalSourceSettingDidChange(enabled: enabled, clearState: clearCodexState)
     }
 
     func clearCodexState() {
@@ -368,15 +357,20 @@ final class AppState: ObservableObject {
     }
 
     func setGrokSourceEnabled(_ enabled: Bool) {
+        optionalSourceSettingDidChange(enabled: enabled, clearState: clearGrokState)
+    }
+
+    private func optionalSourceSettingDidChange(
+        enabled: Bool,
+        clearState: () -> Void
+    ) {
         hasEnabledDataSource = AppSettings.hasEnabledDataSource
         if enabled {
             if isActive { startPolling() }
         } else {
             pipelineGeneration += 1
-            clearGrokState()
-            if canPoll {
-                // Claude/Cursor/Codex sources may still be enabled.
-            } else {
+            clearState()
+            if !canPoll {
                 stopPolling()
                 isLoading = false
             }
@@ -403,6 +397,7 @@ final class AppState: ObservableObject {
         cachedOAuthEnrichment = nil
         lastAccountsFetchAt = nil
         cachedAccountReadings = []
+        accountOAuthFailures = [:]
         hasEnabledDataSource = AppSettings.hasEnabledDataSource
         pipeline = AppState.makePipeline(store: store)
         if canPoll && pollTask == nil {
@@ -443,8 +438,9 @@ final class AppState: ObservableObject {
     var menuBarLimitSets: [LimitInfo] {
         guard let snap = snapshot else { return [] }
         guard let accounts = snap.accounts, !accounts.isEmpty else { return [snap.limits] }
-        let pinned = AppGroupConfig.menuBarAccount
-        if pinned != "", pinned != "nearest", let acc = accounts.first(where: { $0.id == pinned }) {
+        if case .account(let pinned) = AppGroupConfig.menuBarAccountSelection,
+            let acc = accounts.first(where: { $0.id == pinned })
+        {
             return [acc.limits]
         }
         return accounts.map(\.limits)
@@ -455,8 +451,7 @@ final class AppState: ObservableObject {
     /// snapshot's top-level mirror). Nil with no snapshot.
     var menuBarActiveLimits: LimitInfo? {
         guard let snap = snapshot else { return nil }
-        let pinned = AppGroupConfig.menuBarAccount
-        if pinned != "", pinned != "nearest",
+        if case .account(let pinned) = AppGroupConfig.menuBarAccountSelection,
             let acc = snap.accounts?.first(where: { $0.id == pinned })
         {
             return acc.limits
@@ -472,12 +467,10 @@ final class AppState: ObservableObject {
         let now = Date()
         var result: UsageSeverity = .unknown
         for limits in menuBarLimitSets {
-            let windows = [
-                limits.currentSession, limits.currentWeekAllModels, limits.currentWeekOpus,
-            ].compactMap { $0 }
-            for window in windows {
+            for descriptor in limits.bindingWindows {
                 result = UsageSeverity.highest(
-                    result, thresholds.severity(for: window.resolved(asOf: now).percentUsed))
+                    result,
+                    thresholds.severity(for: descriptor.window.resolved(asOf: now).percentUsed))
             }
         }
         return result
@@ -554,8 +547,8 @@ final class AppState: ObservableObject {
                 if !costResult.models.isEmpty { snap.models = costResult.models }
                 costScanPartial = costResult.isPartialEstimate
                 // Opus weekly, extra-usage spend, and plan live only in the OAuth
-                // response. When another source (statusline/claude.ai) produced the
-                // snapshot, layer those fields on if OAuth creds are available.
+                // response. When statusline produced the snapshot, layer those
+                // fields on if OAuth credentials are available.
                 let enrichment = await oauthEnrichment(for: snap, now: now)
                 if let enrichment { Self.apply(enrichment, to: &snap) }
                 // Per-account OAuth readings (multi-account tier): fill each
@@ -590,9 +583,8 @@ final class AppState: ObservableObject {
                 await notificationEngine.pollFailed()
             }
 
-            // A successful poll clears the error. (This used to also promote a
-            // "claude.ai API" parser warning into `lastError`; that tier was
-            // removed in 2026-06 and nothing emits the field any more.)
+            // A successful poll clears the error; tier failures remain available
+            // through the sanitized source-attempt trail.
             lastError = nil
         } catch {
             await serviceStatusTask
@@ -766,7 +758,10 @@ final class AppState: ObservableObject {
     private func accountReadings(now: Date) async -> [OAuthAccountReading] {
         guard AppSettings.oauthSourceEnabled,
             UserDefaults.standard.string(forKey: AppGroupConfig.oauthModeKey) == "auto"
-        else { return [] }
+        else {
+            accountOAuthFailures = [:]
+            return []
+        }
         if let lastAccountsFetchAt,
             now.timeIntervalSince(lastAccountsFetchAt) < Self.oauthEnrichmentIntervalSeconds
         {
@@ -776,11 +771,12 @@ final class AppState: ObservableObject {
         let configuredDirs = AppGroupConfig.configuredConfigDirs
         let disabledKeys = Set(AppGroupConfig.disabledAccountKeys)
         let thresholds = AppGroupConfig.currentThresholds()
-        let readings =
-            (try? await Timeout.run(seconds: 30) { () async -> [OAuthAccountReading] in
+        let results =
+            (try? await Timeout.run(seconds: 30) {
+                () async -> [MultiAccountOAuth.AccountFetchResult] in
                 let accounts = ConfigDirDiscovery.discover(
                     configuredDirs: configuredDirs, disabledKeys: disabledKeys)
-                return await MultiAccountOAuth.fetchAll(
+                return await MultiAccountOAuth.fetchAllResults(
                     accounts: accounts,
                     home: FileManager.default.homeDirectoryForCurrentUser,
                     thresholds: thresholds,
@@ -790,6 +786,11 @@ final class AppState: ObservableObject {
                     },
                     now: now)
             }) ?? []
+        accountOAuthFailures = Dictionary(
+            uniqueKeysWithValues: results.compactMap { result in
+                result.failure.map { (result.accountKey, $0) }
+            })
+        let readings = results.compactMap(\.reading)
         if !readings.isEmpty { cachedAccountReadings = readings }
         return cachedAccountReadings
     }

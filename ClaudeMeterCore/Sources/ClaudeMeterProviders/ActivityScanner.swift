@@ -22,12 +22,13 @@ public struct ActivityHeatmap: Sendable, Equatable {
     /// and dropping any excess. The grid view indexes `counts[0..<7][0..<24]`
     /// directly, and this initializer is public — enforcing the shape here means a
     /// malformed grid can't crash the popover.
-    public init(counts: [[Int]], total: Int, isPartial: Bool, daysCovered: Int) {
-        self.counts = (0..<7).map { day in
+    public init(counts: [[Int]], total _: Int, isPartial: Bool, daysCovered: Int) {
+        let normalizedCounts = (0..<7).map { day in
             let row = day < counts.count ? counts[day] : []
             return (0..<24).map { hour in hour < row.count ? row[hour] : 0 }
         }
-        self.total = total
+        self.counts = normalizedCounts
+        self.total = normalizedCounts.lazy.flatMap { $0 }.reduce(0, +)
         self.isPartial = isPartial
         self.daysCovered = daysCovered
     }
@@ -64,7 +65,7 @@ public struct ActivityScanner: Sendable {
         let cutoff = cal.startOfDay(for: cal.date(byAdding: .day, value: offset, to: now)!)
         // Local yyyy-MM-dd strings compare lexicographically, and `cutoff` is a local
         // start-of-day, so `bucket.day >= cutoffDay` ⟺ `timestamp >= cutoff`.
-        let cutoffDay = JournalReader.dayString(from: cutoff)
+        let cutoffDay = JournalReader.dayString(from: cutoff, calendar: cal)
         let fm = FileManager.default
 
         var counts = Array(repeating: Array(repeating: 0, count: 24), count: 7)
@@ -127,13 +128,15 @@ public struct ActivityScanner: Sendable {
 
                     let scan: ActivityCache.FileScan
                     if let hit = cache.cached(
-                        path: file.path, modDate: modDate, fileSize: fileSize)
+                        path: file.path, modDate: modDate, fileSize: fileSize,
+                        timeZoneIdentifier: cal.timeZone.identifier)
                     {
                         scan = hit
                     } else {
                         scan = parseFile(file, fileSize: fileSize, cal: cal)
                         cache.store(
-                            path: file.path, modDate: modDate, fileSize: fileSize, scan: scan)
+                            path: file.path, modDate: modDate, fileSize: fileSize,
+                            timeZoneIdentifier: cal.timeZone.identifier, scan: scan)
                     }
                     if scan.isPartial { isPartial = true }
                     for (bucket, count) in scan.buckets where bucket.day >= cutoffDay {
@@ -153,7 +156,7 @@ public struct ActivityScanner: Sendable {
         _ file: URL, fileSize: UInt64, cal: Calendar
     ) -> ActivityCache.FileScan {
         guard let handle = try? FileHandle(forReadingFrom: file) else {
-            return ActivityCache.FileScan(buckets: [:], isPartial: false)
+            return ActivityCache.FileScan(buckets: [:], isPartial: true)
         }
         defer { try? handle.close() }
 
@@ -161,7 +164,10 @@ public struct ActivityScanner: Sendable {
         let readFrom: UInt64 =
             tailRead ? (fileSize > Self.tailReadBytes ? fileSize - Self.tailReadBytes : 0) : 0
         if readFrom > 0 { try? handle.seek(toOffset: readFrom) }
-        guard let data = try? handle.readToEnd(), !data.isEmpty else {
+        guard let data = try? handle.readToEnd() else {
+            return ActivityCache.FileScan(buckets: [:], isPartial: true)
+        }
+        guard !data.isEmpty else {
             return ActivityCache.FileScan(buckets: [:], isPartial: tailRead)
         }
 
@@ -189,7 +195,7 @@ public struct ActivityScanner: Sendable {
 
             // Calendar weekday is 1=Sun…7=Sat; remap to 0=Mon…6=Sun.
             let bucket = ActivityCache.Bucket(
-                day: JournalReader.dayString(from: date),
+                day: JournalReader.dayString(from: date, calendar: cal),
                 weekday: (cal.component(.weekday, from: date) + 5) % 7,
                 hour: cal.component(.hour, from: date))
             buckets[bucket, default: 0] += 1
@@ -223,7 +229,9 @@ public final class ActivityCache: @unchecked Sendable {
     private struct Entry {
         let modDate: Date
         let fileSize: UInt64
+        let timeZoneIdentifier: String
         let scan: FileScan
+        var lastAccess: UInt64
     }
 
     /// LRU cap, mirroring `CostUsageCache`. Entries hold a bucket dictionary for
@@ -233,35 +241,41 @@ public final class ActivityCache: @unchecked Sendable {
 
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
-    private var accessOrder: [String] = []
+    private var accessCounter: UInt64 = 0
 
     public init() {}
 
-    func cached(path: String, modDate: Date, fileSize: UInt64) -> FileScan? {
+    func cached(
+        path: String, modDate: Date, fileSize: UInt64, timeZoneIdentifier: String
+    ) -> FileScan? {
         lock.lock()
         defer { lock.unlock() }
-        guard let entry = entries[path],
+        guard var entry = entries[path],
             entry.modDate == modDate,
-            entry.fileSize == fileSize
+            entry.fileSize == fileSize,
+            entry.timeZoneIdentifier == timeZoneIdentifier
         else { return nil }
-        touchLocked(path)
+        accessCounter &+= 1
+        entry.lastAccess = accessCounter
+        entries[path] = entry
         return entry.scan
     }
 
-    func store(path: String, modDate: Date, fileSize: UInt64, scan: FileScan) {
+    func store(
+        path: String, modDate: Date, fileSize: UInt64, timeZoneIdentifier: String,
+        scan: FileScan
+    ) {
         lock.lock()
         defer { lock.unlock() }
-        entries[path] = Entry(modDate: modDate, fileSize: fileSize, scan: scan)
-        touchLocked(path)
-        while accessOrder.count > Self.maxEntries, let oldest = accessOrder.first {
-            accessOrder.removeFirst()
+        accessCounter &+= 1
+        entries[path] = Entry(
+            modDate: modDate, fileSize: fileSize, timeZoneIdentifier: timeZoneIdentifier,
+            scan: scan, lastAccess: accessCounter)
+        while entries.count > Self.maxEntries,
+            let oldest = entries.min(by: { $0.value.lastAccess < $1.value.lastAccess })?.key
+        {
             entries.removeValue(forKey: oldest)
         }
-    }
-
-    private func touchLocked(_ path: String) {
-        if let index = accessOrder.firstIndex(of: path) { accessOrder.remove(at: index) }
-        accessOrder.append(path)
     }
 }
 

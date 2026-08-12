@@ -14,7 +14,8 @@ final class ClaudeMeterAppDelegate: NSObject, NSApplicationDelegate,
 
     func userNotificationCenter(
         _ center: UNUserNotificationCenter, willPresent notification: UNNotification,
-        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+        withCompletionHandler completionHandler:
+            @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         completionHandler([.banner, .list, .sound])
     }
@@ -96,14 +97,16 @@ enum TerminalFocusRouter {
         running.activate(options: [.activateAllWindows])
         guard target.route.client != .warp else { return }
 
-        let wezTermExecutable = target.route.client == .wezTerm
+        let wezTermExecutable =
+            target.route.client == .wezTerm
             ? wezTermCLI(beside: running.executableURL) : nil
         Task.detached(priority: .userInitiated) {
             _ = focusPrecisely(target, wezTermExecutable: wezTermExecutable)
         }
     }
 
-    private static func runningApplication(for client: TerminalRoute.Client) -> NSRunningApplication?
+    private static func runningApplication(for client: TerminalRoute.Client)
+        -> NSRunningApplication?
     {
         for bundleIdentifier in bundleIdentifiers[client] ?? [] {
             if let app = NSRunningApplication.runningApplications(
@@ -262,7 +265,8 @@ enum TerminalFocusRouter {
     }
 
     private nonisolated static func appleScriptLiteral(_ value: String) -> String {
-        let escaped = value
+        let escaped =
+            value
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
             .replacingOccurrences(of: "\r", with: "\\r")

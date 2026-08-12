@@ -33,8 +33,8 @@ public struct HTTPRetryPolicy: Sendable {
         self.maxRetries = max(0, maxRetries)
         self.retryableStatus = retryableStatus
         self.idempotentMethodsOnly = idempotentMethodsOnly
-        self.baseDelay = max(0, baseDelay)
-        self.maxDelay = max(0, maxDelay)
+        self.baseDelay = baseDelay.isFinite ? max(0, baseDelay) : 0
+        self.maxDelay = maxDelay.isFinite ? max(0, maxDelay) : 0
     }
 
     /// No retries.
@@ -100,11 +100,9 @@ public struct HTTPRetryPolicy: Sendable {
 
 /// Shared transport backed by a redirect-guarded, cookie-less ephemeral session.
 ///
-/// All provider requests carry credentials (`Authorization: Bearer …` or
-/// `Cookie: sessionKey=…`), so following an off-origin or downgraded redirect
-/// would leak them. The guard delegate blocks any redirect that isn't same-origin
-/// HTTPS. Cookies are disabled so manually-set `Cookie` headers pass through
-/// verbatim (required by the claude.ai client).
+/// Provider requests can carry bearer credentials, so following an off-origin or
+/// downgraded redirect would leak them. The guard blocks any redirect that is not
+/// same-origin HTTPS. Cookies are disabled to keep provider sessions isolated.
 public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
     public static let shared = ProviderHTTPClient()
 
@@ -147,14 +145,14 @@ public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
                 }
                 let wait = retry.delay(
                     attempt: attempt, retryAfter: http.value(forHTTPHeaderField: "Retry-After"))
-                if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
+                if wait > 0 { try await Task.sleep(for: .seconds(wait)) }
                 attempt += 1
             } catch let error as URLError
                 where Self.isRetryableTransportError(error)
                 && retry.shouldRetry(attempt: attempt, method: request.httpMethod ?? "GET")
             {
                 let wait = retry.delay(attempt: attempt, retryAfter: nil)
-                if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
+                if wait > 0 { try await Task.sleep(for: .seconds(wait)) }
                 attempt += 1
             }
         }

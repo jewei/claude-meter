@@ -3,8 +3,8 @@ import Foundation
 
 /// Fetches per-model Anthropic pricing from models.dev and caches it on disk for
 /// 24 h, so cost estimates track current list prices instead of a hardcoded table
-/// (our static `opus` rate, for instance, is the old Opus 3/4 price — Opus 4.5 is
-/// ~3× cheaper). Falls back to the static `ModelPricing.current` family rates when
+/// while retaining a reviewed offline rate card). Falls back to the static
+/// `ModelPricing.current` family rates when
 /// offline or when the fetched catalog looks implausible. Network + disk only —
 /// never invoked from the sandboxed widget.
 public enum ModelsDevPricing {
@@ -27,21 +27,22 @@ public enum ModelsDevPricing {
     /// uses the static family rates).
     public static func loadCatalog(now: Date = Date()) async -> [String: ModelPricing.Rate]? {
         if let memo = freshMemo(now: now) { return memo.rates }
-        if let disk = readDisk(), now.timeIntervalSince(disk.fetchedAt) < cacheTTL {
+        let disk = readDisk()
+        if let disk, now.timeIntervalSince(disk.fetchedAt) < cacheTTL {
             setMemo(disk)
             return disk.rates
         }
         // Stale or absent → try the network, merging over any stale disk so a model
         // that vanished upstream keeps its last known price.
         if let fetched = await fetch() {
-            let merged = merge(new: fetched, old: readDisk()?.rates)
+            let merged = merge(new: fetched, old: disk?.rates)
             let cached = CachedCatalog(fetchedAt: now, rates: merged)
             writeDisk(cached)
             setMemo(cached)
             return merged
         }
         // Network failed — serve a stale disk cache if we have one.
-        if let stale = readDisk() {
+        if let stale = disk {
             setMemo(stale)
             return stale.rates
         }
@@ -75,7 +76,8 @@ public enum ModelsDevPricing {
         var request = URLRequest(url: apiURL)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         guard
-            let (data, http) = try? await ProviderHTTPClient.shared.send(request, retry: .transient),
+            let (data, http) = try? await ProviderHTTPClient.shared.send(
+                request, retry: .transient),
             http.statusCode == 200
         else { return nil }
         return parseCatalog(from: data)

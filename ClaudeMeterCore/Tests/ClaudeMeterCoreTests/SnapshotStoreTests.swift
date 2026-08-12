@@ -5,13 +5,6 @@ import Testing
 
 private let fixedDate = Date(timeIntervalSince1970: 1_782_108_000)  // 2026-06-22T06:00:00Z
 
-private func makeStore() throws -> SnapshotStore {
-    let dir = FileManager.default.temporaryDirectory
-        .appending(path: "ClaudeMeterTests-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    return SnapshotStore(directory: dir)
-}
-
 private func makeSnapshot(sessionPercent: Double = 25, weekPercent: Double = 30)
     -> ClaudeUsageSnapshot
 {
@@ -36,7 +29,24 @@ private func makeSnapshot(sessionPercent: Double = 25, weekPercent: Double = 30)
 }
 
 @Suite("SnapshotStore")
-struct SnapshotStoreTests {
+final class SnapshotStoreTests {
+    private let root: URL
+
+    init() throws {
+        root = FileManager.default.temporaryDirectory
+            .appending(path: "ClaudeMeterTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    private func makeStore() throws -> SnapshotStore {
+        let dir = root.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return SnapshotStore(directory: dir)
+    }
 
     // MARK: - Read/write roundtrip
 
@@ -80,6 +90,17 @@ struct SnapshotStoreTests {
         let recovered = try store.readLastError()
 
         #expect(recovered == record)
+    }
+
+    @Test("Last errors are sanitized at the persistence boundary")
+    func lastErrorIsSanitized() throws {
+        let store = try makeStore()
+        try store.writeLastError(
+            LastErrorRecord(message: "token for user@example.com at /Users/alice/.claude"))
+
+        let recovered = try #require(try store.readLastError())
+        #expect(!recovered.message.contains("user@example.com"))
+        #expect(!recovered.message.contains("/Users/alice"))
     }
 
     @Test("clearLastError removes the error file")
@@ -151,9 +172,9 @@ struct SnapshotStoreTests {
 
     // MARK: - Directory
 
-    @Test("applicationSupport() creates ClaudeMeter directory")
+    @Test("applicationSupport(in:) creates ClaudeMeter directory hermetically")
     func appSupportDir() throws {
-        let store = try SnapshotStore.applicationSupport()
+        let store = try SnapshotStore.applicationSupport(in: root)
         #expect(store.directory.lastPathComponent == "ClaudeMeter")
         var isDir: ObjCBool = false
         #expect(FileManager.default.fileExists(atPath: store.directory.path, isDirectory: &isDir))
@@ -162,9 +183,11 @@ struct SnapshotStoreTests {
 
     @Test("migrateSnapshotIfNeeded copies legacy snapshot when destination is empty")
     func migratesLegacySnapshot() throws {
-        let legacyDir = FileManager.default.temporaryDirectory
+        let legacyDir =
+            root
             .appending(path: "claudemeter-legacy-\(UUID().uuidString)")
-        let sharedDir = FileManager.default.temporaryDirectory
+        let sharedDir =
+            root
             .appending(path: "claudemeter-shared-\(UUID().uuidString)")
         defer {
             try? FileManager.default.removeItem(at: legacyDir)
@@ -187,9 +210,11 @@ struct SnapshotStoreTests {
 
     @Test("migrateSnapshotIfNeeded does not overwrite existing shared snapshot")
     func skipsMigrationWhenDestinationExists() throws {
-        let legacyDir = FileManager.default.temporaryDirectory
+        let legacyDir =
+            root
             .appending(path: "claudemeter-legacy-\(UUID().uuidString)")
-        let sharedDir = FileManager.default.temporaryDirectory
+        let sharedDir =
+            root
             .appending(path: "claudemeter-shared-\(UUID().uuidString)")
         defer {
             try? FileManager.default.removeItem(at: legacyDir)

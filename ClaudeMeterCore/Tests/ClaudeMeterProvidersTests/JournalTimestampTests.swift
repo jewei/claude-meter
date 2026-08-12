@@ -60,4 +60,14 @@ struct JournalTimestampTests {
             #expect(JournalReader.parseTimestamp("2026-07-14T10:20:30.500Z") == first)
         }
     }
+
+    @Test func dayStringUsesExplicitCalendarTimeZone() {
+        let date = Date(timeIntervalSince1970: 0)
+        var west = Calendar(identifier: .gregorian)
+        west.timeZone = TimeZone(secondsFromGMT: -8 * 3600)!
+        var east = Calendar(identifier: .gregorian)
+        east.timeZone = TimeZone(secondsFromGMT: 8 * 3600)!
+        #expect(JournalReader.dayString(from: date, calendar: west) == "1969-12-31")
+        #expect(JournalReader.dayString(from: date, calendar: east) == "1970-01-01")
+    }
 }

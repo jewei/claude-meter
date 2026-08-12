@@ -136,7 +136,9 @@ enum AppSettings {
     /// are never collapsible: they're the point of the app.
     static var expandedProviderCards: Set<String> {
         get { Set(UserDefaults.standard.stringArray(forKey: expandedProviderCardsKey) ?? []) }
-        set { UserDefaults.standard.set(Array(newValue).sorted(), forKey: expandedProviderCardsKey) }
+        set {
+            UserDefaults.standard.set(Array(newValue).sorted(), forKey: expandedProviderCardsKey)
+        }
     }
 
     static var hasClaudeSource: Bool {
@@ -195,7 +197,8 @@ struct PollConfiguration: Sendable {
 
 extension Array {
     func chunked(into size: Int) -> [[Element]] {
-        stride(from: 0, to: count, by: size).map {
+        precondition(size > 0, "Chunk size must be positive")
+        return stride(from: 0, to: count, by: size).map {
             Array(self[$0..<Swift.min($0 + size, count)])
         }
     }

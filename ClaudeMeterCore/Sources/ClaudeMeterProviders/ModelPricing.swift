@@ -10,6 +10,25 @@ import Foundation
 /// Estimates only — actual billing may differ (tiered cache, promos, plan caps).
 public struct ModelPricing: Sendable {
 
+    public struct TokenUsageBreakdown: Sendable, Equatable {
+        public let input: Int
+        public let output: Int
+        public let cacheRead: Int
+        public let cacheWrite5m: Int
+        public let cacheWrite1h: Int
+
+        public init(
+            input: Int, output: Int, cacheRead: Int, cacheWrite5m: Int,
+            cacheWrite1h: Int = 0
+        ) {
+            self.input = input
+            self.output = output
+            self.cacheRead = cacheRead
+            self.cacheWrite5m = cacheWrite5m
+            self.cacheWrite1h = cacheWrite1h
+        }
+    }
+
     /// Rate card for one model family, USD per million tokens.
     public struct Rate: Sendable, Equatable, Codable {
         public let input: Double
@@ -108,20 +127,13 @@ public struct ModelPricing: Sendable {
 
     /// Estimated USD cost for one model's token totals. `cacheWriteTokens` is the
     /// 5-minute tier; `cacheWrite1hTokens` bills at the 1-hour rate (2× input).
-    public func cost(
-        forModel model: String,
-        inputTokens: Int,
-        outputTokens: Int,
-        cacheReadTokens: Int,
-        cacheWriteTokens: Int,
-        cacheWrite1hTokens: Int = 0
-    ) -> Double {
+    public func cost(forModel model: String, usage: TokenUsageBreakdown) -> Double {
         let r = rate(forModel: model)
         let perToken = 1_000_000.0
-        return Double(inputTokens) / perToken * r.input
-            + Double(outputTokens) / perToken * r.output
-            + Double(cacheReadTokens) / perToken * r.cacheRead
-            + Double(cacheWriteTokens) / perToken * r.cacheWrite
-            + Double(cacheWrite1hTokens) / perToken * r.resolvedCacheWrite1h
+        return Double(usage.input) / perToken * r.input
+            + Double(usage.output) / perToken * r.output
+            + Double(usage.cacheRead) / perToken * r.cacheRead
+            + Double(usage.cacheWrite5m) / perToken * r.cacheWrite
+            + Double(usage.cacheWrite1h) / perToken * r.resolvedCacheWrite1h
     }
 }

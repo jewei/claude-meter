@@ -17,10 +17,7 @@ struct ModelPricingTests {
     @Test func computesCostPerMillionTokens() {
         let cost = ModelPricing.current.cost(
             forModel: "claude-sonnet-4-6",
-            inputTokens: 1_000_000,
-            outputTokens: 0,
-            cacheReadTokens: 0,
-            cacheWriteTokens: 0
+            usage: .init(input: 1_000_000, output: 0, cacheRead: 0, cacheWrite5m: 0)
         )
         #expect(abs(cost - 3.0) < 0.0001)
     }
@@ -115,6 +112,21 @@ struct CostUsageScannerTests {
         #expect(sonnet.outputTokens == 40)
     }
 
+    @Test func dedupsInterleavedStreamingChunksAcrossWholeFile() throws {
+        let now = Date()
+        let ts = iso(now)
+        let model = "claude-sonnet-4-6"
+        let (scanner, root) = try makeScanner(lines: [
+            assistantLine(id: "m1", requestId: "r1", model: model, input: 100, output: 10, ts: ts),
+            assistantLine(id: "m2", requestId: "r2", model: model, input: 50, output: 5, ts: ts),
+            assistantLine(id: "m1", requestId: "r1", model: model, input: 250, output: 40, ts: ts),
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let usage = try #require(scanner.scan(now: now).models.first)
+        #expect(usage.inputTokens == 300)
+        #expect(usage.outputTokens == 45)
+    }
+
     @Test func aggregatesPerModelAndTotalsCost() throws {
         let now = Date()
         let ts = iso(now)
@@ -159,8 +171,8 @@ struct CostUsageScannerTests {
         try handle.write(contentsOf: Data(("\n" + lines.joined(separator: "\n")).utf8))
     }
 
-    @Test("Incremental resume after append matches a full re-parse (no boundary double-count)")
-    func incrementalResumeMatchesFullParse() throws {
+    @Test("Changed-file rescan after append matches an independent full parse")
+    func changedFileRescanMatchesFullParse() throws {
         let now = Date()
         let ts = iso(now)
         let model = "claude-sonnet-4-6"
@@ -186,23 +198,75 @@ struct CostUsageScannerTests {
         // Append m1's final chunk (cumulative 300) and a new message m2.
         try append(
             [
-                assistantLine(id: "m1", requestId: "r1", model: model, input: 300, output: 30, ts: ts),
-                assistantLine(id: "m2", requestId: "r2", model: model, input: 50, output: 5, ts: ts),
+                assistantLine(
+                    id: "m1", requestId: "r1", model: model, input: 300, output: 30, ts: ts),
+                assistantLine(
+                    id: "m2", requestId: "r2", model: model, input: 50, output: 5, ts: ts),
             ], to: file)
 
-        let incremental = scanner.scan(daysBack: 7, now: now)
+        let rescanned = scanner.scan(daysBack: 7, now: now)
 
         // Independent from-scratch full parse of the final file.
         let full = CostUsageScanner(projectsPath: root, cache: CostUsageCache())
             .scan(daysBack: 7, now: now)
 
-        let inc = try #require(incremental.models.first { $0.name == model })
+        let inc = try #require(rescanned.models.first { $0.name == model })
         let ref = try #require(full.models.first { $0.name == model })
-        // m0(10) + m1 max(300) + m2(50) = 360. A naive additive merge would over-count
-        // m1 (200 + 300) and report 560.
+        // m0(10) + m1 max(300) + m2(50) = 360.
         #expect(inc.inputTokens == 360)
         #expect(inc.inputTokens == ref.inputTokens)
         #expect(inc.outputTokens == ref.outputTokens)
+    }
+
+    @Test func completedPreviouslyPartialLineIsCountedAfterGrowth() throws {
+        let now = Date()
+        let ts = iso(now)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let project = root.appendingPathComponent("p")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let file = project.appendingPathComponent("s.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let complete = assistantLine(
+            id: "m1", requestId: "r1", model: "claude-sonnet-4-6",
+            input: 123, output: 7, ts: ts)
+        let split = complete.index(complete.startIndex, offsetBy: complete.count / 2)
+        try Data(complete[..<split].utf8).write(to: file)
+        let scanner = CostUsageScanner(projectsPath: root, cache: CostUsageCache())
+        #expect(scanner.scan(now: now).isEmpty)
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(complete[split...].utf8))
+        try handle.close()
+        #expect(scanner.scan(now: now).models.first?.inputTokens == 123)
+    }
+
+    @Test func largerRewriteDoesNotMergeStaleCachedTotals() throws {
+        let now = Date()
+        let ts = iso(now)
+        let (scanner, root) = try makeScanner(lines: [
+            assistantLine(
+                id: "old", requestId: "r1", model: "claude-sonnet-4-6",
+                input: 100, output: 0, ts: ts)
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(scanner.scan(now: now).models.first?.inputTokens == 100)
+        let file = root.appendingPathComponent("project-a/session.jsonl")
+        let replacement = assistantLine(
+            id: "replacement-longer-id", requestId: "replacement-request",
+            model: "claude-sonnet-4-6", input: 250, output: 0, ts: ts)
+        try Data(replacement.utf8).write(to: file)
+        #expect(scanner.scan(now: now).models.first?.inputTokens == 250)
+    }
+
+    @Test func unreadableTranscriptMarksEstimatePartial() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(
+            at: root.appendingPathComponent("p/unreadable.jsonl"),
+            withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let result = CostUsageScanner(projectsPath: root, cache: CostUsageCache()).scan()
+        #expect(result.isPartialEstimate)
     }
 
     @Test("Cache persists to disk and a fresh cache serves an unchanged file as an exact hit")
@@ -215,14 +279,17 @@ struct CostUsageScannerTests {
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         let file = project.appendingPathComponent("s.jsonl")
         try assistantLine(
-            id: "a", requestId: "1", model: "claude-opus-4-8", input: 1_000_000, output: 0, ts: ts)
-            .data(using: .utf8)!.write(to: file)
+            id: "a", requestId: "1", model: "claude-opus-4-8", input: 1_000_000, output: 0, ts: ts
+        )
+        .data(using: .utf8)!.write(to: file)
         let diskURL = root.appendingPathComponent("cache.json")
         defer { try? FileManager.default.removeItem(at: root) }
 
         // Scan with a disk-backed cache, which flushes on completion.
-        let first = CostUsageScanner(projectsPath: root, cache: CostUsageCache(persistenceURL: diskURL))
-            .scan(daysBack: 7, now: now)
+        let first = CostUsageScanner(
+            projectsPath: root, cache: CostUsageCache(persistenceURL: diskURL)
+        )
+        .scan(daysBack: 7, now: now)
         #expect(FileManager.default.fileExists(atPath: diskURL.path))
 
         // A brand-new cache pointed at the same file must load the entry and serve the
@@ -236,8 +303,9 @@ struct CostUsageScannerTests {
         let modDate = try #require(attrs[.modificationDate] as? Date)
         let size = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
         let reloaded = CostUsageCache(persistenceURL: diskURL)
-        guard case .exact(let value, _) = reloaded.lookup(
-            path: canonical.path, modDate: modDate, fileSize: size)
+        guard
+            case .exact(let value, _) = reloaded.lookup(
+                path: canonical.path, modDate: modDate, fileSize: size)
         else {
             Issue.record("expected an exact cache hit after reload")
             return
@@ -325,7 +393,8 @@ struct CostUsageScannerTests {
         let root = fm.temporaryDirectory.appendingPathComponent(
             UUID().uuidString, isDirectory: true)
         let project = root.appendingPathComponent("p", isDirectory: true)
-        let subagents = project
+        let subagents =
+            project
             .appendingPathComponent("session-uuid", isDirectory: true)
             .appendingPathComponent("subagents", isDirectory: true)
         try fm.createDirectory(at: subagents, withIntermediateDirectories: true)
@@ -353,7 +422,8 @@ struct CostUsageScannerTests {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent(
             UUID().uuidString, isDirectory: true)
-        let subagents = root
+        let subagents =
+            root
             .appendingPathComponent("p", isDirectory: true)
             .appendingPathComponent("session-uuid", isDirectory: true)
             .appendingPathComponent("subagents", isDirectory: true)

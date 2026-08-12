@@ -55,7 +55,8 @@ public enum ConfigDirDiscovery {
     public static func accountKey(for dir: URL) -> String {
         var name = dir.lastPathComponent
         if name.hasPrefix(".") { name.removeFirst() }
-        let filtered = String(String.UnicodeScalarView(name.unicodeScalars.filter(allowedScalars.contains)))
+        let filtered = String(
+            String.UnicodeScalarView(name.unicodeScalars.filter(allowedScalars.contains)))
         return filtered.isEmpty ? "claude" : filtered
     }
 
@@ -131,8 +132,27 @@ public enum ConfigDirDiscovery {
             configs.append(AccountConfig(id: key, label: label(forKey: key), configDir: dir))
         }
 
-        for dir in candidates where accountKey(for: dir) == "claude" { consider(dir) }
-        for dir in candidates.sorted(by: { accountKey(for: $0) < accountKey(for: $1) }) {
+        // Resolve key collisions deterministically. The real default always owns the
+        // `claude` key; for other collisions an explicitly configured path wins, then
+        // resolved-path order breaks ties. The bridge protocol cannot represent two
+        // directories with the same sanitized key, so one must be selected.
+        if isDirectory(defaultDir, fm: fm) { consider(defaultDir) }
+        let configuredResolvedPaths = Set(
+            configuredDirs.map {
+                URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath)
+                    .resolvingSymlinksInPath().standardizedFileURL.path
+            })
+        for dir in candidates.sorted(by: { lhs, rhs in
+            let lhsKey = accountKey(for: lhs)
+            let rhsKey = accountKey(for: rhs)
+            if lhsKey != rhsKey { return lhsKey < rhsKey }
+            let lhsPath = lhs.resolvingSymlinksInPath().standardizedFileURL.path
+            let rhsPath = rhs.resolvingSymlinksInPath().standardizedFileURL.path
+            let lhsConfigured = configuredResolvedPaths.contains(lhsPath)
+            let rhsConfigured = configuredResolvedPaths.contains(rhsPath)
+            if lhsConfigured != rhsConfigured { return lhsConfigured }
+            return lhsPath < rhsPath
+        }) {
             consider(dir)
         }
         return configs

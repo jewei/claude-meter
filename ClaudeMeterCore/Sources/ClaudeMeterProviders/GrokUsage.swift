@@ -37,7 +37,7 @@ public struct GrokUsage: Codable, Equatable, Sendable {
         self.onDemandCapCents = onDemandCapCents
         self.prepaidBalanceCents = prepaidBalanceCents
         self.accountEmail = accountEmail
-        self.maskedAccountEmail = accountEmail.map(CodexUsage.maskedEmail)
+        self.maskedAccountEmail = accountEmail.map(AccountDisplayPrivacy.maskedEmail)
         self.updatedAt = updatedAt
     }
 
@@ -53,7 +53,7 @@ public enum GrokUsageError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .loginRequired: "Grok sign-in required. Open Grok Build and run `grok login`."
-        case let .httpError(code): "Grok usage request failed (HTTP \(code))."
+        case .httpError(let code): "Grok usage request failed (HTTP \(code))."
         case .malformedResponse: "Grok billing returned an unexpected response."
         }
     }
@@ -114,8 +114,6 @@ enum GrokTimestamp {
     static func parse(_ raw: String) -> Date? {
         let stripped = raw.replacingOccurrences(
             of: #"\.\d+"#, with: "", options: .regularExpression)
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: stripped)
+        return JournalReader.parseTimestamp(stripped)
     }
 }

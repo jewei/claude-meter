@@ -19,6 +19,15 @@ public enum LimitWindowKind: Sendable, Equatable {
     }
 }
 
+extension LimitWindowScope {
+    public var kind: LimitWindowKind {
+        switch self {
+        case .session: .session
+        case .weekly, .weeklyOpus: .weekly
+        }
+    }
+}
+
 /// How fast a window's quota is being consumed relative to the time elapsed in
 /// that window — the glanceable "will I make it to reset?" signal.
 ///
@@ -48,25 +57,6 @@ public enum UsagePace: Sendable, Equatable {
         }
     }
 
-    /// Short human-readable label for the badge.
-    public var displayName: String {
-        switch self {
-        case .onPace: "On track"
-        case .ahead: "Running hot"
-        case .behind: "Room to spare"
-        case .unknown: "—"
-        }
-    }
-
-    /// SF Symbol representing the pace.
-    public var symbolName: String {
-        switch self {
-        case .onPace: "equal.circle.fill"
-        case .ahead: "hare.fill"
-        case .behind: "tortoise.fill"
-        case .unknown: "questionmark.circle.fill"
-        }
-    }
 }
 
 /// A forward projection of when a window's quota runs dry at the current burn
@@ -84,6 +74,16 @@ public enum RunsOutEstimate: Sendable, Equatable {
 }
 
 extension LimitWindow {
+    private struct PaceMetrics {
+        let used: Double
+        let elapsed: Double
+
+        var rate: Double? { elapsed > 0 ? used / elapsed : nil }
+        var classification: UsagePace {
+            UsagePace.from(percentUsed: used, percentTimeElapsed: elapsed)
+        }
+    }
+
     /// Minimum fraction (%) of the window that must have elapsed before we project
     /// a run-out — guards against extrapolating from a burst right after a reset
     /// (which would otherwise read "dry in minutes" at ~99% left).
@@ -92,16 +92,17 @@ extension LimitWindow {
     /// Projects when this window runs dry if the current burn rate holds. Call on
     /// the `resolved(asOf:)` window so a just-reset window reads `.unknown`.
     public func runsOutEstimate(kind: LimitWindowKind, asOf now: Date) -> RunsOutEstimate {
-        guard let used = clampedPercent, let reset = resetsAt else { return .unknown }
+        guard let reset = resetsAt else { return .unknown }
+        guard let metrics = paceMetrics(kind: kind, asOf: now) else { return .unknown }
+        let used = metrics.used
         if used >= 100 { return .depleted }
-        guard let elapsedPct = percentTimeElapsed(kind: kind, asOf: now) else { return .unknown }
+        let elapsedPct = metrics.elapsed
         let timeUntilReset = reset.timeIntervalSince(now)
         guard timeUntilReset > 0 else { return .unknown }
         // Too early, or no usage yet → assume it lasts (don't fabricate a number).
         guard elapsedPct >= Self.minElapsedForProjection, used > 0 else { return .lastsUntilReset }
 
-        let rate = used / elapsedPct  // %used per %elapsed
-        guard rate > 0 else { return .lastsUntilReset }
+        guard let rate = metrics.rate, rate > 0 else { return .lastsUntilReset }
         // %elapsed still needed to consume the remaining quota, converted to seconds.
         let elapsedPctNeeded = (100 - used) / rate
         let secondsUntilDry = elapsedPctNeeded * (kind.duration / 100)
@@ -123,39 +124,17 @@ extension LimitWindow {
         return min(100, max(0, elapsed / total * 100))
     }
 
-    /// Burn rate: consumed quota divided by elapsed window time. `1.0` is exactly
-    /// on pace, `2.0` is twice as fast as sustainable. `nil` when pace is unknown
-    /// or no time has elapsed yet.
-    public func burnRate(kind: LimitWindowKind, asOf now: Date) -> Double? {
-        guard let elapsed = percentTimeElapsed(kind: kind, asOf: now), elapsed > 0,
-            let used = clampedPercent
-        else { return nil }
-        return used / elapsed
-    }
-
     /// Pace classification for this window as of `now`. Call on the
     /// `resolved(asOf:)` window so a just-reset window reads `.unknown` rather
     /// than a stale value.
     public func pace(kind: LimitWindowKind, asOf now: Date) -> UsagePace {
-        guard let used = clampedPercent,
-            let elapsed = percentTimeElapsed(kind: kind, asOf: now)
-        else { return .unknown }
-        return UsagePace.from(percentUsed: used, percentTimeElapsed: elapsed)
+        paceMetrics(kind: kind, asOf: now)?.classification ?? .unknown
     }
 
-    /// One-line insight describing the pace deviation, e.g. "12% ahead of pace"
-    /// or "On track". `nil` when pace can't be determined.
-    public func paceInsight(kind: LimitWindowKind, asOf now: Date) -> String? {
+    private func paceMetrics(kind: LimitWindowKind, asOf now: Date) -> PaceMetrics? {
         guard let used = clampedPercent,
             let elapsed = percentTimeElapsed(kind: kind, asOf: now)
         else { return nil }
-        let pace = UsagePace.from(percentUsed: used, percentTimeElapsed: elapsed)
-        let delta = Int(abs(used - elapsed).rounded())
-        switch pace {
-        case .onPace: return "On track"
-        case .ahead: return "\(delta)% ahead of pace"
-        case .behind: return "\(delta)% behind pace"
-        case .unknown: return nil
-        }
+        return PaceMetrics(used: used, elapsed: elapsed)
     }
 }

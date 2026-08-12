@@ -23,6 +23,11 @@ struct ResetPhraseTests {
         #expect(ResetPhrase.compact(until: at(42 * 60), asOf: now) == "42m")
     }
 
+    @Test func roundedUnitBoundariesDoNotEmitSixtyMinutesOrFortyEightHours() {
+        #expect(ResetPhrase.duration(until: at(59 * 60 + 30), asOf: now) == "1h")
+        #expect(ResetPhrase.duration(until: at(47 * 3600 + 59 * 60 + 30), asOf: now) == "2 days")
+    }
+
     @Test func underTwelveHoursKeepsMinuteDetail() {
         #expect(ResetPhrase.duration(until: at(3 * 3600 + 20 * 60), asOf: now) == "3h 20m")
         #expect(ResetPhrase.duration(until: at(3 * 3600), asOf: now) == "3h")

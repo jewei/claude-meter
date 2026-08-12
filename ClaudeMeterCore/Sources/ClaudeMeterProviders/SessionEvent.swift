@@ -141,10 +141,9 @@ public struct SessionEvent: Sendable, Equatable {
 /// attention" state lives in the app, not on disk.
 public enum SessionEventStore {
 
-    /// Reads every fresh marker under the events dir, deletes all markers it sees
-    /// (fresh *and* stale, so a backlog never accumulates), and returns the fresh
-    /// events. Markers older than `maxAge` are dropped silently — on app launch we
-    /// don't want to replay a pile of old "your turn" pings.
+    /// Reads every fresh marker under the events dir and consumes parseable and
+    /// stale markers. A fresh unparseable marker is retained briefly because it may
+    /// have been observed mid-write. Markers older than `maxAge` are dropped silently.
     public static func drain(
         disabledAccountKeys: Set<String> = [], now: Date = Date(), maxAge: TimeInterval = 120
     ) -> [SessionEvent] {
@@ -187,7 +186,9 @@ public enum SessionEventStore {
                 // Unknown mtime → treat as fresh for *emitting* (don't drop a real
                 // event to a stat blip). capturedAt uses the file mtime when known so
                 // the notification id is stable across drains.
-                let isFresh = age.map { $0 < maxAge } ?? true
+                // Permit modest filesystem/clock skew, but do not let a marker with
+                // an implausibly future mtime remain fresh indefinitely.
+                let isFresh = age.map { $0 >= -300 && $0 < maxAge } ?? true
                 if let event = parse(file: file, accountKey: accountKey, capturedAt: mod ?? now) {
                     // A subagent finishing is not the end of the user's turn. Consume
                     // its marker without emitting a pointless "your turn" alert. Keep
@@ -202,7 +203,7 @@ public enum SessionEventStore {
                     // Parse failed: retry only a genuinely-fresh, known-mtime marker
                     // (a transient mid-write read). A stale OR unknown-mtime failure is
                     // cleaned up so a permanently-corrupt marker can't loop forever.
-                    let retain = (age.map { $0 < maxAge }) == true
+                    let retain = (age.map { $0 >= -300 && $0 < maxAge }) == true
                     if !retain { try? fm.removeItem(at: file) }
                 }
             }
@@ -221,8 +222,10 @@ public enum SessionEventStore {
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         let kind = SessionEvent.Kind(from: json["hook_event_name"] as? String)
-        let cwd = (json["cwd"] as? String) ?? ((json["workspace"] as? [String: Any])?["current_dir"]
-            as? String)
+        let cwd =
+            (json["cwd"] as? String)
+            ?? ((json["workspace"] as? [String: Any])?["current_dir"]
+                as? String)
         return SessionEvent(
             kind: kind,
             accountKey: accountKey,

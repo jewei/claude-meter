@@ -21,8 +21,8 @@ public enum AppGroupConfig {
     /// `claude` account is never disablable.
     public static let disabledAccountKeysKey = "disabledAccountKeys"
     /// User-assigned plan badge per account key (e.g. `claude-tech-oneone` → `Max`).
-    /// Plan isn't available per-account from the data (OAuth is single-slot, and the
-    /// statusline payload carries no plan), so the user tags each account by hand.
+    /// This is an override: callers prefer it over the active-account enrichment and
+    /// then over the plan discovered by the per-account OAuth tier.
     public static let accountPlansKey = "accountPlans"
     /// User-set display name per account key (e.g. `claude` → `Personal`). Overrides
     /// the config-dir-derived label in the popover. Empty/absent → use the default.
@@ -34,29 +34,20 @@ public enum AppGroupConfig {
 
     /// User-added custom Claude config directories (absolute paths).
     public static var configuredConfigDirs: [String] {
-        get { UserDefaults.standard.stringArray(forKey: configuredConfigDirsKey) ?? [] }
-        set {
-            UserDefaults.standard.set(newValue, forKey: configuredConfigDirsKey)
-            sharedDefaults?.set(newValue, forKey: configuredConfigDirsKey)
-        }
+        get { standardStringArray(forKey: configuredConfigDirsKey) }
+        set { setMirrored(newValue, forKey: configuredConfigDirsKey) }
     }
 
     /// Account keys the user has disabled.
     public static var disabledAccountKeys: [String] {
-        get { UserDefaults.standard.stringArray(forKey: disabledAccountKeysKey) ?? [] }
-        set {
-            UserDefaults.standard.set(newValue, forKey: disabledAccountKeysKey)
-            sharedDefaults?.set(newValue, forKey: disabledAccountKeysKey)
-        }
+        get { standardStringArray(forKey: disabledAccountKeysKey) }
+        set { setMirrored(newValue, forKey: disabledAccountKeysKey) }
     }
 
     /// User-assigned plan badge per account key. Empty/absent → no badge.
     public static var accountPlans: [String: String] {
-        get { (UserDefaults.standard.dictionary(forKey: accountPlansKey) as? [String: String]) ?? [:] }
-        set {
-            UserDefaults.standard.set(newValue, forKey: accountPlansKey)
-            sharedDefaults?.set(newValue, forKey: accountPlansKey)
-        }
+        get { standardStringDictionary(forKey: accountPlansKey) }
+        set { setMirrored(newValue, forKey: accountPlansKey) }
     }
 
     /// The plan the user tagged for `key`, or `nil` when unset.
@@ -67,11 +58,8 @@ public enum AppGroupConfig {
 
     /// User-set display name per account key. Empty/absent → no override.
     public static var accountNames: [String: String] {
-        get { (UserDefaults.standard.dictionary(forKey: accountNamesKey) as? [String: String]) ?? [:] }
-        set {
-            UserDefaults.standard.set(newValue, forKey: accountNamesKey)
-            sharedDefaults?.set(newValue, forKey: accountNamesKey)
-        }
+        get { standardStringDictionary(forKey: accountNamesKey) }
+        set { setMirrored(newValue, forKey: accountNamesKey) }
     }
 
     /// The display name the user set for `key` (trimmed), or `nil` when unset.
@@ -82,38 +70,107 @@ public enum AppGroupConfig {
 
     // MARK: - Appearance
 
+    public enum CardStyle: String, Sendable, CaseIterable {
+        case rings
+        case bars
+    }
+
+    public enum ProgressionMode: String, Sendable, CaseIterable {
+        case left
+        case used
+    }
+
+    public enum MenuBarWindow: String, Sendable, CaseIterable {
+        case nearest
+        case fiveHour = "5h"
+        case sevenDay = "7d"
+        case both
+    }
+
+    public enum MenuBarAccountSelection: Sendable, Equatable {
+        case nearest
+        case account(key: String)
+
+        public init(storedValue: String?) {
+            guard let value = storedValue, !value.isEmpty, value != "nearest" else {
+                self = .nearest
+                return
+            }
+            self = .account(key: value)
+        }
+
+        public var storedValue: String {
+            switch self {
+            case .nearest: ""
+            case .account(let key): key
+            }
+        }
+    }
+
     public static let cardStyleKey = "cardStyle"  // "rings" | "bars" (popover only)
     public static let progressionModeKey = "progressionMode"  // "left" | "used"
     public static let menuBarAccountKey = "menuBarAccount"  // "" / "nearest" | account key
     public static let menuBarWindowKey = "menuBarWindow"  // "nearest" | "5h" | "7d" | "both"
 
-    /// Popover card style: "rings" (default) or "bars". Shared-first so the widget can read it.
-    public static func cardStyle(from defaults: UserDefaults = .standard) -> String {
-        sharedDefaults?.string(forKey: cardStyleKey) ?? defaults.string(forKey: cardStyleKey) ?? "rings"
+    /// Typed popover card style, shared-first so app processes observe one value.
+    public static func resolvedCardStyle(
+        from defaults: UserDefaults = .standard,
+        shared: UserDefaults? = sharedDefaults
+    ) -> CardStyle {
+        CardStyle(
+            rawValue: shared?.string(forKey: cardStyleKey)
+                ?? defaults.string(forKey: cardStyleKey) ?? "") ?? .rings
     }
 
-    /// Progression display: "left" (energy remaining, default) or "used".
+    /// Legacy string accessor retained for `@AppStorage`-based callers.
+    public static func cardStyle(from defaults: UserDefaults = .standard) -> String {
+        resolvedCardStyle(from: defaults).rawValue
+    }
+
+    /// Typed progression display mode.
+    public static func resolvedProgressionMode(
+        from defaults: UserDefaults = .standard,
+        shared: UserDefaults? = sharedDefaults
+    ) -> ProgressionMode {
+        ProgressionMode(
+            rawValue: shared?.string(forKey: progressionModeKey)
+                ?? defaults.string(forKey: progressionModeKey) ?? "") ?? .left
+    }
+
+    /// Legacy string accessor retained for `@AppStorage`-based callers.
     public static func progressionMode(from defaults: UserDefaults = .standard) -> String {
-        sharedDefaults?.string(forKey: progressionModeKey)
-            ?? defaults.string(forKey: progressionModeKey) ?? "left"
+        resolvedProgressionMode(from: defaults).rawValue
     }
 
     /// Account key the menu bar pins to; "" / "nearest" → nearest-limit across all.
     public static var menuBarAccount: String {
-        UserDefaults.standard.string(forKey: menuBarAccountKey) ?? ""
+        menuBarAccountSelection.storedValue
+    }
+
+    public static var menuBarAccountSelection: MenuBarAccountSelection {
+        MenuBarAccountSelection(
+            storedValue: UserDefaults.standard.string(forKey: menuBarAccountKey))
     }
 
     /// Which window the menu-bar number reflects: "nearest" (default — lowest
     /// energy-left across all windows/accounts), "5h", "7d", or "both" (5h · 7d for
     /// the active/pinned account). Empty/unknown → "nearest".
     public static var menuBarWindow: String {
-        let value = UserDefaults.standard.string(forKey: menuBarWindowKey) ?? ""
-        return ["5h", "7d", "both"].contains(value) ? value : "nearest"
+        resolvedMenuBarWindow.rawValue
+    }
+
+    public static var resolvedMenuBarWindow: MenuBarWindow {
+        MenuBarWindow(
+            rawValue: UserDefaults.standard.string(forKey: menuBarWindowKey) ?? ""
+        ) ?? .nearest
     }
 
     /// Copies display-related settings from the standard suite into the App Group suite.
-    public static func syncDisplaySettings(from source: UserDefaults = .standard) {
-        guard let shared = sharedDefaults else { return }
+    public static func syncDisplaySettings(
+        from source: UserDefaults = .standard,
+        to shared: UserDefaults? = sharedDefaults
+    ) {
+        guard let shared else { return }
         for key in [
             warningThresholdKey,
             criticalThresholdKey,
@@ -129,6 +186,8 @@ public enum AppGroupConfig {
         ] {
             if let value = source.object(forKey: key) {
                 shared.set(value, forKey: key)
+            } else {
+                shared.removeObject(forKey: key)
             }
         }
     }
@@ -159,11 +218,11 @@ public enum AppGroupConfig {
 
     public static func isSnapshotStale(
         lastPollAt: Date?,
+        shared: UserDefaults? = sharedDefaults,
         defaults: UserDefaults = .standard,
         now: Date = Date()
     ) -> Bool {
         guard let polledAt = lastPollAt else { return false }
-        let shared = sharedDefaults
         let threshold = readPositiveDouble(
             forKey: staleAfterSecondsKey,
             shared: shared,
@@ -184,5 +243,18 @@ public enum AppGroupConfig {
         let standardValue = defaults.double(forKey: key)
         if standardValue > 0 { return standardValue }
         return fallback
+    }
+
+    private static func standardStringArray(forKey key: String) -> [String] {
+        UserDefaults.standard.stringArray(forKey: key) ?? []
+    }
+
+    private static func standardStringDictionary(forKey key: String) -> [String: String] {
+        (UserDefaults.standard.dictionary(forKey: key) as? [String: String]) ?? [:]
+    }
+
+    private static func setMirrored(_ value: Any, forKey key: String) {
+        UserDefaults.standard.set(value, forKey: key)
+        sharedDefaults?.set(value, forKey: key)
     }
 }

@@ -83,13 +83,6 @@ public enum JournalReader {
             return f
         }
     }()
-    private static let dayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        return f
-    }()
-
     static func parseTimestamp(_ str: String) -> Date? {
         // Fast path: Claude Code emits ISO 8601 with exactly three fraction digits
         // and `Z` (what `.withFractionalSeconds` requires). The legacy chain stays
@@ -102,8 +95,13 @@ public enum JournalReader {
         return nil
     }
 
-    public static func dayString(from date: Date) -> String {
-        dayFormatter.string(from: date)
+    public static func dayString(from date: Date, calendar: Calendar = .current) -> String {
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = components.year, let month = components.month, let day = components.day
+        else {
+            return ""
+        }
+        return String(format: "%04d-%02d-%02d", year, month, day)
     }
 }
 
@@ -116,11 +114,7 @@ func parseEpochOrISODate(_ string: String?) -> Date? {
         let seconds = number > 1_000_000_000_000 ? number / 1000 : number
         return Date(timeIntervalSince1970: seconds)
     }
-    let iso = ISO8601DateFormatter()
-    iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let date = iso.date(from: string) { return date }
-    iso.formatOptions = [.withInternetDateTime]
-    return iso.date(from: string)
+    return JournalReader.parseTimestamp(string)
 }
 
 extension Array where Element == URL {

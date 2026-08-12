@@ -76,8 +76,7 @@ public enum StatuslineBridge: Sendable {
     /// Dirs that don't exist are skipped; a dir whose `settings.json` is invalid
     /// JSON is skipped without blocking the others (its error is surfaced after).
     public static func install(configDirs: [URL]) throws {
-        try? FileManager.default.createDirectory(
-            at: sessionsDir, withIntermediateDirectories: true)
+        try ensureDirectory(at: sessionsDir)
 
         var firstError: Error?
         for dir in configDirs {
@@ -91,8 +90,12 @@ public enum StatuslineBridge: Sendable {
         if let firstError { throw firstError }
     }
 
+    static func ensureDirectory(at url: URL) throws {
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    }
+
     private static func installOne(settingsPath: URL) throws {
-        var settings = try readSettings(at: settingsPath)
+        var settings = try SettingsFile.read(at: settingsPath)
         var needsWrite = false
 
         // Strip any bridge variant (current or legacy) to recover the user's own
@@ -112,7 +115,7 @@ public enum StatuslineBridge: Sendable {
         }
 
         if needsWrite {
-            try writeSettings(settings, at: settingsPath)
+            try SettingsFile.write(settings, at: settingsPath)
         }
     }
 
@@ -155,7 +158,7 @@ public enum StatuslineBridge: Sendable {
 
     @discardableResult
     private static func uninstallOne(settingsPath: URL) throws -> Bool {
-        var settings = try readSettings(at: settingsPath)
+        var settings = try SettingsFile.read(at: settingsPath)
         let currentCmd = statusLineCommand(in: settings)
         let restored = strippedOfAnyBridge(from: currentCmd)
         guard restored != currentCmd else { return false }
@@ -165,7 +168,7 @@ public enum StatuslineBridge: Sendable {
         } else {
             setStatusLineCommand(restored, in: &settings)
         }
-        try writeSettings(settings, at: settingsPath)
+        try SettingsFile.write(settings, at: settingsPath)
         return true
     }
 
@@ -190,7 +193,7 @@ public enum StatuslineBridge: Sendable {
         // Legacy single statusline.json.
         if let mod =
             (try? fm.attributesOfItem(atPath: statuslineFilePath.path))?[.modificationDate]
-                as? Date,
+            as? Date,
             now.timeIntervalSince(mod) < maxAge
         {
             return true
@@ -251,20 +254,45 @@ public enum StatuslineBridge: Sendable {
     }
 
     public struct StatuslinePayload: Sendable {
-        public let fiveHour: RateLimitWindow?
-        public let sevenDay: RateLimitWindow?
-        public let sevenDayOpus: RateLimitWindow?
-        public let sessionId: String?
-        public let sessionName: String?
-        public let cwd: String?
-        public let modelId: String?
-        public let modelDisplayName: String?
-        public let totalCostUsd: Double?
-        public let totalApiDurationMs: Double?
-        public let codeLinesAdded: Int?
-        public let codeLinesRemoved: Int?
+        public struct Windows: Sendable {
+            public let fiveHour: RateLimitWindow?
+            public let sevenDay: RateLimitWindow?
+            public let sevenDayOpus: RateLimitWindow?
+        }
+
+        public struct SessionMetadata: Sendable {
+            public let id: String?
+            public let name: String?
+            public let cwd: String?
+            public let modelId: String?
+            public let modelDisplayName: String?
+        }
+
+        public struct ActivityCounters: Sendable {
+            public let totalCostUsd: Double?
+            public let totalApiDurationMs: Double?
+            public let codeLinesAdded: Int?
+            public let codeLinesRemoved: Int?
+        }
+
+        public let windows: Windows
+        public let session: SessionMetadata
+        public let counters: ActivityCounters
         public let cliVersion: String?
         public let capturedAt: Date
+
+        public var fiveHour: RateLimitWindow? { windows.fiveHour }
+        public var sevenDay: RateLimitWindow? { windows.sevenDay }
+        public var sevenDayOpus: RateLimitWindow? { windows.sevenDayOpus }
+        public var sessionId: String? { session.id }
+        public var sessionName: String? { session.name }
+        public var cwd: String? { session.cwd }
+        public var modelId: String? { session.modelId }
+        public var modelDisplayName: String? { session.modelDisplayName }
+        public var totalCostUsd: Double? { counters.totalCostUsd }
+        public var totalApiDurationMs: Double? { counters.totalApiDurationMs }
+        public var codeLinesAdded: Int? { counters.codeLinesAdded }
+        public var codeLinesRemoved: Int? { counters.codeLinesRemoved }
         /// Order-independent fingerprint of *every* session file in this account:
         /// each session's cost / API-duration / line counters, keyed by session id
         /// and sorted. Drives active-account detection.
@@ -294,18 +322,14 @@ public enum StatuslineBridge: Sendable {
             capturedAt: Date,
             activityFingerprint: String? = nil
         ) {
-            self.fiveHour = fiveHour
-            self.sevenDay = sevenDay
-            self.sevenDayOpus = sevenDayOpus
-            self.sessionId = sessionId
-            self.sessionName = sessionName
-            self.cwd = cwd
-            self.modelId = modelId
-            self.modelDisplayName = modelDisplayName
-            self.totalCostUsd = totalCostUsd
-            self.totalApiDurationMs = totalApiDurationMs
-            self.codeLinesAdded = codeLinesAdded
-            self.codeLinesRemoved = codeLinesRemoved
+            self.windows = Windows(
+                fiveHour: fiveHour, sevenDay: sevenDay, sevenDayOpus: sevenDayOpus)
+            self.session = SessionMetadata(
+                id: sessionId, name: sessionName, cwd: cwd, modelId: modelId,
+                modelDisplayName: modelDisplayName)
+            self.counters = ActivityCounters(
+                totalCostUsd: totalCostUsd, totalApiDurationMs: totalApiDurationMs,
+                codeLinesAdded: codeLinesAdded, codeLinesRemoved: codeLinesRemoved)
             self.cliVersion = cliVersion
             self.capturedAt = capturedAt
             self.activityFingerprint =
@@ -425,7 +449,13 @@ public enum StatuslineBridge: Sendable {
     }
 
     static func mergePayloads(_ payloads: [StatuslinePayload]) -> StatuslinePayload? {
-        guard let base = payloads.max(by: { $0.capturedAt < $1.capturedAt }) else { return nil }
+        guard
+            let base = payloads.max(by: {
+                if $0.capturedAt != $1.capturedAt { return $0.capturedAt < $1.capturedAt }
+                return ($0.sessionId ?? $0.activityFingerprint)
+                    < ($1.sessionId ?? $1.activityFingerprint)
+            })
+        else { return nil }
 
         let fiveHour = mostRecentWindow(payloads.compactMap(\.fiveHour))
         let sevenDay = mostRecentWindow(payloads.compactMap(\.sevenDay))
@@ -501,10 +531,6 @@ public enum StatuslineBridge: Sendable {
 
     // MARK: - Settings helpers
 
-    private static func readSettings(at settingsPath: URL) throws -> [String: Any] {
-        try SettingsFile.read(at: settingsPath)
-    }
-
     internal static func parseSettingsDataForTesting(_ data: Data?) throws -> [String: Any] {
         try SettingsFile.parse(data)
     }
@@ -563,10 +589,6 @@ public enum StatuslineBridge: Sendable {
         }
     }
 
-    private static func writeSettings(_ settings: [String: Any], at settingsPath: URL) throws {
-        try SettingsFile.write(settings, at: settingsPath)
-    }
-
     private static func numericValue(_ value: Any?) -> Double? {
         switch value {
         case let d as Double: d
@@ -576,4 +598,3 @@ public enum StatuslineBridge: Sendable {
         }
     }
 }
-

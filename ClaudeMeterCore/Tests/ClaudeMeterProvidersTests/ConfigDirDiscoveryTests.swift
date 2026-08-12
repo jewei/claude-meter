@@ -52,7 +52,9 @@ struct ConfigDirDiscoveryTests {
         func make(_ name: String, settings: Bool, projects: Bool) throws -> URL {
             let dir = home.appendingPathComponent(name, isDirectory: true)
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-            if settings { try Data("{}".utf8).write(to: dir.appendingPathComponent("settings.json")) }
+            if settings {
+                try Data("{}".utf8).write(to: dir.appendingPathComponent("settings.json"))
+            }
             if projects {
                 try fm.createDirectory(
                     at: dir.appendingPathComponent("projects"), withIntermediateDirectories: true)
@@ -83,7 +85,8 @@ struct ConfigDirDiscoveryTests {
             _ = try make(".claude", false, false)  // no settings, no projects
         }
         defer { try? FileManager.default.removeItem(at: home) }
-        #expect(ConfigDirDiscovery.discover(home: home, fileManager: .default).map(\.id) == ["claude"])
+        #expect(
+            ConfigDirDiscovery.discover(home: home, fileManager: .default).map(\.id) == ["claude"])
     }
 
     @Test func discoverHonorsDisabledKeysButNeverDropsDefault() throws {
@@ -125,5 +128,24 @@ struct ConfigDirDiscoveryTests {
         let found = ConfigDirDiscovery.discover(
             home: home, fileManager: .default, configuredDirs: [claudePath])
         #expect(found.map(\.id) == ["claude"])
+    }
+
+    @Test func configuredPathWinsSanitizedKeyCollisionDeterministically() throws {
+        let fm = FileManager.default
+        let home = try makeHome { _, make in
+            _ = try make(".claude", true, false)
+            _ = try make(".claude-a!", true, false)
+        }
+        let configured = home.appendingPathComponent(".claude-a@")
+        try fm.createDirectory(at: configured, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: configured.appendingPathComponent("settings.json"))
+        defer { try? fm.removeItem(at: home) }
+
+        let found = ConfigDirDiscovery.discover(
+            home: home, fileManager: fm, configuredDirs: [configured.path])
+        #expect(
+            found.first { $0.id == "claude-a" }?.configDir.resolvingSymlinksInPath()
+                .standardizedFileURL.path
+                == configured.resolvingSymlinksInPath().standardizedFileURL.path)
     }
 }

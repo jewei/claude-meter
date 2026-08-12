@@ -8,8 +8,28 @@ public struct TimeoutError: Error, LocalizedError, CustomStringConvertible, Send
     public var errorDescription: String? { description }
 }
 
+public struct InvalidTimeoutDurationError: Error, LocalizedError, Sendable {
+    public let seconds: TimeInterval
+    public var errorDescription: String? { "Timeout duration must be finite and greater than zero" }
+
+    public init(seconds: TimeInterval) {
+        self.seconds = seconds
+    }
+}
+
+public struct TimeoutCapacityError: Error, LocalizedError, Sendable {
+    public var errorDescription: String? {
+        "Too many timed operations are still running; waiting for cancellation to finish"
+    }
+
+    public init() {}
+}
+
 /// Runs an async operation under a wall-clock deadline.
 public enum Timeout {
+    /// A cancellation-ignoring operation may outlive its deadline. Bound those
+    /// abandoned tasks process-wide so repeated polls cannot grow without limit.
+    private static let detachedTaskBudget = DetachedTaskBudget(limit: 64)
 
     /// Runs `operation`, throwing `TimeoutError` if it doesn't finish within `seconds`.
     ///
@@ -26,8 +46,13 @@ public enum Timeout {
         priority: TaskPriority = .utility,
         operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
+        guard seconds.isFinite, seconds > 0 else {
+            throw InvalidTimeoutDurationError(seconds: seconds)
+        }
+        guard detachedTaskBudget.acquire() else { throw TimeoutCapacityError() }
         let race = RaceBox<T>()
         let work = Task.detached(priority: priority) {
+            defer { detachedTaskBudget.release() }
             do {
                 race.resolve(.success(try await operation()))
             } catch {
@@ -76,6 +101,28 @@ public enum Timeout {
                     lock.unlock()
                 }
             }
+        }
+    }
+
+    private final class DetachedTaskBudget: @unchecked Sendable {
+        private let lock = NSLock()
+        private let limit: Int
+        private var active = 0
+
+        init(limit: Int) {
+            self.limit = limit
+        }
+
+        func acquire() -> Bool {
+            lock.withLock {
+                guard active < limit else { return false }
+                active += 1
+                return true
+            }
+        }
+
+        func release() {
+            lock.withLock { active -= 1 }
         }
     }
 }

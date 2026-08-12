@@ -41,10 +41,12 @@ public struct CodexAppServerAccountResponse: Decodable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let accountContainer = try container.nestedContainer(keyedBy: AccountKeys.self, forKey: .account)
+        let accountContainer = try container.nestedContainer(
+            keyedBy: AccountKeys.self, forKey: .account)
         let type = try? accountContainer.decodeIfPresent(String.self, forKey: .type)
         let email = try? accountContainer.decodeIfPresent(String.self, forKey: .email)
-        let plan = (try? accountContainer.decodeIfPresent(String.self, forKey: .planType))
+        let plan =
+            (try? accountContainer.decodeIfPresent(String.self, forKey: .planType))
             ?? (try? accountContainer.decodeIfPresent(String.self, forKey: .planTypeSnake))
         self.account = CodexAppServerAccount(
             email: email,
@@ -74,7 +76,9 @@ public final class CodexAppServerSource: CodexUsageSourceFetching, @unchecked Se
         env: [String: String] = ProcessInfo.processInfo.environment,
         startupTimeout: TimeInterval = 5,
         requestTimeout: TimeInterval = 5,
-        resolver: @escaping @Sendable ([String: String]) -> String? = { CodexCLILocator.resolve(env: $0) }
+        resolver: @escaping @Sendable ([String: String]) -> String? = {
+            CodexCLILocator.resolve(env: $0)
+        }
     ) {
         self.env = env
         self.startupTimeout = startupTimeout
@@ -117,6 +121,7 @@ final class CodexAppServerClient: @unchecked Sendable {
     /// matcher hand one caller the other's payload.
     private let idLock = NSLock()
     private var nextID = 1
+    private let requestGate = CodexRPCRequestGate()
     private let startupTimeout: TimeInterval
     private let requestTimeout: TimeInterval
 
@@ -159,7 +164,8 @@ final class CodexAppServerClient: @unchecked Sendable {
     }
 
     func fetchRateLimits() async throws -> CodexAppServerRateLimitsResponse {
-        try await decodeResult(from: request(method: "account/rateLimits/read", timeout: requestTimeout))
+        try await decodeResult(
+            from: request(method: "account/rateLimits/read", timeout: requestTimeout))
     }
 
     func shutdown() {
@@ -206,6 +212,25 @@ final class CodexAppServerClient: @unchecked Sendable {
     private func request(
         method: String,
         params: [String: Any] = [:],
+        timeout: TimeInterval
+    ) async throws -> [String: Any] {
+        await requestGate.acquire()
+        do {
+            let value = try await performRequest(method: method, params: params, timeout: timeout)
+            await requestGate.release()
+            return value
+        } catch {
+            await requestGate.release()
+            throw error
+        }
+    }
+
+    /// One stdout stream cannot safely be consumed by concurrent request loops: a
+    /// loop would discard the other request's response. Serialize the complete
+    /// send/read exchange while still allowing callers to invoke this client safely.
+    private func performRequest(
+        method: String,
+        params: [String: Any],
         timeout: TimeInterval
     ) async throws -> [String: Any] {
         let id = claimRequestID()
@@ -284,6 +309,27 @@ final class CodexAppServerClient: @unchecked Sendable {
         case let int as Int: int
         case let number as NSNumber: number.intValue
         default: nil
+        }
+    }
+}
+
+private actor CodexRPCRequestGate {
+    private var isBusy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if !isBusy {
+            isBusy = true
+            return
+        }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            isBusy = false
+        } else {
+            waiters.removeFirst().resume()
         }
     }
 }

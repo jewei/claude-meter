@@ -31,7 +31,45 @@ struct AppGroupConfigTests {
         let fresh = now.addingTimeInterval(-60)
         let old = now.addingTimeInterval(-180)
 
-        #expect(!AppGroupConfig.isSnapshotStale(lastPollAt: fresh, defaults: defaults, now: now))
-        #expect(AppGroupConfig.isSnapshotStale(lastPollAt: old, defaults: defaults, now: now))
+        #expect(
+            !AppGroupConfig.isSnapshotStale(
+                lastPollAt: fresh, shared: nil, defaults: defaults, now: now))
+        #expect(
+            AppGroupConfig.isSnapshotStale(
+                lastPollAt: old, shared: nil, defaults: defaults, now: now))
+    }
+
+    @Test("syncDisplaySettings removes values reset in the source suite")
+    func syncRemovesResetValues() {
+        let sourceName = "com.claudemeter.tests.sync-source"
+        let sharedName = "com.claudemeter.tests.sync-shared"
+        let source = UserDefaults(suiteName: sourceName)!
+        let shared = UserDefaults(suiteName: sharedName)!
+        defer {
+            source.removePersistentDomain(forName: sourceName)
+            shared.removePersistentDomain(forName: sharedName)
+        }
+
+        shared.set("used", forKey: AppGroupConfig.progressionModeKey)
+        source.removeObject(forKey: AppGroupConfig.progressionModeKey)
+        AppGroupConfig.syncDisplaySettings(from: source, to: shared)
+
+        #expect(shared.object(forKey: AppGroupConfig.progressionModeKey) == nil)
+    }
+
+    @Test("typed appearance settings reject unknown persisted strings")
+    func typedAppearanceFallbacks() {
+        let defaultsName = "com.claudemeter.tests.appearance"
+        let defaults = UserDefaults(suiteName: defaultsName)!
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        defaults.set("future-style", forKey: AppGroupConfig.cardStyleKey)
+        defaults.set("future-mode", forKey: AppGroupConfig.progressionModeKey)
+
+        #expect(AppGroupConfig.resolvedCardStyle(from: defaults, shared: nil) == .rings)
+        #expect(AppGroupConfig.resolvedProgressionMode(from: defaults, shared: nil) == .left)
+        #expect(AppGroupConfig.MenuBarAccountSelection(storedValue: "nearest") == .nearest)
+        #expect(
+            AppGroupConfig.MenuBarAccountSelection(storedValue: "claude-work")
+                == .account(key: "claude-work"))
     }
 }

@@ -138,9 +138,12 @@ struct ClaudeMeterProvider: TimelineProvider {
         .filter { $0 > now }
         .min()
 
+        let staleAt = entry.snapshot?.lastSuccessfulPollAt?.addingTimeInterval(
+            AppGroupConfig.defaultStaleAfterSeconds)
         let refreshAt =
-            [nextReset, now.addingTimeInterval(900)]
+            [nextReset, staleAt, now.addingTimeInterval(900)]
             .compactMap { $0 }
+            .filter { $0 > now }
             .min() ?? now.addingTimeInterval(900)
 
         completion(Timeline(entries: [entry], policy: .after(refreshAt)))
@@ -239,7 +242,7 @@ private func ringsBlock(_ snap: ClaudeUsageSnapshot, _ entry: ClaudeMeterEntry, 
     -> WidgetRings
 {
     let now = entry.date
-    let usage = AppGroupConfig.progressionMode() == "used"
+    let usage = AppGroupConfig.resolvedProgressionMode() == .used
     let session = snap.limits.currentSession
     let week = snap.limits.currentWeekAllModels
     // Opus counts toward the headline number even though it has no ring of its
@@ -259,9 +262,11 @@ private func ringsBlock(_ snap: ClaudeUsageSnapshot, _ entry: ClaudeMeterEntry, 
     }
     return WidgetRings(
         weekFraction: displayFraction(week, usage: usage, asOf: now),
-        weekColor: energyColor(percentUsed: week.resolved(asOf: now).percentUsed, thresholds: entry.thresholds),
+        weekColor: energyColor(
+            percentUsed: week.resolved(asOf: now).percentUsed, thresholds: entry.thresholds),
         sessionFraction: displayFraction(session, usage: usage, asOf: now),
-        sessionColor: energyColor(percentUsed: session.resolved(asOf: now).percentUsed, thresholds: entry.thresholds),
+        sessionColor: energyColor(
+            percentUsed: session.resolved(asOf: now).percentUsed, thresholds: entry.thresholds),
         centerText: center,
         size: size)
 }
@@ -275,7 +280,7 @@ private struct EnergyRow: View {
     let referenceDate: Date
     var showReset = true
 
-    private var usage: Bool { AppGroupConfig.progressionMode() == "used" }
+    private var usage: Bool { AppGroupConfig.resolvedProgressionMode() == .used }
 
     var body: some View {
         let color = energyColor(

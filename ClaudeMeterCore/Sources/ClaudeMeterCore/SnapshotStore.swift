@@ -37,8 +37,15 @@ public struct SnapshotStore: Sendable {
             appropriateFor: nil,
             create: true
         )
+        return try applicationSupport(in: base)
+    }
+
+    /// Injectable application-support factory for hermetic tests and alternate hosts.
+    public static func applicationSupport(
+        in base: URL, fileManager: FileManager = .default
+    ) throws -> SnapshotStore {
         let dir = base.appending(path: "ClaudeMeter")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
         return SnapshotStore(directory: dir)
     }
 
@@ -96,7 +103,9 @@ public struct SnapshotStore: Sendable {
     // MARK: - Last error write/read
 
     public func writeLastError(_ record: LastErrorRecord) throws {
-        let data = try makeEncoder().encode(record)
+        var sanitized = record
+        sanitized.message = DiagnosticsSanitizer.sanitize(record.message)
+        let data = try makeEncoder().encode(sanitized)
         try writeAtomically(data, to: lastErrorURL)
     }
 

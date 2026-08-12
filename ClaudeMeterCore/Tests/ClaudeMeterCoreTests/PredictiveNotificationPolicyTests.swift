@@ -45,6 +45,17 @@ struct PredictiveNotificationPolicyTests {
         #expect(tracker.observe(snapshot: snapshot, now: now.addingTimeInterval(60)).isEmpty)
     }
 
+    @Test func staleObservationClearsTheStreakInternally() {
+        var tracker = PredictiveNotificationTracker()
+        let snapshot = makeSnapshot(used: 50, resetAt: now.addingTimeInterval(4 * 3600))
+
+        #expect(tracker.observe(snapshot: snapshot, now: now).isEmpty)
+        #expect(
+            tracker.observe(snapshot: snapshot, isFresh: false, now: now.addingTimeInterval(60))
+                .isEmpty)
+        #expect(tracker.observe(snapshot: snapshot, now: now.addingTimeInterval(120)).isEmpty)
+    }
+
     @Test func dedupKeySeparatesAccounts() {
         let reset = now.addingTimeInterval(3600)
         let first = PredictiveNotificationTrigger(
@@ -95,6 +106,18 @@ struct PredictiveNotificationPolicyTests {
 
         #expect(tracker.observe(snapshot: first, now: now).isEmpty)
         #expect(tracker.observe(snapshot: jittered, now: now.addingTimeInterval(60)).count == 1)
+    }
+
+    @Test func streakSurvivesJitterAcrossARoundingBoundary() {
+        var tracker = PredictiveNotificationTracker()
+        // ±2 seconds around the nearest-five-minute midpoint would ordinarily round
+        // to adjacent buckets even though both readings describe the same cycle.
+        let boundary = Date(timeIntervalSince1970: 1_800_014_550)
+        let first = makeSnapshot(used: 50, resetAt: boundary.addingTimeInterval(-2))
+        let second = makeSnapshot(used: 50, resetAt: boundary.addingTimeInterval(2))
+
+        #expect(tracker.observe(snapshot: first, now: now).isEmpty)
+        #expect(tracker.observe(snapshot: second, now: now.addingTimeInterval(60)).count == 1)
     }
 
     @Test func accountIdentityStickyWhenAccountsAbsent() {

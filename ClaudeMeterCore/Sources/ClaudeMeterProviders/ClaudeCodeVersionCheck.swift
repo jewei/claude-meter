@@ -13,6 +13,8 @@ public enum ClaudeCodeVersionCheck {
 
     private static let lock = NSLock()
     private static nonisolated(unsafe) var memo: Cached?
+    private static nonisolated(unsafe) var lastFailedFetchAt: Date?
+    static let failedFetchRetryInterval: TimeInterval = 15 * 60
 
     struct Cached: Codable, Sendable {
         let fetchedAt: Date
@@ -23,18 +25,32 @@ public enum ClaudeCodeVersionCheck {
     /// neither the network nor a usable cache yields a plausible version (the
     /// caller then shows no "update available" hint).
     public static func latestVersion(now: Date = Date()) async -> String? {
+        await latestVersion(now: now, diskURL: cacheURL()) { await fetch() }
+    }
+
+    /// Injectable implementation used to pin retry/cache behavior without network or
+    /// writes to the caller's real cache directory.
+    static func latestVersion(
+        now: Date,
+        diskURL: URL?,
+        fetcher: @escaping @Sendable () async -> String?
+    ) async -> String? {
         if let memo = freshMemo(now: now) { return memo.version }
-        if let disk = readDisk(), now.timeIntervalSince(disk.fetchedAt) < cacheTTL {
+        if let disk = readDisk(at: diskURL), now.timeIntervalSince(disk.fetchedAt) < cacheTTL {
             setMemo(disk)
             return disk.version
         }
-        if let fetched = await fetch() {
-            let cached = Cached(fetchedAt: now, version: fetched)
-            writeDisk(cached)
-            setMemo(cached)
-            return fetched
+        if shouldAttemptFetch(now: now) {
+            if let fetched = await fetcher() {
+                let cached = Cached(fetchedAt: now, version: fetched)
+                writeDisk(cached, at: diskURL)
+                setMemo(cached)
+                setLastFailedFetchAt(nil)
+                return fetched
+            }
+            setLastFailedFetchAt(now)
         }
-        if let stale = readDisk() {
+        if let stale = readDisk(at: diskURL) {
             setMemo(stale)
             return stale.version
         }
@@ -87,9 +103,23 @@ public enum ClaudeCodeVersionCheck {
         lock.unlock()
     }
 
+    private static func shouldAttemptFetch(now: Date) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let lastFailedFetchAt else { return true }
+        return now.timeIntervalSince(lastFailedFetchAt) >= failedFetchRetryInterval
+    }
+
+    private static func setLastFailedFetchAt(_ value: Date?) {
+        lock.lock()
+        lastFailedFetchAt = value
+        lock.unlock()
+    }
+
     static func resetMemoForTesting() {
         lock.lock()
         memo = nil
+        lastFailedFetchAt = nil
         lock.unlock()
     }
 
@@ -99,7 +129,8 @@ public enum ClaudeCodeVersionCheck {
         var request = URLRequest(url: latestURL)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         guard
-            let (data, http) = try? await ProviderHTTPClient.shared.send(request, retry: .transient),
+            let (data, http) = try? await ProviderHTTPClient.shared.send(
+                request, retry: .transient),
             http.statusCode == 200
         else { return nil }
         return parseVersion(from: data)
@@ -124,13 +155,13 @@ public enum ClaudeCodeVersionCheck {
         return appDir.appendingPathComponent(cacheFileName)
     }
 
-    private static func readDisk() -> Cached? {
-        guard let url = cacheURL(), let data = try? Data(contentsOf: url) else { return nil }
+    private static func readDisk(at url: URL?) -> Cached? {
+        guard let url, let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(Cached.self, from: data)
     }
 
-    private static func writeDisk(_ value: Cached) {
-        guard let url = cacheURL(), let data = try? JSONEncoder().encode(value) else { return }
+    private static func writeDisk(_ value: Cached, at url: URL?) {
+        guard let url, let data = try? JSONEncoder().encode(value) else { return }
         try? data.write(to: url, options: .atomic)
     }
 

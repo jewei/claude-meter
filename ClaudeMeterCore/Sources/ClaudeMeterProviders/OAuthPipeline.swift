@@ -1,6 +1,11 @@
 import ClaudeMeterCore
 import Foundation
 
+private enum ClaudeOAuthMode: String {
+    case auto
+    case manual
+}
+
 /// Pipeline that fetches rate-limit data from the Anthropic OAuth usage API using
 /// Claude Code's own credentials stored in the macOS Keychain.
 ///
@@ -8,13 +13,19 @@ import Foundation
 /// on any error so callers never see an OAuth-specific failure.
 public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
+    private enum RefreshAttempt {
+        case ready(OAuthCredentials)
+        case deferred(SourceAttempt.Reason)
+        case failed(SourceAttempt.Reason)
+    }
+
     private let fallback: any ClaudeMeterPipeline
     private let store: SnapshotStore
     private let thresholds: UsageThresholds
 
     /// Default backoff when a 429 carries no usable `Retry-After`. Matches the
     /// app's 60 s poll cadence so we retry on the next cycle.
-    private static let defaultRateLimitBackoff: TimeInterval = 60
+    fileprivate static let defaultRateLimitBackoff: TimeInterval = 60
 
     // Requests go through the shared redirect-guarded transport (no cookies, 10 s
     // timeout) so a Bearer token can't leak across an off-origin redirect.
@@ -43,22 +54,24 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     /// refresh must not be able to jump it.
     public func poll(now: Date, kind: RefreshKind = .background) async throws -> ParseResult {
         let oauthMode = UserDefaults.standard.string(forKey: AppGroupConfig.oauthModeKey) ?? ""
-        guard oauthMode == "auto" || oauthMode == "manual" else {
+        guard let mode = ClaudeOAuthMode(rawValue: oauthMode) else {
             // The source toggle is ON (or we wouldn't be in the chain) but Connect
             // was never completed — "disabled" would send the user to the wrong fix.
-            return try await fallbackResult(kind: kind, now: now, outcome: .skipped, reason: .notConnected)
+            return try await fallbackResult(
+                kind: kind, now: now, outcome: .skipped, reason: .notConnected)
         }
 
         // Honor an active 429 backoff: skip the API and serve the fallback.
         if OAuthSharedState.isRateLimited(now: now) {
-            return try await fallbackResult(kind: kind, now: now, outcome: .skipped, reason: .rateLimited)
+            return try await fallbackResult(
+                kind: kind, now: now, outcome: .skipped, reason: .rateLimited)
         }
 
         let keychainResult =
-            oauthMode == "manual"
+            mode == .manual
             ? OAuthKeychain.loadManualResult()
             : OAuthKeychain.loadResult()
-        guard var creds = Self.credentials(from: keychainResult, oauthMode: oauthMode) else {
+        guard var creds = Self.credentials(from: keychainResult, oauthMode: mode.rawValue) else {
             let reason: SourceAttempt.Reason
             switch keychainResult {
             case .missing: reason = .credentialsMissing
@@ -70,35 +83,18 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         }
 
         var didRefresh = false
-        if creds.isExpired {
-            guard OAuthRefreshGate.shouldAttempt(refreshToken: creds.refreshToken, now: now) else {
+        if creds.isExpired(asOf: now) {
+            switch await Self.refreshCredentials(creds, mode: mode, now: now) {
+            case .ready(let refreshed):
+                creds = refreshed
+            case .deferred(let reason):
                 return try await fallbackResult(
-                    kind: kind, now: now, outcome: .skipped,
-                    reason: OAuthRefreshGate.deferredReason(
-                        refreshToken: creds.refreshToken, now: now))
+                    kind: kind, now: now, outcome: .skipped, reason: reason)
+            case .failed(let reason):
+                return try await fallbackResult(
+                    kind: kind, now: now, outcome: .failed, reason: reason)
             }
-            let refreshed: OAuthCredentials
-            do {
-                refreshed = try await Self.coalescedRefresh(creds)
-            } catch OAuthError.refreshRejected {
-                OAuthRefreshGate.recordTerminal(refreshToken: creds.refreshToken)
-                OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
-                return try await fallbackResult(
-                    kind: kind, now: now, outcome: .failed, reason: .refreshRejected)
-            } catch {
-                OAuthRefreshGate.recordTransient(now: now)
-                OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
-                return try await fallbackResult(
-                    kind: kind, now: now, outcome: .failed, reason: .refreshFailed)
-            }
-            OAuthRefreshGate.recordSuccess()
             didRefresh = true
-            creds = refreshed
-            OAuthSharedState.setCachedCredentials(refreshed, for: oauthMode)
-            if oauthMode == "manual" {
-                OAuthKeychain.saveManual(
-                    accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
-            }
         }
 
         let plan = ClaudePlan.displayName(
@@ -113,42 +109,26 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 return try await fallbackResult(
                     kind: kind, now: now, outcome: .failed, reason: .unauthorized)
             }
-            guard OAuthRefreshGate.shouldAttempt(refreshToken: creds.refreshToken, now: now) else {
-                return try await fallbackResult(
-                    kind: kind, now: now, outcome: .skipped,
-                    reason: OAuthRefreshGate.deferredReason(
-                        refreshToken: creds.refreshToken, now: now))
-            }
             let refreshed: OAuthCredentials
-            do {
-                refreshed = try await Self.coalescedRefresh(creds)
-            } catch OAuthError.refreshRejected {
-                OAuthRefreshGate.recordTerminal(refreshToken: creds.refreshToken)
-                OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
+            switch await Self.refreshCredentials(creds, mode: mode, now: now) {
+            case .ready(let value): refreshed = value
+            case .deferred(let reason):
                 return try await fallbackResult(
-                    kind: kind, now: now, outcome: .failed, reason: .refreshRejected)
-            } catch {
-                OAuthRefreshGate.recordTransient(now: now)
-                OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
+                    kind: kind, now: now, outcome: .skipped, reason: reason)
+            case .failed(let reason):
                 return try await fallbackResult(
-                    kind: kind, now: now, outcome: .failed, reason: .refreshFailed)
-            }
-            OAuthRefreshGate.recordSuccess()
-            OAuthSharedState.setCachedCredentials(refreshed, for: oauthMode)
-            if oauthMode == "manual" {
-                OAuthKeychain.saveManual(
-                    accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
+                    kind: kind, now: now, outcome: .failed, reason: reason)
             }
             let refreshedPlan = ClaudePlan.displayName(
                 subscriptionType: refreshed.subscriptionType,
                 rateLimitTier: refreshed.rateLimitTier)
-            if let result = try? await fetchAndBuild(
-                token: refreshed.accessToken, plan: refreshedPlan, now: now)
-            {
-                return result
+            do {
+                return try await fetchAndBuild(
+                    token: refreshed.accessToken, plan: refreshedPlan, now: now)
+            } catch {
+                return try await fallbackResult(
+                    kind: kind, now: now, outcome: .failed, reason: Self.attemptReason(for: error))
             }
-            return try await fallbackResult(
-                kind: kind, now: now, outcome: .failed, reason: .unauthorized)
         } catch {
             return try await fallbackResult(
                 kind: kind, now: now, outcome: .failed, reason: Self.attemptReason(for: error))
@@ -173,12 +153,43 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             case .refreshRejected: return .refreshRejected
             case .refreshFailed: return .refreshFailed
             case .httpError: return .requestFailed
-            case .invalidResponse: return .invalidResponse
             }
         }
         if error is URLError { return .networkError }
         if error is DecodingError { return .invalidResponse }
         return .requestFailed
+    }
+
+    /// One refresh state machine shared by normal polling, 401 recovery, and
+    /// enrichment. In particular, every failure clears the cached token chain.
+    private static func refreshCredentials(
+        _ credentials: OAuthCredentials, mode: ClaudeOAuthMode, now: Date
+    ) async -> RefreshAttempt {
+        guard OAuthRefreshGate.shouldAttempt(refreshToken: credentials.refreshToken, now: now)
+        else {
+            return .deferred(
+                OAuthRefreshGate.deferredReason(refreshToken: credentials.refreshToken, now: now))
+        }
+        do {
+            let refreshed = try await coalescedRefresh(credentials)
+            OAuthRefreshGate.recordSuccess()
+            OAuthSharedState.setCachedCredentials(refreshed, for: mode.rawValue)
+            if mode == .manual {
+                // Polling remains best-effort: the in-memory rotated chain remains
+                // usable for this process even if persistence is temporarily blocked.
+                try? OAuthKeychain.saveManual(
+                    accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken)
+            }
+            return .ready(refreshed)
+        } catch OAuthError.refreshRejected {
+            OAuthRefreshGate.recordTerminal(refreshToken: credentials.refreshToken)
+            OAuthSharedState.setCachedCredentials(nil, for: mode.rawValue)
+            return .failed(.refreshRejected)
+        } catch {
+            OAuthRefreshGate.recordTransient(now: now)
+            OAuthSharedState.setCachedCredentials(nil, for: mode.rawValue)
+            return .failed(.refreshFailed)
+        }
     }
 
     /// Resolves Keychain read into credentials, preferring in-memory cache on a
@@ -244,21 +255,16 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         async throws -> (sessionPct: Double, weekPct: Double)
     {
         var creds = credentials
-        if creds.isExpired {
+        if creds.isExpired(asOf: Date()) {
             creds = try await coalescedRefresh(creds)
             OAuthRefreshGate.recordSuccess()
             OAuthSharedState.setCachedCredentials(creds, for: oauthMode)
             if oauthMode == "manual" {
-                OAuthKeychain.saveManual(
+                try OAuthKeychain.saveManual(
                     accessToken: creds.accessToken, refreshToken: creds.refreshToken)
             }
         }
-        let (data, http) = try await transport.send(usageRequest(token: creds.accessToken))
-        guard http.statusCode == 200 else {
-            if http.statusCode == 401 || http.statusCode == 403 { throw OAuthError.unauthorized }
-            throw OAuthError.httpError(http.statusCode)
-        }
-        let usage = try JSONDecoder().decode(UsageResponse.self, from: data)
+        let usage = try await requestUsage(token: creds.accessToken)
         return verificationPercentages(from: usage)
     }
 
@@ -273,7 +279,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     // MARK: - Enrichment
 
-    /// OAuth-only fields the statusline and claude.ai sources can't provide.
+    /// OAuth-only fields the statusline source cannot provide.
     public struct OAuthEnrichment: Sendable, Equatable {
         public let opus: LimitWindow?
         public let scopedWeekly: [ScopedLimitWindow]?
@@ -291,32 +297,18 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     /// OAuth isn't configured or the call fails; never throws.
     public static func fetchEnrichment(now: Date = Date()) async -> OAuthEnrichment? {
         let oauthMode = UserDefaults.standard.string(forKey: AppGroupConfig.oauthModeKey) ?? ""
-        guard oauthMode == "auto" || oauthMode == "manual" else { return nil }
+        guard let mode = ClaudeOAuthMode(rawValue: oauthMode) else { return nil }
         guard !OAuthSharedState.isRateLimited(now: now) else { return nil }
         let keychainResult =
-            oauthMode == "manual"
+            mode == .manual
             ? OAuthKeychain.loadManualResult()
             : OAuthKeychain.loadResult()
         guard var creds = credentials(from: keychainResult, oauthMode: oauthMode) else {
             return nil
         }
-        if creds.isExpired {
-            guard OAuthRefreshGate.shouldAttempt(refreshToken: creds.refreshToken, now: now) else {
-                return nil
-            }
-            let refreshed: OAuthCredentials
-            do {
-                refreshed = try await coalescedRefresh(creds)
-            } catch OAuthError.refreshRejected {
-                OAuthRefreshGate.recordTerminal(refreshToken: creds.refreshToken)
-                OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
-                return nil
-            } catch {
-                OAuthRefreshGate.recordTransient(now: now)
-                OAuthSharedState.setCachedCredentials(nil, for: oauthMode)
-                return nil
-            }
-            OAuthRefreshGate.recordSuccess()
+        if creds.isExpired(asOf: now) {
+            guard case .ready(let refreshed) = await refreshCredentials(creds, mode: mode, now: now)
+            else { return nil }
             creds = OAuthCredentials(
                 accessToken: refreshed.accessToken,
                 refreshToken: refreshed.refreshToken,
@@ -324,11 +316,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 subscriptionType: creds.subscriptionType,
                 rateLimitTier: creds.rateLimitTier
             )
-            OAuthSharedState.setCachedCredentials(creds, for: oauthMode)
-            if oauthMode == "manual" {
-                OAuthKeychain.saveManual(
-                    accessToken: creds.accessToken, refreshToken: creds.refreshToken)
-            }
+            OAuthSharedState.setCachedCredentials(creds, for: mode.rawValue)
         }
         guard let usage = try? await requestUsage(token: creds.accessToken, now: now) else {
             return nil
@@ -453,7 +441,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     private func fetchAndBuild(token: String, plan: String?, now: Date) async throws -> ParseResult
     {
-        let usage = try await fetchUsage(token: token, now: now)
+        let usage = try await Self.requestUsage(token: token, now: now)
         let snapshot = buildSnapshot(usage: usage, plan: plan, now: now)
         try? store.writeLatest(snapshot)
         try? store.clearLastError()
@@ -467,22 +455,6 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 SourceAttempt(source: .oauth, outcome: .selected, reason: .freshData)
             ]
         )
-    }
-
-    private func fetchUsage(token: String, now: Date) async throws -> UsageResponse {
-        let (data, http) = try await Self.transport.send(Self.usageRequest(token: token))
-        guard http.statusCode == 200 else {
-            if http.statusCode == 401 || http.statusCode == 403 { throw OAuthError.unauthorized }
-            if http.statusCode == 429 {
-                OAuthSharedState.recordRateLimit(
-                    retryAfter: Self.retryAfterDate(from: http, now: now),
-                    now: now
-                )
-                throw OAuthError.rateLimited
-            }
-            throw OAuthError.httpError(http.statusCode)
-        }
-        return try JSONDecoder().decode(UsageResponse.self, from: data)
     }
 
     /// The usage endpoint is Claude Code-internal; identify as the CLI so Anthropic
@@ -559,7 +531,6 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 enum OAuthError: Error {
     case unauthorized
     case rateLimited
-    case invalidResponse
     case httpError(Int)
     /// Transient refresh failure (network / 5xx) — safe to retry with backoff.
     case refreshFailed
@@ -602,7 +573,8 @@ internal struct UsageResponse: Decodable {
         // `opusWindow`, `scopedWindows`, enrichment — needs no knowledge of which
         // form the server used. Flat fields always win; `limits` only fills gaps.
         let derived = Self.scopedEntriesFromLimits(
-            (try? container.decodeIfPresent([LimitEntry].self, forKey: DynamicKey("limits"))) ?? nil)
+            (try? container.decodeIfPresent([LimitEntry].self, forKey: DynamicKey("limits"))) ?? nil
+        )
 
         let flatOpus = try? container.decodeIfPresent(
             QuotaEntry.self, forKey: DynamicKey("seven_day_opus"))
@@ -742,7 +714,7 @@ private enum OAuthSharedState {
     static func recordRateLimit(retryAfter: Date?, now: Date) {
         lock.lock()
         defer { lock.unlock() }
-        let candidate = retryAfter ?? now.addingTimeInterval(60)
+        let candidate = retryAfter ?? now.addingTimeInterval(OAuthPipeline.defaultRateLimitBackoff)
         // Never shorten an active backoff. The gate is process-wide, so a second
         // 429 carrying no `Retry-After` (default 60 s) must not undo a longer
         // window an earlier response explicitly asked us to wait out.

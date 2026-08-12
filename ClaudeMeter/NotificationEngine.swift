@@ -127,22 +127,23 @@ actor NotificationEngine {
     private func deliver(trigger: NotificationTrigger, snapshot: ClaudeUsageSnapshot, now: Date)
         async
     {
+        guard let scope = trigger.typedScope, let level = trigger.typedLevel else { return }
         let window: LimitWindow
-        switch trigger.scope {
-        case "session": window = snapshot.limits.currentSession
-        case "weeklyOpus": window = snapshot.limits.currentWeekOpus ?? LimitWindow()
-        default: window = snapshot.limits.currentWeekAllModels
+        switch scope {
+        case .session: window = snapshot.limits.currentSession
+        case .weeklyOpus: window = snapshot.limits.currentWeekOpus ?? LimitWindow()
+        case .weekly: window = snapshot.limits.currentWeekAllModels
         }
         // The whole app speaks "energy left", so notifications do too.
         let left = leftText(window, now: now)
-        let energy = energyName(for: trigger.scope)
+        let energy = energyName(for: scope)
         let key = NotificationPolicy.dedupKey(
-            scope: trigger.scope,
-            level: trigger.level,
+            scope: scope,
+            level: level,
             resetAt: trigger.resetAt
         )
 
-        if trigger.level == "recovered" {
+        if level == .recovered {
             guard !hasFired(key: key) else { return }
             let delivered = await post(
                 id: key,
@@ -154,9 +155,9 @@ actor NotificationEngine {
         }
 
         let refuel =
-            "\(trigger.scope == "session" ? "refills" : "resets") \(resetDescription(trigger.resetAt))"
+            "\(scope == .session ? "refills" : "resets") \(resetDescription(trigger.resetAt))"
 
-        if trigger.level == "critical" {
+        if level == .critical {
             guard !hasFired(key: key) else { return }
             let delivered = await post(
                 id: key,
@@ -164,10 +165,10 @@ actor NotificationEngine {
                 body: "Your \(energy) is at \(left) — \(refuel). Easy now."
             )
             if delivered { markFired(key: key) }
-        } else if trigger.level == "warning" {
+        } else if level == .warning {
             let criticalKey = NotificationPolicy.dedupKey(
-                scope: trigger.scope,
-                level: "critical",
+                scope: scope,
+                level: .critical,
                 resetAt: trigger.resetAt
             )
             guard !hasFired(key: key), !hasFired(key: criticalKey) else { return }
@@ -181,17 +182,19 @@ actor NotificationEngine {
     }
 
     private func deliverPredictive(trigger: PredictiveNotificationTrigger) async {
+        guard let scope = trigger.typedScope else { return }
         let key = trigger.dedupKey
         guard !hasFired(key: key) else { return }
-        let energy = energyName(for: trigger.scope)
+        let energy = energyName(for: scope)
         let estimate = RunsOutText.formatted(
             trigger.secondsUntilDepleted,
-            kind: trigger.scope == "session" ? .session : .weekly
+            kind: scope.kind
         )
         let delivered = await post(
             id: key,
             title: "Running hot ⚡",
-            body: "At this pace, your \(energy) may run out in about \(estimate), before it refills."
+            body:
+                "At this pace, your \(energy) may run out in about \(estimate), before it refills."
         )
         if delivered { markFired(key: key) }
     }
@@ -209,11 +212,11 @@ actor NotificationEngine {
         return "\(Int(left.rounded()))%"
     }
 
-    private func energyName(for scope: String) -> String {
+    private func energyName(for scope: LimitWindowScope) -> String {
         switch scope {
-        case "session": return "5-hour energy"
-        case "weeklyOpus": return "weekly Opus fuel"
-        default: return "weekly fuel"
+        case .session: return "5-hour energy"
+        case .weeklyOpus: return "weekly Opus fuel"
+        case .weekly: return "weekly fuel"
         }
     }
 

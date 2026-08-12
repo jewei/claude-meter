@@ -1,3 +1,4 @@
+import ClaudeMeterCore
 import Foundation
 import ServiceManagement
 import SwiftUI
@@ -27,7 +28,8 @@ struct AdvancedSettingsTab: View {
                         }
                         cardText(
                             "Fetch usage",
-                            "Pause to stop all polling. The menu bar dims and keeps its last reading.")
+                            "Pause to stop all polling. The menu bar dims and keeps its last reading."
+                        )
                         Spacer(minLength: 8)
                         Toggle(
                             "",
@@ -195,7 +197,7 @@ struct AdvancedSettingsTab: View {
         } catch {
             NSLog(
                 "Claude Meter: launch-at-login \(enabled ? "register" : "unregister") failed: "
-                    + error.localizedDescription)
+                    + DiagnosticsSanitizer.sanitize(error.localizedDescription))
             syncLaunchAtLoginFromSystem()
             return
         }

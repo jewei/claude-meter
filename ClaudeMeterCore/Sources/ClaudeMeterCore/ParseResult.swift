@@ -34,6 +34,7 @@ public struct SourceAttempt: Equatable, Sendable {
         case requestFailed
         case cachedSnapshot
         case cacheMissing
+        case cacheUnreadable
     }
 
     public let source: Source
@@ -60,7 +61,8 @@ public struct ParseResult: Sendable {
     public let sourceAttempts: [SourceAttempt]
 
     public var hasUsableSnapshot: Bool { snapshot != nil }
-    public var isFatal: Bool { !errors.isEmpty }
+    /// A result is fatal only when it has errors and no snapshot callers can use.
+    public var isFatal: Bool { snapshot == nil && !errors.isEmpty }
 
     public init(
         snapshot: ClaudeUsageSnapshot?,

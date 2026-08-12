@@ -36,16 +36,25 @@ public final class CursorUsageProvider: @unchecked Sendable {
     private static let planInfoPath = "/aiserver.v1.DashboardService/GetPlanInfo"
 
     private let transport: any HTTPTransport
+    private let credentialsLoader: @Sendable () -> CursorCredentials?
     private let stateQueue = DispatchQueue(label: "com.jewei.claudemeter.cursor-provider.state")
     private var cachedAccessToken: String?
     private var cachedRefreshToken: String?
+    private var cachedSourceCredentials: CursorCredentials?
 
-    public init(transport: any HTTPTransport = ProviderHTTPClient.shared) {
+    public init(
+        transport: any HTTPTransport = ProviderHTTPClient.shared,
+        credentialsLoader: @escaping @Sendable () -> CursorCredentials? = {
+            CursorTokenStore.detect()
+        }
+    ) {
         self.transport = transport
+        self.credentialsLoader = credentialsLoader
     }
 
     public func fetchUsage(now: Date = Date()) async throws -> CursorUsage {
-        guard let creds = CursorTokenStore.detect() else { throw CursorError.notDetected }
+        guard let creds = credentialsLoader() else { throw CursorError.notDetected }
+        reconcileCachedTokens(with: creds)
 
         let refreshToken = readCachedRefreshToken() ?? creds.refreshToken
         var token = readCachedAccessToken() ?? creds.accessToken
@@ -157,6 +166,19 @@ public final class CursorUsageProvider: @unchecked Sendable {
             } else if access == nil {
                 cachedRefreshToken = nil
             }
+        }
+    }
+
+    /// Refreshed tokens belong to the exact locally detected credential set that
+    /// produced them. Cursor can switch accounts while this process is alive; never
+    /// let a previous account's session cache outrank the new on-disk identity.
+    private func reconcileCachedTokens(with credentials: CursorCredentials) {
+        stateQueue.sync {
+            if let cachedSourceCredentials, cachedSourceCredentials != credentials {
+                cachedAccessToken = nil
+                cachedRefreshToken = nil
+            }
+            cachedSourceCredentials = credentials
         }
     }
 }

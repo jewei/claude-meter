@@ -10,6 +10,29 @@ public struct NotificationTrigger: Equatable, Sendable {
         self.level = level
         self.resetAt = resetAt
     }
+
+    public init(scope: LimitWindowScope, level: NotificationLevel, resetAt: Date) {
+        self.init(scope: scope.rawValue, level: level.rawValue, resetAt: resetAt)
+    }
+
+    public var typedScope: LimitWindowScope? { LimitWindowScope(rawValue: scope) }
+    public var typedLevel: NotificationLevel? { NotificationLevel(rawValue: level) }
+}
+
+public enum NotificationLevel: String, Codable, Equatable, Sendable, CaseIterable {
+    case warning
+    case critical
+    case recovered
+}
+
+public struct NotificationBaselines: Sendable {
+    public let escalation: ClaudeUsageSnapshot?
+    public let recovery: ClaudeUsageSnapshot?
+
+    public init(escalation: ClaudeUsageSnapshot?, recovery: ClaudeUsageSnapshot?) {
+        self.escalation = escalation
+        self.recovery = recovery
+    }
 }
 
 /// Pure threshold-crossing logic for local usage notifications.
@@ -30,42 +53,55 @@ public enum NotificationPolicy {
         thresholds: UsageThresholds = .default,
         now: Date = Date()
     ) -> [NotificationTrigger] {
+        let resolvedRecovery: ClaudeUsageSnapshot? = recoveryBaseline ?? previous
+        return triggers(
+            snapshot: snapshot,
+            baselines: NotificationBaselines(
+                escalation: previous, recovery: resolvedRecovery),
+            thresholds: thresholds,
+            now: now)
+    }
+
+    /// Typed-baseline variant for new callers. Keeping escalation and recovery
+    /// separate avoids nested-optional call sites such as `.some(nil)`.
+    public static func triggers(
+        snapshot: ClaudeUsageSnapshot,
+        baselines: NotificationBaselines,
+        thresholds: UsageThresholds = .default,
+        now: Date = Date()
+    ) -> [NotificationTrigger] {
         // Top-level limits mirror the *active* account, so diff against THAT account's
         // own previous entry (matched by id) — an active-account switch otherwise
         // compares two unrelated accounts. When the active account wasn't observed
         // last poll (new account, or a switch out of single-account history) there's
         // no baseline, so its current state is surfaced once. Single-account snapshots
         // (no `accounts`) never switch, so the top-level previous is the same account.
-        let resolvedRecovery: ClaudeUsageSnapshot? = recoveryBaseline ?? previous
-        func limits(of snap: ClaudeUsageSnapshot?) -> LimitInfo? {
-            if let activeId = snapshot.accounts?.first(where: { $0.isActive })?.id {
-                return snap?.accounts?.first(where: { $0.id == activeId })?.limits
-            }
-            return snap?.limits
-        }
-        let prevLimits = limits(of: previous)
-        let recoveryLimits = limits(of: resolvedRecovery)
+        let prevLimits = snapshot.limitsForActiveAccount(in: baselines.escalation)
+        let recoveryLimits = snapshot.limitsForActiveAccount(in: baselines.recovery)
 
         var out: [NotificationTrigger] = []
         out += evaluate(
-            scope: "session",
+            scope: .session,
             current: snapshot.limits.currentSession,
             previous: prevLimits?.currentSession,
             recoveryPrevious: recoveryLimits?.currentSession,
+            allowMissingBaselineEscalation: baselines.escalation != nil,
             thresholds: thresholds, now: now)
         out += evaluate(
-            scope: "weekly",
+            scope: .weekly,
             current: snapshot.limits.currentWeekAllModels,
             previous: prevLimits?.currentWeekAllModels,
             recoveryPrevious: recoveryLimits?.currentWeekAllModels,
+            allowMissingBaselineEscalation: baselines.escalation != nil,
             thresholds: thresholds, now: now)
         // Only diff Opus when *both* snapshots carry it — otherwise the first OAuth
         // enrichment (previous nil, current already 85%+) looks like a fresh crossing.
         if let curOpus = snapshot.limits.currentWeekOpus, let prevOpus = prevLimits?.currentWeekOpus
         {
             out += evaluate(
-                scope: "weeklyOpus", current: curOpus, previous: prevOpus,
+                scope: .weeklyOpus, current: curOpus, previous: prevOpus,
                 recoveryPrevious: recoveryLimits?.currentWeekOpus,
+                allowMissingBaselineEscalation: false,
                 thresholds: thresholds, now: now)
         }
         return out
@@ -73,6 +109,12 @@ public enum NotificationPolicy {
 
     public static func dedupKey(scope: String, level: String, resetAt: Date) -> String {
         "\(dedupKeyPrefix)\(scope).\(level).\(Int(resetAt.timeIntervalSince1970))"
+    }
+
+    public static func dedupKey(
+        scope: LimitWindowScope, level: NotificationLevel, resetAt: Date
+    ) -> String {
+        dedupKey(scope: scope.rawValue, level: level.rawValue, resetAt: resetAt)
     }
 
     /// Removes dedup keys whose reset epoch is in the past.
@@ -92,22 +134,28 @@ public enum NotificationPolicy {
     // MARK: - Private
 
     private static func evaluate(
-        scope: String,
+        scope: LimitWindowScope,
         current rawCurrent: LimitWindow,
         previous rawPrevious: LimitWindow?,
         recoveryPrevious rawRecoveryPrevious: LimitWindow?,
+        allowMissingBaselineEscalation: Bool,
         thresholds: UsageThresholds,
         now: Date
     ) -> [NotificationTrigger] {
         // Rolling windows past their reset read as 0% — resolve for the current
         // state, but keep the *raw* previous reading for recovery detection.
         let current = rawCurrent.resolved(asOf: now)
-        let previousSeverity = thresholds.severity(for: rawPrevious?.resolved(asOf: now).percentUsed)
+        let previousSeverity = thresholds.severity(
+            for: rawPrevious?.resolved(asOf: now).percentUsed)
         let currentSeverity = thresholds.severity(for: current.percentUsed)
 
-        let escalatedToCritical = isCritical(currentSeverity) && !isCritical(previousSeverity)
+        // No previous reading means no observed crossing. This suppresses stale
+        // launch-time alerts while still allowing the separate recovery baseline.
+        let hasEscalationBaseline = rawPrevious != nil || allowMissingBaselineEscalation
+        let escalatedToCritical =
+            hasEscalationBaseline && isCritical(currentSeverity) && !isCritical(previousSeverity)
         let escalatedToWarning =
-            currentSeverity == .warning
+            hasEscalationBaseline && currentSeverity == .warning
             && (previousSeverity == .normal || previousSeverity == .unknown)
 
         if escalatedToCritical || escalatedToWarning {
@@ -118,7 +166,7 @@ public enum NotificationPolicy {
             } else {
                 resetAt = fallbackResetAnchor(now: now)
             }
-            let level = escalatedToCritical ? "critical" : "warning"
+            let level: NotificationLevel = escalatedToCritical ? .critical : .warning
             return [NotificationTrigger(scope: scope, level: level, resetAt: resetAt)]
         }
 
@@ -133,7 +181,7 @@ public enum NotificationPolicy {
             // reset), so distinct cycles don't collapse onto one day-anchor key.
             let resetAt =
                 rawRecoveryPrevious?.resetsAt ?? current.resetsAt ?? fallbackResetAnchor(now: now)
-            return [NotificationTrigger(scope: scope, level: "recovered", resetAt: resetAt)]
+            return [NotificationTrigger(scope: scope, level: .recovered, resetAt: resetAt)]
         }
 
         return []

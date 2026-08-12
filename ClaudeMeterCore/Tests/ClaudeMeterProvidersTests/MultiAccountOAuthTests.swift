@@ -147,6 +147,19 @@ extension MultiAccountOAuthTests {
         #expect(transport.requests.count == 1)
     }
 
+    @Test func detailedFetchRetainsCredentialFailureReason() async {
+        let account = AccountConfig(
+            id: "claude-work", label: "work",
+            configDir: URL(fileURLWithPath: "/tmp/none/.claude-work"))
+        let results = await MultiAccountOAuth.fetchAllResults(
+            accounts: [account], home: URL(fileURLWithPath: "/tmp/none"),
+            thresholds: .default, transport: StubTransport(responses: []),
+            credentialsLoader: { _, _ in .temporarilyUnavailable }, now: Date())
+        #expect(results.count == 1)
+        #expect(results.first?.reading == nil)
+        #expect(results.first?.failure == .credentialsUnavailable)
+    }
+
     @Test func fetchAllStopsOn429AndRecordsBackoff() async {
         let transport = StubTransport(responses: [
             (Data("{}".utf8), Self.httpResponse(status: 429, orgId: nil))
@@ -212,10 +225,9 @@ extension MultiAccountOAuthTests {
         let merged = MultiAccountOAuth.merge(
             readings: [Self.reading(key: "claude-work", org: "org-1")], into: snap, now: Date())
 
-        let accounts = try? #require(merged.accounts)
-        #expect(accounts?.count == 1)
-        #expect(accounts?.first?.id == "claude-work")
-        #expect(accounts?.first?.isActive == true)
+        #expect(merged.accounts?.count == 1)
+        #expect(merged.accounts?.first?.id == "claude-work")
+        #expect(merged.accounts?.first?.isActive == true)
         // Top-level fields stay untouched — the merge never rewrites them.
         #expect(merged.limits.currentSession.percentUsed == 50)
     }
@@ -302,6 +314,19 @@ extension MultiAccountOAuthTests {
         #expect(merged.accounts?.first?.id == "claude")
         #expect(merged.accounts?.first?.isActive == true)
         #expect(merged.limits == snap.limits)
+    }
+
+    @Test func mergePreservesTheReadingObservationTime() {
+        let observed = Date(timeIntervalSince1970: 100)
+        let mergedAt = Date(timeIntervalSince1970: 10_000)
+        let base = Self.reading(key: "claude-work", org: "org-W")
+        let reading = OAuthAccountReading(
+            accountKey: base.accountKey, label: base.label, email: base.email, plan: base.plan,
+            organizationId: base.organizationId, limits: base.limits, severity: base.severity,
+            fetchedAt: observed)
+        let merged = MultiAccountOAuth.merge(
+            readings: [reading], into: Self.statuslineSnapshot(accounts: nil), now: mergedAt)
+        #expect(merged.accounts?.first?.lastSuccessfulPollAt == observed)
     }
 
     @Test func duplicateOrgDetection() {

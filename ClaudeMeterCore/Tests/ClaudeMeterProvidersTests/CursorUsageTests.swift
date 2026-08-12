@@ -124,6 +124,29 @@ struct CursorUsageTests {
         #expect(response.refreshToken == "new-refresh")
     }
 
+    @Test func switchingDetectedAccountInvalidatesRefreshedTokenCache() async throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let firstToken = Self.makeJWT(exp: now.addingTimeInterval(3600).timeIntervalSince1970)
+        let secondToken = Self.makeJWT(exp: now.addingTimeInterval(7200).timeIntervalSince1970)
+        let credentials = MutableCursorCredentialSource(
+            CursorCredentials(
+                accessToken: firstToken, refreshToken: nil,
+                email: "first@example.com", membership: "pro"))
+        let transport = RecordingCursorTransport()
+        let provider = CursorUsageProvider(
+            transport: transport, credentialsLoader: { credentials.value })
+
+        _ = try await provider.fetchUsage(now: now)
+        credentials.value = CursorCredentials(
+            accessToken: secondToken, refreshToken: nil,
+            email: "second@example.com", membership: "pro")
+        let second = try await provider.fetchUsage(now: now)
+
+        #expect(
+            transport.authorizationHeaders == ["Bearer \(firstToken)", "Bearer \(secondToken)"])
+        #expect(second.email == "second@example.com")
+    }
+
     // MARK: - Helpers
 
     private static func makeJWT(exp: TimeInterval) -> String {
@@ -133,5 +156,36 @@ struct CursorUsageTests {
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
         return "header.\(encoded).signature"
+    }
+}
+
+private final class MutableCursorCredentialSource: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: CursorCredentials
+    init(_ value: CursorCredentials) { self.stored = value }
+    var value: CursorCredentials {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+}
+
+private final class RecordingCursorTransport: HTTPTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var headers: [String] = []
+    var authorizationHeaders: [String] { lock.withLock { headers } }
+
+    func send(_ request: URLRequest, retry _: HTTPRetryPolicy) async throws -> (
+        Data, HTTPURLResponse
+    ) {
+        if let value = request.value(forHTTPHeaderField: "Authorization") {
+            lock.withLock { headers.append(value) }
+        }
+        let data = Data(
+            #"{"planUsage":{"totalSpend":0,"limit":100,"totalPercentUsed":0},"enabled":true}"#.utf8)
+        return (
+            data,
+            HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        )
     }
 }

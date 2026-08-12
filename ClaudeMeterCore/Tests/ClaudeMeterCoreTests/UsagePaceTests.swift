@@ -37,6 +37,34 @@ struct LimitWindowPaceTests {
         #expect(w.pace(kind: .session, asOf: now) == .ahead)
     }
 
+    @Test("Pace insight describes the gap and mirrors its marker") func insight() throws {
+        // 50% used, 25% elapsed → usage is 25 percentage points ahead.
+        let w = LimitWindow(percentUsed: 50, resetsAt: now.addingTimeInterval(3.75 * 3600))
+        let insight = try #require(w.paceInsight(kind: .session, asOf: now))
+        #expect(insight.pace == .ahead)
+        #expect(insight.displayText == "25% ahead of pace")
+        #expect(abs(insight.expectedDisplayFraction(usage: true) - 0.25) < 0.001)
+        #expect(abs(insight.expectedDisplayFraction(usage: false) - 0.75) < 0.001)
+    }
+
+    @Test("Pace insight uses compact on-pace and behind copy") func insightCopy() throws {
+        let onPace = LimitWindow(
+            percentUsed: 48,
+            resetsAt: now.addingTimeInterval(2.5 * 3600)
+        )
+        #expect(
+            try #require(onPace.paceInsight(kind: .session, asOf: now)).displayText == "On pace")
+
+        let behind = LimitWindow(
+            percentUsed: 10,
+            resetsAt: now.addingTimeInterval(2.5 * 3600)
+        )
+        #expect(
+            try #require(behind.paceInsight(kind: .session, asOf: now)).displayText
+                == "40% behind pace"
+        )
+    }
+
     @Test("Weekly window uses 7-day span") func weekly() {
         // 3.5 days remaining of 7 → 50% elapsed; 10% used → behind.
         let w = LimitWindow(percentUsed: 10, resetsAt: now.addingTimeInterval(3.5 * 24 * 3600))
@@ -53,6 +81,7 @@ struct LimitWindowPaceTests {
     @Test("Resolved just-reset window reports unknown pace") func resolvedReset() {
         let w = LimitWindow(percentUsed: 80, resetsAt: now.addingTimeInterval(-60))
         #expect(w.resolved(asOf: now).pace(kind: .session, asOf: now) == .unknown)
+        #expect(w.resolved(asOf: now).paceInsight(kind: .session, asOf: now) == nil)
     }
 
     @Test("Implausible reset time yields unknown elapsed") func implausibleReset() {

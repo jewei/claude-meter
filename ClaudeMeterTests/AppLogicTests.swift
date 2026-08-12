@@ -40,4 +40,12 @@ struct AppLogicTests {
     func chunking() {
         #expect(Array(1...7).chunked(into: 3) == [[1, 2, 3], [4, 5, 6], [7]])
     }
+
+    @Test("Energy bar pace marker stays centered and inside the track")
+    func energyBarPaceMarker() {
+        #expect(energyBarMarkerOffset(width: 100, expectedFraction: -1) == 0)
+        #expect(energyBarMarkerOffset(width: 100, expectedFraction: 0.5) == 49)
+        #expect(energyBarMarkerOffset(width: 100, expectedFraction: 2) == 98)
+        #expect(energyBarMarkerOffset(width: 1, expectedFraction: 0.5) == 0)
+    }
 }

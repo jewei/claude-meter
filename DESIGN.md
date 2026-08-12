@@ -125,6 +125,20 @@ signal:
 
 Single account collapses the subline to that account's own status ("Refills in 3h 12m").
 
+### Pace reference
+
+Pace is a neutral, display-only comparison between percent used and percent of the rolling
+window elapsed. It never changes `EnergyBand`, severity, notifications, or threshold colors.
+
+- Bar cards draw a 2pt `ink-muted` marker at the expected position. In usage mode that position
+  is `percentTimeElapsed`; in energy-left mode it mirrors to `100 - percentTimeElapsed`.
+- The bar status phrase becomes "On pace", "12% ahead of pace", or "12% behind pace" when the
+  comparison is available.
+- Ring cards keep their reset phrase and add the same neutral text below the primary 5-hour and
+  weekly rows. Opus and dynamic scoped rows do not repeat it.
+- Missing, expired, or implausible reset times produce no marker or pace text. Bar cards retain
+  their existing energy phrase in that case.
+
 ---
 
 ## Typography

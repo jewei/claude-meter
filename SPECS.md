@@ -190,6 +190,13 @@ Rings and bars deplete in `left` mode and fill in `used` mode. Severity always u
 used and the configured warning/critical thresholds; progression mode does not change
 policy. Unknown values render neutral placeholders and never use an empty/tapped-out phrase.
 
+Pace presentation compares percent used with percent of the fixed rolling window elapsed.
+Bar cards show a neutral expected-position marker plus compact pace text; the marker mirrors
+between `used` and `left` progression modes. Ring cards show text only for the primary session
+and weekly rings while retaining reset timing. Pace never affects severity or color. If the
+reset time is absent, expired, or outside the window span, pace presentation disappears and
+the bar falls back to its energy phrase.
+
 The menu-bar dot uses the highest Claude severity across all binding windows of the pinned
 account, or all accounts when unpinned. Its number follows `menuBarWindow`: nearest, 5-hour,
 7-day, or both. A single-window number may intentionally differ from the all-window dot.

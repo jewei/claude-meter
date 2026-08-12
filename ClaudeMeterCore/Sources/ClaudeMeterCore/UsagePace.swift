@@ -56,7 +56,34 @@ public enum UsagePace: Sendable, Equatable {
             return .behind
         }
     }
+}
 
+/// Display-ready comparison between actual usage and the usage expected at the
+/// current point in a rolling window.
+public struct UsagePaceInsight: Sendable, Equatable {
+    public let pace: UsagePace
+    public let percentUsed: Double
+    public let expectedPercentUsed: Double
+
+    /// Short, neutral copy suitable for compact account cards. Pace never
+    /// changes severity; it only explains the distance between actual usage and
+    /// the time-derived reference point.
+    public var displayText: String {
+        let difference = Int(abs(percentUsed - expectedPercentUsed).rounded())
+        switch pace {
+        case .onPace: return "On pace"
+        case .ahead: return "\(difference)% ahead of pace"
+        case .behind: return "\(difference)% behind pace"
+        case .unknown: return ""
+        }
+    }
+
+    /// Position of the expected-pace marker in the selected progression mode.
+    /// Usage fills left-to-right; energy remaining mirrors the same reference.
+    public func expectedDisplayFraction(usage: Bool) -> Double {
+        let usedFraction = min(1, max(0, expectedPercentUsed / 100))
+        return usage ? usedFraction : 1 - usedFraction
+    }
 }
 
 /// A forward projection of when a window's quota runs dry at the current burn
@@ -128,7 +155,18 @@ extension LimitWindow {
     /// `resolved(asOf:)` window so a just-reset window reads `.unknown` rather
     /// than a stale value.
     public func pace(kind: LimitWindowKind, asOf now: Date) -> UsagePace {
-        paceMetrics(kind: kind, asOf: now)?.classification ?? .unknown
+        paceInsight(kind: kind, asOf: now)?.pace ?? .unknown
+    }
+
+    /// Builds the compact UI insight and expected-position reference for a
+    /// window. Call on `resolved(asOf:)` so expired rolling windows return nil.
+    public func paceInsight(kind: LimitWindowKind, asOf now: Date) -> UsagePaceInsight? {
+        guard let metrics = paceMetrics(kind: kind, asOf: now) else { return nil }
+        return UsagePaceInsight(
+            pace: metrics.classification,
+            percentUsed: metrics.used,
+            expectedPercentUsed: metrics.elapsed
+        )
     }
 
     private func paceMetrics(kind: LimitWindowKind, asOf now: Date) -> PaceMetrics? {

@@ -64,10 +64,19 @@ struct EnergyDot: View {
 
 /// A chunky horizontal energy bar (fills or depletes depending on the fraction
 /// passed) with an inner top gloss.
+func energyBarMarkerOffset(width: CGFloat, expectedFraction: Double) -> CGFloat {
+    let markerWidth: CGFloat = 2
+    let trackWidth = max(0, width)
+    let fraction = min(1, max(0, expectedFraction))
+    return min(max(0, trackWidth - markerWidth), max(0, trackWidth * fraction - markerWidth / 2))
+}
+
 struct EnergyBar: View {
     var fraction: Double
     var color: Color
     var height: CGFloat = 14
+    /// Neutral reference showing where the fill would sit if usage matched time elapsed.
+    var expectedFraction: Double? = nil
 
     var body: some View {
         GeometryReader { geo in
@@ -80,10 +89,23 @@ struct EnergyBar: View {
                         Capsule().fill(Color.white.opacity(0.45))
                             .frame(height: 2).padding(.horizontal, 3).padding(.top, 2)
                     }
+                if let expectedFraction {
+                    Capsule()
+                        .fill(Color.pfInkMuted)
+                        .frame(width: 2, height: height + 4)
+                        .offset(
+                            x: energyBarMarkerOffset(
+                                width: geo.size.width,
+                                expectedFraction: expectedFraction
+                            )
+                        )
+                        .accessibilityHidden(true)
+                }
             }
         }
         .frame(height: height)
         .animation(.easeOut(duration: 0.5), value: fraction)
+        .animation(.easeOut(duration: 0.5), value: expectedFraction)
     }
 }
 
@@ -311,8 +333,8 @@ struct AccountRingCard: View {
                         .foregroundStyle(Color.pfInkMuted)
                         .lineLimit(1)
                 }
-                metricRow("5-hr", window: model.session, band: sBand)
-                metricRow("week", window: model.week, band: wBand)
+                metricRow("5-hr", window: model.session, band: sBand, paceKind: .session)
+                metricRow("week", window: model.week, band: wBand, paceKind: .weekly)
                 if let opus = model.opus {
                     let oBand = opus.energyBand(thresholds: thresholds, asOf: now)
                     metricRow("opus", window: opus, band: oBand)
@@ -337,26 +359,38 @@ struct AccountRingCard: View {
 
     @ViewBuilder
     private func metricRow(
-        _ label: String, window: LimitWindow, band: EnergyBand
+        _ label: String, window: LimitWindow, band: EnergyBand,
+        paceKind: LimitWindowKind? = nil
     ) -> some View {
-        HStack(spacing: 6) {
-            EnergyDot(color: band.color)
-            Text(label)
-                .font(PFont.body(11, .bold))
-                .foregroundStyle(Color.pfInk)
-            Text(window.displayText(usage: usage, asOf: now) ?? "—")
-                .font(PFont.display(11, .heavy))
-                .foregroundStyle(
-                    window.percentLeft(asOf: now) == nil ? Color.pfInkMuted : band.color
-                )
-                .monospacedDigit()
-            if let detail = resetDetail(window) {
-                Text("· \(detail)")
-                    .font(PFont.body(11, .semibold))
-                    .foregroundStyle(Color.pfInkMuted)
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 6) {
+                EnergyDot(color: band.color)
+                Text(label)
+                    .font(PFont.body(11, .bold))
+                    .foregroundStyle(Color.pfInk)
+                Text(window.displayText(usage: usage, asOf: now) ?? "—")
+                    .font(PFont.display(11, .heavy))
+                    .foregroundStyle(
+                        window.percentLeft(asOf: now) == nil ? Color.pfInkMuted : band.color
+                    )
                     .monospacedDigit()
+                if let detail = resetDetail(window) {
+                    Text("· \(detail)")
+                        .font(PFont.body(11, .semibold))
+                        .foregroundStyle(Color.pfInkMuted)
+                        .monospacedDigit()
+                }
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+            if let paceKind,
+                let insight = window.resolved(asOf: now).paceInsight(kind: paceKind, asOf: now)
+            {
+                Text(insight.displayText)
+                    .font(PFont.body(10, .bold))
+                    .foregroundStyle(Color.pfInkMuted)
+                    .padding(.leading, 15)
+                    .lineLimit(1)
+            }
         }
     }
 
@@ -370,7 +404,16 @@ struct AccountRingCard: View {
     private var accessibilityText: String {
         let s = model.session.leftPercentText(asOf: now) ?? "unknown"
         let w = model.week.leftPercentText(asOf: now) ?? "unknown"
-        return "\(model.label): 5-hour \(s) left, weekly \(w) left"
+        let sessionPace = accessibilityPace(model.session, kind: .session)
+        let weeklyPace = accessibilityPace(model.week, kind: .weekly)
+        return "\(model.label): 5-hour \(s) left\(sessionPace), weekly \(w) left\(weeklyPace)"
+    }
+
+    private func accessibilityPace(_ window: LimitWindow, kind: LimitWindowKind) -> String {
+        guard let insight = window.resolved(asOf: now).paceInsight(kind: kind, asOf: now) else {
+            return ""
+        }
+        return ", \(insight.displayText)"
     }
 }
 
@@ -427,6 +470,7 @@ struct AccountBarCard: View {
         _ label: String, icon: String, window: LimitWindow, kind: LimitWindowKind
     ) -> some View {
         let band = window.energyBand(thresholds: thresholds, asOf: now)
+        let insight = window.resolved(asOf: now).paceInsight(kind: kind, asOf: now)
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 7) {
                 Text(icon).font(.system(size: 13))
@@ -437,9 +481,16 @@ struct AccountBarCard: View {
                 Text(usage ? "used" : "left")
                     .font(PFont.body(12, .bold)).foregroundStyle(Color.pfInkMuted)
             }
-            EnergyBar(fraction: window.displayFraction(usage: usage, asOf: now), color: band.color)
+            EnergyBar(
+                fraction: window.displayFraction(usage: usage, asOf: now),
+                color: band.color,
+                expectedFraction: insight?.expectedDisplayFraction(usage: usage)
+            )
             HStack {
-                if let left = window.percentLeft(asOf: now) {
+                if let insight {
+                    Text(insight.displayText)
+                        .font(PFont.body(11, .bold)).foregroundStyle(Color.pfInkMuted)
+                } else if let left = window.percentLeft(asOf: now) {
                     Text(energyPhrase(left: left, kind: kind))
                         .font(PFont.body(11, .bold)).foregroundStyle(band.color)
                 } else {

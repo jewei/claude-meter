@@ -60,3 +60,14 @@ public enum AccountIdentityReader {
         )
     }
 }
+
+/// Provider-neutral privacy formatting for account identity shown in the UI.
+enum AccountDisplayPrivacy {
+    static func maskedEmail(_ email: String) -> String {
+        let parts = email.split(separator: "@", maxSplits: 1)
+        guard parts.count == 2 else { return "***" }
+        let local = parts[0]
+        let masked = local.count <= 1 ? "*" : "\(local.prefix(1))***"
+        return "\(masked)@\(parts[1])"
+    }
+}

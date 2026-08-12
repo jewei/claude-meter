@@ -50,4 +50,13 @@ struct TimeoutTests {
         let elapsed = Date().timeIntervalSince(start)
         #expect(elapsed < 5)  // returns promptly at the deadline, not after the 30s sleep
     }
+
+    @Test("Rejects invalid timeout durations before scheduling")
+    func invalidDurations() async {
+        for seconds in [0.0, -1.0, .infinity, .nan] {
+            await #expect(throws: InvalidTimeoutDurationError.self) {
+                try await Timeout.run(seconds: seconds) { 1 }
+            }
+        }
+    }
 }

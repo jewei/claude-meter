@@ -49,9 +49,9 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     /// While the cooldown holds, the cached snapshot keeps its original
     /// `lastSuccessfulPollAt`, so a cooldown at or above the staleness threshold
     /// would park the UI in "Data may be stale" for part of every cycle. Going
-    /// meaningfully higher needs a user-initiated bypass first (opening the
-    /// popover currently calls `refreshNow`, which lands on this same gate and
-    /// would just serve the cache).
+    /// meaningfully higher needs tier-aware staleness: interactive polls already
+    /// bypass this request-budget gate, but the continuously displayed menu bar has
+    /// no interactive refresh moment and still observes the old success timestamp.
     static let fallbackCooldown: TimeInterval = 120
 
     public init(
@@ -177,7 +177,8 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     private func markFallbackPollIfCooldownElapsed(now: Date) -> Bool {
         stateQueue.sync {
             let cooldownElapsed =
-                lastFallbackPollAt.map { now.timeIntervalSince($0) >= Self.fallbackCooldown } ?? true
+                lastFallbackPollAt.map { now.timeIntervalSince($0) >= Self.fallbackCooldown }
+                ?? true
             if cooldownElapsed {
                 lastFallbackPollAt = now
             }
@@ -293,8 +294,14 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
 
     /// Maps one window-bearing payload to the display limits/session/severity shared
     /// by both the top-level snapshot and the per-account list.
+    private struct AccountSnapshotFields {
+        let limits: LimitInfo
+        let session: SessionInfo?
+        let severity: UsageSeverity
+    }
+
     private func accountFields(from payload: StatuslineBridge.StatuslinePayload, now: Date)
-        -> (limits: LimitInfo, session: SessionInfo?, severity: UsageSeverity)
+        -> AccountSnapshotFields
     {
         let sessionWindow = Self.displayWindow(for: payload.fiveHour, now: now)
         let weekWindow = Self.displayWindow(for: payload.sevenDay, now: now)
@@ -320,14 +327,14 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
             )
         }()
 
-        return (
-            LimitInfo(
+        return AccountSnapshotFields(
+            limits: LimitInfo(
                 currentSession: sessionWindow,
                 currentWeekAllModels: weekWindow,
                 currentWeekOpus: opusWindow
             ),
-            sessionInfo,
-            severity
+            session: sessionInfo,
+            severity: severity
         )
     }
 

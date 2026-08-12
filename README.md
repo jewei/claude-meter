@@ -14,8 +14,8 @@ account, with optional notifications.
 - **Playful popover** — a combined-health hero and per-account **activity rings** (weekly + 5-hour), framed as energy remaining — plus a desktop widget, threshold notifications, launch at login, and auto-updates.
 - **Multi-account aware** — run several `CLAUDE_CONFIG_DIR` accounts side by side (rate limits are per-account); give each a display name and plan badge.
 - **Zero-config with Claude Code** — installs a transparent statusline bridge; no API keys needed.
-- **Optional sources** — Claude Code OAuth usage API and (opt-in) Cursor billing-period usage.
-- **Private** — local-first; Claude credentials live in the macOS Keychain. Cursor reads the locally signed-in Cursor app's token store (read-only); nothing is logged.
+- **Optional sources** — Claude Code OAuth, Cursor billing-period usage, multiple Codex homes, and Grok CLI credits. Non-Claude providers stay separate from Claude's menu-bar meter and notifications.
+- **Private** — local-first and read-only toward provider credentials. Claude credentials remain in macOS Keychain; Cursor, Codex, and Grok read their own local sign-in state. Diagnostics are sanitized before display or persistence.
 
 ## Requirements
 
@@ -35,11 +35,11 @@ Gatekeeper warnings. Updates are delivered automatically via Sparkle.
 ## Build
 
 ```bash
-xcodebuild -scheme ClaudeMeter -configuration Debug CODE_SIGNING_ALLOWED=NO  # compile
-swift test --package-path ClaudeMeterCore                                    # core + provider tests
+./scripts/verify-local.sh  # formatting, all package tests, Debug + Release unsigned builds
 ```
 
 Running the app requires a provisioning profile (App Group entitlement).
+For a faster focused check, run `swift test --package-path ClaudeMeterCore`.
 
 ## Docs
 

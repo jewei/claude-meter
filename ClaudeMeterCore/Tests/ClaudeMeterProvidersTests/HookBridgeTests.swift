@@ -45,7 +45,12 @@ struct HookBridgeTests {
         try writeJSON(
             [
                 "hooks": [
-                    "PreToolUse": [["matcher": "Bash", "hooks": [["type": "command", "command": "echo audit"]]]],
+                    "PreToolUse": [
+                        [
+                            "matcher": "Bash",
+                            "hooks": [["type": "command", "command": "echo audit"]],
+                        ]
+                    ],
                     "Stop": [["hooks": [["type": "command", "command": "echo my-stop"]]]],
                 ]
             ], to: settings)
@@ -60,6 +65,17 @@ struct HookBridgeTests {
         #expect(commands(out, event: "Stop").contains(HookBridge.hookSnippet))
         // Notification managed entry present.
         #expect(commands(out, event: "Notification") == [HookBridge.hookSnippet])
+    }
+
+    @Test func installsAndRemovesStopFailure() throws {
+        let (dir, settings) = try makeConfigDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try writeJSON([:], to: settings)
+        try HookBridge.install(configDirs: [dir], events: ["StopFailure"])
+        #expect(
+            commands(try readSettings(settings), event: "StopFailure") == [HookBridge.hookSnippet])
+        try HookBridge.install(configDirs: [dir], events: [])
+        #expect(commands(try readSettings(settings), event: "StopFailure").isEmpty)
     }
 
     @Test func installIsIdempotent() throws {
@@ -127,12 +143,14 @@ struct HookBridgeTests {
         try writeJSON(
             [
                 "hooks": [
-                    "Stop": [[
-                        "hooks": [
-                            ["type": "command", "command": "echo mine"],
-                            ["type": "command", "command": HookBridge.hookSnippet],
+                    "Stop": [
+                        [
+                            "hooks": [
+                                ["type": "command", "command": "echo mine"],
+                                ["type": "command", "command": HookBridge.hookSnippet],
+                            ]
                         ]
-                    ]]
+                    ]
                 ]
             ], to: settings)
 

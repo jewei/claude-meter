@@ -8,9 +8,11 @@ import Testing
 struct ModelPricingCatalogTests {
     // A deliberately distinct sentinel (not the real Opus rate) so a catalog hit is
     // distinguishable from the static family fallback (which is also Opus $5).
-    private let opusCatalog = ModelPricing.Rate(input: 7, output: 25, cacheRead: 0.5, cacheWrite: 6.25)
+    private let opusCatalog = ModelPricing.Rate(
+        input: 7, output: 25, cacheRead: 0.5, cacheWrite: 6.25)
 
-    @Test("Exact and dated-prefix ids hit the catalog; others fall back to family") func matching() {
+    @Test("Exact and dated-prefix ids hit the catalog; others fall back to family") func matching()
+    {
         let catalog = ["claude-opus-4-5": opusCatalog]
         let pricing = ModelPricing.current.withCatalog(catalog)
 
@@ -79,13 +81,18 @@ struct ModelsDevPricingTests {
         let noAnthropic = try #require(#"{"openai":{"models":{}}}"#.data(using: .utf8))
         #expect(ModelsDevPricing.parseCatalog(from: noAnthropic) == nil)
         // Too few / no sonnet.
-        #expect(!ModelsDevPricing.isPlausible(["claude-opus-4-5": .init(
-            input: 5, output: 25, cacheRead: 0, cacheWrite: 0)]))
+        #expect(
+            !ModelsDevPricing.isPlausible([
+                "claude-opus-4-5": .init(
+                    input: 5, output: 25, cacheRead: 0, cacheWrite: 0)
+            ]))
     }
 
     @Test("Merge keeps vanished ids, prefers fresh prices") func merge() {
-        let old = ["a": ModelPricing.Rate(input: 1, output: 1, cacheRead: 0, cacheWrite: 0),
-                   "gone": ModelPricing.Rate(input: 9, output: 9, cacheRead: 0, cacheWrite: 0)]
+        let old = [
+            "a": ModelPricing.Rate(input: 1, output: 1, cacheRead: 0, cacheWrite: 0),
+            "gone": ModelPricing.Rate(input: 9, output: 9, cacheRead: 0, cacheWrite: 0),
+        ]
         let new = ["a": ModelPricing.Rate(input: 2, output: 2, cacheRead: 0, cacheWrite: 0)]
         let merged = ModelsDevPricing.merge(new: new, old: old)
         #expect(merged["a"]?.input == 2)

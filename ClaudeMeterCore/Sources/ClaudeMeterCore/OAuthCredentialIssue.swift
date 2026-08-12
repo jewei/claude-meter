@@ -95,7 +95,7 @@ public enum OAuthCredentialIssue: String, Sendable, Equatable, CaseIterable {
         case .rateLimited: return .rateLimited
         case .freshData, .sourceDisabled, .notConnected, .staleData, .noData, .cooldown,
             .networkError, .invalidResponse, .requestFailed, .cachedSnapshot,
-            .cacheMissing:
+            .cacheMissing, .cacheUnreadable:
             return nil
         }
     }

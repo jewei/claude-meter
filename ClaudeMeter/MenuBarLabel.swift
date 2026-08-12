@@ -12,6 +12,14 @@ struct MenuBarLabel: View {
     @AppStorage(AppGroupConfig.menuBarAccountKey) private var menuBarAccountPin = ""
     @AppStorage(AppGroupConfig.menuBarWindowKey) private var menuBarWindow = "nearest"
 
+    private var progression: AppGroupConfig.ProgressionMode {
+        AppGroupConfig.ProgressionMode(rawValue: progressionMode) ?? .left
+    }
+
+    private var selectedWindow: AppGroupConfig.MenuBarWindow {
+        AppGroupConfig.MenuBarWindow(rawValue: menuBarWindow) ?? .nearest
+    }
+
     var body: some View {
         HStack(spacing: 4) {
             iconView
@@ -34,7 +42,8 @@ struct MenuBarLabel: View {
                 .font(.system(size: 12, weight: .bold))
                 .rotationEffect(.degrees(360))
                 .animation(
-                    reduceMotion ? .default : .linear(duration: 1).repeatForever(autoreverses: false),
+                    reduceMotion
+                        ? .default : .linear(duration: 1).repeatForever(autoreverses: false),
                     value: appState.isLoading)
         } else if showsErrorIcon {
             Image(systemName: "bolt.trianglebadge.exclamationmark.fill")
@@ -123,19 +132,19 @@ struct MenuBarLabel: View {
         // Cursor is intentionally excluded — the menu bar reflects Claude only, and
         // honors "Menu bar follows" (pinned account vs. nearest Claude limit). Cursor
         // has its own popover card.
-        switch menuBarWindow {
-        case "5h":
+        switch selectedWindow {
+        case .fiveHour:
             return part(appState.menuBarActiveLimits?.currentSession, suffix: "5h", now: now)
-        case "7d":
+        case .sevenDay:
             return part(appState.menuBarActiveLimits?.currentWeekAllModels, suffix: "7d", now: now)
-        case "both":
+        case .both:
             let limits = appState.menuBarActiveLimits
             let parts = [
                 part(limits?.currentSession, suffix: "5h", now: now),
                 part(limits?.currentWeekAllModels, suffix: "7d", now: now),
             ].compactMap { $0 }
             return parts.isEmpty ? nil : parts.joined(separator: " · ")
-        default:
+        case .nearest:
             return nearestText(now: now)
         }
     }
@@ -144,7 +153,7 @@ struct MenuBarLabel: View {
     /// when the window has no value.
     /// Energy-left, or usage when in "used" mode.
     private func displayed(_ left: Double) -> Double {
-        progressionMode == "used" ? 100 - left : left
+        progression == .used ? 100 - left : left
     }
 
     private func part(_ window: LimitWindow?, suffix: String, now: Date) -> String? {
@@ -156,8 +165,7 @@ struct MenuBarLabel: View {
     /// nearest limit. No window suffix (it may come from any window/account).
     private func nearestText(now: Date) -> String? {
         let lefts = appState.menuBarLimitSets.flatMap { limits in
-            [limits.currentSession, limits.currentWeekAllModels, limits.currentWeekOpus]
-                .compactMap { $0?.percentLeft(asOf: now) }
+            limits.bindingWindows.compactMap { $0.window.percentLeft(asOf: now) }
         }
         guard let minLeft = lefts.min() else { return nil }
         // "Used" mode shows the max usage (= the nearest limit, inverted).

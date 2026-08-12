@@ -85,7 +85,8 @@ struct ActivityScannerTests {
         let root = fm.temporaryDirectory.appendingPathComponent(
             UUID().uuidString, isDirectory: true)
         let project = root.appendingPathComponent("p", isDirectory: true)
-        let subagents = project
+        let subagents =
+            project
             .appendingPathComponent("session-uuid", isDirectory: true)
             .appendingPathComponent("subagents", isDirectory: true)
         try fm.createDirectory(at: subagents, withIntermediateDirectories: true)
@@ -176,6 +177,19 @@ struct ActivityScannerTests {
         let map = scanner.scan(daysBack: 7, now: now)
         #expect(map.total == 1)  // only the recent one
     }
+
+    @Test func unreadableTranscriptMarksEstimatePartial() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let project = root.appendingPathComponent("p")
+        try fm.createDirectory(
+            at: project.appendingPathComponent("unreadable.jsonl"),
+            withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        let map = ActivityScanner(projectsPaths: [root], cache: ActivityCache()).scan()
+        #expect(map.isPartial)
+    }
 }
 
 @Suite("ActivityHeatmap shape")
@@ -205,5 +219,12 @@ struct ActivityHeatmapShapeTests {
         let map = ActivityHeatmap(counts: grid, total: 7, isPartial: false, daysCovered: 1)
         #expect(map.counts == grid)
         #expect(map.peak == 7)
+    }
+
+    @Test func derivesTotalFromNormalizedGrid() {
+        let map = ActivityHeatmap(
+            counts: [[2, 3]], total: 999, isPartial: false, daysCovered: 1)
+        #expect(map.total == 5)
+        #expect(!map.isEmpty)
     }
 }

@@ -205,8 +205,16 @@ public enum CursorTokenStore {
         final class CapturedData: @unchecked Sendable {
             private let lock = NSLock()
             private var data = Data()
-            func set(_ value: Data) { lock.lock(); data = value; lock.unlock() }
-            var value: Data { lock.lock(); defer { lock.unlock() }; return data }
+            func set(_ value: Data) {
+                lock.lock()
+                data = value
+                lock.unlock()
+            }
+            var value: Data {
+                lock.lock()
+                defer { lock.unlock() }
+                return data
+            }
         }
         let outBuffer = CapturedData()
         let drainGroup = DispatchGroup()

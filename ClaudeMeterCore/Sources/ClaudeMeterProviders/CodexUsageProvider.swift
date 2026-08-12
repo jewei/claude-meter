@@ -29,7 +29,9 @@ public final class CodexUsageProvider: @unchecked Sendable {
             }))
     }
 
-    public func fetchUsage(mode: CodexSourceMode = .auto, now: Date = Date()) async throws -> CodexUsage {
+    public func fetchUsage(mode: CodexSourceMode = .auto, now: Date = Date()) async throws
+        -> CodexUsage
+    {
         switch mode {
         case .appServer:
             return try await fetchRequired(appServerSource, now: now)
@@ -51,19 +53,22 @@ public final class CodexUsageProvider: @unchecked Sendable {
                     return try await fetchOAuthIfAvailable(now: now, preferredError: error)
                 }
             }
-            return try await fetchOAuthIfAvailable(now: now, preferredError: CodexUsageError.cliNotFound)
+            return try await fetchOAuthIfAvailable(
+                now: now, preferredError: CodexUsageError.cliNotFound)
         }
     }
 
-    private func fetchRequired(_ source: any CodexUsageSourceFetching, now: Date) async throws -> CodexUsage {
+    private func fetchRequired(_ source: any CodexUsageSourceFetching, now: Date) async throws
+        -> CodexUsage
+    {
         guard await source.isAvailable() else {
-            if source is CodexUnavailableSource { throw CodexUsageError.noUsageData }
             throw CodexUsageError.sourceUnavailable
         }
         return try await source.fetchUsage(now: now)
     }
 
-    private func fetchOAuthIfAvailable(now: Date, preferredError: Error) async throws -> CodexUsage {
+    private func fetchOAuthIfAvailable(now: Date, preferredError: Error) async throws -> CodexUsage
+    {
         guard await oauthSource.isAvailable() else { throw preferredError }
         do {
             return try await oauthSource.fetchUsage(now: now)
@@ -71,15 +76,4 @@ public final class CodexUsageProvider: @unchecked Sendable {
             throw preferredError
         }
     }
-}
-
-public struct CodexUnavailableSource: CodexUsageSourceFetching {
-    let error: Error
-
-    public init(error: Error) {
-        self.error = error
-    }
-
-    public func isAvailable() async -> Bool { false }
-    public func fetchUsage(now _: Date) async throws -> CodexUsage { throw error }
 }

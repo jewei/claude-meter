@@ -316,6 +316,22 @@ struct OAuthPipelineTests {
             OAuthPipeline.credentials(from: .found(freshKeychain), oauthMode: "auto")?
                 .refreshToken == "R_C")
     }
+
+    @Test func verification429ArmsTheSharedBackoff() async {
+        OAuthPipeline.clearRateLimitForTesting()
+        OAuthPipeline.setTransportForTesting(FailingTransport(status: 429, body: "{}"))
+        defer {
+            OAuthPipeline.setTransportForTesting(nil)
+            OAuthPipeline.clearRateLimitForTesting()
+        }
+        let credentials = OAuthCredentials(
+            accessToken: "access", refreshToken: "refresh", expiresAt: .distantFuture)
+        do {
+            _ = try await OAuthPipeline.verify(credentials: credentials)
+            Issue.record("Expected verification to reject the 429")
+        } catch {}
+        #expect(OAuthPipeline.isRateLimited(now: Date()))
+    }
 }
 
 /// Fails every request with a canned status and body — enough to drive the token
@@ -560,8 +576,9 @@ struct ScopedLimitsArrayTests {
 
     /// A malformed or absent array must not take the rest of the response down.
     @Test func toleratesAMalformedOrAbsentArray() throws {
-        #expect(try decode(#"{"seven_day":{"utilization":20.0},"limits":"nope"}"#).sevenDay?
-            .utilization == 20.0)
+        #expect(
+            try decode(#"{"seven_day":{"utilization":20.0},"limits":"nope"}"#).sevenDay?
+                .utilization == 20.0)
         #expect(try decode(#"{"seven_day":{"utilization":20.0}}"#).sevenDay?.utilization == 20.0)
         #expect(try decode(#"{"seven_day":{"utilization":20.0},"limits":[]}"#).scopedWeekly.isEmpty)
     }

@@ -27,12 +27,15 @@ struct SessionEventStoreTests {
     }
 
     @Test func recognizesSupportedTerminalPrograms() {
-        #expect(TerminalRoute(termProgram: "Ghostty", tty: nil, identifier: nil)?.client == .ghostty)
+        #expect(
+            TerminalRoute(termProgram: "Ghostty", tty: nil, identifier: nil)?.client == .ghostty)
         #expect(
             TerminalRoute(termProgram: "Apple_Terminal", tty: nil, identifier: nil)?.client
                 == .terminal)
-        #expect(TerminalRoute(termProgram: "iTerm.app", tty: nil, identifier: nil)?.client == .iTerm2)
-        #expect(TerminalRoute(termProgram: "WezTerm", tty: nil, identifier: nil)?.client == .wezTerm)
+        #expect(
+            TerminalRoute(termProgram: "iTerm.app", tty: nil, identifier: nil)?.client == .iTerm2)
+        #expect(
+            TerminalRoute(termProgram: "WezTerm", tty: nil, identifier: nil)?.client == .wezTerm)
         #expect(
             TerminalRoute(termProgram: "WarpTerminal", tty: nil, identifier: nil)?.client == .warp)
         #expect(TerminalRoute(termProgram: "unknown", tty: nil, identifier: nil) == nil)
@@ -51,8 +54,10 @@ struct SessionEventStoreTests {
             ],
             account: "claude-work", name: "s2.Notification", mtime: now, in: root)
 
-        let events = SessionEventStore.drain(eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120)
-            .sorted { ($0.sessionId ?? "") < ($1.sessionId ?? "") }
+        let events = SessionEventStore.drain(
+            eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120
+        )
+        .sorted { ($0.sessionId ?? "") < ($1.sessionId ?? "") }
         #expect(events.count == 2)
 
         let stop = events[0]
@@ -98,8 +103,10 @@ struct SessionEventStoreTests {
             ["hook_event_name": "StopFailure", "session_id": "s2", "error_type": "server_error"],
             account: "claude", name: "s2.StopFailure", mtime: now, in: root)
 
-        let events = SessionEventStore.drain(eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120)
-            .sorted { ($0.sessionId ?? "") < ($1.sessionId ?? "") }
+        let events = SessionEventStore.drain(
+            eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120
+        )
+        .sorted { ($0.sessionId ?? "") < ($1.sessionId ?? "") }
         #expect(events.count == 2)
 
         #expect(events[0].kind == .stopFailure)
@@ -117,9 +124,15 @@ struct SessionEventStoreTests {
             ["hook_event_name": "Stop", "session_id": "s1"],
             account: "claude", name: "s1.Stop", mtime: now, in: root)
 
-        #expect(SessionEventStore.drain(eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120).count == 1)
+        #expect(
+            SessionEventStore.drain(
+                eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120
+            ).count == 1)
         // Second drain finds nothing — the marker was consumed.
-        #expect(SessionEventStore.drain(eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120).isEmpty)
+        #expect(
+            SessionEventStore.drain(
+                eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120
+            ).isEmpty)
     }
 
     @Test func consumesSubagentStopsWithoutEmittingThem() throws {
@@ -159,7 +172,10 @@ struct SessionEventStoreTests {
             account: "claude", name: "old.Stop", mtime: now.addingTimeInterval(-600), in: root)
 
         // Older than maxAge → not emitted (no burst of old pings on launch)...
-        #expect(SessionEventStore.drain(eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120).isEmpty)
+        #expect(
+            SessionEventStore.drain(
+                eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120
+            ).isEmpty)
         // ...but cleaned up so it can't accumulate.
         let dir = root.appendingPathComponent("claude")
         let remaining = try FileManager.default.contentsOfDirectory(atPath: dir.path)
@@ -203,7 +219,22 @@ struct SessionEventStoreTests {
         #expect(FileManager.default.fileExists(atPath: url.path))
         // Once it ages past maxAge it gets cleaned up.
         _ = SessionEventStore.drain(
-            eventsRoot: root, disabledAccountKeys: [], now: now.addingTimeInterval(600), maxAge: 120)
+            eventsRoot: root, disabledAccountKeys: [], now: now.addingTimeInterval(600), maxAge: 120
+        )
         #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func implausiblyFutureMarkerIsConsumedWithoutEmission() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try writeMarker(
+            ["hook_event_name": "Stop", "session_id": "future"],
+            account: "claude", name: "future.Stop",
+            mtime: now.addingTimeInterval(24 * 60 * 60), in: root)
+        let events = SessionEventStore.drain(
+            eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120)
+        #expect(events.isEmpty)
+        let dir = root.appendingPathComponent("claude")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).isEmpty)
     }
 }

@@ -91,9 +91,11 @@ struct OAuthConnectionSection: View {
             // poll result here too — this is the screen someone opens to fix it.
             if let issue = appState.oauthCredentialIssue {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Image(systemName: issue.needsUserAction
-                        ? "exclamationmark.triangle.fill" : "clock.arrow.circlepath")
-                        .foregroundStyle(issue.needsUserAction ? .orange : .secondary)
+                    Image(
+                        systemName: issue.needsUserAction
+                            ? "exclamationmark.triangle.fill" : "clock.arrow.circlepath"
+                    )
+                    .foregroundStyle(issue.needsUserAction ? .orange : .secondary)
                     Text(issue.displayText(retryAt: appState.oauthRetryAt))
                         .font(.caption)
                         .foregroundStyle(issue.needsUserAction ? .primary : .secondary)
@@ -218,7 +220,10 @@ struct OAuthConnectionSection: View {
     private func loadState() {
         switch oauthMode {
         case "auto": state = .connectedAuto
-        case "manual": state = OAuthKeychain.loadManual() != nil ? .connectedManual : .manualEntry
+        case "manual":
+            state =
+                OAuthKeychain.manualCredentialAvailability() == .available
+                ? .connectedManual : .manualEntry
         default: state = disconnectedState()
         }
     }
@@ -267,7 +272,7 @@ struct OAuthConnectionSection: View {
                 appState.rebuildPipeline()
                 appState.refreshNow()
             } catch {
-                state = .error(error.localizedDescription)
+                state = .error(DiagnosticsSanitizer.sanitize(error.localizedDescription))
             }
         }
     }
@@ -276,7 +281,14 @@ struct OAuthConnectionSection: View {
         let accessToken = manualAccess.trimmingCharacters(in: .whitespaces)
         let refreshToken = manualRefresh.trimmingCharacters(in: .whitespaces)
         guard !accessToken.isEmpty, !refreshToken.isEmpty else { return }
-        OAuthKeychain.saveManual(accessToken: accessToken, refreshToken: refreshToken)
+        do {
+            try OAuthKeychain.saveManual(accessToken: accessToken, refreshToken: refreshToken)
+        } catch {
+            state = .error(
+                "Could not save credentials: \(DiagnosticsSanitizer.sanitize(error.localizedDescription))"
+            )
+            return
+        }
         state = .verifying
         Task {
             do {
@@ -294,8 +306,10 @@ struct OAuthConnectionSection: View {
                 appState.rebuildPipeline()
                 appState.refreshNow()
             } catch {
-                OAuthKeychain.deleteManual()
-                state = .error("Verification failed: \(error.localizedDescription)")
+                try? OAuthKeychain.deleteManual()
+                state = .error(
+                    "Verification failed: \(DiagnosticsSanitizer.sanitize(error.localizedDescription))"
+                )
             }
         }
     }
@@ -305,7 +319,16 @@ struct OAuthConnectionSection: View {
     }
 
     private func disconnect() {
-        if oauthMode == "manual" { OAuthKeychain.deleteManual() }
+        if oauthMode == "manual" {
+            do {
+                try OAuthKeychain.deleteManual()
+            } catch {
+                state = .error(
+                    "Could not disconnect: \(DiagnosticsSanitizer.sanitize(error.localizedDescription))"
+                )
+                return
+            }
+        }
         OAuthPipeline.clearCachedCredentials()
         oauthMode = ""
         testResult = ""

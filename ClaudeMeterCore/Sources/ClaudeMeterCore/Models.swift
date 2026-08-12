@@ -18,8 +18,8 @@ public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
     /// Per-account usage when more than one Claude config dir (`CLAUDE_CONFIG_DIR`)
     /// is active. The top-level `limits`/`account`/`session`/`state` always mirror
     /// the *active* account (most-recently-used), so single-account consumers are
-    /// unaffected. `nil` when only one account is observed — keeping `current.json`
-    /// byte-identical to the historical shape.
+    /// unaffected. `nil` only for a lone default `claude` account; a lone non-default
+    /// account remains a one-element list so its stable key can drive overrides.
     public var accounts: [AccountUsage]?
 
     public init(
@@ -50,6 +50,19 @@ public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
         self.settingSources = settingSources
         self.state = state
         self.accounts = accounts
+    }
+
+    /// Stable identity of the account mirrored into the top-level fields.
+    public var activeAccountID: String? {
+        accounts?.first(where: \.isActive)?.id
+    }
+
+    /// Returns `snapshot`'s limits for the account currently active in `self`.
+    /// This hides the persisted top-level/account-list mirroring scheme from policies
+    /// that compare snapshots across an active-account switch.
+    public func limitsForActiveAccount(in snapshot: ClaudeUsageSnapshot?) -> LimitInfo? {
+        guard let activeAccountID else { return snapshot?.limits }
+        return snapshot?.accounts?.first(where: { $0.id == activeAccountID })?.limits
     }
 }
 
@@ -98,14 +111,29 @@ public struct AccountUsage: Codable, Equatable, Sendable, Identifiable {
 // MARK: - Source
 
 public struct SourceInfo: Codable, Equatable, Sendable {
+    /// Executable path for CLI sources, or origin/host for network sources.
     public var cliPath: String
     public var cliVersion: String?
+    /// CLI command or network operation used to obtain the snapshot.
     public var command: String
 
     public init(cliPath: String, cliVersion: String? = nil, command: String) {
         self.cliPath = cliPath
         self.cliVersion = cliVersion
         self.command = command
+    }
+
+    /// Source-neutral alias for new callers. `cliPath` remains persisted for schema
+    /// compatibility with existing snapshots.
+    public var endpoint: String {
+        get { cliPath }
+        set { cliPath = newValue }
+    }
+
+    /// Source-neutral alias for new callers.
+    public var operation: String {
+        get { command }
+        set { command = newValue }
     }
 }
 
@@ -167,11 +195,6 @@ public struct SessionInfo: Codable, Equatable, Sendable {
         self.codeLinesRemoved = codeLinesRemoved
     }
 
-    var isEmpty: Bool {
-        id == nil && name == nil && cwd == nil && activeModel == nil
-            && totalCostUsd == nil && totalApiDurationSeconds == nil
-            && codeLinesAdded == nil && codeLinesRemoved == nil
-    }
 }
 
 // MARK: - Limits
@@ -193,6 +216,23 @@ public struct ScopedLimitWindow: Codable, Equatable, Sendable, Identifiable {
         guard !scope.isEmpty else { return id }
         return scope.split(separator: "_").map { $0.prefix(1).uppercased() + $0.dropFirst() }
             .joined(separator: " ")
+    }
+}
+
+/// Stable identity for the fixed rate-limit windows that participate in policy.
+public enum LimitWindowScope: String, Codable, Equatable, Sendable, CaseIterable {
+    case session
+    case weekly
+    case weeklyOpus
+}
+
+public struct LimitWindowDescriptor: Equatable, Sendable {
+    public let scope: LimitWindowScope
+    public let window: LimitWindow
+
+    public init(scope: LimitWindowScope, window: LimitWindow) {
+        self.scope = scope
+        self.window = window
     }
 }
 
@@ -224,12 +264,34 @@ public struct LimitInfo: Codable, Equatable, Sendable {
         self.extraUsage = extraUsage
     }
 
+    /// Windows that participate in severity, menu-bar binding, and notifications.
+    /// Display-only dynamic scopes are intentionally excluded.
+    public var bindingWindows: [LimitWindowDescriptor] {
+        var result = [
+            LimitWindowDescriptor(scope: .session, window: currentSession),
+            LimitWindowDescriptor(scope: .weekly, window: currentWeekAllModels),
+        ]
+        if let currentWeekOpus {
+            result.append(LimitWindowDescriptor(scope: .weeklyOpus, window: currentWeekOpus))
+        }
+        return result
+    }
+
+    public func window(for scope: LimitWindowScope) -> LimitWindow? {
+        switch scope {
+        case .session: currentSession
+        case .weekly: currentWeekAllModels
+        case .weeklyOpus: currentWeekOpus
+        }
+    }
+
     /// Display percent for the window with the highest resolved usage — matches
     /// menu-bar severity when Opus weekly is the binding limit.
     public func bindingDisplayPercent(asOf now: Date) -> String? {
         var highest: LimitWindow?
         var maxPct = -1.0
-        for window in [currentSession, currentWeekAllModels, currentWeekOpus].compactMap({ $0 }) {
+        for descriptor in bindingWindows {
+            let window = descriptor.window
             let resolved = window.resolved(asOf: now)
             let pct = resolved.percentUsed ?? -1
             if pct > maxPct {
@@ -246,9 +308,7 @@ public struct LimitInfo: Codable, Equatable, Sendable {
     /// number consistent with the gauge's severity color. Falls back to the binding
     /// window when the session window has no value.
     public func menuBarDisplayPercent(asOf now: Date, thresholds: UsageThresholds) -> String? {
-        let resolved = [currentSession, currentWeekAllModels, currentWeekOpus]
-            .compactMap { $0 }
-            .map { $0.resolved(asOf: now) }
+        let resolved = bindingWindows.map { $0.window.resolved(asOf: now) }
         let anyElevated = resolved.contains { window in
             switch thresholds.severity(for: window.percentUsed) {
             case .warning, .critical, .overLimit: return true
@@ -267,6 +327,27 @@ public struct LimitInfo: Codable, Equatable, Sendable {
 /// `10^decimalPlaces` to get a `currency` value. `isEnabled` reflects whether
 /// overage billing is currently active (it can be off, e.g. "out_of_credits",
 /// while `usedCredits` still shows the month's consumption).
+public struct MinorUnitMoney: Equatable, Sendable {
+    public let minorUnits: Int64
+    public let decimalPlaces: Int
+    public let currency: String?
+
+    public init?(credits: Double, decimalPlaces: Int, currency: String?) {
+        guard credits.isFinite, credits.rounded() == credits,
+            credits >= Double(Int64.min), credits <= Double(Int64.max)
+        else { return nil }
+        self.minorUnits = Int64(credits)
+        self.decimalPlaces = min(18, max(0, decimalPlaces))
+        self.currency = currency?.uppercased()
+    }
+
+    public var amount: Decimal {
+        var divisor = Decimal(1)
+        for _ in 0..<decimalPlaces { divisor *= 10 }
+        return Decimal(minorUnits) / divisor
+    }
+}
+
 public struct ExtraUsage: Codable, Equatable, Sendable {
     public var isEnabled: Bool
     public var usedCredits: Double?
@@ -287,7 +368,7 @@ public struct ExtraUsage: Codable, Equatable, Sendable {
         self.isEnabled = isEnabled
         self.usedCredits = usedCredits
         self.monthlyLimit = monthlyLimit
-        self.decimalPlaces = decimalPlaces
+        self.decimalPlaces = min(18, max(0, decimalPlaces))
         self.utilization = utilization
         self.currency = currency
     }
@@ -298,6 +379,20 @@ public struct ExtraUsage: Codable, Equatable, Sendable {
     public var usedAmount: Double? { usedCredits.map { $0 / divisor } }
     /// Monthly budget in `currency` units.
     public var limitAmount: Double? { monthlyLimit.map { $0 / divisor } }
+
+    /// Exact minor-unit representation for money-sensitive callers. The `Double`
+    /// fields remain persisted for backward compatibility with schema version 1.
+    public var usedMoney: MinorUnitMoney? {
+        usedCredits.flatMap {
+            MinorUnitMoney(credits: $0, decimalPlaces: decimalPlaces, currency: currency)
+        }
+    }
+
+    public var limitMoney: MinorUnitMoney? {
+        monthlyLimit.flatMap {
+            MinorUnitMoney(credits: $0, decimalPlaces: decimalPlaces, currency: currency)
+        }
+    }
 
     /// Percent of the monthly overage budget consumed, preferring the API's own
     /// utilization and falling back to used/limit. `nil` when not computable.
@@ -422,6 +517,8 @@ public struct ModelUsage: Codable, Equatable, Sendable {
 
 // MARK: - MCP
 
+/// Legacy snapshot compatibility for statusline fields no current UI consumes.
+/// Keep this shape decodable until the persisted snapshot schema is version-migrated.
 public struct MCPStatus: Codable, Equatable, Sendable {
     public var connected: Int?
     public var needsAuth: Int?
@@ -438,6 +535,8 @@ public struct MCPStatus: Codable, Equatable, Sendable {
 
 // MARK: - State
 
+/// Persisted source state. `severity` is retained for widget/backward compatibility;
+/// live app policy recomputes severity from resolved limits and current thresholds.
 public struct SnapshotState: Codable, Equatable, Sendable {
     public var status: SnapshotStatus
     public var isStale: Bool
@@ -497,13 +596,6 @@ public enum UsageSeverity: String, Codable, Equatable, Sendable {
     case critical
     case overLimit
     case unknown
-
-    public static func from(
-        percent: Double?,
-        thresholds: UsageThresholds = .default
-    ) -> UsageSeverity {
-        thresholds.severity(for: percent)
-    }
 
     public static func highest(_ a: UsageSeverity, _ b: UsageSeverity) -> UsageSeverity {
         let order: [UsageSeverity] = [.unknown, .normal, .warning, .critical, .overLimit]

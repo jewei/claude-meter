@@ -26,7 +26,6 @@ public enum CodexAccountAuthMode: String, Codable, Equatable, Sendable {
 public enum CodexLimitWindowKind: String, Codable, Equatable, Sendable {
     case primary
     case secondary
-    case additional
 }
 
 public struct CodexLimitWindow: Codable, Equatable, Sendable {
@@ -81,7 +80,6 @@ public struct CodexLimitWindow: Codable, Equatable, Sendable {
         switch kind {
         case .primary: return "Session"
         case .secondary: return "Weekly"
-        case .additional: return "Limit"
         }
     }
 
@@ -129,7 +127,6 @@ public struct CodexRateLimitResets: Codable, Equatable, Sendable {
 public struct CodexUsage: Codable, Equatable, Sendable {
     public var primaryWindow: CodexLimitWindow?
     public var secondaryWindow: CodexLimitWindow?
-    public var additionalWindows: [CodexLimitWindow]
     public var usageCredits: CodexCredits?
     public var rateLimitResets: CodexRateLimitResets?
     public var accountEmail: String?
@@ -141,7 +138,6 @@ public struct CodexUsage: Codable, Equatable, Sendable {
     public init(
         primaryWindow: CodexLimitWindow?,
         secondaryWindow: CodexLimitWindow?,
-        additionalWindows: [CodexLimitWindow] = [],
         usageCredits: CodexCredits?,
         rateLimitResets: CodexRateLimitResets? = nil,
         accountEmail: String?,
@@ -151,11 +147,10 @@ public struct CodexUsage: Codable, Equatable, Sendable {
     ) {
         self.primaryWindow = primaryWindow
         self.secondaryWindow = secondaryWindow
-        self.additionalWindows = additionalWindows
         self.usageCredits = usageCredits
         self.rateLimitResets = rateLimitResets
         self.accountEmail = accountEmail
-        self.maskedAccountEmail = accountEmail.map(Self.maskedEmail)
+        self.maskedAccountEmail = accountEmail.map(AccountDisplayPrivacy.maskedEmail)
         self.plan = plan
         self.source = source
         self.updatedAt = updatedAt
@@ -181,11 +176,7 @@ public struct CodexUsage: Codable, Equatable, Sendable {
     }
 
     public static func maskedEmail(_ email: String) -> String {
-        let parts = email.split(separator: "@", maxSplits: 1)
-        guard parts.count == 2 else { return "***" }
-        let local = parts[0]
-        let masked = local.count <= 1 ? "*" : "\(local.prefix(1))***"
-        return "\(masked)@\(parts[1])"
+        AccountDisplayPrivacy.maskedEmail(email)
     }
 }
 
@@ -216,18 +207,27 @@ public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
         // omit the positional primary/secondary pair. Bucket by duration: ≤ 24 h is
         // session-like (unknown duration included — better shown than dropped),
         // longer is weekly-like; the most-used window per bucket is the binding one.
-        if primary == nil, secondary == nil, let byId = rateLimits.byLimitId, !byId.isEmpty {
+        if primary == nil || secondary == nil, let byId = rateLimits.byLimitId, !byId.isEmpty {
             let windows = byId.sorted { $0.key < $1.key }
-            let mostUsed: ([(String, AppServerRateLimitWindow)]) -> (String, AppServerRateLimitWindow)? = {
-                $0.max { ($0.1.usedPercent ?? -1) < ($1.1.usedPercent ?? -1) }
-            }
-            let sessionLike = mostUsed(windows.filter { ($0.value.windowDurationMins ?? 0) <= 1440 })
+            let mostUsed:
+                ([(String, AppServerRateLimitWindow)]) -> (String, AppServerRateLimitWindow)? = {
+                    $0.max { ($0.1.usedPercent ?? -1) < ($1.1.usedPercent ?? -1) }
+                }
+            let sessionLike = mostUsed(
+                windows.filter { ($0.value.windowDurationMins ?? 0) <= 1440 })
             let weeklyLike = mostUsed(windows.filter { ($0.value.windowDurationMins ?? 0) > 1440 })
-            primary = sessionLike.flatMap { Self.window($0.1, kind: .primary, rawLabel: $0.0) }
-            secondary = weeklyLike.flatMap { Self.window($0.1, kind: .secondary, rawLabel: $0.0) }
+            if primary == nil {
+                primary = sessionLike.flatMap { Self.window($0.1, kind: .primary, rawLabel: $0.0) }
+            }
+            if secondary == nil {
+                secondary = weeklyLike.flatMap {
+                    Self.window($0.1, kind: .secondary, rawLabel: $0.0)
+                }
+            }
         }
-        guard primary != nil || secondary != nil || rateLimits.credits != nil
-            || rateLimitResetCredits != nil
+        guard
+            primary != nil || secondary != nil || rateLimits.credits != nil
+                || rateLimitResetCredits != nil
         else {
             throw CodexUsageError.noUsageData
         }
@@ -275,15 +275,18 @@ public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
 
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            primary = try? container.decodeIfPresent(AppServerRateLimitWindow.self, forKey: .primary)
-            secondary = try? container.decodeIfPresent(AppServerRateLimitWindow.self, forKey: .secondary)
+            primary = try? container.decodeIfPresent(
+                AppServerRateLimitWindow.self, forKey: .primary)
+            secondary = try? container.decodeIfPresent(
+                AppServerRateLimitWindow.self, forKey: .secondary)
             byLimitId =
                 (try? container.decodeIfPresent(
                     [String: AppServerRateLimitWindow].self, forKey: .byLimitId))
                 ?? (try? container.decodeIfPresent(
                     [String: AppServerRateLimitWindow].self, forKey: .byLimitIdSnake))
             credits = try? container.decodeIfPresent(AppServerCredits.self, forKey: .credits)
-            planType = (try? container.decodeIfPresent(String.self, forKey: .planType))
+            planType =
+                (try? container.decodeIfPresent(String.self, forKey: .planType))
                 ?? (try? container.decodeIfPresent(String.self, forKey: .planTypeSnake))
         }
     }
@@ -339,7 +342,9 @@ public struct CodexOAuthUsageResponse: Decodable, Sendable {
         case credits
     }
 
-    public func usage(accountEmail: String?, now: Date, source: CodexUsageSource) throws -> CodexUsage {
+    public func usage(accountEmail: String?, now: Date, source: CodexUsageSource) throws
+        -> CodexUsage
+    {
         let primary = rateLimit?.primaryWindow.map { Self.window($0, kind: .primary) }
         let secondary = rateLimit?.secondaryWindow.map { Self.window($0, kind: .secondary) }
         guard primary != nil || secondary != nil || credits != nil else {
@@ -415,9 +420,9 @@ public enum CodexUsageError: Error, LocalizedError, Equatable {
         case .loginRequired: "Codex login required. Run `codex login`."
         case .sourceUnavailable: "Codex usage source unavailable."
         case .invalidRPCResponse: "Codex CLI returned an unexpected response."
-        case let .rpcTimedOut(method): "Codex CLI timed out during \(method)."
-        case let .rpcFailed(message): "Codex CLI request failed: \(message)"
-        case let .httpError(code): "Codex usage request failed (HTTP \(code))."
+        case .rpcTimedOut(let method): "Codex CLI timed out during \(method)."
+        case .rpcFailed(let message): "Codex CLI request failed: \(message)"
+        case .httpError(let code): "Codex usage request failed (HTTP \(code))."
         }
     }
 }

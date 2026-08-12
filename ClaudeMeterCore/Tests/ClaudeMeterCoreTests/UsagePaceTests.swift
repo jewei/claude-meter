@@ -31,13 +31,10 @@ struct LimitWindowPaceTests {
         #expect(abs((elapsed ?? 0) - 50) < 0.001)
     }
 
-    @Test("Burning twice as fast reads ahead with burn rate ~2") func ahead() {
-        // 50% used, 25% elapsed (3.75h remaining of 5h) → ahead, burn 2.0.
+    @Test("Burning twice as fast reads ahead") func ahead() {
+        // 50% used, 25% elapsed (3.75h remaining of 5h) → ahead.
         let w = LimitWindow(percentUsed: 50, resetsAt: now.addingTimeInterval(3.75 * 3600))
         #expect(w.pace(kind: .session, asOf: now) == .ahead)
-        let burn = w.burnRate(kind: .session, asOf: now)
-        #expect(burn != nil)
-        #expect(abs((burn ?? 0) - 2.0) < 0.001)
     }
 
     @Test("Weekly window uses 7-day span") func weekly() {
@@ -51,8 +48,6 @@ struct LimitWindowPaceTests {
         let w = LimitWindow(percentUsed: 40)
         #expect(w.percentTimeElapsed(kind: .session, asOf: now) == nil)
         #expect(w.pace(kind: .session, asOf: now) == .unknown)
-        #expect(w.burnRate(kind: .session, asOf: now) == nil)
-        #expect(w.paceInsight(kind: .session, asOf: now) == nil)
     }
 
     @Test("Resolved just-reset window reports unknown pace") func resolvedReset() {
@@ -70,12 +65,6 @@ struct LimitWindowPaceTests {
         #expect(past.percentTimeElapsed(kind: .session, asOf: now) == nil)
     }
 
-    @Test("Insight describes deviation") func insight() {
-        let ahead = LimitWindow(percentUsed: 62, resetsAt: now.addingTimeInterval(2.5 * 3600))
-        #expect(ahead.paceInsight(kind: .session, asOf: now) == "12% ahead of pace")
-        let onPace = LimitWindow(percentUsed: 51, resetsAt: now.addingTimeInterval(2.5 * 3600))
-        #expect(onPace.paceInsight(kind: .session, asOf: now) == "On track")
-    }
 }
 
 @Suite("RunsOutEstimate forecast")

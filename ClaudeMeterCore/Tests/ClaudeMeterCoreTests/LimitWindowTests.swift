@@ -85,3 +85,18 @@ struct LimitInfoMenuBarDisplayTests {
         #expect(limits.menuBarDisplayPercent(asOf: now, thresholds: thresholds) == "85%")
     }
 }
+
+@Suite("ExtraUsage money")
+struct ExtraUsageMoneyTests {
+    @Test("Exposes exact typed minor-unit amounts and clamps invalid scales")
+    func typedMoney() {
+        let usage = ExtraUsage(
+            isEnabled: true, usedCredits: 1_234, monthlyLimit: 5_000,
+            decimalPlaces: 2, currency: "usd")
+
+        #expect(usage.usedMoney?.minorUnits == 1_234)
+        #expect(usage.usedMoney?.amount == Decimal(string: "12.34"))
+        #expect(usage.usedMoney?.currency == "USD")
+        #expect(ExtraUsage(isEnabled: true, decimalPlaces: -3).decimalPlaces == 0)
+    }
+}

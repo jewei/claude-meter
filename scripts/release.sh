@@ -249,19 +249,19 @@ git -C "$PROJECT_DIR" add appcast.xml CHANGELOG.md ClaudeMeter.xcodeproj/project
 git -C "$PROJECT_DIR" commit -m "Release $TAG"
 RELEASE_COMMIT="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
 
-# ── Push ──────────────────────────────────────────────────────────────────────
-# Push BEFORE creating the release: GitHub's target_commitish must already exist
-# on the remote, otherwise `gh release create` fails with HTTP 422 ("invalid").
-# The appcast download URL points at the release asset (uploaded below), which
-# doesn't exist until `gh release create` runs — so publishing the commit first
-# never exposes a dangling appcast.
+# ── Stage release commit ──────────────────────────────────────────────────────
+# GitHub can only target a commit it already knows. Push the release commit to a
+# temporary branch first, leaving `main` on the old appcast until the signed DMG
+# is published. This prevents an updater from ever seeing a feed whose asset does
+# not exist yet.
 
-echo "▶ Pushing to origin…"
-git -C "$PROJECT_DIR" push
+STAGING_BRANCH="release-staging/$TAG"
+echo "▶ Staging release commit on origin/$STAGING_BRANCH…"
+git -C "$PROJECT_DIR" push origin "$RELEASE_COMMIT:refs/heads/$STAGING_BRANCH"
 
 # ── GitHub Release ────────────────────────────────────────────────────────────
-# Tag the release commit (not the pre-build HEAD) so source and assets align.
-# Use the full 40-char SHA — GitHub rejects abbreviated SHAs as target_commitish.
+# Publish the signed asset before updating `main`. The tag points at the release
+# commit (including its matching appcast/changelog), not the pre-build HEAD.
 
 echo "▶ Creating GitHub release ${TAG}…"
 gh release create "$TAG" "$DMG_PATH" \
@@ -272,6 +272,14 @@ gh release create "$TAG" "$DMG_PATH" \
 
 ---
 Download and open **$DMG_NAME** to install."
+
+# Only now expose the new appcast. If this push fails, users remain on the prior
+# valid feed while the new release is still available for a safe manual retry.
+echo "▶ Publishing release commit to main…"
+git -C "$PROJECT_DIR" push origin HEAD:main
+
+echo "▶ Removing staging branch…"
+git -C "$PROJECT_DIR" push origin --delete "$STAGING_BRANCH"
 
 echo ""
 echo "✓ Released Claude Meter $VERSION"

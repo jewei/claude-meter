@@ -192,10 +192,12 @@ struct AccountCardModel: Identifiable {
 
     /// Soonest upcoming refill/reset across this account's windows.
     func soonestReset(_ now: Date) -> Date? {
-        [session.resolved(asOf: now).resetsAt,
-         week.resolved(asOf: now).resetsAt,
-         opus?.resolved(asOf: now).resetsAt]
-            .compactMap { $0 }.filter { $0 > now }.min()
+        [
+            session.resolved(asOf: now).resetsAt,
+            week.resolved(asOf: now).resetsAt,
+            opus?.resolved(asOf: now).resetsAt,
+        ]
+        .compactMap { $0 }.filter { $0 > now }.min()
     }
 }
 
@@ -242,7 +244,8 @@ struct LiveDot: View {
             } else {
                 // 12 fps is plenty for a 1.6 s opacity pulse; paused entirely
                 // while the popover window is hidden.
-                TimelineView(.animation(minimumInterval: 1 / 12, paused: !popoverIsVisible)) { context in
+                TimelineView(.animation(minimumInterval: 1 / 12, paused: !popoverIsVisible)) {
+                    context in
                     let t = context.date.timeIntervalSinceReferenceDate
                     let phase = (sin(t * 2 * .pi / 1.6) + 1) / 2  // 0…1 over 1.6s
                     Circle()
@@ -343,7 +346,9 @@ struct AccountRingCard: View {
                 .foregroundStyle(Color.pfInk)
             Text(window.displayText(usage: usage, asOf: now) ?? "—")
                 .font(PFont.display(11, .heavy))
-                .foregroundStyle(window.percentLeft(asOf: now) == nil ? Color.pfInkMuted : band.color)
+                .foregroundStyle(
+                    window.percentLeft(asOf: now) == nil ? Color.pfInkMuted : band.color
+                )
                 .monospacedDigit()
             if let detail = resetDetail(window) {
                 Text("· \(detail)")
@@ -392,7 +397,8 @@ struct AccountBarCard: View {
                     }
                     if let subtitle = model.subtitle {
                         Text(subtitle)
-                            .font(PFont.body(11, .bold)).foregroundStyle(Color.pfInkMuted).lineLimit(1)
+                            .font(PFont.body(11, .bold)).foregroundStyle(Color.pfInkMuted)
+                            .lineLimit(1)
                     }
                 }
                 Spacer(minLength: 4)
@@ -433,8 +439,13 @@ struct AccountBarCard: View {
             }
             EnergyBar(fraction: window.displayFraction(usage: usage, asOf: now), color: band.color)
             HStack {
-                Text(energyPhrase(left: window.percentLeft(asOf: now) ?? 0, kind: kind))
-                    .font(PFont.body(11, .bold)).foregroundStyle(band.color)
+                if let left = window.percentLeft(asOf: now) {
+                    Text(energyPhrase(left: left, kind: kind))
+                        .font(PFont.body(11, .bold)).foregroundStyle(band.color)
+                } else {
+                    Text("Waiting for usage")
+                        .font(PFont.body(11, .bold)).foregroundStyle(Color.pfInkMuted)
+                }
                 Spacer(minLength: 4)
                 if let reset = resetText(window, kind: kind) {
                     Text(reset)
@@ -500,16 +511,19 @@ struct HeroSummary {
             let band = active.band(thresholds, now)
             let when = active.soonestReset(now).map { describeReset($0, now: now) }
             switch band {
-            case .full: return when.map { "Plenty in the tank · refills \($0)" } ?? "Plenty in the tank 🎉"
+            case .full:
+                return when.map { "Plenty in the tank · refills \($0)" } ?? "Plenty in the tank 🎉"
             case .low: return when.map { "Getting low · refills \($0)" } ?? "Getting low"
-            case .empty, .tappedOut: return when.map { "Almost dry · refills \($0)" } ?? "Almost dry"
+            case .empty, .tappedOut:
+                return when.map { "Almost dry · refills \($0)" } ?? "Almost dry"
             case .unknown: return "Warming up…"
             }
         }
 
         // Multi account → count fresh + flag the lowest non-full account.
         let fresh = models.filter { $0.band(thresholds, now) == .full }.count
-        let lowest = models
+        let lowest =
+            models
             .filter { $0.band(thresholds, now) != .full && $0.band(thresholds, now) != .unknown }
             .min(by: { $0.minLeft(now) < $1.minLeft(now) })
         // No account has a reading yet. Unknown accounts are excluded from both
@@ -519,7 +533,8 @@ struct HeroSummary {
         if fresh == 0 && lowest == nil { return "Warming up…" }
         if let low = lowest {
             let word = low.band(thresholds, now) == .low ? "low" : "nearly dry"
-            let refill = low.soonestReset(now)
+            let refill =
+                low.soonestReset(now)
                 .map { " (\(ResetPhrase.duration(until: $0, asOf: now) ?? "soon"))" } ?? ""
             if fresh == 0 { return "\(low.label) is \(word)\(refill)" }
             let freshWord = fresh == 1 ? "1 fresh" : "\(fresh) fresh"
@@ -541,7 +556,8 @@ struct HeroSummary {
         switch band {
         case .full, .unknown:
             return Palette(
-                bg: .pfHeroFullBG, border: .pfHeroFullBorder, ink: .pfHeroFullInk, sub: .pfHeroFullSub)
+                bg: .pfHeroFullBG, border: .pfHeroFullBorder, ink: .pfHeroFullInk,
+                sub: .pfHeroFullSub)
         case .low:
             return Palette(
                 bg: .pfHeroLowBG, border: .pfHeroLowBorder, ink: .pfHeroLowInk, sub: .pfHeroLowSub)

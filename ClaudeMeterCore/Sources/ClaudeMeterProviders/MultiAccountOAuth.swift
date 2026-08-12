@@ -26,10 +26,14 @@ public struct OAuthAccountReading: Sendable, Equatable {
     public let organizationId: String?
     public let limits: LimitInfo
     public let severity: UsageSeverity
+    /// When the usage response was actually observed. Merge time must not make a
+    /// cached reading look newly fetched.
+    public let fetchedAt: Date
 
     public init(
         accountKey: String, label: String, email: String?, plan: String?,
-        organizationId: String?, limits: LimitInfo, severity: UsageSeverity
+        organizationId: String?, limits: LimitInfo, severity: UsageSeverity,
+        fetchedAt: Date = Date()
     ) {
         self.accountKey = accountKey
         self.label = label
@@ -38,10 +42,28 @@ public struct OAuthAccountReading: Sendable, Equatable {
         self.organizationId = organizationId
         self.limits = limits
         self.severity = severity
+        self.fetchedAt = fetchedAt
     }
 }
 
 extension MultiAccountOAuth {
+
+    public enum AccountFetchFailure: Sendable, Equatable {
+        case credentialsMissing
+        case credentialsUnavailable
+        case credentialsInvalid
+        case credentialsExpired
+        case unauthorized
+        case rateLimited
+        case invalidResponse
+        case requestFailed
+    }
+
+    public struct AccountFetchResult: Sendable, Equatable {
+        public let accountKey: String
+        public let reading: OAuthAccountReading?
+        public let failure: AccountFetchFailure?
+    }
 
     /// Fetches every account's usage with that account's own bearer, sequentially
     /// (small N; keeps 429 handling simple). An account with no credentials, an
@@ -61,7 +83,23 @@ extension MultiAccountOAuth {
         credentialsLoader: @Sendable (String, Bool) -> KeychainReadResult<OAuthCredentials>,
         now: Date
     ) async -> [OAuthAccountReading] {
-        var readings: [OAuthAccountReading] = []
+        await fetchAllResults(
+            accounts: accounts, home: home, thresholds: thresholds, transport: transport,
+            credentialsLoader: credentialsLoader, now: now
+        ).compactMap(\.reading)
+    }
+
+    /// Diagnostic-preserving form of `fetchAll`. Each attempted account produces a
+    /// coherent success or failure instead of silently disappearing from the result.
+    public static func fetchAllResults(
+        accounts: [AccountConfig],
+        home: URL,
+        thresholds: UsageThresholds,
+        transport: any HTTPTransport,
+        credentialsLoader: @Sendable (String, Bool) -> KeychainReadResult<OAuthCredentials>,
+        now: Date
+    ) async -> [AccountFetchResult] {
+        var results: [AccountFetchResult] = []
         for account in accounts {
             // Cooperative cancellation: `Timeout.run` abandons this task on expiry,
             // and the blanket `catch { continue }` below would otherwise swallow the
@@ -71,8 +109,22 @@ extension MultiAccountOAuth {
             if OAuthPipeline.isRateLimited(now: now) { break }
             let dirPath = OAuthKeychain.standardizedConfigDirPath(account.configDir.path)
             let isDefault = account.id == "claude"
-            guard let creds = credentialsLoader(dirPath, isDefault).value, !creds.isExpired
-            else { continue }
+            let credentialResult = credentialsLoader(dirPath, isDefault)
+            guard let creds = credentialResult.value else {
+                let failure: AccountFetchFailure
+                switch credentialResult {
+                case .missing: failure = .credentialsMissing
+                case .temporarilyUnavailable: failure = .credentialsUnavailable
+                case .invalid, .found: failure = .credentialsInvalid
+                }
+                results.append(.init(accountKey: account.id, reading: nil, failure: failure))
+                continue
+            }
+            guard !creds.isExpired(asOf: now) else {
+                results.append(
+                    .init(accountKey: account.id, reading: nil, failure: .credentialsExpired))
+                continue
+            }
             let identity = AccountIdentityReader.loadLocal(configDir: account.configDir, home: home)
             do {
                 let (data, http) = try await transport.send(
@@ -82,21 +134,34 @@ extension MultiAccountOAuth {
                         OAuthPipeline.recordRateLimit(
                             retryAfter: OAuthPipeline.retryAfterDate(from: http, now: now),
                             now: now)
+                        results.append(
+                            .init(accountKey: account.id, reading: nil, failure: .rateLimited))
                         break
                     }
+                    results.append(
+                        .init(
+                            accountKey: account.id, reading: nil,
+                            failure: http.statusCode == 401 || http.statusCode == 403
+                                ? .unauthorized : .requestFailed))
                     continue
                 }
-                let usage = try JSONDecoder().decode(UsageResponse.self, from: data)
-                readings.append(
-                    reading(
+                do {
+                    let usage = try JSONDecoder().decode(UsageResponse.self, from: data)
+                    let value = reading(
                         account: account, usage: usage, identity: identity, creds: creds,
                         orgHeader: http.value(forHTTPHeaderField: "anthropic-organization-id"),
-                        thresholds: thresholds))
+                        thresholds: thresholds, fetchedAt: now)
+                    results.append(.init(accountKey: account.id, reading: value, failure: nil))
+                } catch {
+                    results.append(
+                        .init(accountKey: account.id, reading: nil, failure: .invalidResponse))
+                }
             } catch {
+                results.append(.init(accountKey: account.id, reading: nil, failure: .requestFailed))
                 continue
             }
         }
-        return readings
+        return results
     }
 
     /// Pure assembly of one account's reading.
@@ -106,7 +171,8 @@ extension MultiAccountOAuth {
         identity: ClaudeAccountIdentity?,
         creds: OAuthCredentials,
         orgHeader: String?,
-        thresholds: UsageThresholds
+        thresholds: UsageThresholds,
+        fetchedAt: Date
     ) -> OAuthAccountReading {
         func window(_ entry: QuotaEntry?) -> LimitWindow? {
             guard let entry, let utilization = entry.utilization else { return nil }
@@ -117,6 +183,7 @@ extension MultiAccountOAuth {
             currentSession: window(usage.fiveHour) ?? LimitWindow(),
             currentWeekAllModels: window(usage.sevenDay) ?? LimitWindow(),
             currentWeekOpus: window(usage.sevenDayOpus),
+            scopedWeekly: OAuthPipeline.scopedWindows(from: usage),
             extraUsage: usage.extraUsage?.model)
         let severity = [
             usage.fiveHour?.utilization, usage.sevenDay?.utilization,
@@ -131,7 +198,8 @@ extension MultiAccountOAuth {
                 rateLimitTier: creds.rateLimitTier ?? identity?.rateLimitTier),
             organizationId: orgHeader ?? identity?.organizationUuid,
             limits: limits,
-            severity: severity)
+            severity: severity,
+            fetchedAt: fetchedAt)
     }
 }
 
@@ -153,7 +221,8 @@ extension MultiAccountOAuth {
         // `uniquingKeysWith`, not `uniqueKeysWithValues`: `fetchAll` is public and
         // maps 1:1 over a caller-supplied account list, so a duplicate account key
         // (two config dirs sharing a basename) would otherwise trap mid-poll.
-        var byKey = Dictionary(readings.map { ($0.accountKey, $0) }, uniquingKeysWith: { a, _ in a })
+        var byKey = Dictionary(
+            readings.map { ($0.accountKey, $0) }, uniquingKeysWith: { a, _ in a })
         var snap = snapshot
 
         if var accounts = snap.accounts, !accounts.isEmpty {
@@ -165,7 +234,7 @@ extension MultiAccountOAuth {
             }
             accounts.append(
                 contentsOf: byKey.values.sorted { $0.accountKey < $1.accountKey }
-                    .map { newAccount(from: $0, now: now) })
+                    .map { newAccount(from: $0) })
             snap.accounts = sorted(accounts)
             return snap
         }
@@ -183,7 +252,7 @@ extension MultiAccountOAuth {
         // byte-identical to the historical shape.
         guard deduped.count >= 2 else {
             if let only = deduped.first, only.accountKey != "claude" {
-                var account = newAccount(from: only, now: now)
+                var account = newAccount(from: only)
                 account.isActive = true
                 snap.accounts = [account]
             }
@@ -191,7 +260,7 @@ extension MultiAccountOAuth {
         }
         let activeKey = byKey["claude"] != nil ? "claude" : deduped[0].accountKey
         let accounts = deduped.map { reading in
-            var account = newAccount(from: reading, now: now)
+            var account = newAccount(from: reading)
             account.isActive = reading.accountKey == activeKey
             return account
         }
@@ -224,6 +293,9 @@ extension MultiAccountOAuth {
         if account.limits.currentWeekOpus == nil {
             account.limits.currentWeekOpus = reading.limits.currentWeekOpus
         }
+        if account.limits.scopedWeekly == nil {
+            account.limits.scopedWeekly = reading.limits.scopedWeekly
+        }
         if account.limits.extraUsage == nil {
             account.limits.extraUsage = reading.limits.extraUsage
         }
@@ -236,7 +308,7 @@ extension MultiAccountOAuth {
         return account
     }
 
-    private static func newAccount(from reading: OAuthAccountReading, now: Date) -> AccountUsage {
+    private static func newAccount(from reading: OAuthAccountReading) -> AccountUsage {
         AccountUsage(
             id: reading.accountKey,
             label: reading.label,
@@ -246,7 +318,7 @@ extension MultiAccountOAuth {
                 email: reading.email,
                 plan: reading.plan),
             limits: reading.limits,
-            lastSuccessfulPollAt: now,
+            lastSuccessfulPollAt: reading.fetchedAt,
             severity: reading.severity,
             isActive: false)
     }

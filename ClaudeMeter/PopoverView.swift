@@ -79,13 +79,17 @@ struct PopoverView: View {
     }
 
     /// `true` when the user chose to display usage instead of energy-left.
-    private var usage: Bool { progressionMode == "used" }
+    private var cardStyleValue: AppGroupConfig.CardStyle {
+        AppGroupConfig.CardStyle(rawValue: cardStyle) ?? .rings
+    }
+
+    private var usage: Bool {
+        (AppGroupConfig.ProgressionMode(rawValue: progressionMode) ?? .left) == .used
+    }
 
     private var needsOnboarding: Bool {
         !hasCompletedOnboarding
     }
-
-    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -130,7 +134,14 @@ struct PopoverView: View {
         }
         .background(Color.pfPopover)
         .environment(\.popoverIsVisible, isVisible)
-        .onReceive(ticker) { if isVisible { now = $0 } }
+        .task(id: isVisible) {
+            guard isVisible else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled, isVisible else { return }
+                now = Date()
+            }
+        }
         .onAppear {
             isVisible = true
             now = Date()
@@ -294,7 +305,8 @@ struct PopoverView: View {
     @ViewBuilder
     private func claudeNotices(_ snap: ClaudeUsageSnapshot) -> some View {
         if appState.lastError != nil {
-            noticeBanner(pollErrorText, systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
+            noticeBanner(
+                pollErrorText, systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
         }
         // A dead Claude Code sign-in otherwise fails silently — every OAuth error
         // falls through to the next source, so the numbers just quietly stop
@@ -306,7 +318,7 @@ struct PopoverView: View {
                     ? "key.slash.fill" : "clock.arrow.circlepath",
                 tint: issue.needsUserAction ? .pfEnergyLow : .pfInkMuted)
         }
-        if appState.isStale {
+        if appState.claudeIsStale || snap.state.isStale {
             noticeBanner("Data may be stale", systemImage: "clock.fill", tint: .pfInkMuted)
         }
     }
@@ -318,7 +330,8 @@ struct PopoverView: View {
                 appState.cursorError ?? "Cursor refresh failed — showing last known data",
                 systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
         } else if appState.cursorIsStale {
-            noticeBanner("Cursor data may be outdated", systemImage: "clock.fill", tint: .pfInkMuted)
+            noticeBanner(
+                "Cursor data may be outdated", systemImage: "clock.fill", tint: .pfInkMuted)
         }
     }
 
@@ -332,11 +345,11 @@ struct PopoverView: View {
                     .tracking(0.9)
                     .foregroundStyle(Color.pfSectionLabel)
                 Spacer()
-                if cardStyle != "bars" { RingLegend() }
+                if cardStyleValue != .bars { RingLegend() }
             }
             .padding(.horizontal, 2)
             ForEach(models) { model in
-                if cardStyle == "bars" {
+                if cardStyleValue == .bars {
                     AccountBarCard(
                         model: model, now: now, thresholds: usageThresholds, usage: usage)
                 } else {
@@ -364,10 +377,11 @@ struct PopoverView: View {
             return sorted.map { acc in
                 AccountCardModel(
                     id: acc.id,
-                    label: AppGroupConfig.accountName(forKey: acc.id) ?? acc.label.friendlyAccountLabel,
+                    label: AppGroupConfig.accountName(forKey: acc.id)
+                        ?? acc.label.friendlyAccountLabel,
                     plan: AppGroupConfig.accountPlan(forKey: acc.id)
                         ?? (acc.isActive ? snap.account?.plan : acc.account?.plan)
-                        ?? acc.account?.plan,
+                            ?? acc.account?.plan,
                     subtitle: (acc.isActive ? snap.account?.email : acc.account?.email)
                         ?? acc.account?.email,
                     session: acc.limits.currentSession,
@@ -602,7 +616,9 @@ struct PopoverView: View {
         let tint: Color = band == .full ? .pfEnergyFull : band.color
         let expanded = isExpanded(Self.cursorCardID)
         return VStack(alignment: .leading, spacing: 8) {
-            Button { toggleCard(Self.cursorCardID) } label: {
+            Button {
+                toggleCard(Self.cursorCardID)
+            } label: {
                 HStack(spacing: 7) {
                     Image("CursorLogo").resizable().scaledToFit().frame(width: 15, height: 15)
                     Text("Cursor")
@@ -703,7 +719,9 @@ struct PopoverView: View {
         let cardID = Self.codexCardID(account.id)
         let expanded = isExpanded(cardID)
         return VStack(alignment: .leading, spacing: 8) {
-            Button { toggleCard(cardID) } label: {
+            Button {
+                toggleCard(cardID)
+            } label: {
                 HStack(spacing: 7) {
                     codexMark
                     Text(account.displayName)
@@ -726,7 +744,9 @@ struct PopoverView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(expanded ? "Hide \(account.displayName) details" : "Show \(account.displayName) details")
+            .help(
+                expanded
+                    ? "Hide \(account.displayName) details" : "Show \(account.displayName) details")
             EnergyBar(fraction: (displayPercent ?? 0) / 100, color: tint, height: 12)
             // Reset timing stays visible when collapsed — one line, and without it
             // a red "93%" tells you you're nearly out but not when it comes back.
@@ -818,7 +838,9 @@ struct PopoverView: View {
         let tint: Color = band == .full ? .pfEnergyFull : band.color
         let expanded = isExpanded(Self.grokCardID)
         return VStack(alignment: .leading, spacing: 8) {
-            Button { toggleCard(Self.grokCardID) } label: {
+            Button {
+                toggleCard(Self.grokCardID)
+            } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "atom")
                         .font(.system(size: 14, weight: .bold))
@@ -1020,11 +1042,14 @@ struct PopoverView: View {
     }
 
     private func serviceStatusNotice(_ status: ServiceStatus) -> some View {
-        let tint: Color = status.level == .critical || status.level == .major ? .pfEnergyEmpty : .pfEnergyLow
+        let tint: Color =
+            status.level == .critical || status.level == .major ? .pfEnergyEmpty : .pfEnergyLow
         return noticeBanner(
-            "Anthropic: \(status.description)", systemImage: "exclamationmark.bubble.fill", tint: tint)
-            .padding(.horizontal, 15)
-            .padding(.bottom, 2)
+            "Anthropic: \(status.description)", systemImage: "exclamationmark.bubble.fill",
+            tint: tint
+        )
+        .padding(.horizontal, 15)
+        .padding(.bottom, 2)
     }
 
     private var pollErrorText: String {
@@ -1055,13 +1080,13 @@ struct PopoverView: View {
         .help(help)
     }
 
-
     private var updatedText: String {
         let claudeAt =
             AppSettings.hasClaudeSource
             ? (appState.snapshot?.lastSuccessfulPollAt ?? appState.lastPolledAt) : nil
         let cursorAt = AppSettings.cursorSourceEnabled ? appState.cursorLastPolledAt : nil
-        let codexAt = AppSettings.codexSourceEnabled
+        let codexAt =
+            AppSettings.codexSourceEnabled
             ? appState.codexAccounts.compactMap(\.lastPolledAt).max() : nil
         let grokAt = AppSettings.grokSourceEnabled ? appState.grokLastPolledAt : nil
         guard
@@ -1091,8 +1116,8 @@ struct PopoverView: View {
     private func skipOnboardingForExistingUsers() {
         guard !hasCompletedOnboarding else { return }
         if appState.snapshot != nil
-            || OAuthKeychain.load() != nil
-            || OAuthKeychain.loadManual() != nil
+            || OAuthKeychain.credentialAvailability() != .missing
+            || OAuthKeychain.manualCredentialAvailability() != .missing
             || CursorTokenStore.isStateDBPresent()
             || Self.claudeMeterDirectoryExists
         {
@@ -1163,7 +1188,8 @@ extension AppState {
                 ),
                 currentWeekAllModels: LimitWindow(
                     percentUsed: 36,
-                    resetsAt: Calendar.current.startOfDay(for: Date().addingTimeInterval(3 * 86400)),
+                    resetsAt: Calendar.current.startOfDay(
+                        for: Date().addingTimeInterval(3 * 86400)),
                     rawValueText: "1482 msgs"
                 )
             ),

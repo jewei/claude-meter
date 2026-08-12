@@ -179,6 +179,20 @@ struct StatuslineBridgeTests {
         #expect(StatuslineBridge.mergePayloads([]) == nil)
     }
 
+    @Test func mergePayloadsBreaksEqualCaptureTimesDeterministically() throws {
+        func payload(id: String, cost: Double) -> StatuslineBridge.StatuslinePayload {
+            StatuslineBridge.StatuslinePayload(
+                fiveHour: nil, sevenDay: nil, sessionId: id, sessionName: nil, cwd: nil,
+                modelId: nil, modelDisplayName: nil, totalCostUsd: cost,
+                totalApiDurationMs: nil, codeLinesAdded: nil, codeLinesRemoved: nil,
+                cliVersion: nil, capturedAt: Date(timeIntervalSince1970: 100))
+        }
+        let a = payload(id: "a", cost: 1)
+        let b = payload(id: "b", cost: 2)
+        #expect(try #require(StatuslineBridge.mergePayloads([a, b])).sessionId == "b")
+        #expect(try #require(StatuslineBridge.mergePayloads([b, a])).sessionId == "b")
+    }
+
     @Test func settingsParserAllowsMissingFileButRejectsInvalidJSON() throws {
         let missing = try StatuslineBridge.parseSettingsDataForTesting(nil)
         #expect(missing.isEmpty)
@@ -222,7 +236,8 @@ struct StatuslineBridgeTests {
 
     @Test func installConfigDirsTagsEachSettingsAndPreservesUserCommand() throws {
         let fm = FileManager.default
-        let base = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let base = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
         let dirA = base.appendingPathComponent("a", isDirectory: true)
         let dirB = base.appendingPathComponent("b", isDirectory: true)
         try fm.createDirectory(at: dirA, withIntermediateDirectories: true)
@@ -252,7 +267,8 @@ struct StatuslineBridgeTests {
     /// must be a no-op rather than repeated writes.
     @Test func uninstallRestoresUserCommandAndIsIdempotent() throws {
         let fm = FileManager.default
-        let base = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let base = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
         let owned = base.appendingPathComponent("owned", isDirectory: true)
         let shared = base.appendingPathComponent("shared", isDirectory: true)
         try fm.createDirectory(at: owned, withIntermediateDirectories: true)
@@ -281,7 +297,8 @@ struct StatuslineBridgeTests {
 
     @Test func installSkipsInvalidSettingsButStillInstallsOthers() throws {
         let fm = FileManager.default
-        let base = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let base = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
         let good = base.appendingPathComponent("good", isDirectory: true)
         let bad = base.appendingPathComponent("bad", isDirectory: true)
         try fm.createDirectory(at: good, withIntermediateDirectories: true)
@@ -299,11 +316,22 @@ struct StatuslineBridgeTests {
         #expect(cmd == StatuslineBridge.bridgeSnippet + " > /dev/null")
     }
 
+    @Test func directoryCreationFailureIsSurfaced() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("not a directory".utf8).write(to: root)
+        #expect(throws: (any Error).self) {
+            try StatuslineBridge.ensureDirectory(at: root.appendingPathComponent("sessions"))
+        }
+    }
+
     // MARK: - Grouped reads (per-account, never blended)
 
     @Test func readDataGroupedBucketsByAccountWithoutBlending() throws {
         let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
         let claudeDir = root.appendingPathComponent("claude", isDirectory: true)
         let workDir = root.appendingPathComponent("claude-work", isDirectory: true)
         try fm.createDirectory(at: claudeDir, withIntermediateDirectories: true)
@@ -327,7 +355,8 @@ struct StatuslineBridgeTests {
 
     @Test func readDataGroupedBucketsLegacyFlatFilesUnderDefault() throws {
         let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: root) }
 

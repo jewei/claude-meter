@@ -1,7 +1,8 @@
 import Foundation
 
 /// The app-wide rule for describing when a rolling window resets, relative to now:
-/// under an hour → minutes ("42m"), under 48 hours → hours ("3h 20m", "36h"),
+/// after rounding to the nearest minute: under an hour → minutes ("42m"),
+/// under 48 hours → hours ("3h 20m", "36h"),
 /// otherwise → whole days ("4 days"). Never a calendar date or weekday — "20 Jul"
 /// makes the reader do the math, and a bare weekday is ambiguous a week out.
 public enum ResetPhrase {
@@ -43,13 +44,13 @@ public enum ResetPhrase {
     private static func parts(until reset: Date, asOf now: Date) -> Parts {
         let interval = reset.timeIntervalSince(now)
         guard interval > 0 else { return .none }
-        if interval < 3600 { return .minutes(max(1, Int((interval / 60).rounded()))) }
-        if interval < 48 * 3600 {
-            let totalMinutes = Int((interval / 60).rounded())
+        let totalMinutes = max(1, Int((interval / 60).rounded()))
+        if totalMinutes < 60 { return .minutes(totalMinutes) }
+        if totalMinutes < 48 * 60 {
             let hours = totalMinutes / 60
             if hours < 12 { return .hoursMinutes(hours, totalMinutes % 60) }
-            return .hours(Int((interval / 3600).rounded()))
+            return .hours(Int((Double(totalMinutes) / 60).rounded()))
         }
-        return .days(max(2, Int((interval / 86400).rounded())))
+        return .days(max(2, Int((Double(totalMinutes) / (24 * 60)).rounded())))
     }
 }

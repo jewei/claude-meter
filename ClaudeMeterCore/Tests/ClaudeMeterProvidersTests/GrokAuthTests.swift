@@ -59,6 +59,16 @@ struct GrokAuthTests {
         }
     }
 
+    @Test func skipsMalformedPreferredEntryForLaterUsableCredential() throws {
+        let url = try writeAuth(
+            """
+            {"https://auth.x.ai::aaa":{"email":"broken@example.com"},
+             "https://auth.x.ai::bbb":{"key":" usable-token "}}
+            """)
+        let creds = try GrokAuthStore.load(authPath: url, now: Date(timeIntervalSince1970: 0))
+        #expect(creds.bearer == "usable-token")
+    }
+
     /// The auth.x.ai OIDC entry (SuperGrok/X Premium) wins over the legacy
     /// accounts.x.ai session entry.
     @Test func prefersAuthXaiOverLegacyEntry() throws {

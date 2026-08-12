@@ -129,6 +129,32 @@ struct NotificationPolicyTests {
         #expect(!triggers.contains { $0.level == "recovered" })
     }
 
+    @Test("First poll does not turn an existing warning into a crossing")
+    func firstPollWarningIsSuppressed() {
+        let current = snapshot(session: 85)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: nil, now: fixedNow)
+        #expect(!triggers.contains { $0.level == "warning" })
+    }
+
+    @Test("First poll does not turn an existing critical limit into a crossing")
+    func firstPollCriticalIsSuppressed() {
+        let current = snapshot(session: 96)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current, previous: nil, now: fixedNow)
+        #expect(!triggers.contains { $0.level == "critical" })
+    }
+
+    @Test("Typed baselines can explicitly omit recovery history")
+    func typedBaselinesAvoidNestedOptional() {
+        let current = snapshot(session: 30)
+        let triggers = NotificationPolicy.triggers(
+            snapshot: current,
+            baselines: NotificationBaselines(escalation: nil, recovery: nil),
+            now: fixedNow)
+        #expect(triggers.isEmpty)
+    }
+
     /// A two-account snapshot whose top-level mirrors the `active` account.
     private func multiSnap(active: String, aSession: Double, bSession: Double)
         -> ClaudeUsageSnapshot
@@ -138,8 +164,10 @@ struct NotificationPolicyTests {
         var s = snapshot(session: 0)
         s.limits = active == "a" ? a : b
         s.accounts = [
-            AccountUsage(id: "a", label: "a", limits: a, severity: .normal, isActive: active == "a"),
-            AccountUsage(id: "b", label: "b", limits: b, severity: .normal, isActive: active == "b"),
+            AccountUsage(
+                id: "a", label: "a", limits: a, severity: .normal, isActive: active == "a"),
+            AccountUsage(
+                id: "b", label: "b", limits: b, severity: .normal, isActive: active == "b"),
         ]
         return s
     }

@@ -36,7 +36,23 @@ public struct CachedSnapshotPipeline: Sendable {
 
     /// Reads from disk, so there is nothing for `kind` to change here.
     public func poll(now: Date, kind _: RefreshKind = .background) async throws -> ParseResult {
-        guard var snapshot = try? store.readLatest() else {
+        let loaded: ClaudeUsageSnapshot?
+        do {
+            loaded = try store.readLatest()
+        } catch {
+            let message = DiagnosticsSanitizer.sanitize(error.localizedDescription)
+            return ParseResult(
+                snapshot: nil,
+                warnings: [],
+                errors: [ParseError("Cached snapshot could not be read: \(message)")],
+                rawHash: "",
+                parserVersion: "cache-1.0",
+                sourceAttempts: [
+                    SourceAttempt(source: .cache, outcome: .failed, reason: .cacheUnreadable)
+                ]
+            )
+        }
+        guard var snapshot = loaded else {
             return ParseResult(
                 snapshot: nil,
                 warnings: [],

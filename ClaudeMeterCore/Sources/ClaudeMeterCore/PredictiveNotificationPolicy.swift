@@ -18,6 +18,19 @@ public struct PredictiveNotificationTrigger: Equatable, Sendable {
         self.secondsUntilDepleted = secondsUntilDepleted
     }
 
+    public init(
+        accountID: String,
+        scope: LimitWindowScope,
+        resetAt: Date,
+        secondsUntilDepleted: TimeInterval
+    ) {
+        self.init(
+            accountID: accountID, scope: scope.rawValue, resetAt: resetAt,
+            secondsUntilDepleted: secondsUntilDepleted)
+    }
+
+    public var typedScope: LimitWindowScope? { LimitWindowScope(rawValue: scope) }
+
     /// Persisted dedup key. The reset epoch is bucketed (see
     /// `PredictiveNotificationTracker.resetBucket`) so jittery `resets_at` values
     /// for the same window — e.g. the statusline and OAuth tiers rounding
@@ -34,7 +47,7 @@ public struct PredictiveNotificationTrigger: Equatable, Sendable {
 public struct PredictiveNotificationTracker: Sendable {
     private struct ObservationKey: Hashable, Sendable {
         let accountID: String
-        let scope: String
+        let scope: LimitWindowScope
         let resetEpoch: Int
     }
 
@@ -50,8 +63,13 @@ public struct PredictiveNotificationTracker: Sendable {
 
     public init() {}
 
-    public mutating func reset() {
+    public mutating func resetQualificationStreak() {
         previousQualifiers.removeAll()
+    }
+
+    /// Backward-compatible spelling. This intentionally retains sticky account identity.
+    public mutating func reset() {
+        resetQualificationStreak()
     }
 
     /// Width of the reset-time bucket. The same window's `resets_at` arrives with
@@ -75,8 +93,13 @@ public struct PredictiveNotificationTracker: Sendable {
     public mutating func observe(
         snapshot: ClaudeUsageSnapshot,
         thresholds: UsageThresholds = .default,
+        isFresh: Bool = true,
         now: Date = Date()
     ) -> [PredictiveNotificationTrigger] {
+        guard isFresh else {
+            resetQualificationStreak()
+            return []
+        }
         let accountID: String
         if let active = snapshot.accounts?.first(where: { $0.isActive })?.id {
             accountID = active
@@ -84,35 +107,37 @@ public struct PredictiveNotificationTracker: Sendable {
         } else {
             accountID = lastActiveAccountID ?? "claude"
         }
-        let candidates: [(scope: String, window: LimitWindow, kind: LimitWindowKind)] =
-            [
-                ("session", snapshot.limits.currentSession, .session),
-                ("weekly", snapshot.limits.currentWeekAllModels, .weekly),
-            ] + (snapshot.limits.currentWeekOpus.map { [("weeklyOpus", $0, .weekly)] } ?? [])
-
         var qualifying: [(ObservationKey, PredictiveNotificationTrigger)] = []
-        for candidate in candidates {
+        for candidate in snapshot.limits.bindingWindows {
             let window = candidate.window.resolved(asOf: now)
             guard thresholds.severity(for: window.percentUsed) == .normal,
                 let resetAt = window.resetsAt,
                 resetAt > now,
                 case .runsOut(let seconds) = window.runsOutEstimate(
-                    kind: candidate.kind, asOf: now),
+                    kind: candidate.scope.kind, asOf: now),
                 seconds > 0
             else { continue }
 
-            let key = ObservationKey(
+            let proposedKey = ObservationKey(
                 accountID: accountID,
                 scope: candidate.scope,
                 resetEpoch: Self.bucketedEpoch(resetAt)
             )
+            // Carry forward the first observation's canonical cycle identity when
+            // two sources put the same reset on opposite sides of a rounding boundary.
+            let key =
+                previousQualifiers.first(where: {
+                    $0.accountID == proposedKey.accountID && $0.scope == proposedKey.scope
+                        && abs($0.resetEpoch - proposedKey.resetEpoch) <= Int(Self.resetBucket)
+                }) ?? proposedKey
+            let canonicalReset = Date(timeIntervalSince1970: TimeInterval(key.resetEpoch))
             qualifying.append(
                 (
                     key,
                     PredictiveNotificationTrigger(
                         accountID: accountID,
                         scope: candidate.scope,
-                        resetAt: resetAt,
+                        resetAt: canonicalReset,
                         secondsUntilDepleted: seconds
                     )
                 ))

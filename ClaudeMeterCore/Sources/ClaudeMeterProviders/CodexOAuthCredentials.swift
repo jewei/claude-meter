@@ -20,6 +20,7 @@ public enum CodexOAuthCredentialsError: Error, LocalizedError, Equatable {
     case apiKeyOnly
     case missingTokens
     case decodeFailed
+    case unreadable
 
     public var errorDescription: String? {
         switch self {
@@ -31,6 +32,8 @@ public enum CodexOAuthCredentialsError: Error, LocalizedError, Equatable {
             "Codex auth file has no ChatGPT OAuth tokens."
         case .decodeFailed:
             "Could not decode Codex auth file."
+        case .unreadable:
+            "Could not read Codex auth file."
         }
     }
 }
@@ -44,7 +47,10 @@ public enum CodexOAuthCredentialsStore {
         guard fileManager.fileExists(atPath: url.path) else {
             throw CodexOAuthCredentialsError.notFound
         }
-        return try parse(data: try Data(contentsOf: url))
+        guard let data = try? Data(contentsOf: url) else {
+            throw CodexOAuthCredentialsError.unreadable
+        }
+        return try parse(data: data)
     }
 
     static func authFileURL(

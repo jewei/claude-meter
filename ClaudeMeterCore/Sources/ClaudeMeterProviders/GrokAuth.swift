@@ -50,8 +50,7 @@ public enum GrokAuthStore {
             let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else { throw GrokAuthError.unreadable }
 
-        guard let entry = preferredEntry(in: object),
-            let key = entry["key"] as? String, !key.isEmpty
+        guard let entry = preferredEntry(in: object), let key = usableKey(in: entry)
         else { throw GrokAuthError.missing }
 
         let expiresAt = (entry["expires_at"] as? String).flatMap(GrokTimestamp.parse)
@@ -72,10 +71,17 @@ public enum GrokAuthStore {
     static func preferredEntry(in object: [String: Any]) -> [String: Any]? {
         let entries = object.compactMapValues { $0 as? [String: Any] }
         let keys = entries.keys.sorted()
-        if let oidcKey = keys.first(where: { $0.hasPrefix("https://auth.x.ai") }) {
-            return entries[oidcKey]
-        }
-        if let legacy = entries["https://accounts.x.ai/sign-in"] { return legacy }
-        return keys.first.flatMap { entries[$0] }
+        let oidcKeys = keys.filter { $0.hasPrefix("https://auth.x.ai") }
+        let legacyKeys = keys.filter { $0 == "https://accounts.x.ai/sign-in" }
+        let fallbackKeys = keys.filter { !oidcKeys.contains($0) && !legacyKeys.contains($0) }
+        return (oidcKeys + legacyKeys + fallbackKeys)
+            .compactMap { entries[$0] }
+            .first { usableKey(in: $0) != nil }
+    }
+
+    private static func usableKey(in entry: [String: Any]) -> String? {
+        guard let raw = entry["key"] as? String else { return nil }
+        let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return key.isEmpty ? nil : key
     }
 }

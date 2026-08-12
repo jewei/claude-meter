@@ -41,7 +41,7 @@ struct OAuthKeychainTests {
         #expect(creds?.rateLimitTier == "default_claude_max_20x")
     }
 
-    @Test func picksNewestHashedOverOlderLegacyAndIgnoresUnrelated() {
+    @Test func picksNewestHashedAndIgnoresLegacyAndUnrelated() {
         let base = Date(timeIntervalSince1970: 1_700_000_000)
         let candidates: [(service: String, modified: Date)] = [
             ("Claude Code-credentials", base.addingTimeInterval(10)),  // legacy, but stale
@@ -51,20 +51,20 @@ struct OAuthKeychainTests {
             ("com.jewei.claudemeter-oauth", base.addingTimeInterval(9999)),  // unrelated: ignored
         ]
         #expect(
-            OAuthKeychain.newestCredentialService(among: candidates)
+            OAuthKeychain.newestHashedService(among: candidates)
                 == "Claude Code-credentials-420899a1"
         )
     }
 
-    @Test func picksLegacyWhenItIsTheNewestCredential() {
-        // The in-place-upgrade case the single-pass read fixes: a *fresh* legacy entry
-        // must win over an older hashed one (and vice-versa is covered above).
+    @Test func legacyIsExcludedFromHashedFallback() {
         let base = Date(timeIntervalSince1970: 1_700_000_000)
         let candidates: [(service: String, modified: Date)] = [
             ("Claude Code-credentials", base.addingTimeInterval(99)),  // freshly refreshed legacy
             ("Claude Code-credentials-abc312d1", base.addingTimeInterval(20)),  // stale hashed
         ]
-        #expect(OAuthKeychain.newestCredentialService(among: candidates) == "Claude Code-credentials")
+        #expect(
+            OAuthKeychain.newestHashedService(among: candidates)
+                == "Claude Code-credentials-abc312d1")
     }
 
     @Test func noCredentialServiceWhenOnlyUnrelatedPresent() {
@@ -73,7 +73,26 @@ struct OAuthKeychainTests {
             ("Claude Safe Storage", now),
             ("com.jewei.claudemeter-oauth", now),
         ]
-        #expect(OAuthKeychain.newestCredentialService(among: candidates) == nil)
-        #expect(OAuthKeychain.newestCredentialService(among: []) == nil)
+        #expect(OAuthKeychain.newestHashedService(among: candidates) == nil)
+        #expect(OAuthKeychain.newestHashedService(among: []) == nil)
+    }
+
+    @Test func equalModificationDatesResolveDeterministically() {
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let forward = [
+            (service: "Claude Code-credentials-bbbb", modified: date),
+            (service: "Claude Code-credentials", modified: date),
+            (service: "Claude Code-credentials-aaaa", modified: date),
+        ]
+        #expect(OAuthKeychain.newestHashedService(among: forward) == "Claude Code-credentials-aaaa")
+        #expect(
+            OAuthKeychain.newestHashedService(among: forward.reversed())
+                == "Claude Code-credentials-aaaa")
+    }
+
+    @Test func manualAvailabilityPreflightFailsClosedWithoutReadingSecrets() {
+        // Tests are denied live Keychain access by KeychainGateway. An attributes-
+        // only query therefore reports unavailable rather than pretending missing.
+        #expect(OAuthKeychain.manualCredentialAvailability() == .temporarilyUnavailable)
     }
 }

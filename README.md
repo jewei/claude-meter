@@ -4,9 +4,16 @@ A macOS menu bar app that shows your Claude usage at a glance — your 5-hour
 session and weekly limits as playful, color-coded **energy rings**, across every
 account, with optional notifications.
 
-<p align="center">
-  <img src="assets/claude-meter-screenshot-2.10.jpg" alt="Claude Meter popover showing two Claude accounts as energy rings, a 7-day cost summary, and collapsed Cursor and Codex cards" width="600">
-</p>
+<table>
+  <tr>
+    <th align="center">Light mode</th>
+    <th align="center">Dark mode</th>
+  </tr>
+  <tr>
+    <td><img src="assets/claude-meter-light-mode.jpg" alt="Claude Meter popover in light mode" width="480"></td>
+    <td><img src="assets/claude-meter-dark-mode.png" alt="Claude Meter popover in dark mode" width="480"></td>
+  </tr>
+</table>
 
 ## Features
 

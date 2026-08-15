@@ -1,21 +1,28 @@
 # Domain docs
 
-This is a single-context repository. Its domain documentation lives at the
-**repository root**, not in `CONTEXT.md` or `docs/adr/` — neither exists here.
+Domain documentation lives at the **repository root**, not in `CONTEXT.md` or
+`docs/adr/` — neither exists here. The one exception is area-specific gotchas,
+which live in a `CLAUDE.md` beside the code they describe so they load only when
+you work under that directory.
 
 ## Layout
 
 ```text
 /
 ├── SPECS.md                  # full behavioural spec + settings/persistence reference
-├── AGENTS.md                 # architecture, non-obvious gotchas (imported by CLAUDE.md)
+├── AGENTS.md                 # cross-cutting architecture + gotchas (imported by CLAUDE.md)
 ├── DESIGN.md                 # playful-UI design system and tokens
+├── ClaudeMeter/CLAUDE.md     # playful UI / energy design, notifications
+├── ClaudeMeterWidget/CLAUDE.md
+├── ClaudeMeterCore/Sources/ClaudeMeterProviders/CLAUDE.md
 └── docs/
     └── agents/               # these conventions (issue tracker, triage labels, domain)
 ```
 
 `AGENTS.md` is already in context every session via `CLAUDE.md`'s `@AGENTS.md`
-import — do not re-read it.
+import — do not re-read it. The directory-level `CLAUDE.md` files are **not**
+always loaded: read the one for the area you are about to touch, and put new
+area-specific gotchas there rather than in `AGENTS.md`.
 
 ## Before exploring
 

@@ -7,6 +7,12 @@ import Testing
 @Suite("Codex usage")
 struct CodexUsageTests {
 
+    @Test func appServerUsesSupportedNonInteractiveArguments() {
+        #expect(
+            CodexAppServerClient.processArguments
+                == ["-s", "read-only", "-a", "never", "app-server"])
+    }
+
     @Test func boundedProcessCaptureRejectsOverflowInsteadOfReturningATruncatedPrefix() {
         let capture = BoundedProcessOutputCapture(maxBytes: 4)
         capture.append(Data("ab".utf8))

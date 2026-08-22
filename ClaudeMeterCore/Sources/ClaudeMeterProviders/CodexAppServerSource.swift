@@ -107,6 +107,9 @@ public final class CodexAppServerSource: CodexUsageSourceFetching, @unchecked Se
 
 final class CodexAppServerClient: @unchecked Sendable {
     private static let maxBufferedMessages = 16
+    // App Server only reads account and quota data. `never` keeps the subprocess
+    // noninteractive and is accepted by current Codex CLIs; `untrusted` was removed.
+    static let processArguments = ["-s", "read-only", "-a", "never", "app-server"]
 
     private struct JSONMessage: @unchecked Sendable {
         let value: [String: Any]
@@ -144,7 +147,7 @@ final class CodexAppServerClient: @unchecked Sendable {
         self.stdoutLineContinuation = continuation
 
         process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = ["-s", "read-only", "-a", "untrusted", "app-server"]
+        process.arguments = Self.processArguments
         // Scrub auth-override vars (CODEX_API_KEY, OPENAI_BASE_URL, …) so an env
         // inherited from a terminal launch can't point the read at a different
         // account/provider than the local login.

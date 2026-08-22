@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Codex banked resets appear again, and current Codex versions no longer make
+  Claude Meter quit.** Codex removed its old `untrusted` approval mode, so App
+  Server exited at startup. Claude Meter then fell back to OAuth data without
+  banked resets and could receive `SIGPIPE` while it initialized the closed
+  process. It now uses the supported noninteractive mode.
+
 ## [2.12] - 2026-08-12
 
 ### Changed

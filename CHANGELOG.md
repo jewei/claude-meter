@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.12.1] - 2026-08-22
+
 ### Fixed
 
 - **Codex banked resets appear again, and current Codex versions no longer make
@@ -577,7 +579,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.12...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.12.1...HEAD
+[2.12.1]: https://github.com/jewei/claude-meter/compare/v2.12...v2.12.1
 [2.12]: https://github.com/jewei/claude-meter/compare/v2.11...v2.12
 [2.11]: https://github.com/jewei/claude-meter/compare/v2.10...v2.11
 [2.10]: https://github.com/jewei/claude-meter/compare/v2.9...v2.10

@@ -529,6 +529,20 @@ struct HeroSummary {
     var ink: Color
     var sub: Color
 
+    static func stale(oauthConnected: Bool) -> HeroSummary {
+        let palette = paletteFor(.unknown)
+        return HeroSummary(
+            emoji: "🛰️",
+            title: "Refresh needed",
+            subtitle: oauthConnected
+                ? "Claude data is out of date"
+                : "Open Claude Code or connect OAuth",
+            bg: palette.bg,
+            border: palette.border,
+            ink: palette.ink,
+            sub: palette.sub)
+    }
+
     static func make(models: [AccountCardModel], thresholds: UsageThresholds, now: Date)
         -> HeroSummary
     {

@@ -64,6 +64,13 @@ public struct CachedSnapshotPipeline: Sendable {
                 ]
             )
         }
+        snapshot.limits = snapshot.limits.hidingExpiredStaleWindows(asOf: now)
+        if var accounts = snapshot.accounts {
+            for index in accounts.indices {
+                accounts[index].limits = accounts[index].limits.hidingExpiredStaleWindows(asOf: now)
+            }
+            snapshot.accounts = accounts
+        }
         snapshot.state.isStale = true
         return ParseResult(
             snapshot: snapshot,
@@ -79,6 +86,27 @@ public struct CachedSnapshotPipeline: Sendable {
 }
 
 extension CachedSnapshotPipeline: ClaudeMeterPipeline {}
+
+extension LimitInfo {
+    fileprivate func hidingExpiredStaleWindows(asOf now: Date) -> LimitInfo {
+        func display(_ window: LimitWindow) -> LimitWindow {
+            guard let resetsAt = window.resetsAt, resetsAt <= now else { return window }
+            return LimitWindow()
+        }
+        func display(_ window: LimitWindow?) -> LimitWindow? {
+            window.map { display($0) }
+        }
+
+        return LimitInfo(
+            currentSession: display(currentSession),
+            currentWeekAllModels: display(currentWeekAllModels),
+            currentWeekOpus: display(currentWeekOpus),
+            scopedWeekly: scopedWeekly?.map {
+                ScopedLimitWindow(id: $0.id, window: display($0.window))
+            },
+            extraUsage: extraUsage)
+    }
+}
 
 public enum CachedSnapshotError: Error, LocalizedError {
     case noSnapshot

@@ -36,6 +36,32 @@ struct SourceAttemptTests {
             ])
     }
 
+    @Test func expiredWindowFromStaleCacheBecomesUnknown() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let now = Date(timeIntervalSince1970: 1_000)
+        let snapshot = ClaudeUsageSnapshot(
+            parserVersion: "test",
+            createdAt: now.addingTimeInterval(-600),
+            source: SourceInfo(cliPath: "test", command: "test"),
+            limits: LimitInfo(
+                currentSession: LimitWindow(
+                    percentUsed: 42, resetsAt: now.addingTimeInterval(-60)),
+                currentWeekAllModels: LimitWindow(
+                    percentUsed: 18, resetsAt: now.addingTimeInterval(60))),
+            state: SnapshotState(status: .ok, severity: .normal))
+        let store = SnapshotStore(directory: directory)
+        try store.writeLatest(snapshot)
+
+        let result = try await CachedSnapshotPipeline(store: store).poll(now: now)
+
+        #expect(result.snapshot?.limits.currentSession.percentUsed == nil)
+        #expect(result.snapshot?.limits.currentWeekAllModels.percentUsed == 18)
+        #expect(result.snapshot?.state.isStale == true)
+    }
+
     @Test func corruptCacheIsDistinguishedFromAMissingCache() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

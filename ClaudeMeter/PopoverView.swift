@@ -3,23 +3,17 @@ import ClaudeMeterCore
 import ClaudeMeterProviders
 import SwiftUI
 
-/// Carries the scrolling body's measured content height up to `PopoverView`.
-private struct ContentHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
 struct PopoverView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage(AppSettings.cursorSourceEnabledKey) private var cursorSourceEnabled = false
     @AppStorage(AppSettings.codexSourceEnabledKey) private var codexSourceEnabled = false
     @AppStorage(AppSettings.grokSourceEnabledKey) private var grokSourceEnabled = false
     @AppStorage(AppGroupConfig.cardStyleKey) private var cardStyle = "rings"
     @AppStorage(AppGroupConfig.progressionModeKey) private var progressionMode = "left"
+    @AppStorage(AppSettings.oauthModeKey) private var oauthMode = ""
     @State private var now = Date()
     @State private var showHeatmap = false
     // Tracks whether the popover window is on screen (the view is retained,
@@ -30,8 +24,6 @@ struct PopoverView: View {
     /// Expanded non-Claude provider cards, mirrored from `AppSettings` so toggling
     /// re-renders. Empty by default — see `AppSettings.expandedProviderCards`.
     @State private var expandedCards: Set<String> = AppSettings.expandedProviderCards
-    /// Measured height of the scrolling body's content — see the `.frame` on it.
-    @State private var contentHeight: CGFloat = 0
 
     private var usageThresholds: UsageThresholds {
         AppState.currentThresholds()
@@ -46,21 +38,13 @@ struct PopoverView: View {
     private func isExpanded(_ id: String) -> Bool { expandedCards.contains(id) }
 
     private func toggleCard(_ id: String) {
-        withAnimation(.easeInOut(duration: 0.18)) {
-            if expandedCards.contains(id) {
-                expandedCards.remove(id)
-            } else {
-                expandedCards.insert(id)
-            }
-        }
+        if expandedCards.remove(id) == nil { expandedCards.insert(id) }
         AppSettings.expandedProviderCards = expandedCards
     }
 
-    /// Codex's mark. The asset is an even-odd SVG — the `>` and `—` are cutouts,
-    /// not white fill — so template rendering keeps them and the logo follows the
-    /// ink colour into dark mode. Deliberately *not* severity-tinted: the
-    /// percentage beside it already carries that, and a red-tinted glyph read as
-    /// an alert rather than a brand.
+    /// OpenAI's mark follows the ink colour into dark mode. Deliberately *not*
+    /// severity-tinted: the percentage beside it already carries that, and a
+    /// red-tinted glyph reads as an alert rather than a brand.
     private var codexMark: some View {
         Image("CodexLogo")
             .renderingMode(.template)
@@ -76,6 +60,9 @@ struct PopoverView: View {
             .font(.system(size: 9, weight: .bold))
             .foregroundStyle(Color.pfInkMuted)
             .rotationEffect(.degrees(expanded ? 0 : -90))
+            .animation(
+                reduceMotion ? nil : .easeInOut(duration: 0.18),
+                value: expanded)
     }
 
     /// `true` when the user chose to display usage instead of energy-left.
@@ -94,12 +81,7 @@ struct PopoverView: View {
     var body: some View {
         VStack(spacing: 0) {
             headerBar
-            // The body scrolls under a screen-derived cap. Without this the popover
-            // grows to whatever the content needs, so someone running two Claude
-            // accounts plus Cursor, Codex and Grok runs off the bottom of a 13"
-            // display. Collapsing cards trims the common case; this is what makes
-            // *any* configuration fit.
-            ScrollView(.vertical) {
+            PopoverTransitionBody(desiredExpandedCards: expandedCards) {
                 VStack(spacing: 0) {
                     if showHeatmap {
                         heatmapBody
@@ -113,25 +95,12 @@ struct PopoverView: View {
                         mainContent
                     }
                 }
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: ContentHeightKey.self, value: proxy.size.height)
-                    }
-                )
             }
-            .scrollBounceBehavior(.basedOnSize)
-            .onPreferenceChange(ContentHeightKey.self) { height in
-                contentHeight = height
-            }
-            // An explicit height, not just a cap. A ScrollView has no definite
-            // ideal height, so the menu-bar window — which sizes itself to its
-            // content — had nothing to size against and settled far shorter than
-            // the content or the cap. Measuring the content and pinning the frame
-            // makes the popover exactly as tall as it needs, up to the screen cap,
-            // and only then scrolls.
-            .frame(height: min(max(contentHeight, 120), Self.maxBodyHeight))
         }
+        // AppKit briefly makes the host taller than SwiftUI's committed fitting
+        // size while expanding. Fill that proposal and pin content to the top so
+        // the pane does not center itself, drift down, then snap back.
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(Color.pfPopover)
         .environment(\.popoverIsVisible, isVisible)
         .task(id: isVisible) {
@@ -204,18 +173,6 @@ struct PopoverView: View {
         .padding(.bottom, 8)
     }
 
-    /// Cap for the scrolling body, derived from the screen so a 13" laptop and a
-    /// 27" display each show as much as they can.
-    ///
-    /// `visibleFrame` already excludes the menu bar and Dock, so only a small
-    /// margin plus this view's own header is subtracted — the popover is allowed
-    /// to use essentially the full height available to it. `NSScreen.main` can be
-    /// nil for an `LSUIElement` app with no key window, hence the fallback.
-    private static var maxBodyHeight: CGFloat {
-        let screen = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame.height ?? 900
-        return max(560, screen - 72)
-    }
-
     // MARK: - Main content
 
     private var hasCursor: Bool {
@@ -267,9 +224,12 @@ struct PopoverView: View {
             if let snap = appState.snapshot {
                 claudeNotices(snap)
                 let models = accountModels(snap)
+                let claudeDataIsStale = appState.claudeIsStale || snap.state.isStale
                 HeroView(
-                    summary: HeroSummary.make(
-                        models: models, thresholds: usageThresholds, now: now))
+                    summary: claudeDataIsStale
+                        ? HeroSummary.stale(oauthConnected: !oauthMode.isEmpty)
+                        : HeroSummary.make(
+                            models: models, thresholds: usageThresholds, now: now))
                 accountsSection(models)
                 if let extra = snap.limits.extraUsage, extra.hasSpend {
                     extraUsageCard(extra)
@@ -324,7 +284,11 @@ struct PopoverView: View {
                 tint: .pfInkMuted)
         }
         if appState.claudeIsStale || snap.state.isStale {
-            noticeBanner("Data may be stale", systemImage: "clock.fill", tint: .pfInkMuted)
+            let message =
+                oauthMode.isEmpty
+                ? "Claude data is stale — open Claude Code or connect OAuth in Settings"
+                : "Claude data may be stale"
+            noticeBanner(message, systemImage: "clock.fill", tint: .pfInkMuted)
         }
     }
 
@@ -625,7 +589,12 @@ struct PopoverView: View {
                 toggleCard(Self.cursorCardID)
             } label: {
                 HStack(spacing: 7) {
-                    Image("CursorLogo").resizable().scaledToFit().frame(width: 15, height: 15)
+                    Image("CursorLogo")
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .foregroundStyle(Color.pfInk)
+                        .frame(width: 15, height: 15)
                     Text("Cursor")
                         .font(PFont.display(14, .semibold))
                         .foregroundStyle(Color.pfInk)
@@ -652,17 +621,20 @@ struct PopoverView: View {
                     .foregroundStyle(Color.pfInkMuted)
             }
             if expanded {
-                if usage.clampedAutoPercent != nil || usage.clampedAPIPercent != nil {
-                    Divider().overlay(Color.pfCardBorder)
-                    VStack(spacing: 7) {
-                        if let percent = usage.clampedAutoPercent {
-                            cursorUsageRow("Auto + Composer", percent: percent)
-                        }
-                        if let percent = usage.clampedAPIPercent {
-                            cursorUsageRow("API", percent: percent)
+                Group {
+                    if usage.clampedAutoPercent != nil || usage.clampedAPIPercent != nil {
+                        Divider().overlay(Color.pfCardBorder)
+                        VStack(spacing: 7) {
+                            if let percent = usage.clampedAutoPercent {
+                                cursorUsageRow("Auto + Composer", percent: percent)
+                            }
+                            if let percent = usage.clampedAPIPercent {
+                                cursorUsageRow("API", percent: percent)
+                            }
                         }
                     }
                 }
+                .popoverDisclosure(id: Self.cursorCardID)
             }
         }
         .padding(.horizontal, 14)
@@ -761,19 +733,23 @@ struct PopoverView: View {
                     .foregroundStyle(Color.pfInkMuted)
             }
             if expanded {
-                if let resets = usage.rateLimitResets {
-                    Divider().overlay(Color.pfCardBorder)
-                    VStack(spacing: 5) {
-                        codexDetailRow(
-                            "Usage resets",
-                            value: "\(resets.availableCount) available")
-                        if let expiration = resets.nearestExpiration(after: now) {
+                Group {
+                    if let resets = usage.rateLimitResets {
+                        Divider().overlay(Color.pfCardBorder)
+                        VStack(spacing: 5) {
                             codexDetailRow(
-                                "Next expiry",
-                                value: ResetPhrase.spoken(until: expiration, asOf: now) ?? "soon")
+                                "Usage resets",
+                                value: "\(resets.availableCount) available")
+                            if let expiration = resets.nearestExpiration(after: now) {
+                                codexDetailRow(
+                                    "Next expiry",
+                                    value: ResetPhrase.spoken(until: expiration, asOf: now)
+                                        ?? "soon")
+                            }
                         }
                     }
                 }
+                .popoverDisclosure(id: cardID)
             }
         }
         .padding(.horizontal, 14)

@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.13.1] - 2026-08-28
+
 ### Fixed
 
 - **OAuth throttling no longer looks like a broken connection.** Settings now says
@@ -604,7 +606,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.13...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.13.1...HEAD
+[2.13.1]: https://github.com/jewei/claude-meter/compare/v2.13...v2.13.1
 [2.13]: https://github.com/jewei/claude-meter/compare/v2.12.1...v2.13
 [2.12.1]: https://github.com/jewei/claude-meter/compare/v2.12...v2.12.1
 [2.12]: https://github.com/jewei/claude-meter/compare/v2.11...v2.12

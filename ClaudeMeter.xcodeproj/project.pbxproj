@@ -489,7 +489,7 @@
 				CODE_SIGN_ENTITLEMENTS = ClaudeMeter/ClaudeMeter.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 218;
+				CURRENT_PROJECT_VERSION = 220;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -499,7 +499,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.13;
+				MARKETING_VERSION = 2.13.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jewei.claudemeter;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -514,7 +514,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ClaudeMeterWidget/ClaudeMeterWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 218;
+				CURRENT_PROJECT_VERSION = 220;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "ClaudeMeterWidget/ClaudeMeterWidget-Info.plist";
@@ -524,7 +524,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.13;
+				MARKETING_VERSION = 2.13.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jewei.claudemeter.widget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -540,7 +540,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ClaudeMeterWidget/ClaudeMeterWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 218;
+				CURRENT_PROJECT_VERSION = 220;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -551,7 +551,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.13;
+				MARKETING_VERSION = 2.13.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jewei.claudemeter.widget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -570,7 +570,7 @@
 				CODE_SIGN_ENTITLEMENTS = ClaudeMeter/ClaudeMeter.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 218;
+				CURRENT_PROJECT_VERSION = 220;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ClaudeMeter/Info.plist;
@@ -579,7 +579,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.13;
+				MARKETING_VERSION = 2.13.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jewei.claudemeter;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;

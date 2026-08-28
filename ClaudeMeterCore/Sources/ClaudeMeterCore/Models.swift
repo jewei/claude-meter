@@ -515,6 +515,151 @@ public struct ModelUsage: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - Main meter
+
+/// Provider allowed to own the app's primary energy meter. Optional providers with
+/// incompatible quota semantics remain secondary cards.
+public enum MainMeterProvider: String, Codable, Equatable, Sendable, CaseIterable {
+    case claude
+    case codex
+
+    public var displayName: String {
+        switch self {
+        case .claude: "Claude"
+        case .codex: "Codex"
+        }
+    }
+}
+
+/// Provider-neutral quota reading shared by the app, notification policy, and widget.
+/// Provider wire models stay in `ClaudeMeterProviders`; this is the durable Core model.
+public struct MainMeterReading: Codable, Equatable, Sendable {
+    public var schemaVersion: Int
+    public var provider: MainMeterProvider
+    public var accountID: String
+    public var accountLabel: String
+    public var plan: String?
+    public var limits: LimitInfo
+    public var sessionLabel: String
+    public var weeklyLabel: String
+    public var observedAt: Date
+    /// Monotonic selection generation mirrored through the App Group. The widget
+    /// rejects an older file after provider/account/source settings change.
+    public var selectionRevision: Int
+    /// A source can explicitly mark an otherwise recent observation stale, such as
+    /// Claude's cached-snapshot fallback. Age-based staleness is computed by consumers.
+    public var sourceMarkedStale: Bool
+
+    public init(
+        schemaVersion: Int = 1,
+        provider: MainMeterProvider,
+        accountID: String,
+        accountLabel: String,
+        plan: String? = nil,
+        limits: LimitInfo,
+        sessionLabel: String = "5-hr",
+        weeklyLabel: String = "week",
+        observedAt: Date,
+        selectionRevision: Int = 0,
+        sourceMarkedStale: Bool = false
+    ) {
+        self.schemaVersion = schemaVersion
+        self.provider = provider
+        self.accountID = accountID
+        self.accountLabel = accountLabel
+        self.plan = plan
+        self.limits = limits
+        self.sessionLabel = sessionLabel
+        self.weeklyLabel = weeklyLabel
+        self.observedAt = observedAt
+        self.selectionRevision = selectionRevision
+        self.sourceMarkedStale = sourceMarkedStale
+    }
+
+    public var stableIdentity: String { "\(provider.rawValue):\(accountID)" }
+
+    public func severity(
+        thresholds: UsageThresholds = .default,
+        asOf now: Date = Date()
+    ) -> UsageSeverity {
+        limits.bindingWindows.reduce(.unknown) { result, descriptor in
+            UsageSeverity.highest(
+                result,
+                thresholds.severity(for: descriptor.window.resolved(asOf: now).percentUsed))
+        }
+    }
+}
+
+/// Account selection policy shared by app presentation, widget publication, and tests.
+public enum MainMeterPolicy {
+    /// A configured pin is exact: a missing pinned reading returns nil rather than
+    /// changing the percentage's account. Without a pin, the account nearest its
+    /// limit owns every main-meter surface.
+    public static func primary(
+        from readings: [MainMeterReading],
+        pinnedAccountID: String?,
+        asOf now: Date = Date()
+    ) -> MainMeterReading? {
+        guard let first = readings.first else { return nil }
+        if let pinnedAccountID {
+            return readings.first { $0.accountID == pinnedAccountID }
+        }
+        var selected = first
+        var selectedUsage = bindingUsage(first, asOf: now)
+        for candidate in readings.dropFirst() {
+            let candidateUsage = bindingUsage(candidate, asOf: now)
+            if candidateUsage > selectedUsage {
+                selected = candidate
+                selectedUsage = candidateUsage
+            }
+        }
+        return selected
+    }
+
+    public static func considered(
+        _ readings: [MainMeterReading],
+        pinnedAccountID: String?
+    ) -> [MainMeterReading] {
+        guard let pinnedAccountID else { return readings }
+        return readings.first { $0.accountID == pinnedAccountID }.map { [$0] } ?? []
+    }
+
+    public static func acceptsPublished(
+        _ reading: MainMeterReading,
+        provider: MainMeterProvider,
+        pinnedAccountID: String?,
+        selectionRevision: Int
+    ) -> Bool {
+        guard reading.provider == provider,
+            reading.selectionRevision == selectionRevision
+        else { return false }
+        return pinnedAccountID == nil || reading.accountID == pinnedAccountID
+    }
+
+    public static func shouldBumpSelectionRevision(
+        previous: MainMeterReading?,
+        current: MainMeterReading?,
+        configurationChanged: Bool
+    ) -> Bool {
+        configurationChanged || previous?.stableIdentity != current?.stableIdentity
+    }
+
+    public static func shouldReloadWidget(
+        previous: MainMeterReading?,
+        current: MainMeterReading?
+    ) -> Bool {
+        guard var previous, let current else { return previous != current }
+        previous.observedAt = current.observedAt
+        return previous != current
+    }
+
+    private static func bindingUsage(_ reading: MainMeterReading, asOf now: Date) -> Double {
+        reading.limits.bindingWindows.compactMap {
+            $0.window.resolved(asOf: now).percentUsed
+        }.max() ?? -1
+    }
+}
+
 // MARK: - MCP
 
 /// Legacy snapshot compatibility for statusline fields no current UI consumes.

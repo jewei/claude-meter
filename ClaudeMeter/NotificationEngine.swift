@@ -83,9 +83,9 @@ actor NotificationEngine {
     // MARK: - Processing
 
     func process(
-        snapshot: ClaudeUsageSnapshot,
-        previous: ClaudeUsageSnapshot?,
-        recoveryBaseline: ClaudeUsageSnapshot?,
+        reading: MainMeterReading,
+        previous: MainMeterReading?,
+        recoveryBaseline: MainMeterReading?,
         isStale: Bool
     ) async {
         guard !isStale, isEnabled(), await isAuthorized() else {
@@ -97,7 +97,7 @@ actor NotificationEngine {
         pruneExpiredKeys()
         let thresholds = AppGroupConfig.currentThresholds(defaults: defaults)
         let pending = NotificationPolicy.triggers(
-            snapshot: snapshot,
+            reading: reading,
             previous: previous,
             recoveryBaseline: recoveryBaseline,
             thresholds: thresholds,
@@ -105,17 +105,17 @@ actor NotificationEngine {
         )
 
         for trigger in pending {
-            await deliver(trigger: trigger, snapshot: snapshot, now: now)
+            await deliver(trigger: trigger, reading: reading, now: now)
         }
 
         if defaults.bool(forKey: AppSettings.predictiveNotificationsEnabledKey) {
             let predictive = predictiveTracker.observe(
-                snapshot: snapshot,
+                snapshot: predictiveSnapshot(for: reading),
                 thresholds: thresholds,
                 now: now
             )
             for trigger in predictive {
-                await deliverPredictive(trigger: trigger)
+                await deliverPredictive(trigger: trigger, reading: reading)
             }
         } else {
             predictiveTracker.reset()
@@ -124,31 +124,23 @@ actor NotificationEngine {
 
     // MARK: - Delivery
 
-    private func deliver(trigger: NotificationTrigger, snapshot: ClaudeUsageSnapshot, now: Date)
-        async
-    {
+    private func deliver(trigger: NotificationTrigger, reading: MainMeterReading, now: Date) async {
         guard let scope = trigger.typedScope, let level = trigger.typedLevel else { return }
-        let window: LimitWindow
-        switch scope {
-        case .session: window = snapshot.limits.currentSession
-        case .weeklyOpus: window = snapshot.limits.currentWeekOpus ?? LimitWindow()
-        case .weekly: window = snapshot.limits.currentWeekAllModels
-        }
-        // The whole app speaks "energy left", so notifications do too.
+        let window = reading.limits.window(for: scope) ?? LimitWindow()
         let left = leftText(window, now: now)
-        let energy = energyName(for: scope)
-        let key = NotificationPolicy.dedupKey(
-            scope: scope,
-            level: level,
-            resetAt: trigger.resetAt
-        )
+        let energy = energyName(for: scope, reading: reading)
+        let key = notificationKey(
+            reading: reading, scope: scope, level: level, resetAt: trigger.resetAt)
+        let legacyKey = legacyClaudeKey(
+            reading: reading, scope: scope, level: level, resetAt: trigger.resetAt)
+        let account = reading.accountLabel
 
         if level == .recovered {
-            guard !hasFired(key: key) else { return }
+            guard !hasFired(key: key, legacyKey: legacyKey) else { return }
             let delivered = await post(
                 id: key,
                 title: "You're refueled! 🎉",
-                body: "Your \(energy) is back to \(left). Go get 'em."
+                body: "\(account)'s \(energy) is back to \(left). Go get 'em."
             )
             if delivered { markFired(key: key) }
             return
@@ -158,34 +150,47 @@ actor NotificationEngine {
             "\(scope == .session ? "refills" : "resets") \(resetDescription(trigger.resetAt))"
 
         if level == .critical {
-            guard !hasFired(key: key) else { return }
+            guard !hasFired(key: key, legacyKey: legacyKey) else { return }
             let delivered = await post(
                 id: key,
                 title: "Almost tapped out 🪫",
-                body: "Your \(energy) is at \(left) — \(refuel). Easy now."
+                body: "\(account)'s \(energy) is at \(left) — \(refuel). Easy now."
             )
             if delivered { markFired(key: key) }
         } else if level == .warning {
-            let criticalKey = NotificationPolicy.dedupKey(
-                scope: scope,
-                level: .critical,
-                resetAt: trigger.resetAt
-            )
-            guard !hasFired(key: key), !hasFired(key: criticalKey) else { return }
+            let criticalKey = notificationKey(
+                reading: reading, scope: scope, level: .critical, resetAt: trigger.resetAt)
+            let legacyCriticalKey = legacyClaudeKey(
+                reading: reading, scope: scope, level: .critical, resetAt: trigger.resetAt)
+            guard !hasFired(key: key, legacyKey: legacyKey),
+                !hasFired(key: criticalKey, legacyKey: legacyCriticalKey)
+            else { return }
             let delivered = await post(
                 id: key,
                 title: "Running low ⚡",
-                body: "Your \(energy) is at \(left) — \(refuel). Maybe touch grass? 🌱"
+                body: "\(account)'s \(energy) is at \(left) — \(refuel). Maybe touch grass? 🌱"
             )
             if delivered { markFired(key: key) }
         }
     }
 
-    private func deliverPredictive(trigger: PredictiveNotificationTrigger) async {
+    private func deliverPredictive(
+        trigger: PredictiveNotificationTrigger,
+        reading: MainMeterReading
+    ) async {
         guard let scope = trigger.typedScope else { return }
         let key = trigger.dedupKey
-        guard !hasFired(key: key) else { return }
-        let energy = energyName(for: scope)
+        let legacyKey: String? =
+            reading.provider == .claude
+            ? PredictiveNotificationTrigger(
+                accountID: reading.accountID,
+                scope: trigger.scope,
+                resetAt: trigger.resetAt,
+                secondsUntilDepleted: trigger.secondsUntilDepleted
+            ).dedupKey
+            : nil
+        guard !hasFired(key: key, legacyKey: legacyKey) else { return }
+        let energy = energyName(for: scope, reading: reading)
         let estimate = RunsOutText.formatted(
             trigger.secondsUntilDepleted,
             kind: scope.kind
@@ -194,7 +199,7 @@ actor NotificationEngine {
             id: key,
             title: "Running hot ⚡",
             body:
-                "At this pace, your \(energy) may run out in about \(estimate), before it refills."
+                "At this pace, \(reading.accountLabel)'s \(energy) may run out in about \(estimate), before it refills."
         )
         if delivered { markFired(key: key) }
     }
@@ -212,12 +217,70 @@ actor NotificationEngine {
         return "\(Int(left.rounded()))%"
     }
 
-    private func energyName(for scope: LimitWindowScope) -> String {
+    private func energyName(
+        for scope: LimitWindowScope,
+        reading: MainMeterReading
+    ) -> String {
         switch scope {
-        case .session: return "5-hour energy"
+        case .session: return "\(reading.sessionLabel) energy"
         case .weeklyOpus: return "weekly Opus fuel"
-        case .weekly: return "weekly fuel"
+        case .weekly: return "\(reading.weeklyLabel) fuel"
         }
+    }
+
+    private func notificationKey(
+        reading: MainMeterReading,
+        scope: LimitWindowScope,
+        level: NotificationLevel,
+        resetAt: Date
+    ) -> String {
+        NotificationPolicy.dedupKey(
+            scope: "\(notificationNamespace(reading)).\(scope.rawValue)",
+            level: level.rawValue,
+            resetAt: resetAt)
+    }
+
+    private func legacyClaudeKey(
+        reading: MainMeterReading,
+        scope: LimitWindowScope,
+        level: NotificationLevel,
+        resetAt: Date
+    ) -> String? {
+        guard reading.provider == .claude else { return nil }
+        return NotificationPolicy.dedupKey(scope: scope, level: level, resetAt: resetAt)
+    }
+
+    private func notificationNamespace(_ reading: MainMeterReading) -> String {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in reading.stableIdentity.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return "\(reading.provider.rawValue).\(String(hash, radix: 16))"
+    }
+
+    private func predictiveSnapshot(for reading: MainMeterReading) -> ClaudeUsageSnapshot {
+        let identity = notificationNamespace(reading)
+        let thresholds = AppGroupConfig.currentThresholds(defaults: defaults)
+        let severity = reading.severity(thresholds: thresholds)
+        return ClaudeUsageSnapshot(
+            parserVersion: "main-meter-1",
+            createdAt: reading.observedAt,
+            lastSuccessfulPollAt: reading.observedAt,
+            source: SourceInfo(
+                cliPath: reading.provider.rawValue,
+                command: "main-meter"),
+            limits: reading.limits,
+            state: SnapshotState(status: .ok, severity: severity),
+            accounts: [
+                AccountUsage(
+                    id: identity,
+                    label: reading.accountLabel,
+                    limits: reading.limits,
+                    lastSuccessfulPollAt: reading.observedAt,
+                    severity: severity,
+                    isActive: true)
+            ])
     }
 
     private func post(
@@ -246,6 +309,10 @@ actor NotificationEngine {
 
     private func hasFired(key: String) -> Bool {
         firedKeys().contains(key)
+    }
+
+    private func hasFired(key: String, legacyKey: String?) -> Bool {
+        hasFired(key: key) || legacyKey.map { hasFired(key: $0) } == true
     }
 
     private func markFired(key: String) {

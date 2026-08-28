@@ -95,18 +95,18 @@ private enum WFont {
 
 struct ClaudeMeterEntry: TimelineEntry {
     let date: Date
-    let snapshot: ClaudeUsageSnapshot?
+    let reading: MainMeterReading?
     let thresholds: UsageThresholds
     let isStale: Bool
 
     init(
         date: Date,
-        snapshot: ClaudeUsageSnapshot?,
+        reading: MainMeterReading?,
         thresholds: UsageThresholds = .default,
         isStale: Bool = false
     ) {
         self.date = date
-        self.snapshot = snapshot
+        self.reading = reading
         self.thresholds = thresholds
         self.isStale = isStale
     }
@@ -116,7 +116,7 @@ struct ClaudeMeterEntry: TimelineEntry {
 
 struct ClaudeMeterProvider: TimelineProvider {
     func placeholder(in context: Context) -> ClaudeMeterEntry {
-        ClaudeMeterEntry(date: Date(), snapshot: nil)
+        ClaudeMeterEntry(date: Date(), reading: nil)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (ClaudeMeterEntry) -> Void) {
@@ -130,15 +130,15 @@ struct ClaudeMeterProvider: TimelineProvider {
         let entry = makeEntry(at: now)
 
         let nextReset = [
-            entry.snapshot?.limits.currentSession.resetsAt,
-            entry.snapshot?.limits.currentWeekAllModels.resetsAt,
-            entry.snapshot?.limits.currentWeekOpus?.resetsAt,
+            entry.reading?.limits.currentSession.resetsAt,
+            entry.reading?.limits.currentWeekAllModels.resetsAt,
+            entry.reading?.limits.currentWeekOpus?.resetsAt,
         ]
         .compactMap { $0 }
         .filter { $0 > now }
         .min()
 
-        let staleAt = entry.snapshot?.lastSuccessfulPollAt?.addingTimeInterval(
+        let staleAt = entry.reading?.observedAt.addingTimeInterval(
             AppGroupConfig.defaultStaleAfterSeconds)
         let refreshAt =
             [nextReset, staleAt, now.addingTimeInterval(900)]
@@ -150,21 +150,22 @@ struct ClaudeMeterProvider: TimelineProvider {
     }
 
     private func makeEntry(at date: Date) -> ClaudeMeterEntry {
-        let snapshot = loadSnapshot()
+        let reading = loadReading()
         return ClaudeMeterEntry(
             date: date,
-            snapshot: snapshot,
+            reading: reading,
             thresholds: AppGroupConfig.currentThresholds(),
-            isStale: AppGroupConfig.isSnapshotStale(
-                lastPollAt: snapshot?.lastSuccessfulPollAt, now: date)
+            isStale: reading?.sourceMarkedStale == true
+                || AppGroupConfig.isSnapshotStale(
+                    lastPollAt: reading?.observedAt, now: date)
         )
     }
 
-    private func loadSnapshot() -> ClaudeUsageSnapshot? {
+    private func loadReading() -> MainMeterReading? {
         guard let store = try? SnapshotStore.appGroup(suiteName: AppGroupConfig.suiteName) else {
             return nil
         }
-        return try? store.readLatest()
+        return MainMeterPublication.load(from: store)
     }
 }
 
@@ -180,7 +181,7 @@ struct ClaudeMeterWidget: Widget {
                 .containerBackground(Color.wPopover, for: .widget)
         }
         .configurationDisplayName("Claude Meter")
-        .description("Your Claude energy at a glance.")
+        .description("Your selected energy meter at a glance.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
@@ -238,13 +239,13 @@ private struct WidgetRings: View {
     }
 }
 
-private func ringsBlock(_ snap: ClaudeUsageSnapshot, _ entry: ClaudeMeterEntry, size: CGFloat)
+private func ringsBlock(_ reading: MainMeterReading, _ entry: ClaudeMeterEntry, size: CGFloat)
     -> WidgetRings
 {
     let now = entry.date
     let usage = AppGroupConfig.resolvedProgressionMode() == .used
-    let session = snap.limits.currentSession
-    let week = snap.limits.currentWeekAllModels
+    let session = reading.limits.currentSession
+    let week = reading.limits.currentWeekAllModels
     // Opus counts toward the headline number even though it has no ring of its
     // own. It is frequently the binding limit on Max, and every other surface
     // (menu-bar severity, `bindingDisplayPercent`) includes it — leaving it out
@@ -252,7 +253,7 @@ private func ringsBlock(_ snap: ClaudeUsageSnapshot, _ entry: ClaudeMeterEntry, 
     let lefts = [
         percentLeft(session, asOf: now),
         percentLeft(week, asOf: now),
-        snap.limits.currentWeekOpus.flatMap { percentLeft($0, asOf: now) },
+        reading.limits.currentWeekOpus.flatMap { percentLeft($0, asOf: now) },
     ].compactMap { $0 }
     let center: String
     if let minLeft = lefts.min() {
@@ -325,15 +326,16 @@ private struct WidgetHeader: View {
                     .foregroundStyle(.white)
             }
             .frame(width: 22, height: 22)
-            Text("Claude Meter")
+            Text(headerTitle)
                 .font(WFont.display(13, .semibold))
                 .foregroundStyle(Color.wInk)
+                .lineLimit(1)
             Spacer()
             if entry.isStale {
                 Image(systemName: "clock.badge.exclamationmark")
                     .font(.system(size: 11))
                     .foregroundStyle(Color.wLow)
-            } else if showUpdated, let pollAt = entry.snapshot?.lastSuccessfulPollAt {
+            } else if showUpdated, let pollAt = entry.reading?.observedAt {
                 // `.relative` ticks on its own. Computing the delta against
                 // `entry.date` froze it at render time, so a widget drawn as
                 // "Updated 4s ago" still said 4s a quarter-hour later — the
@@ -345,6 +347,11 @@ private struct WidgetHeader: View {
             }
         }
     }
+
+    private var headerTitle: String {
+        guard let reading = entry.reading else { return "Claude Meter" }
+        return "\(reading.provider.displayName) · \(reading.accountLabel)"
+    }
 }
 
 // MARK: - Small
@@ -353,15 +360,15 @@ private struct SmallWidgetView: View {
     let entry: ClaudeMeterEntry
 
     var body: some View {
-        if let snap = entry.snapshot {
+        if let reading = entry.reading {
             VStack(spacing: 8) {
-                ringsBlock(snap, entry, size: 78)
+                ringsBlock(reading, entry, size: 78)
                 VStack(spacing: 3) {
                     EnergyRow(
-                        label: "5-hr", window: snap.limits.currentSession,
+                        label: reading.sessionLabel, window: reading.limits.currentSession,
                         thresholds: entry.thresholds, referenceDate: entry.date, showReset: false)
                     EnergyRow(
-                        label: "week", window: snap.limits.currentWeekAllModels,
+                        label: reading.weeklyLabel, window: reading.limits.currentWeekAllModels,
                         thresholds: entry.thresholds, referenceDate: entry.date, showReset: false)
                 }
             }
@@ -378,18 +385,18 @@ private struct MediumWidgetView: View {
     let entry: ClaudeMeterEntry
 
     var body: some View {
-        if let snap = entry.snapshot {
+        if let reading = entry.reading {
             HStack(spacing: 16) {
-                ringsBlock(snap, entry, size: 96)
+                ringsBlock(reading, entry, size: 96)
                 VStack(alignment: .leading, spacing: 7) {
                     WidgetHeader(entry: entry)
                     EnergyRow(
-                        label: "5-hr", window: snap.limits.currentSession,
+                        label: reading.sessionLabel, window: reading.limits.currentSession,
                         thresholds: entry.thresholds, referenceDate: entry.date)
                     EnergyRow(
-                        label: "week", window: snap.limits.currentWeekAllModels,
+                        label: reading.weeklyLabel, window: reading.limits.currentWeekAllModels,
                         thresholds: entry.thresholds, referenceDate: entry.date)
-                    if let opus = snap.limits.currentWeekOpus {
+                    if let opus = reading.limits.currentWeekOpus {
                         EnergyRow(
                             label: "opus", window: opus, thresholds: entry.thresholds,
                             referenceDate: entry.date)
@@ -409,19 +416,19 @@ private struct LargeWidgetView: View {
     let entry: ClaudeMeterEntry
 
     var body: some View {
-        if let snap = entry.snapshot {
+        if let reading = entry.reading {
             VStack(alignment: .leading, spacing: 16) {
                 WidgetHeader(entry: entry, showUpdated: true)
                 HStack(spacing: 18) {
-                    ringsBlock(snap, entry, size: 120)
+                    ringsBlock(reading, entry, size: 120)
                     VStack(alignment: .leading, spacing: 10) {
                         EnergyRow(
-                            label: "5-hr", window: snap.limits.currentSession,
+                            label: reading.sessionLabel, window: reading.limits.currentSession,
                             thresholds: entry.thresholds, referenceDate: entry.date)
                         EnergyRow(
-                            label: "week", window: snap.limits.currentWeekAllModels,
+                            label: reading.weeklyLabel, window: reading.limits.currentWeekAllModels,
                             thresholds: entry.thresholds, referenceDate: entry.date)
-                        if let opus = snap.limits.currentWeekOpus {
+                        if let opus = reading.limits.currentWeekOpus {
                             EnergyRow(
                                 label: "opus", window: opus, thresholds: entry.thresholds,
                                 referenceDate: entry.date)
@@ -467,20 +474,16 @@ private struct NoDataView: View {
 } timeline: {
     ClaudeMeterEntry(
         date: Date(),
-        snapshot: ClaudeUsageSnapshot(
-            parserVersion: "0.1.0",
-            createdAt: Date(),
-            lastSuccessfulPollAt: Date(),
-            source: SourceInfo(cliPath: "/opt/homebrew/bin/claude", command: "claude status"),
+        reading: MainMeterReading(
+            provider: .codex,
+            accountID: "preview",
+            accountLabel: "Pi",
+            plan: "Pro",
             limits: LimitInfo(
                 currentSession: LimitWindow(
                     percentUsed: 22, resetsAt: Date().addingTimeInterval(2700)),
                 currentWeekAllModels: LimitWindow(
-                    percentUsed: 36, resetsAt: Date().addingTimeInterval(5 * 86400)),
-                currentWeekOpus: LimitWindow(
-                    percentUsed: 58, resetsAt: Date().addingTimeInterval(5 * 86400))
-            ),
-            state: SnapshotState(status: .ok, severity: .normal)
-        )
+                    percentUsed: 36, resetsAt: Date().addingTimeInterval(5 * 86400))),
+            observedAt: Date())
     )
 }

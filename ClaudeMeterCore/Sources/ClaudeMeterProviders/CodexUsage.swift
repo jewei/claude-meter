@@ -53,8 +53,8 @@ public struct CodexLimitWindow: Codable, Equatable, Sendable {
         usedPercent.map { Self.clampPercent(100 - $0) }
     }
 
-    public var cardDisplayPercent: Double? {
-        usedPercent
+    public func displayPercent(showUsage: Bool) -> Double? {
+        showUsage ? usedPercent : energyLeftPercent
     }
 
     public var displayLabel: String {
@@ -132,6 +132,9 @@ public struct CodexUsage: Codable, Equatable, Sendable {
     public var accountEmail: String?
     public var maskedAccountEmail: String?
     public var plan: String?
+    /// Authentication reported by the source. `nil` means the usage fetch
+    /// succeeded but account metadata was unavailable.
+    public var authMode: CodexAccountAuthMode?
     public var source: CodexUsageSource
     public var updatedAt: Date
 
@@ -142,6 +145,7 @@ public struct CodexUsage: Codable, Equatable, Sendable {
         rateLimitResets: CodexRateLimitResets? = nil,
         accountEmail: String?,
         plan: String?,
+        authMode: CodexAccountAuthMode? = nil,
         source: CodexUsageSource,
         updatedAt: Date
     ) {
@@ -152,6 +156,7 @@ public struct CodexUsage: Codable, Equatable, Sendable {
         self.accountEmail = accountEmail
         self.maskedAccountEmail = accountEmail.map(AccountDisplayPrivacy.maskedEmail)
         self.plan = plan
+        self.authMode = authMode
         self.source = source
         self.updatedAt = updatedAt
     }
@@ -238,6 +243,7 @@ public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
             rateLimitResets: rateLimitResetCredits?.codexRateLimitResets,
             accountEmail: account?.email,
             plan: rateLimits.planType ?? account?.plan,
+            authMode: account?.authMode,
             source: source,
             updatedAt: now)
     }
@@ -356,6 +362,7 @@ public struct CodexOAuthUsageResponse: Decodable, Sendable {
             usageCredits: credits?.codexCredits,
             accountEmail: accountEmail,
             plan: planType,
+            authMode: .chatGPT,
             source: source,
             updatedAt: now)
     }
@@ -403,26 +410,27 @@ public struct CodexOAuthUsageResponse: Decodable, Sendable {
     }
 }
 
-public enum CodexUsageError: Error, LocalizedError, Equatable {
+public enum CodexUsageError: Error, LocalizedError, Equatable, Sendable {
     case noUsageData
     case cliNotFound
     case loginRequired
-    case sourceUnavailable
     case invalidRPCResponse
     case rpcTimedOut(String)
     case rpcFailed(String)
     case httpError(Int)
+    case allSourcesFailed(appServer: String, directOAuth: String)
 
     public var errorDescription: String? {
         switch self {
         case .noUsageData: "Codex returned no usage windows."
         case .cliNotFound: "Codex CLI not found. Install Codex or set the Codex CLI path."
         case .loginRequired: "Codex login required. Run `codex login`."
-        case .sourceUnavailable: "Codex usage source unavailable."
         case .invalidRPCResponse: "Codex CLI returned an unexpected response."
         case .rpcTimedOut(let method): "Codex CLI timed out during \(method)."
         case .rpcFailed(let message): "Codex CLI request failed: \(message)"
         case .httpError(let code): "Codex usage request failed (HTTP \(code))."
+        case .allSourcesFailed(let appServer, let directOAuth):
+            "Codex App Server failed: \(appServer) Direct OAuth failed: \(directOAuth)"
         }
     }
 }

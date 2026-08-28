@@ -13,6 +13,22 @@ struct NotificationPolicyTests {
         LimitWindow(percentUsed: percent, resetsAt: resetAt, rawResetText: "2:50pm")
     }
 
+    private func meter(
+        provider: MainMeterProvider = .codex,
+        accountID: String = "work",
+        session: Double?,
+        week: Double? = 30
+    ) -> MainMeterReading {
+        MainMeterReading(
+            provider: provider,
+            accountID: accountID,
+            accountLabel: "Work",
+            limits: LimitInfo(
+                currentSession: window(percent: session),
+                currentWeekAllModels: window(percent: week)),
+            observedAt: fixedNow)
+    }
+
     private func snapshot(session: Double?, week: Double? = 30) -> ClaudeUsageSnapshot {
         ClaudeUsageSnapshot(
             parserVersion: "0.1.0",
@@ -245,6 +261,31 @@ struct NotificationPolicyTests {
         )
         #expect(
             NotificationPolicy.triggers(snapshot: current, previous: nil, now: fixedNow).isEmpty)
+    }
+
+    @Test("Main meter policy fires for one stable provider account")
+    func mainMeterCrossing() {
+        let previous = meter(session: 70)
+        let current = meter(session: 85)
+        let triggers = NotificationPolicy.triggers(
+            reading: current, previous: previous, now: fixedNow)
+        #expect(triggers.contains { $0.scope == "session" && $0.level == "warning" })
+    }
+
+    @Test("Main meter policy ignores baselines from another provider or account")
+    func mainMeterIdentitySwitch() {
+        let claude = meter(provider: .claude, accountID: "work", session: 70)
+        let otherCodex = meter(provider: .codex, accountID: "personal", session: 70)
+        let current = meter(provider: .codex, accountID: "work", session: 96)
+
+        #expect(
+            NotificationPolicy.triggers(
+                reading: current, previous: claude, now: fixedNow
+            ).isEmpty)
+        #expect(
+            NotificationPolicy.triggers(
+                reading: current, previous: otherCodex, now: fixedNow
+            ).isEmpty)
     }
 
     @Test("dedupKey embeds scope, level, and reset epoch")

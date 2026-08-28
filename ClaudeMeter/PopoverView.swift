@@ -13,6 +13,7 @@ struct PopoverView: View {
     @AppStorage(AppSettings.grokSourceEnabledKey) private var grokSourceEnabled = false
     @AppStorage(AppGroupConfig.cardStyleKey) private var cardStyle = "rings"
     @AppStorage(AppGroupConfig.progressionModeKey) private var progressionMode = "left"
+    @AppStorage(AppGroupConfig.mainMeterProviderKey) private var mainMeterProvider = "claude"
     @AppStorage(AppSettings.oauthModeKey) private var oauthMode = ""
     @State private var now = Date()
     @State private var showHeatmap = false
@@ -42,9 +43,18 @@ struct PopoverView: View {
         AppSettings.expandedProviderCards = expandedCards
     }
 
-    /// OpenAI's mark follows the ink colour into dark mode. Deliberately *not*
-    /// severity-tinted: the percentage beside it already carries that, and a
+    /// Brand marks follow the ink colour into dark mode. Deliberately *not*
+    /// severity-tinted: the percentage beside them already carries that, and a
     /// red-tinted glyph reads as an alert rather than a brand.
+    private var claudeMark: some View {
+        Image("ClaudeLogo")
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .frame(width: 15, height: 15)
+            .foregroundStyle(Color.pfInk)
+    }
+
     private var codexMark: some View {
         Image("CodexLogo")
             .renderingMode(.template)
@@ -70,8 +80,21 @@ struct PopoverView: View {
         AppGroupConfig.CardStyle(rawValue: cardStyle) ?? .rings
     }
 
+    nonisolated static func accountCardStyle(
+        requested: AppGroupConfig.CardStyle,
+        provider: MainMeterProvider
+    ) -> AppGroupConfig.CardStyle {
+        switch provider {
+        case .claude, .codex: requested
+        }
+    }
+
     private var usage: Bool {
         (AppGroupConfig.ProgressionMode(rawValue: progressionMode) ?? .left) == .used
+    }
+
+    private var selectedProvider: MainMeterProvider {
+        MainMeterProvider(rawValue: mainMeterProvider) ?? .claude
     }
 
     private var needsOnboarding: Bool {
@@ -89,7 +112,10 @@ struct PopoverView: View {
                         if appState.updateAvailable {
                             updateAvailableNotice
                         }
-                        if let status = appState.serviceStatus, status.level.isIncident {
+                        if selectedProvider == .claude,
+                            let status = appState.serviceStatus,
+                            status.level.isIncident
+                        {
                             serviceStatusNotice(status)
                         }
                         mainContent
@@ -191,6 +217,19 @@ struct PopoverView: View {
         appState.snapshot != nil || hasCursor || hasCodex || hasGrok
     }
 
+    private var hasProviderState: Bool {
+        Self.shouldRenderProviderSections(
+            hasAnyData: hasAnyData,
+            hasCodexLifecycle: codexSourceEnabled && !appState.codexAccounts.isEmpty)
+    }
+
+    nonisolated static func shouldRenderProviderSections(
+        hasAnyData: Bool,
+        hasCodexLifecycle: Bool
+    ) -> Bool {
+        hasAnyData || hasCodexLifecycle
+    }
+
     @ViewBuilder
     private var mainContent: some View {
         if needsOnboarding {
@@ -199,10 +238,12 @@ struct PopoverView: View {
             if hasAnyData { dataState } else { inactiveState }
         } else if !appState.hasEnabledDataSource {
             noSourcesState
-        } else if !hasAnyData && appState.isLoading {
+        } else if !hasAnyData && appState.mainMeterIsLoading {
             loadingState
-        } else if hasAnyData {
+        } else if hasProviderState {
             dataState
+        } else if appState.mainMeterReading == nil, appState.mainMeterError != nil {
+            mainMeterErrorState
         } else if appState.lastError != nil {
             errorState
         } else if cursorSourceEnabled && appState.cursorError != nil {
@@ -221,36 +262,16 @@ struct PopoverView: View {
     @ViewBuilder
     private var dataState: some View {
         VStack(spacing: 12) {
-            if let snap = appState.snapshot {
-                claudeNotices(snap)
-                let models = accountModels(snap)
-                let claudeDataIsStale = appState.claudeIsStale || snap.state.isStale
-                HeroView(
-                    summary: claudeDataIsStale
-                        ? HeroSummary.stale(oauthConnected: !oauthMode.isEmpty)
-                        : HeroSummary.make(
-                            models: models, thresholds: usageThresholds, now: now))
-                accountsSection(models)
-                if let extra = snap.limits.extraUsage, extra.hasSpend {
-                    extraUsageCard(extra)
-                }
-                if !snap.models.isEmpty {
-                    costCard(snap.models)
-                } else {
-                    activityEntryCard
-                }
+            if selectedProvider == .claude {
+                claudeProviderSection(isPrimary: true)
+                codexProviderSection(isPrimary: false)
+            } else {
+                codexProviderSection(isPrimary: true)
+                claudeProviderSection(isPrimary: false)
             }
             if hasCursor, let cursor = appState.cursorUsage {
                 cursorNotices()
                 cursorCard(cursor)
-            }
-            if codexSourceEnabled {
-                ForEach(appState.codexAccounts) { reading in
-                    codexNotices(reading)
-                    if let usage = reading.usage {
-                        codexCard(usage, account: reading.account)
-                    }
-                }
             }
             if hasGrok, let grok = appState.grokUsage {
                 grokNotices()
@@ -260,6 +281,169 @@ struct PopoverView: View {
         .padding(.horizontal, 15)
         .padding(.top, 2)
         .padding(.bottom, 12)
+    }
+
+    @ViewBuilder
+    private func claudeProviderSection(isPrimary: Bool) -> some View {
+        if let snap = appState.snapshot, AppSettings.hasClaudeSource {
+            let models = accountModels(snap)
+            if isPrimary {
+                claudeNotices(snap)
+                if appState.mainMeterReading == nil {
+                    selectedMeterUnavailable(provider: .claude)
+                } else {
+                    HeroView(
+                        summary: appState.mainMeterIsStale
+                            ? HeroSummary.stale(
+                                providerName: "Claude",
+                                recovery: oauthMode.isEmpty
+                                    ? "Open Claude Code or connect OAuth"
+                                    : "Claude data is out of date"
+                            )
+                            : HeroSummary.make(
+                                models: primaryOrdered(models),
+                                thresholds: usageThresholds,
+                                now: now))
+                }
+                accountsSection(primaryOrdered(models))
+                if let extra = snap.limits.extraUsage, extra.hasSpend {
+                    extraUsageCard(extra)
+                }
+                if !snap.models.isEmpty {
+                    costCard(snap.models)
+                } else {
+                    activityEntryCard
+                }
+            } else {
+                sectionLabel("CLAUDE")
+                claudeSecondaryCard(models)
+            }
+        } else if isPrimary {
+            selectedMeterUnavailable(provider: .claude)
+        }
+    }
+
+    @ViewBuilder
+    private func codexProviderSection(isPrimary: Bool) -> some View {
+        if codexSourceEnabled {
+            if isPrimary {
+                ForEach(orderedCodexReadings) { reading in
+                    codexNotices(reading)
+                }
+                if appState.mainMeterReading == nil {
+                    selectedMeterUnavailable(provider: .codex)
+                } else {
+                    HeroView(
+                        summary: appState.mainMeterIsStale
+                            ? HeroSummary.stale(
+                                providerName: "Codex", recovery: "Codex data is out of date")
+                            : HeroSummary.make(
+                                models: codexAccountModels,
+                                thresholds: usageThresholds,
+                                now: now))
+                }
+                if !codexAccountModels.isEmpty {
+                    let style = Self.accountCardStyle(
+                        requested: cardStyleValue,
+                        provider: .codex)
+                    VStack(spacing: 10) {
+                        accountSectionHeader("ACCOUNTS", style: style)
+                        ForEach(orderedCodexReadings) { reading in
+                            codexAccountCard(reading, style: style)
+                        }
+                    }
+                }
+            } else {
+                sectionLabel("CODEX")
+                secondaryProviderCard(
+                    name: "Codex",
+                    models: codexAccountModels,
+                    hasError: orderedCodexReadings.contains(where: { $0.error != nil }),
+                    isStale: orderedCodexReadings.contains(where: {
+                        $0.observationIsStale(asOf: now)
+                    })
+                ) {
+                    codexMark
+                }
+            }
+        } else if isPrimary {
+            selectedMeterUnavailable(provider: .codex)
+        }
+    }
+
+    private func claudeSecondaryCard(_ models: [AccountCardModel]) -> some View {
+        secondaryProviderCard(
+            name: "Claude",
+            models: models,
+            hasError: appState.lastError != nil,
+            isStale: appState.claudeIsStale
+        ) {
+            claudeMark
+        }
+    }
+
+    private func secondaryProviderCard<Mark: View>(
+        name: String,
+        models: [AccountCardModel],
+        hasError: Bool,
+        isStale: Bool,
+        @ViewBuilder mark: () -> Mark
+    ) -> some View {
+        let nearest = models.min { $0.minLeft(now) < $1.minLeft(now) }
+        let left = nearest?.minLeft(now)
+        let displayedPercent = left.map { usage ? 100 - $0 : $0 }
+        let band = nearest?.band(usageThresholds, now) ?? .unknown
+        let tint: Color = band == .full ? .pfEnergyFull : band.color
+        let detail = Self.secondaryProviderDetail(
+            hasError: hasError,
+            isStale: isStale,
+            accountCount: models.count)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                mark()
+                Text(name)
+                    .font(PFont.display(14, .semibold))
+                    .foregroundStyle(Color.pfInk)
+                Spacer()
+                Text(displayedPercent.map { "\(Int($0.rounded()))%" } ?? "—")
+                    .font(PFont.display(14, .bold))
+                    .foregroundStyle(band == .full ? Color.pfInk : tint)
+                    .monospacedDigit()
+            }
+            EnergyBar(
+                fraction: (displayedPercent ?? 0) / 100,
+                color: tint,
+                height: 12)
+            Text(detail)
+                .font(PFont.body(11, .semibold))
+                .foregroundStyle(Color.pfInkMuted)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .chunkyCard()
+    }
+
+    nonisolated static func secondaryProviderDetail(
+        hasError: Bool,
+        isStale: Bool,
+        accountCount: Int
+    ) -> String {
+        if hasError {
+            return accountCount == 0
+                ? "Refresh failed · no usage data"
+                : "Refresh failed · showing last known data"
+        }
+        if isStale { return "Data may be stale" }
+        if accountCount == 0 { return "No usage data" }
+        return accountCount == 1 ? "1 account" : "\(accountCount) accounts"
+    }
+
+    private func selectedMeterUnavailable(provider: MainMeterProvider) -> some View {
+        HeroView(
+            summary: HeroSummary.unavailable(
+                providerName: provider.displayName,
+                detail: appState.mainMeterError
+                    ?? "Turn on \(provider.displayName) in Data settings"))
     }
 
     @ViewBuilder
@@ -306,19 +490,16 @@ struct PopoverView: View {
 
     // MARK: - Accounts
 
-    private func accountsSection(_ models: [AccountCardModel]) -> some View {
-        VStack(spacing: 10) {
-            HStack {
-                Text("ACCOUNTS")
-                    .font(PFont.body(11, .heavy))
-                    .tracking(0.9)
-                    .foregroundStyle(Color.pfSectionLabel)
-                Spacer()
-                if cardStyleValue != .bars { RingLegend() }
-            }
-            .padding(.horizontal, 2)
+    private func accountsSection(
+        _ models: [AccountCardModel],
+        title: String = "ACCOUNTS",
+        provider: MainMeterProvider = .claude
+    ) -> some View {
+        let style = Self.accountCardStyle(requested: cardStyleValue, provider: provider)
+        return VStack(spacing: 10) {
+            accountSectionHeader(title, style: style)
             ForEach(models) { model in
-                if cardStyleValue == .bars {
+                if style == .bars {
                     AccountBarCard(
                         model: model, now: now, thresholds: usageThresholds, usage: usage)
                 } else {
@@ -327,6 +508,58 @@ struct PopoverView: View {
                 }
             }
         }
+    }
+
+    private func accountSectionHeader(
+        _ title: String,
+        style: AppGroupConfig.CardStyle
+    ) -> some View {
+        HStack {
+            Text(title)
+                .font(PFont.body(11, .heavy))
+                .tracking(0.9)
+                .foregroundStyle(Color.pfSectionLabel)
+            Spacer()
+            if style == .rings { RingLegend() }
+        }
+        .padding(.horizontal, 2)
+    }
+
+    private func primaryOrdered(_ models: [AccountCardModel]) -> [AccountCardModel] {
+        guard let selectedID = appState.mainMeterReading?.accountID,
+            let index = models.firstIndex(where: { $0.id == selectedID }),
+            index != models.startIndex
+        else { return models }
+        var ordered = models
+        let selected = ordered.remove(at: index)
+        ordered.insert(selected, at: 0)
+        return ordered
+    }
+
+    private func sectionLabel(_ title: String) -> some View {
+        HStack {
+            Text(title)
+                .font(PFont.body(11, .heavy))
+                .tracking(0.9)
+                .foregroundStyle(Color.pfSectionLabel)
+            Spacer()
+        }
+        .padding(.horizontal, 2)
+    }
+
+    private var orderedCodexReadings: [CodexAccountReading] {
+        let selectedID = selectedProvider == .codex ? appState.mainMeterReading?.accountID : nil
+        return appState.codexAccounts.sorted { lhs, rhs in
+            if lhs.id == selectedID { return true }
+            if rhs.id == selectedID { return false }
+            return lhs.account.displayName.localizedCaseInsensitiveCompare(rhs.account.displayName)
+                == .orderedAscending
+        }
+    }
+
+    private var codexAccountModels: [AccountCardModel] {
+        orderedCodexReadings.compactMap(AppState.codexMainMeterReading)
+            .map(AccountCardModel.init(mainMeterReading:))
     }
 
     /// Builds the unified per-account list: `snapshot.accounts` when present
@@ -675,12 +908,30 @@ struct PopoverView: View {
     // MARK: - Codex card (usage-based, local to the popover)
 
     @ViewBuilder
+    private func codexAccountCard(
+        _ reading: CodexAccountReading,
+        style: AppGroupConfig.CardStyle
+    ) -> some View {
+        if style == .rings,
+            let normalized = AppState.codexMainMeterReading(reading)
+        {
+            AccountRingCard(
+                model: AccountCardModel(mainMeterReading: normalized),
+                now: now,
+                thresholds: usageThresholds,
+                usage: usage)
+        } else if let usage = reading.usage {
+            codexCard(usage, account: reading.account)
+        }
+    }
+
+    @ViewBuilder
     private func codexNotices(_ reading: CodexAccountReading) -> some View {
         if let error = reading.error {
             noticeBanner(
                 "\(reading.account.displayName): \(error)",
                 systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
-        } else if AppGroupConfig.isSnapshotStale(lastPollAt: reading.lastPolledAt) {
+        } else if reading.observationIsStale(asOf: now) {
             noticeBanner(
                 "\(reading.account.displayName) data may be outdated",
                 systemImage: "clock.fill", tint: .pfInkMuted)
@@ -690,7 +941,7 @@ struct PopoverView: View {
     private func codexCard(_ usage: CodexUsage, account: CodexAccount) -> some View {
         let primary = usage.primaryWindow
         let percentUsed = primary?.usedPercent
-        let displayPercent = primary?.cardDisplayPercent
+        let displayPercent = codexDisplayPercent(primary)
         let band = EnergyBand(severity: usageThresholds.severity(for: percentUsed))
         let tint: Color = band == .full ? .pfEnergyFull : band.color
         let cardID = Self.codexCardID(account.id)
@@ -771,10 +1022,17 @@ struct PopoverView: View {
         .accessibilityElement(children: .combine)
     }
 
+    private func codexDisplayPercent(_ window: CodexLimitWindow?) -> Double? {
+        window?.displayPercent(showUsage: usage)
+    }
+
     private func codexSubtitle(_ usage: CodexUsage) -> String? {
         var parts: [String] = []
-        if let weekly = usage.secondaryWindow?.cardDisplayPercent {
-            parts.append("Weekly \(Int(weekly.rounded()))% used")
+        if let secondary = usage.secondaryWindow,
+            let percent = codexDisplayPercent(secondary)
+        {
+            let modeLabel = self.usage ? "used" : "left"
+            parts.append("\(secondary.displayLabel) \(Int(percent.rounded()))% \(modeLabel)")
         }
         if let credits = usage.usageCredits {
             if credits.unlimited {
@@ -966,6 +1224,15 @@ struct PopoverView: View {
             "Open Claude Code so the statusline bridge can publish usage, or connect OAuth in Settings."
     }
 
+    private var mainMeterErrorState: some View {
+        statusState(
+            emoji: "⚠️",
+            title: "Couldn't read \(selectedProvider.displayName)",
+            message: appState.mainMeterError ?? "Open Settings and check the selected meter.",
+            primaryTitle: "Open Settings",
+            primary: openSettingsAndCompleteOnboarding)
+    }
+
     private var cursorErrorState: some View {
         statusState(
             emoji: "⚠️", title: "Couldn't read Cursor",
@@ -1062,18 +1329,7 @@ struct PopoverView: View {
     }
 
     private var updatedText: String {
-        let claudeAt =
-            AppSettings.hasClaudeSource
-            ? (appState.snapshot?.lastSuccessfulPollAt ?? appState.lastPolledAt) : nil
-        let cursorAt = AppSettings.cursorSourceEnabled ? appState.cursorLastPolledAt : nil
-        let codexAt =
-            AppSettings.codexSourceEnabled
-            ? appState.codexAccounts.compactMap(\.lastPolledAt).max() : nil
-        let grokAt = AppSettings.grokSourceEnabled ? appState.grokLastPolledAt : nil
-        guard
-            let polledAt = [claudeAt, cursorAt, codexAt, grokAt]
-                .compactMap({ $0 }).max()
-        else {
+        guard let polledAt = appState.mainMeterLastSuccessfulAt else {
             return "Not yet polled"
         }
         // No "Updated " prefix: the header is width-bound at 360pt once the title
@@ -1100,9 +1356,21 @@ struct PopoverView: View {
             || OAuthKeychain.credentialAvailability() != .missing
             || OAuthKeychain.manualCredentialAvailability() != .missing
             || CursorTokenStore.isStateDBPresent()
+            || appState.codexAccounts.contains(where: { $0.usage != nil })
+            || Self.codexConfigurationExists
             || Self.claudeMeterDirectoryExists
         {
             hasCompletedOnboarding = true
+        }
+    }
+
+    private static var codexConfigurationExists: Bool {
+        guard AppSettings.codexSourceEnabled else { return false }
+        return AppSettings.codexAccounts().contains { account in
+            FileManager.default.fileExists(
+                atPath: account.home.appendingPathComponent("auth.json").path)
+                || FileManager.default.fileExists(
+                    atPath: account.home.appendingPathComponent("config.toml").path)
         }
     }
 

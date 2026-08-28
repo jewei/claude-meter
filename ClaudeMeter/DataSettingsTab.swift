@@ -169,7 +169,10 @@ struct DataSettingsTab: View {
         }
         .onChange(of: codexSourceMode) { _, _ in
             loadCodexStatus()
-            if codexSourceEnabled { appState.refreshNow() }
+            if codexSourceEnabled {
+                appState.refreshCodexAccountsFromSettings(configurationChanged: true)
+                appState.refreshNow()
+            }
         }
         .onChange(of: grokSourceEnabled) { _, enabled in
             loadGrokStatus()
@@ -367,6 +370,22 @@ struct DataSettingsTab: View {
 /// Lists discovered Claude config dirs (one per account), letting the user disable
 /// non-default ones and add custom paths. Rate limits are per-account, so the meter
 /// keeps them separate; the menu bar follows the most recently used account.
+enum AccountTrackingPolicy {
+    static func updating(
+        disabledKeys: Set<String>,
+        accountID: String,
+        enabled: Bool
+    ) -> Set<String> {
+        var result = disabledKeys
+        if enabled {
+            result.remove(accountID)
+        } else {
+            result.insert(accountID)
+        }
+        return result
+    }
+}
+
 private struct ConfigDirAccountsSection: View {
     let appState: AppState
 
@@ -473,18 +492,10 @@ private struct ConfigDirAccountsSection: View {
         Binding(
             get: { !disabledKeys.contains(key) },
             set: { enabled in
-                if enabled {
-                    disabledKeys.remove(key)
-                } else {
-                    disabledKeys.insert(key)
-                    // A disabled account is no longer tracked, so a menu-bar pin to it
-                    // would silently fall back to nearest-limit. Clear the pin so the
-                    // Appearance picker label matches the menu bar's behavior.
-                    if AppGroupConfig.menuBarAccount == key {
-                        UserDefaults.standard.removeObject(forKey: AppGroupConfig.menuBarAccountKey)
-                        AppGroupConfig.syncDisplaySettings()
-                    }
-                }
+                disabledKeys = AccountTrackingPolicy.updating(
+                    disabledKeys: disabledKeys,
+                    accountID: key,
+                    enabled: enabled)
                 AppGroupConfig.disabledAccountKeys = Array(disabledKeys)
                 appState.scheduleRebuildPipeline()
             }
@@ -524,6 +535,7 @@ private struct ConfigDirAccountsSection: View {
             plans.removeValue(forKey: key)
         }
         AppGroupConfig.accountPlans = plans
+        appState.mainMeterMetadataChanged(provider: .claude)
     }
 
     /// Editable display name; blank clears the override (falls back to the default).
@@ -537,6 +549,7 @@ private struct ConfigDirAccountsSection: View {
                     names[key] = newValue
                 }
                 AppGroupConfig.accountNames = names
+                appState.mainMeterMetadataChanged(provider: .claude)
             }
         )
     }
@@ -653,7 +666,7 @@ private struct CodexHomesSection: View {
                     names[account.id] = value
                 }
                 AppSettings.codexAccountNames = names
-                appState.refreshCodexAccountLabels()
+                appState.refreshCodexAccountsFromSettings(configurationChanged: true)
             })
     }
 
@@ -685,6 +698,7 @@ private struct CodexHomesSection: View {
         guard !existing.contains(url.path) else { return }
         homes.append(url.path)
         AppSettings.configuredCodexHomes = homes
+        appState.refreshCodexAccountsFromSettings(configurationChanged: true)
         appState.refreshNow()
     }
 
@@ -696,6 +710,7 @@ private struct CodexHomesSection: View {
         AppSettings.configuredCodexHomes = homes
         names.removeValue(forKey: account.id)
         AppSettings.codexAccountNames = names
+        appState.refreshCodexAccountsFromSettings(configurationChanged: true)
         appState.refreshNow()
     }
 }

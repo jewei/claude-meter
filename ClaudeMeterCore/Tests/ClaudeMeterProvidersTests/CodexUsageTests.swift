@@ -83,6 +83,7 @@ struct CodexUsageTests {
             usage.rateLimitResets?.nearestExpiration(after: now)
                 == Date(timeIntervalSince1970: 1_751_100_000))
         #expect(usage.maskedAccountEmail == "a***@example.com")
+        #expect(usage.authMode == .chatGPT)
         #expect(usage.source == .appServer)
     }
 
@@ -188,7 +189,7 @@ struct CodexUsageTests {
         #expect(window.displayLabel == "24h")
     }
 
-    @Test func cardDisplayPercentUsesUsedPercentLikeCursor() {
+    @Test func displayPercentRespectsProgressionMode() {
         let window = CodexLimitWindow(
             kind: .primary,
             usedPercent: 82,
@@ -196,7 +197,8 @@ struct CodexUsageTests {
             durationSeconds: 18_000,
             rawLabel: nil)
 
-        #expect(window.cardDisplayPercent == 82)
+        #expect(window.displayPercent(showUsage: true) == 82)
+        #expect(window.displayPercent(showUsage: false) == 18)
     }
 
     @Test func decodesOAuthUsageWithoutRequiringAllWindows() throws {
@@ -224,6 +226,7 @@ struct CodexUsageTests {
         #expect(usage.secondaryWindow == nil)
         #expect(usage.usageCredits?.remaining == 7.5)
         #expect(usage.plan == "plus")
+        #expect(usage.authMode == .chatGPT)
         #expect(usage.source == .directOAuth)
     }
 
@@ -293,7 +296,7 @@ struct CodexUsageTests {
         let usage = try await provider.fetchUsage(mode: .auto)
 
         #expect(usage.source == .directOAuth)
-        #expect(appServer.fetchCount == 0)
+        #expect(appServer.fetchCount == 1)
         #expect(oauth.fetchCount == 1)
     }
 
@@ -313,8 +316,8 @@ struct CodexUsageTests {
         #expect(oauth.fetchCount == 1)
     }
 
-    /// The app-server is installed (so `isAvailable()` passes) but its RPC fails.
-    /// This is the common real-world failure — a codex build whose `app-server`
+    /// The app-server fetch begins but its RPC fails. This is the common
+    /// real-world failure — a codex build whose `app-server`
     /// subcommand is missing or slow — and it must still reach the OAuth source,
     /// which reads `auth.json` over HTTPS and is unaffected by the CLI.
     @Test func providerAutoFallsBackWhenAppServerFailsMidFetch() async throws {
@@ -334,9 +337,7 @@ struct CodexUsageTests {
         #expect(oauth.fetchCount == 1)
     }
 
-    /// When the fallback can't help either, the *app-server's* error is what
-    /// surfaces — it names the actual problem the user can act on.
-    @Test func providerReportsAppServerErrorWhenOAuthAlsoFails() async {
+    @Test func providerReportsBothErrorsWhenOAuthAlsoFails() async {
         let appServer = StubCodexSource(
             usage: Self.usage(source: .appServer),
             availability: true,
@@ -347,12 +348,16 @@ struct CodexUsageTests {
             unavailableError: CodexOAuthCredentialsError.notFound)
         let provider = CodexUsageProvider(appServerSource: appServer, oauthSource: oauth)
 
-        await #expect(throws: CodexUsageError.rpcFailed("boom")) {
+        await #expect(
+            throws: CodexUsageError.allSourcesFailed(
+                appServer: "Codex CLI request failed: boom",
+                directOAuth: "Codex auth file not found; using Codex CLI if available.")
+        ) {
             try await provider.fetchUsage(mode: .auto)
         }
     }
 
-    @Test func providerKeepsMostUsefulFailureWhenBothSourcesUnavailable() async {
+    @Test func providerReportsBothSourcesUnavailable() async {
         let appServer = StubCodexSource(
             usage: Self.usage(source: .appServer),
             availability: false,
@@ -363,7 +368,11 @@ struct CodexUsageTests {
             unavailableError: CodexOAuthCredentialsError.notFound)
         let provider = CodexUsageProvider(appServerSource: appServer, oauthSource: oauth)
 
-        await #expect(throws: CodexUsageError.cliNotFound) {
+        await #expect(
+            throws: CodexUsageError.allSourcesFailed(
+                appServer: "Codex CLI not found. Install Codex or set the Codex CLI path.",
+                directOAuth: "Codex auth file not found; using Codex CLI if available.")
+        ) {
             try await provider.fetchUsage(mode: .auto)
         }
     }
@@ -431,6 +440,7 @@ struct CodexUsageTests {
         let usage = try await source.fetchUsage(now: Date(timeIntervalSince1970: 1_700_000_000))
 
         #expect(usage.source == .directOAuth)
+        #expect(usage.authMode == .chatGPT)
         #expect(usage.primaryWindow?.usedPercent == 12)
         #expect(
             transport.lastRequest?.url?.absoluteString
@@ -477,10 +487,6 @@ struct CodexUsageTests {
             self.availability = availability
             self.unavailableError = unavailableError
             self.fetchError = fetchError
-        }
-
-        func isAvailable() async -> Bool {
-            availability
         }
 
         func fetchUsage(now _: Date) async throws -> CodexUsage {

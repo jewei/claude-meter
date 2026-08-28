@@ -64,6 +64,13 @@ struct DiagnosticsView: View {
     private var dataSourceSection: some View {
         Section("Data Source") {
             LabeledContent("Mode", value: dataSourceMode)
+            LabeledContent("Main meter") {
+                Text(
+                    [
+                        appState.mainMeterProvider.displayName,
+                        appState.mainMeterReading?.accountLabel,
+                    ].compactMap { $0 }.joined(separator: " · "))
+            }
             if let snap = appState.snapshot {
                 LabeledContent("Source", value: DiagnosticsSanitizer.sanitize(snap.source.command))
                 LabeledContent("Parser", value: snap.parserVersion)
@@ -75,9 +82,15 @@ struct DiagnosticsView: View {
             if AppSettings.codexSourceEnabled {
                 LabeledContent("Codex mode", value: AppSettings.codexSourceMode.rawValue)
                 ForEach(appState.codexAccounts) { reading in
-                    LabeledContent(
-                        DiagnosticsSanitizer.sanitize(reading.account.displayName),
-                        value: reading.usage?.source.rawValue ?? "Not available")
+                    LabeledContent(DiagnosticsSanitizer.sanitize(reading.account.displayName)) {
+                        if let usage = reading.usage {
+                            Text(
+                                [usage.source.rawValue, usage.authMode?.rawValue]
+                                    .compactMap { $0 }.joined(separator: " · "))
+                        } else {
+                            Text("Not available")
+                        }
+                    }
                 }
             }
             if AppSettings.grokSourceEnabled {
@@ -133,8 +146,14 @@ struct DiagnosticsView: View {
             if AppSettings.codexSourceEnabled {
                 ForEach(appState.codexAccounts) { reading in
                     LabeledContent(
-                        "\(DiagnosticsSanitizer.sanitize(reading.account.displayName)) poll",
-                        value: reading.lastPolledAt.map { isoFormatter.string(from: $0) } ?? "Never"
+                        "\(DiagnosticsSanitizer.sanitize(reading.account.displayName)) success",
+                        value: reading.lastSuccessfulAt.map { isoFormatter.string(from: $0) }
+                            ?? "Never"
+                    )
+                    LabeledContent(
+                        "\(DiagnosticsSanitizer.sanitize(reading.account.displayName)) attempt",
+                        value: reading.lastAttemptAt.map { isoFormatter.string(from: $0) }
+                            ?? "None this launch"
                     )
                     if let err = reading.error {
                         LabeledContent(
@@ -238,6 +257,9 @@ struct DiagnosticsView: View {
             "",
             "Data Source",
             "  Mode: \(dataSourceMode)",
+            "  Main meter: \(appState.mainMeterProvider.displayName)",
+            "  Main account: \(DiagnosticsSanitizer.sanitize(appState.mainMeterReading?.accountLabel ?? "Unavailable"))",
+            "  Main error: \(DiagnosticsSanitizer.sanitize(appState.mainMeterError ?? "None"))",
             "",
             "Last Poll",
             "  Claude: \(claudePollTimeText)",
@@ -260,12 +282,18 @@ struct DiagnosticsView: View {
         if AppSettings.codexSourceEnabled {
             lines.append("  Codex mode: \(AppSettings.codexSourceMode.rawValue)")
             for reading in appState.codexAccounts {
-                let poll = reading.lastPolledAt.map { isoFormatter.string(from: $0) } ?? "Never"
+                let success =
+                    reading.lastSuccessfulAt.map { isoFormatter.string(from: $0) } ?? "Never"
+                let attempt =
+                    reading.lastAttemptAt.map { isoFormatter.string(from: $0) }
+                    ?? "None this launch"
                 lines += [
                     "  Codex account: \(DiagnosticsSanitizer.sanitize(reading.account.displayName))",
                     "    Home: \(DiagnosticsSanitizer.sanitize(reading.account.home.path))",
-                    "    Poll: \(poll)",
+                    "    Last success: \(success)",
+                    "    Last attempt: \(attempt)",
                     "    Source: \(reading.usage?.source.rawValue ?? "None")",
+                    "    Auth: \(reading.usage?.authMode?.rawValue ?? "Unknown")",
                     "    Error: \(DiagnosticsSanitizer.sanitize(reading.error ?? "None"))",
                 ]
             }

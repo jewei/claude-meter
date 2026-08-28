@@ -109,7 +109,11 @@ public enum AppGroupConfig {
 
     public static let cardStyleKey = "cardStyle"  // "rings" | "bars" (popover only)
     public static let progressionModeKey = "progressionMode"  // "left" | "used"
+    public static let mainMeterProviderKey = "mainMeterProvider"  // "claude" | "codex"
+    public static let mainMeterRevisionKey = "mainMeterRevision"
+    /// Claude keeps the legacy menu-bar account key so existing pins migrate without work.
     public static let menuBarAccountKey = "menuBarAccount"  // "" / "nearest" | account key
+    public static let codexMainMeterAccountKey = "codexMainMeterAccount"
     public static let menuBarWindowKey = "menuBarWindow"  // "nearest" | "5h" | "7d" | "both"
 
     /// Typed popover card style, shared-first so app processes observe one value.
@@ -140,6 +144,51 @@ public enum AppGroupConfig {
     /// Legacy string accessor retained for `@AppStorage`-based callers.
     public static func progressionMode(from defaults: UserDefaults = .standard) -> String {
         resolvedProgressionMode(from: defaults).rawValue
+    }
+
+    /// Claude remains the default when the preference is absent, preserving the
+    /// behavior of every installation that predates selectable main meters.
+    public static func resolvedMainMeterProvider(
+        from defaults: UserDefaults = .standard,
+        shared: UserDefaults? = sharedDefaults
+    ) -> MainMeterProvider {
+        MainMeterProvider(
+            rawValue: shared?.string(forKey: mainMeterProviderKey)
+                ?? defaults.string(forKey: mainMeterProviderKey) ?? "") ?? .claude
+    }
+
+    /// Account policy for the selected provider. Claude reads the existing menu-bar
+    /// key; Codex has its own key so switching providers does not discard either pin.
+    public static func mainMeterAccountSelection(
+        provider: MainMeterProvider,
+        defaults: UserDefaults = .standard,
+        shared: UserDefaults? = nil
+    ) -> MenuBarAccountSelection {
+        let key = provider == .claude ? menuBarAccountKey : codexMainMeterAccountKey
+        return MenuBarAccountSelection(
+            storedValue: shared?.string(forKey: key) ?? defaults.string(forKey: key))
+    }
+
+    public static func mainMeterRevision(
+        defaults: UserDefaults = .standard,
+        shared: UserDefaults? = sharedDefaults
+    ) -> Int {
+        if let shared, shared.object(forKey: mainMeterRevisionKey) != nil {
+            return shared.integer(forKey: mainMeterRevisionKey)
+        }
+        return defaults.integer(forKey: mainMeterRevisionKey)
+    }
+
+    @discardableResult
+    public static func bumpMainMeterRevision(
+        defaults: UserDefaults = .standard,
+        shared: UserDefaults? = sharedDefaults
+    ) -> Int {
+        let current = defaults.integer(forKey: mainMeterRevisionKey)
+        let next = current == Int.max ? 1 : current + 1
+        defaults.set(next, forKey: mainMeterRevisionKey)
+        shared?.set(next, forKey: mainMeterRevisionKey)
+        return next
     }
 
     /// Account key the menu bar pins to; "" / "nearest" → nearest-limit across all.
@@ -181,7 +230,10 @@ public enum AppGroupConfig {
             accountNamesKey,
             cardStyleKey,
             progressionModeKey,
+            mainMeterProviderKey,
+            mainMeterRevisionKey,
             menuBarAccountKey,
+            codexMainMeterAccountKey,
             menuBarWindowKey,
         ] {
             if let value = source.object(forKey: key) {

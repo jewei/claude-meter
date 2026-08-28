@@ -1,15 +1,15 @@
 import ClaudeMeterCore
 import SwiftUI
 
-/// Menu-bar item: an energy bolt + a status dot that mirrors the *nearest-limit*
-/// account (green = safe, orange = getting low, red = almost dry, pulsing when
-/// critical, a "0" badge when tapped out). A compact energy-left % rides along so
-/// the exact headroom stays glanceable.
+/// Menu-bar item for the explicitly selected main meter. Provider selection is
+/// stable until the user changes it; missing data never falls back to another source.
 struct MenuBarLabel: View {
     @ObservedObject var appState: AppState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(AppGroupConfig.progressionModeKey) private var progressionMode = "left"
-    @AppStorage(AppGroupConfig.menuBarAccountKey) private var menuBarAccountPin = ""
+    @AppStorage(AppGroupConfig.mainMeterProviderKey) private var mainMeterProvider = "claude"
+    @AppStorage(AppGroupConfig.menuBarAccountKey) private var claudeAccountPin = ""
+    @AppStorage(AppGroupConfig.codexMainMeterAccountKey) private var codexAccountPin = ""
     @AppStorage(AppGroupConfig.menuBarWindowKey) private var menuBarWindow = "nearest"
 
     private var progression: AppGroupConfig.ProgressionMode {
@@ -37,14 +37,14 @@ struct MenuBarLabel: View {
 
     @ViewBuilder
     private var iconView: some View {
-        if appState.isLoading {
+        if appState.mainMeterIsLoading {
             Image(systemName: "arrow.clockwise")
                 .font(.system(size: 12, weight: .bold))
                 .rotationEffect(.degrees(360))
                 .animation(
                     reduceMotion
                         ? .default : .linear(duration: 1).repeatForever(autoreverses: false),
-                    value: appState.isLoading)
+                    value: appState.mainMeterIsLoading)
         } else if showsErrorIcon {
             Image(systemName: "bolt.trianglebadge.exclamationmark.fill")
                 .font(.system(size: 12, weight: .semibold))
@@ -62,12 +62,12 @@ struct MenuBarLabel: View {
     private var statusBadge: some View {
         if !appState.isActive {
             EmptyView()
-        } else if appState.claudeIsStale {
+        } else if appState.mainMeterIsStale {
             dot(Color.secondary)
-        } else if appState.severity == .overLimit {
+        } else if appState.mainMeterSeverity == .overLimit {
             tappedOutBadge
         } else {
-            switch appState.severity {
+            switch appState.mainMeterSeverity {
             case .critical:
                 if reduceMotion { dot(.pfEnergyEmpty) } else { pulsingDot(.pfEnergyEmpty) }
             case .warning:
@@ -113,32 +113,31 @@ struct MenuBarLabel: View {
     }
 
     private var showsErrorIcon: Bool {
-        // Claude only — a Cursor error surfaces in the popover, not the menu bar.
-        appState.lastError != nil && appState.snapshot == nil
+        appState.mainMeterReading == nil && appState.mainMeterError != nil
     }
 
-    // MARK: - Energy-left number (nearest limit)
+    // MARK: - Main-meter number
 
     private var leftText: String? {
-        // Hide the number when stale so a stale energy % isn't mistaken for fresh
-        // (the gray status dot still shows). Paused hides it too.
-        //
-        // `claudeIsStale`, not `isStale`: the latter ORs in Cursor staleness, so a
-        // Cursor token expiring would blank the *Claude* percentage and gray the dot
-        // indefinitely — contradicting the Claude-only rule this file documents.
-        guard appState.isActive, !appState.claudeIsStale else { return nil }
-        _ = menuBarAccountPin  // re-render the label when the pinned account changes
+        // Hide stale numbers so cached quota cannot be mistaken for a fresh reading.
+        guard appState.isActive, !appState.mainMeterIsStale else { return nil }
+        _ = mainMeterProvider
+        _ = claudeAccountPin
+        _ = codexAccountPin
         let now = Date()
-        // Cursor is intentionally excluded — the menu bar reflects Claude only, and
-        // honors "Menu bar follows" (pinned account vs. nearest Claude limit). Cursor
-        // has its own popover card.
         switch selectedWindow {
         case .fiveHour:
-            return part(appState.menuBarActiveLimits?.currentSession, suffix: "5h", now: now)
+            return part(
+                appState.mainMeterReading?.limits.currentSession,
+                suffix: "5h",
+                now: now)
         case .sevenDay:
-            return part(appState.menuBarActiveLimits?.currentWeekAllModels, suffix: "7d", now: now)
+            return part(
+                appState.mainMeterReading?.limits.currentWeekAllModels,
+                suffix: "7d",
+                now: now)
         case .both:
-            let limits = appState.menuBarActiveLimits
+            let limits = appState.mainMeterReading?.limits
             let parts = [
                 part(limits?.currentSession, suffix: "5h", now: now),
                 part(limits?.currentWeekAllModels, suffix: "7d", now: now),
@@ -164,7 +163,7 @@ struct MenuBarLabel: View {
     /// Lowest energy-left across every window of every menu-bar account — the
     /// nearest limit. No window suffix (it may come from any window/account).
     private func nearestText(now: Date) -> String? {
-        let lefts = appState.menuBarLimitSets.flatMap { limits in
+        let lefts = appState.mainMeterLimitSets.flatMap { limits in
             limits.bindingWindows.compactMap { $0.window.percentLeft(asOf: now) }
         }
         guard let minLeft = lefts.min() else { return nil }

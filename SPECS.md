@@ -6,19 +6,22 @@ component treatment belong in `DESIGN.md`. Removed features are not part of this
 
 ## 1. Product contract
 
-Claude Meter is a macOS 14+ menu-bar app for viewing Claude usage limits as energy
+Claude Meter is a macOS 14+ menu-bar app for viewing coding quota as energy
 remaining. It has no Dock icon (`LSUIElement = YES`) and uses a SwiftUI
-`MenuBarExtra` with `.window` style. A WidgetKit extension displays the active Claude
-snapshot. Cursor, Codex, and Grok are optional, independent popover sources.
+`MenuBarExtra` with `.window` style. Claude remains the default main meter for existing
+users; users can explicitly select Claude or Codex. Cursor and Grok remain secondary
+popover sources.
 
 The app is local-first:
 
 - Provider credentials are read-only except for manually entered Claude OAuth tokens,
   which Claude Meter owns in Keychain.
 - Provider secrets are never rendered, logged, or copied into diagnostics.
-- The widget reads only the App Group snapshot and performs no provider I/O.
-- Non-Claude providers never affect the Claude menu-bar indicator, widget, or quota
-  notifications.
+- The widget reads only the normalized App Group main-meter reading and performs no
+  provider I/O.
+- Only the explicitly selected main provider affects the hero, first popover section,
+  menu-bar indicator, header timestamp, widget, or quota notifications. Missing selected
+  data never falls back to another provider.
 
 ## 2. Targets and ownership
 
@@ -34,7 +37,9 @@ Providers; Providers depends on Core. Provider-specific wire formats do not ente
 
 `AppState` is the main-actor composition root. Each poll captures one immutable
 `PollConfiguration`; optional providers publish one coherent `ReadingState` so value,
-timestamp, staleness, and error cannot drift apart.
+timestamp, staleness, and error cannot drift apart. `MainMeterReading` is the normalized
+Core model shared by app policy, App Group persistence, and the widget; provider wire
+models never become presentation or widget contracts.
 
 ## 3. Claude data pipeline
 
@@ -121,8 +126,10 @@ fresh absence. The active account keeps the single-slot refresh path.
 
 ### 3.3 Snapshot and staleness
 
-The App Group suite is `group.com.jewei.claudemeter`. `SnapshotStore` atomically writes
-`current.json` and sanitized last-error data. App startup migrates a legacy Application
+The App Group suite is `group.com.jewei.claudemeter`. `SnapshotStore` atomically writes Claude's `current.json`, the selected provider's
+normalized `main-meter.json`, and sanitized last-error data. Provider/account/source
+changes bump a mirrored selection revision; the widget rejects a file from an older
+revision or a mismatched provider/exact pin. App startup migrates a legacy Application
 Support snapshot into the App Group when needed. The widget never falls back outside the
 App Group.
 
@@ -177,8 +184,16 @@ Codex is opt-in and supports one implicit `CODEX_HOME` plus explicitly configure
 Each home has its own subprocess/provider state and display name. Provider subprocesses
 strip environment credential overrides. App-server request/response dispatch is actor
 isolated so overlapping requests cannot consume one another's messages. Positional and
-keyed rate-limit windows independently fill missing session/weekly buckets. Account failure
-retains prior usage as stale without blocking healthy accounts.
+keyed rate-limit windows independently fill missing session/weekly buckets. App-server
+account metadata retains the reported authentication mode. Auto-mode failures preserve
+both the app-server and direct-OAuth reasons for diagnostics.
+
+Last-good readings are persisted per resolved Codex home, without account email, and are
+restored on launch. A failed refresh retains that reading and records the attempt error/time
+separately from the last-success time; observation staleness remains age-based. Healthy
+accounts continue updating when another account fails. Main-meter normalization classifies
+windows by reported duration (up to 24 hours is short/session; longer is weekly), falling back
+to primary/secondary position only when duration is absent.
 
 ### 5.3 Grok
 
@@ -195,9 +210,10 @@ Canonical data stores percent used. Presentation defaults to energy remaining:
 percentLeft = clamp(100 - resolved.percentUsed, 0...100)
 ```
 
-Rings and bars deplete in `left` mode and fill in `used` mode. Severity always uses percent
-used and the configured warning/critical thresholds; progression mode does not change
-policy. Unknown values render neutral placeholders and never use an empty/tapped-out phrase.
+Rings and bars deplete in `left` mode and fill in `used` mode, including Codex windows.
+Severity always uses percent used and the configured warning/critical thresholds;
+progression mode does not change policy. Unknown values render neutral placeholders and
+never use an empty/tapped-out phrase.
 
 Pace presentation compares percent used with percent of the fixed rolling window elapsed.
 Bar cards show a neutral expected-position marker plus compact pace text; the marker mirrors
@@ -206,20 +222,27 @@ and weekly rings while retaining reset timing. Pace never affects severity or co
 reset time is absent, expired, or outside the window span, pace presentation disappears and
 the bar falls back to its energy phrase.
 
-The menu-bar dot uses the highest Claude severity across all binding windows of the pinned
-account, or all accounts when unpinned. Its number follows `menuBarWindow`: nearest, 5-hour,
-7-day, or both. A single-window number may intentionally differ from the all-window dot.
+The menu-bar dot uses the highest severity from the selected main provider across all
+binding windows of the pinned account, or all of that provider's accounts when unpinned.
+Its number follows `menuBarWindow`: nearest, short/session, long/weekly, or both. A
+single-window number may intentionally differ from the all-window dot. Selecting a provider
+or account with no reading produces an explicit unavailable/error state, never fallback.
 
 The popover is 360 points wide with a screen-derived scrolling height. Header controls are
 Settings and Quit; opening performs refresh, so there is no redundant refresh button.
-The hero headline reflects the active account, while its subtitle can flag a lower other
-account. Claude account cards are always expanded. Cursor/Codex/Grok cards remember their
-expanded state. The last-seven-days cost card opens the activity heatmap. Claude Code
+The selected provider owns the hero and first account section. An exact account pin wins;
+otherwise the account nearest its limit owns every primary surface. The other eligible
+provider remains visible below as one compact secondary summary. Claude
+account cards are always expanded. Primary Codex, Cursor, and Grok account cards remember
+their expanded state.
+The header timestamp belongs only to the selected reading. The last-seven-days cost card
+opens the activity heatmap. Claude Code
 version appears with the cost section when known; there is no footer or Add Account button.
 
 First-run onboarding pauses polling and directs the user to Settings. Existing users skip
-onboarding when a snapshot, attributes-only OAuth credential presence, Cursor state, or the
-Claude Meter data directory exists. Rendering onboarding never reads secret Keychain data.
+onboarding when a snapshot, attributes-only OAuth credential presence, Cursor state, an
+enabled Codex home with `auth.json`/`config.toml`, or the Claude Meter data directory exists.
+Rendering onboarding never reads credential contents or secret Keychain data.
 
 All reset/refill copy uses Core `ResetPhrase`: minutes below one hour, hours below 48 hours,
 and days from 48 hours. Surfaces never introduce their own date/weekday formatter.
@@ -234,7 +257,9 @@ value removes the mirrored value so defaults cannot become stale.
 | --- | --- | --- |
 | `cardStyle` | `rings`, `bars` | `rings` |
 | `progressionMode` | `left`, `used` | `left` |
-| `menuBarAccount` | nearest or account key | nearest |
+| `mainMeterProvider` | `claude`, `codex` | `claude` |
+| `menuBarAccount` | nearest or Claude account key | nearest |
+| `codexMainMeterAccount` | nearest or Codex home id | nearest |
 | `menuBarWindow` | `nearest`, `5h`, `7d`, `both` | `nearest` |
 | warning threshold | percent used | 80 |
 | critical threshold | percent used | 95 |
@@ -246,10 +271,12 @@ Configured paths are canonicalized and account disabling never removes the defau
 
 ## 8. Notifications and attention hooks
 
-Quota notifications process only fresh Claude snapshots. Threshold events are typed by
-scope and level, and dedup by account, scope, level, and reset cycle. The first in-session
-poll establishes a baseline and never emits an old threshold crossing. Recovery compares
-raw prior severity so a rolling-window reset can emit “refueled.”
+Quota notifications process only fresh observations from the selected main provider.
+Threshold events are typed by scope and level, and dedup by provider, account, scope,
+level, and reset cycle. A provider/account switch establishes a new baseline and never
+compares unrelated quota. Recovery compares raw prior severity so a rolling-window reset
+can emit “refueled.” Attention hooks remain Claude Code-specific and independent of the
+main-meter selection.
 
 Predictive depletion is opt-in. It requires two consecutive fresh qualifying observations
 for the same account/scope/reset cycle and normal current severity. Small reset-time jitter
@@ -263,11 +290,13 @@ an already-running terminal; it never launches a terminal and bounds subprocess 
 
 ## 9. Widget
 
-The widget supports small, medium, and large families. It shows depleting rings for the
-active Claude account, optional Opus rows where space allows, staleness, and neutral no-data
-state. Timeline refresh is the earliest of the next binding reset, the stale deadline, or
-15 minutes. Progression changes request a WidgetKit timeline reload. Widget fonts and color
-helpers intentionally remain target-local.
+The widget supports small, medium, and large families. It loads `main-meter.json` through
+Core's provider/account/revision-validating `MainMeterPublication` seam and shows
+depleting rings for the selected Claude or Codex account, optional Opus rows where space
+allows, provider/account identity, staleness, and a neutral no-data state. Timeline refresh
+is the earliest of the next binding reset, the stale deadline, or 15 minutes. Provider,
+account, and progression changes request a WidgetKit timeline reload. Widget fonts and
+color helpers intentionally remain target-local.
 
 ## 10. Networking, Keychain, and diagnostics
 

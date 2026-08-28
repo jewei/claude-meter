@@ -86,10 +86,6 @@ public final class CodexAppServerSource: CodexUsageSourceFetching, @unchecked Se
         self.resolver = resolver
     }
 
-    public func isAvailable() async -> Bool {
-        resolver(env) != nil
-    }
-
     public func fetchUsage(now: Date = Date()) async throws -> CodexUsage {
         guard let executable = resolver(env) else { throw CodexUsageError.cliNotFound }
         let client = try CodexAppServerClient(

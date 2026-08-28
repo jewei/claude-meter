@@ -4,11 +4,13 @@ import SwiftUI
 import WidgetKit
 
 struct AppearanceSettingsTab: View {
-    let appState: AppState
+    @ObservedObject var appState: AppState
 
     @AppStorage(AppGroupConfig.cardStyleKey) private var cardStyle = "rings"
     @AppStorage(AppGroupConfig.progressionModeKey) private var progressionMode = "left"
-    @AppStorage(AppGroupConfig.menuBarAccountKey) private var menuBarAccount = ""
+    @AppStorage(AppGroupConfig.mainMeterProviderKey) private var mainMeterProvider = "claude"
+    @AppStorage(AppGroupConfig.menuBarAccountKey) private var claudeMainMeterAccount = ""
+    @AppStorage(AppGroupConfig.codexMainMeterAccountKey) private var codexMainMeterAccount = ""
     @AppStorage(AppGroupConfig.menuBarWindowKey) private var menuBarWindow = "nearest"
 
     @State private var accounts: [AccountConfig] = []
@@ -20,6 +22,23 @@ struct AppearanceSettingsTab: View {
                     .font(PFont.display(26, .bold))
                     .foregroundStyle(Color.pfInk)
                     .padding(.horizontal, 4)
+
+                settingCard(
+                    icon: "bolt.circle.fill", color: Color(hex: "4FC51C"),
+                    title: "Main meter",
+                    subtitle: "The provider that owns the hero, menu bar, widget, and quota alerts."
+                ) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        segmented(
+                            $mainMeterProvider,
+                            [("claude", "Claude"), ("codex", "Codex")])
+                        if selectedProvider == .codex && !AppSettings.codexSourceEnabled {
+                            Text("Turn on Codex in Data settings to start this meter.")
+                                .font(PFont.body(11, .semibold))
+                                .foregroundStyle(Color.pfEnergyLow)
+                        }
+                    }
+                }
 
                 settingCard(
                     icon: "chart.bar.xaxis", color: Color(hex: "C77DFF"),
@@ -37,16 +56,17 @@ struct AppearanceSettingsTab: View {
 
                 settingCard(
                     icon: "menubar.rectangle", color: Color(hex: "FF9D0A"),
-                    title: "Menu bar follows",
-                    subtitle: "Which account the menu-bar percentage tracks."
+                    title: "Main meter follows",
+                    subtitle:
+                        "Which \(selectedProvider.displayName) account the primary meter tracks."
                 ) {
                     menuBarPicker
                 }
 
                 settingCard(
                     icon: "gauge.with.dots.needle.bottom.50percent", color: Color(hex: "4FC51C"),
-                    title: "Menu bar shows",
-                    subtitle: "Which window the percentage reflects."
+                    title: "Main meter shows",
+                    subtitle: "Which window the menu-bar percentage reflects."
                 ) {
                     segmented(
                         $menuBarWindow,
@@ -61,8 +81,10 @@ struct AppearanceSettingsTab: View {
             AppGroupConfig.syncDisplaySettings()
             WidgetCenter.shared.reloadAllTimelines()
         }
-        .onChange(of: menuBarAccount) { _, _ in AppGroupConfig.syncDisplaySettings() }
-        .onChange(of: menuBarWindow) { _, _ in AppGroupConfig.syncDisplaySettings() }
+        .onChange(of: mainMeterProvider) { _, _ in mainMeterSettingChanged() }
+        .onChange(of: claudeMainMeterAccount) { _, _ in mainMeterSettingChanged() }
+        .onChange(of: codexMainMeterAccount) { _, _ in mainMeterSettingChanged() }
+        .onChange(of: menuBarWindow) { _, _ in mainMeterDisplaySettingChanged() }
     }
 
     @ViewBuilder
@@ -116,13 +138,21 @@ struct AppearanceSettingsTab: View {
         }
     }
 
+    private var selectedProvider: MainMeterProvider {
+        MainMeterProvider(rawValue: mainMeterProvider) ?? .claude
+    }
+
+    private var selectedAccount: Binding<String> {
+        selectedProvider == .claude ? $claudeMainMeterAccount : $codexMainMeterAccount
+    }
+
     private var menuBarPicker: some View {
         Menu {
-            Button("Nearest limit") { menuBarAccount = "" }
-            if !accounts.isEmpty {
+            Button("Nearest limit") { selectedAccount.wrappedValue = "" }
+            if !mainMeterAccounts.isEmpty {
                 Divider()
-                ForEach(accounts) { account in
-                    Button(displayName(account)) { menuBarAccount = account.id }
+                ForEach(mainMeterAccounts, id: \.id) { account in
+                    Button(account.label) { selectedAccount.wrappedValue = account.id }
                 }
             }
         } label: {
@@ -148,15 +178,33 @@ struct AppearanceSettingsTab: View {
     }
 
     private var currentMenuBarLabel: String {
-        if menuBarAccount.isEmpty || menuBarAccount == "nearest" { return "Nearest limit" }
-        if let account = accounts.first(where: { $0.id == menuBarAccount }) {
-            return displayName(account)
+        let selection = selectedAccount.wrappedValue
+        if selection.isEmpty || selection == "nearest" { return "Nearest limit" }
+        return mainMeterAccounts.first(where: { $0.id == selection })?.label
+            ?? "Selected account unavailable"
+    }
+
+    private var mainMeterAccounts: [(id: String, label: String)] {
+        switch selectedProvider {
+        case .claude:
+            return accounts.map { ($0.id, displayName($0)) }
+        case .codex:
+            return AppSettings.codexAccounts().map { ($0.id, $0.displayName) }
         }
-        return "Nearest limit"
     }
 
     private func displayName(_ account: AccountConfig) -> String {
         AppGroupConfig.accountName(forKey: account.id) ?? account.label.friendlyAccountLabel
+    }
+
+    private func mainMeterSettingChanged() {
+        AppGroupConfig.syncDisplaySettings()
+        appState.mainMeterSelectionChanged()
+    }
+
+    private func mainMeterDisplaySettingChanged() {
+        AppGroupConfig.syncDisplaySettings()
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     private func reloadAccounts() {

@@ -32,8 +32,9 @@ build/
 .Trashes
 Icon?
 
-# Instruments
+# Instruments and profiling output
 *.trace
+*.profraw
 
 # Archives
 *.xcarchive

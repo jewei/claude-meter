@@ -68,6 +68,73 @@ final class SnapshotStoreTests {
         #expect(try store.readLatest() == nil)
     }
 
+    @Test("Writes, reads, and clears the selected main meter independently")
+    func mainMeterRoundtrip() throws {
+        let store = try makeStore()
+        let reading = MainMeterReading(
+            provider: .codex,
+            accountID: "codex-work",
+            accountLabel: "Work",
+            plan: "Pro",
+            limits: LimitInfo(
+                currentSession: LimitWindow(
+                    percentUsed: 42, resetsAt: fixedDate.addingTimeInterval(18_000)),
+                currentWeekAllModels: LimitWindow(
+                    percentUsed: 63, resetsAt: fixedDate.addingTimeInterval(604_800))),
+            sessionLabel: "5h",
+            weeklyLabel: "Weekly",
+            observedAt: fixedDate)
+
+        try store.writeMainMeter(reading)
+        #expect(try store.readMainMeter() == reading)
+        #expect(try store.readLatest() == nil)
+
+        try store.clearMainMeter()
+        #expect(try store.readMainMeter() == nil)
+    }
+
+    @Test("Widget publication loader follows shared provider, pin, revision, and clearing")
+    func mainMeterPublicationLoader() throws {
+        let store = try makeStore()
+        let defaultsName = "MainMeterPublication-defaults-\(UUID().uuidString)"
+        let sharedName = "MainMeterPublication-shared-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: defaultsName)!
+        let shared = UserDefaults(suiteName: sharedName)!
+        defer {
+            defaults.removePersistentDomain(forName: defaultsName)
+            shared.removePersistentDomain(forName: sharedName)
+        }
+        defaults.set("claude", forKey: AppGroupConfig.mainMeterProviderKey)
+        defaults.set("wrong", forKey: AppGroupConfig.codexMainMeterAccountKey)
+        shared.set("codex", forKey: AppGroupConfig.mainMeterProviderKey)
+        shared.set("codex-work", forKey: AppGroupConfig.codexMainMeterAccountKey)
+        shared.set(7, forKey: AppGroupConfig.mainMeterRevisionKey)
+        let reading = MainMeterReading(
+            provider: .codex,
+            accountID: "codex-work",
+            accountLabel: "Work",
+            limits: LimitInfo(currentSession: LimitWindow(percentUsed: 42)),
+            observedAt: fixedDate,
+            selectionRevision: 7)
+
+        try MainMeterPublication.replace(reading, in: store)
+        #expect(
+            MainMeterPublication.load(from: store, defaults: defaults, shared: shared) == reading)
+
+        shared.set("claude", forKey: AppGroupConfig.mainMeterProviderKey)
+        #expect(MainMeterPublication.load(from: store, defaults: defaults, shared: shared) == nil)
+        shared.set("codex", forKey: AppGroupConfig.mainMeterProviderKey)
+        shared.set("other", forKey: AppGroupConfig.codexMainMeterAccountKey)
+        #expect(MainMeterPublication.load(from: store, defaults: defaults, shared: shared) == nil)
+        shared.set("codex-work", forKey: AppGroupConfig.codexMainMeterAccountKey)
+        shared.set(8, forKey: AppGroupConfig.mainMeterRevisionKey)
+        #expect(MainMeterPublication.load(from: store, defaults: defaults, shared: shared) == nil)
+
+        try MainMeterPublication.replace(nil, in: store)
+        #expect(try store.readMainMeter() == nil)
+        #expect(MainMeterPublication.load(from: store, defaults: defaults, shared: shared) == nil)
+    }
+
     @Test("A wedged filesystem operation trips a per-store circuit breaker")
     func boundedIOTimeout() throws {
         let io = BoundedSnapshotIO()

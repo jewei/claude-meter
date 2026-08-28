@@ -2,7 +2,6 @@ import ClaudeMeterCore
 import Foundation
 
 public protocol CodexUsageSourceFetching: Sendable {
-    func isAvailable() async -> Bool
     func fetchUsage(now: Date) async throws -> CodexUsage
 }
 
@@ -34,46 +33,32 @@ public final class CodexUsageProvider: @unchecked Sendable {
     {
         switch mode {
         case .appServer:
-            return try await fetchRequired(appServerSource, now: now)
+            return try await appServerSource.fetchUsage(now: now)
         case .directOAuth:
-            return try await fetchRequired(oauthSource, now: now)
+            return try await oauthSource.fetchUsage(now: now)
         case .auto:
-            if await appServerSource.isAvailable() {
+            do {
+                return try await appServerSource.fetchUsage(now: now)
+            } catch {
+                let appServerError = error
                 do {
-                    return try await appServerSource.fetchUsage(now: now)
+                    return try await oauthSource.fetchUsage(now: now)
                 } catch {
-                    // Fall back on *any* app-server failure. The direct-OAuth read
-                    // uses a wholly different mechanism (local auth.json + HTTPS) and
-                    // routinely succeeds when the CLI/RPC path can't — a stale or
-                    // renamed `app-server` subcommand just times out. The previous
-                    // allow-list (`cliNotFound`/`loginRequired`) matched nothing the
-                    // app-server can actually raise once `isAvailable()` has passed,
-                    // so the fallback never ran for anyone with the CLI installed.
-                    // The original error still surfaces if OAuth also fails.
-                    return try await fetchOAuthIfAvailable(now: now, preferredError: error)
+                    throw Self.combinedFailure(
+                        appServer: appServerError,
+                        directOAuth: error)
                 }
             }
-            return try await fetchOAuthIfAvailable(
-                now: now, preferredError: CodexUsageError.cliNotFound)
         }
     }
 
-    private func fetchRequired(_ source: any CodexUsageSourceFetching, now: Date) async throws
-        -> CodexUsage
-    {
-        guard await source.isAvailable() else {
-            throw CodexUsageError.sourceUnavailable
-        }
-        return try await source.fetchUsage(now: now)
+    private static func combinedFailure(appServer: Error, directOAuth: Error) -> CodexUsageError {
+        CodexUsageError.allSourcesFailed(
+            appServer: errorText(appServer),
+            directOAuth: errorText(directOAuth))
     }
 
-    private func fetchOAuthIfAvailable(now: Date, preferredError: Error) async throws -> CodexUsage
-    {
-        guard await oauthSource.isAvailable() else { throw preferredError }
-        do {
-            return try await oauthSource.fetchUsage(now: now)
-        } catch {
-            throw preferredError
-        }
+    private static func errorText(_ error: Error) -> String {
+        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
     }
 }

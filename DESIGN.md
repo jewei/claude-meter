@@ -112,9 +112,9 @@ Per-window status line (left side, colored by band):
 | Low        | "Half a tank" · "Getting low" · "Running on fumes soon"  |
 | Empty      | "Almost dry — easy now" · "Tapped out"                    |
 
-Hero state follows the **active** account's band. Its subtitle may call out the
-lowest other account, while the menu-bar dot remains the all-account nearest-limit
-signal:
+Hero state follows the selected main provider and account policy. An exact pin wins;
+otherwise the nearest-limit account owns the hero, menu bar, widget, and quota alerts.
+The subtitle may call out another low account from that provider:
 
 | Overall | Emoji | Headline             | Subline pattern                                   | Hero colors |
 | ------- | ----- | -------------------- | ------------------------------------------------- | ----------- |
@@ -225,14 +225,14 @@ when accounts/providers overflow.
   control is shown. Pause/resume lives in Settings.
 
 ### Hero
-State-driven per the table above. Layout: 46×46 white circle (border = hero-border) holding the
+The selected Claude or Codex meter drives the hero. State follows the table above. Layout: 46×46 white circle (border = hero-border) holding the
 mascot emoji, then headline (Fredoka 600/18 `hero-ink`) + subline (Nunito 700/12 `hero-subink`).
 Hero bg/border swap green→orange→red with severity. Animate color with `.easeInOut(0.3)`.
 
 ### Accounts section
 - Label row: "ACCOUNTS" (label style) left; **ring legend** right — `◌ weekly` (2.5pt ring outline
   dot) + `● 5-hour` (filled dot), Nunito 700/10 `ink-muted`. (Bars variant shows "N connected".)
-- **One ring card per account**, active account first. Build a unified `[AccountUsage]`: use
+- **One ring card per account**, selected nearest/pinned account first. Build a unified `[AccountUsage]`: use
   `snapshot.accounts` when present, else synthesize a single element from the top-level snapshot.
 
 ### Ring card (primary — Frame B)
@@ -274,8 +274,9 @@ Add Account button; account management and pause/resume live in Settings.
 
 ## Menu Bar Icon (Frame C)
 
-**The icon mirrors the nearest-limit account** so a glance says whether it's safe to fire a big
-prompt. Bolt glyph + a colored status dot (top-right), severity from the same engine as the rings:
+**The icon mirrors the selected main provider's nearest-limit account** so a glance says whether
+it's safe to fire a big prompt. It never falls back to another provider. Bolt glyph + a colored
+status dot (top-right), severity from the same engine as the rings:
 
 | State       | Glyph         | Dot                          |
 | ----------- | ------------- | ---------------------------- |
@@ -302,6 +303,9 @@ macOS can't style the toast (system chrome + app icon only), so "implementing Fr
 Keep the existing dedup + threshold logic; only titles/bodies change. Title always "Claude Usage".
 Frame `%` as **% left**. Examples:
 
+Quota notification policy follows the selected main meter. Claude attention-hook notifications
+remain Claude-specific.
+
 - **Low (warning):** "Heads up — {account} is at {left}%. Refills in {refill}. Maybe touch grass? 🌱"
 - **Empty (critical):** "{account} is almost dry ({left}%). {refill} to refuel. Easy now. 🫠"
 - **Tapped out:** "{account} is tapped out. Back in {refill}. Go stretch. 🧘"
@@ -316,10 +320,11 @@ Weekly scope swaps "Refills" → "Resets {day}". No sound (unchanged).
 No design spec ships for these — translate the language faithfully:
 - **Settings:** cream `popover-bg` window, chunky cards per section/data-source, raised primary
   buttons, Fredoka headings / Nunito body, adaptive dark. Keep the existing tab structure & controls.
-- **Widget (sandboxed):** the depleting-ring look for the active account; medium/large can show a
-  ring per account. Duplicate the ring component + token hexes into the widget target (design tokens
-  are intentionally not shared across targets — see `Color(widgetHex:)`). Read `SnapshotStore.appGroup()`
-  only; degrade to a neutral "no data" ring.
+- **Widget (sandboxed):** the depleting-ring look for the selected Claude or Codex account;
+  medium/large show provider/account identity and optional Opus detail. Duplicate the ring component
+  + token hexes into the widget target (design tokens are intentionally not shared across targets —
+  see `Color(widgetHex:)`). Open only `SnapshotStore.appGroup()` and load through Core's
+  provider/account/revision-validating `MainMeterPublication`; degrade to a neutral "no data" ring.
 
 ---
 

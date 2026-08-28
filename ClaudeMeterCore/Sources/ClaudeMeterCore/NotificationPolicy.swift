@@ -25,6 +25,16 @@ public enum NotificationLevel: String, Codable, Equatable, Sendable, CaseIterabl
     case recovered
 }
 
+public struct MainMeterNotificationBaselines: Sendable {
+    public let escalation: MainMeterReading?
+    public let recovery: MainMeterReading?
+
+    public init(escalation: MainMeterReading?, recovery: MainMeterReading?) {
+        self.escalation = escalation
+        self.recovery = recovery
+    }
+}
+
 public struct NotificationBaselines: Sendable {
     public let escalation: ClaudeUsageSnapshot?
     public let recovery: ClaudeUsageSnapshot?
@@ -38,6 +48,83 @@ public struct NotificationBaselines: Sendable {
 /// Pure threshold-crossing logic for local usage notifications.
 public enum NotificationPolicy {
     public static let dedupKeyPrefix = "com.claudemeter.notif."
+
+    public static func mainMeterBaselines(
+        reading: MainMeterReading,
+        previous: MainMeterReading?,
+        notificationIdentity: String?,
+        allowsPersistedRecovery: Bool
+    ) -> MainMeterNotificationBaselines {
+        let sameReadingIdentity = previous?.stableIdentity == reading.stableIdentity
+        let continuesInSession = notificationIdentity == reading.stableIdentity
+        return MainMeterNotificationBaselines(
+            escalation: sameReadingIdentity && continuesInSession ? previous : nil,
+            recovery: sameReadingIdentity
+                && (continuesInSession || allowsPersistedRecovery) ? previous : nil)
+    }
+
+    /// Provider-neutral threshold policy for the selected main meter. Baselines from
+    /// another provider or account are ignored so switching the meter never creates a
+    /// synthetic crossing or recovery.
+    public static func triggers(
+        reading: MainMeterReading,
+        previous: MainMeterReading?,
+        recoveryBaseline: MainMeterReading?? = nil,
+        thresholds: UsageThresholds = .default,
+        now: Date = Date()
+    ) -> [NotificationTrigger] {
+        let recovery: MainMeterReading? = recoveryBaseline ?? previous
+        return triggers(
+            reading: reading,
+            baselines: MainMeterNotificationBaselines(
+                escalation: previous, recovery: recovery),
+            thresholds: thresholds,
+            now: now)
+    }
+
+    public static func triggers(
+        reading: MainMeterReading,
+        baselines: MainMeterNotificationBaselines,
+        thresholds: UsageThresholds = .default,
+        now: Date = Date()
+    ) -> [NotificationTrigger] {
+        let previous = baselines.escalation.flatMap {
+            $0.stableIdentity == reading.stableIdentity ? $0 : nil
+        }
+        let recovery = baselines.recovery.flatMap {
+            $0.stableIdentity == reading.stableIdentity ? $0 : nil
+        }
+        var out: [NotificationTrigger] = []
+        out += evaluate(
+            scope: .session,
+            current: reading.limits.currentSession,
+            previous: previous?.limits.currentSession,
+            recoveryPrevious: recovery?.limits.currentSession,
+            allowMissingBaselineEscalation: false,
+            thresholds: thresholds,
+            now: now)
+        out += evaluate(
+            scope: .weekly,
+            current: reading.limits.currentWeekAllModels,
+            previous: previous?.limits.currentWeekAllModels,
+            recoveryPrevious: recovery?.limits.currentWeekAllModels,
+            allowMissingBaselineEscalation: false,
+            thresholds: thresholds,
+            now: now)
+        if let currentOpus = reading.limits.currentWeekOpus,
+            let previousOpus = previous?.limits.currentWeekOpus
+        {
+            out += evaluate(
+                scope: .weeklyOpus,
+                current: currentOpus,
+                previous: previousOpus,
+                recoveryPrevious: recovery?.limits.currentWeekOpus,
+                allowMissingBaselineEscalation: false,
+                thresholds: thresholds,
+                now: now)
+        }
+        return out
+    }
 
     /// Returns notification triggers for scopes whose severity escalated since `previous`.
     ///

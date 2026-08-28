@@ -124,6 +124,226 @@ struct AppLogicTests {
         #expect(stale.isStale)
     }
 
+    @Test("Codex refresh failure is separate from observation age")
+    func codexRefreshFailureIsSeparateFromObservationAge() {
+        let suiteName = "CodexFreshness-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(180.0, forKey: AppGroupConfig.staleAfterSecondsKey)
+        let success = Date(timeIntervalSince1970: 100)
+        let reading = CodexAccountReading(
+            account: CodexAccount(
+                home: URL(fileURLWithPath: "/tmp/codex"),
+                isImplicit: true,
+                customName: nil),
+            state: .stale(
+                value: codexUsage(accountEmail: nil),
+                polledAt: success,
+                error: "offline"),
+            lastAttemptAt: Date(timeIntervalSince1970: 110))
+
+        #expect(reading.latestAttemptFailed)
+        #expect(
+            !reading.observationIsStale(
+                asOf: Date(timeIntervalSince1970: 200),
+                shared: nil,
+                defaults: defaults))
+        #expect(
+            reading.observationIsStale(
+                asOf: Date(timeIntervalSince1970: 281),
+                shared: nil,
+                defaults: defaults))
+    }
+
+    @MainActor
+    @Test("Codex last-good store survives relaunch without account email")
+    func codexLastGoodStore() {
+        let suiteName = "CodexReadingStore-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = CodexReadingStore(defaults: defaults)
+        let account = CodexAccount(
+            home: URL(fileURLWithPath: "/tmp/codex-work"),
+            isImplicit: false,
+            customName: "Work")
+        let success = Date(timeIntervalSince1970: 123)
+        let reading = CodexAccountReading(
+            account: account,
+            state: .current(
+                value: codexUsage(accountEmail: "person@example.com"),
+                polledAt: success),
+            lastAttemptAt: success)
+
+        store.save([reading])
+        let restored = store.restore(accounts: [account])
+
+        #expect(restored.count == 1)
+        #expect(restored.first?.lastSuccessfulAt == success)
+        #expect(restored.first?.lastAttemptAt == nil)
+        #expect(restored.first?.usage?.accountEmail == nil)
+        #expect(restored.first?.usage?.maskedAccountEmail == nil)
+        #expect(restored.first?.usage?.authMode == .chatGPT)
+    }
+
+    @Test("Codex readings normalize into the shared main-meter model")
+    func codexMainMeterMapping() throws {
+        let observedAt = Date(timeIntervalSince1970: 123)
+        let reading = CodexAccountReading(
+            account: CodexAccount(
+                home: URL(fileURLWithPath: "/tmp/codex-work"),
+                isImplicit: false,
+                customName: "Pi"),
+            state: .current(
+                value: codexUsage(accountEmail: "person@example.com"),
+                polledAt: observedAt))
+
+        let meter = try #require(AppState.codexMainMeterReading(reading))
+        #expect(meter.provider == .codex)
+        #expect(meter.accountLabel == "Pi")
+        #expect(meter.plan == "Plus")
+        #expect(meter.sessionLabel == "5h")
+        #expect(meter.limits.currentSession.percentUsed == 25)
+        #expect(meter.observedAt == observedAt)
+    }
+
+    @Test("A seven-day Codex primary window normalizes as weekly")
+    func codexWeeklyPrimaryMapping() throws {
+        let observedAt = Date(timeIntervalSince1970: 123)
+        let usage = CodexUsage(
+            primaryWindow: CodexLimitWindow(
+                kind: .primary,
+                usedPercent: 18,
+                resetAt: Date(timeIntervalSince1970: 456),
+                durationSeconds: 7 * 24 * 60 * 60,
+                rawLabel: nil),
+            secondaryWindow: nil,
+            usageCredits: nil,
+            accountEmail: nil,
+            plan: "prolite",
+            authMode: .chatGPT,
+            source: .directOAuth,
+            updatedAt: observedAt)
+        let reading = CodexAccountReading(
+            account: CodexAccount(
+                home: URL(fileURLWithPath: "/tmp/codex"),
+                isImplicit: true,
+                customName: nil),
+            state: .current(value: usage, polledAt: observedAt))
+
+        let meter = try #require(AppState.codexMainMeterReading(reading))
+
+        #expect(meter.limits.currentSession.percentUsed == nil)
+        #expect(meter.limits.currentWeekAllModels.percentUsed == 18)
+        #expect(meter.weeklyLabel == "Weekly")
+    }
+
+    @Test("Startup compares the current selection with the persisted publication")
+    func startupMainMeterTransition() {
+        func reading(_ id: String) -> MainMeterReading {
+            MainMeterReading(
+                provider: .claude,
+                accountID: id,
+                accountLabel: id,
+                limits: LimitInfo(currentSession: LimitWindow(percentUsed: 20)),
+                observedAt: Date(timeIntervalSince1970: 100))
+        }
+        let published = reading("before-reset")
+        let current = reading("after-reset")
+
+        let changed = AppState.startupMainMeterTransition(
+            previousPublished: published,
+            current: current)
+        #expect(changed.bumpRevision)
+        #expect(changed.reloadWidget)
+        #expect(!changed.allowsPersistedRecovery)
+
+        let unchanged = AppState.startupMainMeterTransition(
+            previousPublished: current,
+            current: current)
+        #expect(!unchanged.bumpRevision)
+        #expect(!unchanged.reloadWidget)
+        #expect(unchanged.allowsPersistedRecovery)
+    }
+
+    @Test("Notification baselines never cross main-meter identities")
+    func notificationBaselinesStayWithinIdentity() {
+        func reading(_ provider: MainMeterProvider, _ accountID: String) -> MainMeterReading {
+            MainMeterReading(
+                provider: provider,
+                accountID: accountID,
+                accountLabel: accountID,
+                limits: LimitInfo(currentSession: LimitWindow(percentUsed: 20)),
+                observedAt: Date(timeIntervalSince1970: 100))
+        }
+        let claude = reading(.claude, "claude")
+        let codex = reading(.codex, "codex")
+
+        let switched = NotificationPolicy.mainMeterBaselines(
+            reading: codex,
+            previous: codex,
+            notificationIdentity: nil,
+            allowsPersistedRecovery: false)
+        #expect(switched.escalation == nil)
+        #expect(switched.recovery == nil)
+
+        let relaunched = NotificationPolicy.mainMeterBaselines(
+            reading: codex,
+            previous: codex,
+            notificationIdentity: nil,
+            allowsPersistedRecovery: true)
+        #expect(relaunched.escalation == nil)
+        #expect(relaunched.recovery?.stableIdentity == codex.stableIdentity)
+
+        let continuing = NotificationPolicy.mainMeterBaselines(
+            reading: codex,
+            previous: codex,
+            notificationIdentity: codex.stableIdentity,
+            allowsPersistedRecovery: false)
+        #expect(continuing.escalation?.stableIdentity == codex.stableIdentity)
+        #expect(continuing.recovery?.stableIdentity == codex.stableIdentity)
+    }
+
+    @Test("Disabling a Claude account preserves its exact main-meter pin")
+    func disablingClaudeAccountPreservesPin() {
+        let suiteName = "AccountTracking-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("claude-work", forKey: AppGroupConfig.menuBarAccountKey)
+
+        let disabled = AccountTrackingPolicy.updating(
+            disabledKeys: [], accountID: "claude-work", enabled: false)
+
+        #expect(disabled == ["claude-work"])
+        #expect(defaults.string(forKey: AppGroupConfig.menuBarAccountKey) == "claude-work")
+    }
+
+    @Test("Account card style applies equally to Claude and Codex")
+    func accountCardStyleAppliesToEveryMainProvider() {
+        for provider in MainMeterProvider.allCases {
+            #expect(
+                PopoverView.accountCardStyle(requested: .rings, provider: provider) == .rings)
+            #expect(PopoverView.accountCardStyle(requested: .bars, provider: provider) == .bars)
+        }
+    }
+
+    @Test("Failed secondary provider state remains renderable without claiming cached data")
+    func failedSecondaryProviderPresentation() {
+        #expect(
+            PopoverView.shouldRenderProviderSections(
+                hasAnyData: false,
+                hasCodexLifecycle: true))
+        #expect(
+            PopoverView.secondaryProviderDetail(
+                hasError: true,
+                isStale: false,
+                accountCount: 0) == "Refresh failed · no usage data")
+        #expect(
+            PopoverView.secondaryProviderDetail(
+                hasError: true,
+                isStale: false,
+                accountCount: 1) == "Refresh failed · showing last known data")
+    }
+
     @Test("Chunking preserves order and the final partial chunk")
     func chunking() {
         #expect(Array(1...7).chunked(into: 3) == [[1, 2, 3], [4, 5, 6], [7]])
@@ -270,8 +490,10 @@ struct AppLogicTests {
 
     @Test("Stale hero does not promise available capacity")
     func staleHeroCopy() {
-        #expect(HeroSummary.stale(oauthConnected: false).title == "Refresh needed")
-        #expect(!HeroSummary.stale(oauthConnected: false).subtitle.contains("Plenty"))
+        let stale = HeroSummary.stale(
+            providerName: "Codex", recovery: "Codex data is out of date")
+        #expect(stale.title == "Refresh needed")
+        #expect(!stale.subtitle.contains("Plenty"))
     }
 
     @MainActor
@@ -500,7 +722,9 @@ struct AppLogicTests {
         #expect(coordinator.isQuiescent)
 
         adapter.frame = CGRect(x: 1_500, y: 500, width: 360, height: 220)
-        try await Task.sleep(for: .milliseconds(30))
+        for _ in 0..<100 where !coordinator.isSettled {
+            try await Task.sleep(for: .milliseconds(5))
+        }
         #expect(coordinator.isSettled)
         #expect(adapter.frame?.minX == 1_500)
         #expect(adapter.frame?.maxY == 720)
@@ -593,7 +817,9 @@ struct AppLogicTests {
         #expect(coordinator.isQuiescent)
 
         adapter.frame = CGRect(x: 100, y: 500, width: 360, height: 220)
-        try await Task.sleep(for: .milliseconds(30))
+        for _ in 0..<100 where !coordinator.isSettled {
+            try await Task.sleep(for: .milliseconds(5))
+        }
 
         #expect(coordinator.isSettled)
         #expect(adapter.frame?.minX == 100)
@@ -613,7 +839,9 @@ struct AppLogicTests {
         #expect(coordinator.isQuiescent)
 
         adapter.isVisible = true
-        try await Task.sleep(for: .milliseconds(30))
+        for _ in 0..<100 where !coordinator.isSettled {
+            try await Task.sleep(for: .milliseconds(5))
+        }
 
         #expect(coordinator.isSettled)
         #expect(adapter.frame?.maxY == 720)
@@ -854,5 +1082,22 @@ struct AppLogicTests {
             try? await Task.sleep(for: .milliseconds(1))
         }
         #expect(state.serviceStatus == expected)
+    }
+
+    private func codexUsage(accountEmail: String?) -> CodexUsage {
+        CodexUsage(
+            primaryWindow: CodexLimitWindow(
+                kind: .primary,
+                usedPercent: 25,
+                resetAt: nil,
+                durationSeconds: 18_000,
+                rawLabel: nil),
+            secondaryWindow: nil,
+            usageCredits: nil,
+            accountEmail: accountEmail,
+            plan: "plus",
+            authMode: .chatGPT,
+            source: .appServer,
+            updatedAt: Date(timeIntervalSince1970: 100))
     }
 }

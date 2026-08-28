@@ -223,6 +223,19 @@ struct AccountCardModel: Identifiable {
     }
 }
 
+extension AccountCardModel {
+    init(mainMeterReading reading: MainMeterReading) {
+        self.init(
+            id: reading.accountID,
+            label: reading.accountLabel,
+            plan: reading.plan,
+            subtitle: nil,
+            session: reading.limits.currentSession,
+            week: reading.limits.currentWeekAllModels,
+            opus: reading.limits.currentWeekOpus)
+    }
+}
+
 private let pfAvatarPalette: [Color] = [
     Color(hex: "25B6F0"), Color(hex: "C77DFF"), Color(hex: "FF9D0A"),
     Color(hex: "4FC51C"), Color(hex: "FF7AA8"), Color(hex: "2DD4BF"),
@@ -517,9 +530,8 @@ struct AccountBarCard: View {
 
 // MARK: - Hero (combined health)
 
-/// The hero reflects the *active* account's vibe (the one you're using), with a
-/// subtitle that flags the lowest other account. The menu-bar dot, by contrast,
-/// mirrors the nearest-limit account across all of them.
+/// The caller puts the selected nearest/pinned account first; the subtitle can
+/// flag another low account from the same provider.
 struct HeroSummary {
     var emoji: String
     var title: String
@@ -529,14 +541,24 @@ struct HeroSummary {
     var ink: Color
     var sub: Color
 
-    static func stale(oauthConnected: Bool) -> HeroSummary {
+    static func stale(providerName: String, recovery: String) -> HeroSummary {
         let palette = paletteFor(.unknown)
         return HeroSummary(
             emoji: "🛰️",
             title: "Refresh needed",
-            subtitle: oauthConnected
-                ? "Claude data is out of date"
-                : "Open Claude Code or connect OAuth",
+            subtitle: recovery.isEmpty ? "\(providerName) data is out of date" : recovery,
+            bg: palette.bg,
+            border: palette.border,
+            ink: palette.ink,
+            sub: palette.sub)
+    }
+
+    static func unavailable(providerName: String, detail: String) -> HeroSummary {
+        let palette = paletteFor(.unknown)
+        return HeroSummary(
+            emoji: "🔌",
+            title: "\(providerName) meter unavailable",
+            subtitle: detail,
             bg: palette.bg,
             border: palette.border,
             ink: palette.ink,

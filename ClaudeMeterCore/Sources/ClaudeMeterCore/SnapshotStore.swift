@@ -97,7 +97,8 @@ final class BoundedSnapshotIO: @unchecked Sendable {
 /// Atomic reader/writer for the latest `ClaudeUsageSnapshot`.
 ///
 /// Files in `<directory>/`:
-///   - `current.json`      — latest parsed snapshot (pretty-printed JSON)
+///   - `current.json`      — latest parsed Claude snapshot (pretty-printed JSON)
+///   - `main-meter.json`   — selected provider's normalized widget reading
 ///   - `last-error.json`   — most recent poll/parse failure
 ///
 /// Writes use `Data.write(.atomic)`, which creates a temp file in the same
@@ -113,6 +114,7 @@ public struct SnapshotStore: Sendable {
     private let boundedIO: BoundedSnapshotIO
 
     private var currentURL: URL { directory.appending(path: "current.json") }
+    private var mainMeterURL: URL { directory.appending(path: "main-meter.json") }
     private var lastErrorURL: URL { directory.appending(path: "last-error.json") }
 
     // MARK: - Factory
@@ -194,6 +196,41 @@ public struct SnapshotStore: Sendable {
             return try makeDecoder().decode(ClaudeUsageSnapshot.self, from: data)
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             return nil
+        }
+    }
+
+    // MARK: - Main meter write/read
+
+    public func writeMainMeter(_ reading: MainMeterReading) throws {
+        let data = try makeEncoder().encode(reading)
+        try writeAtomically(data, to: mainMeterURL)
+    }
+
+    public func readMainMeter() throws -> MainMeterReading? {
+        do {
+            let url = mainMeterURL
+            let data = try boundedIO.perform(
+                operation: "read-main-meter", timeout: BoundedSnapshotIO.readTimeout
+            ) {
+                try Data(contentsOf: url)
+            }
+            let reading = try makeDecoder().decode(MainMeterReading.self, from: data)
+            return reading.schemaVersion == 1 ? reading : nil
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return nil
+        }
+    }
+
+    public func clearMainMeter() throws {
+        do {
+            let url = mainMeterURL
+            try boundedIO.perform(
+                operation: "delete-main-meter", timeout: BoundedSnapshotIO.writeTimeout
+            ) {
+                try FileManager.default.removeItem(at: url)
+            }
+        } catch let error as CocoaError where error.code == .fileNoSuchFile {
+            return
         }
     }
 

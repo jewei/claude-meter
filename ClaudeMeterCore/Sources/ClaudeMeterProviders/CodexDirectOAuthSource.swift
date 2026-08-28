@@ -17,10 +17,6 @@ public final class CodexDirectOAuthSource: CodexUsageSourceFetching, @unchecked 
         self.credentialsLoader = credentialsLoader
     }
 
-    public func isAvailable() async -> Bool {
-        (try? credentialsLoader()) != nil
-    }
-
     public func fetchUsage(now: Date = Date()) async throws -> CodexUsage {
         let credentials = try credentialsLoader()
         var request = URLRequest(url: Self.usageURL)

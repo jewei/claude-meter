@@ -20,7 +20,7 @@ struct NotificationsSettingsTab: View {
                     icon: "bell.fill",
                     iconColor: Color(hex: "4FC51C"),
                     title: "Enable notifications",
-                    subtitle: "Get a heads-up before you hit a wall.",
+                    subtitle: "Quota alerts follow the main meter selected in Appearance.",
                     isEnabled: $enableNotifications,
                     contentLeading: 0
                 ) {

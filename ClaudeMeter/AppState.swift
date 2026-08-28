@@ -9,6 +9,8 @@ final class AppState: ObservableObject {
     @Published var snapshot: ClaudeUsageSnapshot? = nil
     @Published var lastPollResult: ParseResult? = nil
     @Published var isLoading = false
+    @Published private(set) var claudeIsLoading = false
+    @Published private(set) var codexIsLoading = false
     @Published var lastError: String? = nil
     @Published var lastPolledAt: Date? = nil
     @Published var isPopoverOpen = false
@@ -37,6 +39,8 @@ final class AppState: ObservableObject {
     var pipeline: any ClaudeMeterPipeline
     let notificationEngine = NotificationEngine()
     private let store: SnapshotStore
+    private let codexReadingStore: CodexReadingStore
+    private let ephemeralDefaultsSuiteName: String?
     /// Present only for the dependency-injected initializer. Keeping each test in
     /// its own directory prevents parallel runs from sharing `current.json`.
     private let ephemeralStoreDirectory: URL?
@@ -58,10 +62,14 @@ final class AppState: ObservableObject {
     /// (likely, at a 60 s cadence) would silently downgrade to `.background` and
     /// serve cache, which is the exact case the bypass exists for.
     private var pendingRefreshKind: RefreshKind = .background
-    /// False until the first successful in-session poll. The first poll's
-    /// `previous` is the persisted snapshot, which must not seed notifications
-    /// (e.g. a "refueled" for a window that reset while the app was quit).
-    private var didPollInSession = false
+    /// Identity last processed by quota notifications. A provider/account switch
+    /// starts a new baseline instead of comparing unrelated meters.
+    private var notificationIdentity: String?
+    private var lastNotificationReading: MainMeterReading?
+    private var publishedMainMeterReading: MainMeterReading?
+    /// A cold launch may recover from a persisted same-account baseline. Explicit
+    /// provider/account switches suppress that recovery on their first observation.
+    private var allowsPersistedNotificationRecovery = true
     private var powerMonitor: PowerMonitor?
     private var networkMonitor: NetworkMonitor?
     private var memoryPressureMonitor: MemoryPressureMonitor?
@@ -146,6 +154,148 @@ final class AppState: ObservableObject {
         snapshot?.accounts?.first(where: { $0.isActive })?.label
     }
 
+    var mainMeterProvider: MainMeterProvider {
+        AppGroupConfig.resolvedMainMeterProvider(shared: nil)
+    }
+
+    private struct MainMeterSourceState {
+        let readings: [MainMeterReading]
+        let selected: MainMeterReading?
+        let isLoading: Bool
+        let error: String?
+    }
+
+    private var mainMeterSourceState: MainMeterSourceState {
+        let provider = mainMeterProvider
+        switch provider {
+        case .claude:
+            guard AppSettings.hasClaudeSource else {
+                return MainMeterSourceState(
+                    readings: [], selected: nil, isLoading: claudeIsLoading,
+                    error: "Claude is not enabled in Data settings.")
+            }
+            let readings = snapshot.map(Self.claudeMainMeterReadings(from:)) ?? []
+            let selected = Self.selectedMainMeterReading(readings, provider: provider)
+            let error: String?
+            if selected == nil {
+                error = lastError ?? "The selected Claude account has no usage reading."
+            } else {
+                error = lastError
+            }
+            return MainMeterSourceState(
+                readings: readings,
+                selected: selected,
+                isLoading: claudeIsLoading,
+                error: error)
+        case .codex:
+            guard AppSettings.codexSourceEnabled else {
+                return MainMeterSourceState(
+                    readings: [], selected: nil, isLoading: codexIsLoading,
+                    error: "Codex is not enabled in Data settings.")
+            }
+            let readings = codexAccounts.compactMap(Self.codexMainMeterReading)
+            let selected = Self.selectedMainMeterReading(readings, provider: provider)
+            let error: String?
+            if case .account(let key) = AppGroupConfig.mainMeterAccountSelection(
+                provider: .codex)
+            {
+                if let lifecycle = codexAccounts.first(where: { $0.id == key }) {
+                    error =
+                        lifecycle.usage == nil
+                        ? lifecycle.error ?? "The selected Codex account has no usage reading."
+                        : lifecycle.error
+                } else {
+                    error = "The selected Codex account is no longer configured."
+                }
+            } else {
+                error =
+                    codexAccounts.compactMap(\.error).first
+                    ?? (selected == nil ? "Codex has no usage reading." : nil)
+            }
+            return MainMeterSourceState(
+                readings: readings,
+                selected: selected,
+                isLoading: codexIsLoading,
+                error: error)
+        }
+    }
+
+    /// All usable readings for the selected provider. Ordering is stable; the
+    /// selection policy chooses the nearest or explicitly pinned account.
+    var mainMeterReadings: [MainMeterReading] { mainMeterSourceState.readings }
+
+    /// Reading that owns the hero, widget, header timestamp, and specific-window
+    /// menu-bar values. A pin wins. Otherwise the account nearest its limit owns
+    /// every primary surface.
+    var mainMeterReading: MainMeterReading? { mainMeterSourceState.selected }
+
+    /// Limit sets considered by nearest-window menu-bar policy. A provider-specific
+    /// account pin narrows the set; otherwise every selected-provider account counts.
+    var mainMeterLimitSets: [LimitInfo] {
+        MainMeterPolicy.considered(
+            mainMeterReadings,
+            pinnedAccountID: Self.pinnedAccountID(for: mainMeterProvider)
+        ).map(\.limits)
+    }
+
+    var mainMeterSeverity: UsageSeverity {
+        let thresholds = Self.currentThresholds()
+        let now = Date()
+        return mainMeterLimitSets.reduce(.unknown) { result, limits in
+            limits.bindingWindows.reduce(result) { current, descriptor in
+                UsageSeverity.highest(
+                    current,
+                    thresholds.severity(
+                        for: descriptor.window.resolved(asOf: now).percentUsed))
+            }
+        }
+    }
+
+    var mainMeterIsStale: Bool {
+        guard let reading = mainMeterReading else { return false }
+        return reading.sourceMarkedStale
+            || AppGroupConfig.isSnapshotStale(lastPollAt: reading.observedAt)
+    }
+
+    var mainMeterLastSuccessfulAt: Date? { mainMeterReading?.observedAt }
+
+    var mainMeterIsLoading: Bool { mainMeterSourceState.isLoading }
+
+    var mainMeterError: String? { mainMeterSourceState.error }
+
+    nonisolated static func startupMainMeterTransition(
+        previousPublished: MainMeterReading?,
+        current: MainMeterReading?
+    ) -> (bumpRevision: Bool, reloadWidget: Bool, allowsPersistedRecovery: Bool) {
+        (
+            bumpRevision: MainMeterPolicy.shouldBumpSelectionRevision(
+                previous: previousPublished,
+                current: current,
+                configurationChanged: false),
+            reloadWidget: MainMeterPolicy.shouldReloadWidget(
+                previous: previousPublished,
+                current: current),
+            allowsPersistedRecovery: current != nil
+                && previousPublished?.stableIdentity == current?.stableIdentity
+        )
+    }
+
+    func mainMeterSelectionChanged() {
+        AppGroupConfig.bumpMainMeterRevision()
+        notificationIdentity = nil
+        allowsPersistedNotificationRecovery = false
+        publishMainMeterReading()
+        WidgetCenter.shared.reloadAllTimelines()
+        Task { await notificationEngine.pollFailed() }
+    }
+
+    func mainMeterMetadataChanged(provider: MainMeterProvider) {
+        guard mainMeterProvider == provider else { return }
+        AppGroupConfig.bumpMainMeterRevision()
+        publishMainMeterReading()
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
     /// One-shot cleanup of `usage-history.jsonl`, the per-account time series the
     /// app used to record every poll. Nothing ever read it back, so the collector
     /// was removed — this stops a few hundred KB of orphaned data sitting in
@@ -162,6 +312,140 @@ final class AppState: ObservableObject {
                     base
                     .appendingPathComponent("ClaudeMeter", isDirectory: true)
                     .appendingPathComponent("usage-history.jsonl"))
+        }
+    }
+
+    private static func claudeMainMeterReadings(
+        from snapshot: ClaudeUsageSnapshot
+    ) -> [MainMeterReading] {
+        let observedAt = snapshot.lastSuccessfulPollAt ?? snapshot.createdAt
+        if let accounts = snapshot.accounts, !accounts.isEmpty {
+            let disabled = Set(AppGroupConfig.disabledAccountKeys)
+            return accounts.filter { !disabled.contains($0.id) }.sorted { lhs, rhs in
+                if lhs.isActive != rhs.isActive { return lhs.isActive }
+                return lhs.label.localizedCaseInsensitiveCompare(rhs.label) == .orderedAscending
+            }.map { account in
+                MainMeterReading(
+                    provider: .claude,
+                    accountID: account.id,
+                    accountLabel: AppGroupConfig.accountName(forKey: account.id)
+                        ?? account.label.friendlyAccountLabel,
+                    plan: AppGroupConfig.accountPlan(forKey: account.id)
+                        ?? (account.isActive ? snapshot.account?.plan : account.account?.plan),
+                    limits: account.isActive ? snapshot.limits : account.limits,
+                    observedAt: account.lastSuccessfulPollAt ?? observedAt,
+                    selectionRevision: AppGroupConfig.mainMeterRevision(shared: nil),
+                    sourceMarkedStale: snapshot.state.isStale)
+            }
+        }
+        return [
+            MainMeterReading(
+                provider: .claude,
+                accountID: StatuslineBridge.defaultAccountKey,
+                accountLabel: AppGroupConfig.accountName(forKey: StatuslineBridge.defaultAccountKey)
+                    ?? "Claude",
+                plan: AppGroupConfig.accountPlan(forKey: StatuslineBridge.defaultAccountKey)
+                    ?? snapshot.account?.plan,
+                limits: snapshot.limits,
+                observedAt: observedAt,
+                selectionRevision: AppGroupConfig.mainMeterRevision(shared: nil),
+                sourceMarkedStale: snapshot.state.isStale)
+        ]
+    }
+
+    nonisolated static func codexMainMeterReading(
+        _ reading: CodexAccountReading
+    ) -> MainMeterReading? {
+        guard let usage = reading.usage, let observedAt = reading.lastSuccessfulAt else {
+            return nil
+        }
+        let windows = classifiedCodexWindows(usage)
+        return MainMeterReading(
+            provider: .codex,
+            accountID: reading.id,
+            accountLabel: reading.account.displayName,
+            plan: usage.displayPlanName,
+            limits: LimitInfo(
+                currentSession: LimitWindow(
+                    percentUsed: windows.session?.usedPercent,
+                    resetsAt: windows.session?.resetAt),
+                currentWeekAllModels: LimitWindow(
+                    percentUsed: windows.weekly?.usedPercent,
+                    resetsAt: windows.weekly?.resetAt)),
+            sessionLabel: windows.session?.displayLabel ?? "5h",
+            weeklyLabel: windows.weekly?.displayLabel ?? "7d",
+            observedAt: observedAt,
+            selectionRevision: AppGroupConfig.mainMeterRevision(shared: nil))
+    }
+
+    private nonisolated static func classifiedCodexWindows(_ usage: CodexUsage) -> (
+        session: CodexLimitWindow?, weekly: CodexLimitWindow?
+    ) {
+        var session: CodexLimitWindow?
+        var weekly: CodexLimitWindow?
+        for window in [usage.primaryWindow, usage.secondaryWindow].compactMap({ $0 }) {
+            let isWeekly: Bool
+            if let duration = window.durationSeconds {
+                isWeekly = duration > 24 * 60 * 60
+            } else {
+                isWeekly = window.kind == .secondary
+            }
+            if isWeekly {
+                if weekly == nil || (window.usedPercent ?? -1) > (weekly?.usedPercent ?? -1) {
+                    weekly = window
+                }
+            } else if session == nil || (window.usedPercent ?? -1) > (session?.usedPercent ?? -1) {
+                session = window
+            }
+        }
+        return (session, weekly)
+    }
+
+    private static func selectedMainMeterReading(
+        _ readings: [MainMeterReading],
+        provider: MainMeterProvider
+    ) -> MainMeterReading? {
+        MainMeterPolicy.primary(
+            from: readings,
+            pinnedAccountID: pinnedAccountID(for: provider))
+    }
+
+    private static func pinnedAccountID(for provider: MainMeterProvider) -> String? {
+        if case .account(let key) = AppGroupConfig.mainMeterAccountSelection(provider: provider) {
+            return key
+        }
+        return nil
+    }
+
+    private func processMainMeterObservation(
+        _ reading: MainMeterReading,
+        previous: MainMeterReading?,
+        isStale: Bool
+    ) async {
+        let baselines = NotificationPolicy.mainMeterBaselines(
+            reading: reading,
+            previous: previous,
+            notificationIdentity: notificationIdentity,
+            allowsPersistedRecovery: allowsPersistedNotificationRecovery)
+        await notificationEngine.process(
+            reading: reading,
+            previous: baselines.escalation,
+            recoveryBaseline: baselines.recovery,
+            isStale: isStale)
+        guard !isStale else { return }
+        notificationIdentity = reading.stableIdentity
+        lastNotificationReading = reading
+        allowsPersistedNotificationRecovery = true
+    }
+
+    private func publishMainMeterReading() {
+        let reading = mainMeterReading
+        do {
+            try MainMeterPublication.replace(reading, in: store)
+            publishedMainMeterReading = reading
+        } catch {
+            // The main provider stores remain authoritative. Widget publication is
+            // best-effort and must not change poll lifecycle or user-facing errors.
         }
     }
 
@@ -186,6 +470,9 @@ final class AppState: ObservableObject {
         AppState.removeLegacyUsageHistory()
         let store = AppState.makeStore()
         self.store = store
+        let codexReadingStore = CodexReadingStore()
+        self.codexReadingStore = codexReadingStore
+        self.ephemeralDefaultsSuiteName = nil
         self.ephemeralStoreDirectory = nil
         self.isActive = AppSettings.isActive
         self.hasEnabledDataSource = AppSettings.hasEnabledDataSource
@@ -199,8 +486,31 @@ final class AppState: ObservableObject {
         // Self is fully initialized from here on.
         self.snapshot = try? store.readLatest()
         self.lastPolledAt = snapshot?.lastSuccessfulPollAt
+        if AppSettings.codexSourceEnabled {
+            self.codexAccounts = codexReadingStore.restore(accounts: AppSettings.codexAccounts())
+        }
         if snapshot == nil, let record = try? store.readLastError() {
             self.lastError = record.message
+        }
+        let previousPublishedReading = try? store.readMainMeter()
+        publishedMainMeterReading = previousPublishedReading
+        lastNotificationReading = previousPublishedReading
+        var currentReading = mainMeterReading
+        let startupTransition = Self.startupMainMeterTransition(
+            previousPublished: previousPublishedReading,
+            current: currentReading)
+        if startupTransition.bumpRevision {
+            AppGroupConfig.bumpMainMeterRevision()
+            currentReading = mainMeterReading
+        }
+        allowsPersistedNotificationRecovery = startupTransition.allowsPersistedRecovery
+        publishMainMeterReading()
+        if startupTransition.reloadWidget
+            || MainMeterPolicy.shouldReloadWidget(
+                previous: previousPublishedReading,
+                current: currentReading)
+        {
+            WidgetCenter.shared.reloadAllTimelines()
         }
         appUpdater.appState = self
         let monitor = PowerMonitor()
@@ -235,11 +545,22 @@ final class AppState: ObservableObject {
             @escaping @Sendable (Date) async ->
             OAuthPipeline.OAuthEnrichmentFetchResult = { now in
                 await OAuthPipeline.fetchEnrichmentResult(now: now)
-            }
+            },
+        codexReadingStore: CodexReadingStore? = nil
     ) {
+        let id = UUID().uuidString
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ClaudeMeter-AppState-(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("ClaudeMeter-AppState-\(id)", isDirectory: true)
         self.store = SnapshotStore(directory: directory)
+        if let codexReadingStore {
+            self.codexReadingStore = codexReadingStore
+            self.ephemeralDefaultsSuiteName = nil
+        } else {
+            let suiteName = "ClaudeMeter-AppState-\(id)"
+            self.codexReadingStore = CodexReadingStore(
+                defaults: UserDefaults(suiteName: suiteName)!)
+            self.ephemeralDefaultsSuiteName = suiteName
+        }
         self.ephemeralStoreDirectory = directory
         self.isActive = true
         self.hasEnabledDataSource = true
@@ -261,6 +582,10 @@ final class AppState: ObservableObject {
         attentionTask?.cancel()
         if let ephemeralStoreDirectory {
             try? FileManager.default.removeItem(at: ephemeralStoreDirectory)
+        }
+        if let ephemeralDefaultsSuiteName {
+            UserDefaults(suiteName: ephemeralDefaultsSuiteName)?.removePersistentDomain(
+                forName: ephemeralDefaultsSuiteName)
         }
     }
 
@@ -360,11 +685,11 @@ final class AppState: ObservableObject {
         AppGroupConfig.isSnapshotStale(lastPollAt: cursorLastPolledAt)
     }
 
+    /// Observation age only. A recent last-good value remains fresh even when
+    /// the newest refresh attempt failed; callers can inspect `reading.error`
+    /// independently.
     var codexIsStale: Bool {
-        codexAccounts.contains {
-            $0.isStale
-                || ($0.usage != nil && AppGroupConfig.isSnapshotStale(lastPollAt: $0.lastPolledAt))
-        }
+        codexAccounts.contains { $0.observationIsStale() }
     }
 
     var grokIsStale: Bool {
@@ -380,21 +705,56 @@ final class AppState: ObservableObject {
     }
 
     func setCodexSourceEnabled(_ enabled: Bool) {
+        if enabled {
+            codexAccounts = codexReadingStore.restore(accounts: AppSettings.codexAccounts())
+        }
         optionalSourceSettingDidChange(enabled: enabled, clearState: clearCodexState)
+        if mainMeterProvider == .codex { mainMeterSelectionChanged() }
     }
 
     func clearCodexState() {
         codexAccounts = []
+        if mainMeterProvider == .codex { publishMainMeterReading() }
     }
 
-    func refreshCodexAccountLabels() {
-        let names = AppSettings.codexAccountNames
-        codexAccounts = codexAccounts.map { reading in
-            let account = CodexAccount(
-                home: reading.account.home,
-                isImplicit: reading.account.isImplicit,
-                customName: names[reading.id])
-            return CodexAccountReading(account: account, state: reading.state)
+    func refreshCodexAccountsFromSettings(configurationChanged: Bool = false) {
+        if configurationChanged { pipelineGeneration += 1 }
+        let previousPublishedReading = publishedMainMeterReading
+        let previousNotificationReading = lastNotificationReading
+        let existing = Dictionary(uniqueKeysWithValues: codexAccounts.map { ($0.id, $0) })
+        let restored = Dictionary(
+            uniqueKeysWithValues: codexReadingStore.restore(
+                accounts: AppSettings.codexAccounts()
+            ).map { ($0.id, $0) })
+        codexAccounts = AppSettings.codexAccounts().compactMap { account in
+            guard let reading = existing[account.id] ?? restored[account.id] else { return nil }
+            return CodexAccountReading(
+                account: account,
+                state: reading.state,
+                lastAttemptAt: reading.lastAttemptAt)
+        }
+        guard mainMeterProvider == .codex else { return }
+        var currentReading = mainMeterReading
+        if MainMeterPolicy.shouldBumpSelectionRevision(
+            previous: previousPublishedReading,
+            current: currentReading,
+            configurationChanged: configurationChanged)
+        {
+            AppGroupConfig.bumpMainMeterRevision()
+            currentReading = mainMeterReading
+        }
+        if previousNotificationReading?.stableIdentity != currentReading?.stableIdentity {
+            notificationIdentity = nil
+            allowsPersistedNotificationRecovery = false
+            Task { await notificationEngine.pollFailed() }
+        }
+        publishMainMeterReading()
+        if configurationChanged
+            || MainMeterPolicy.shouldReloadWidget(
+                previous: previousPublishedReading,
+                current: currentReading)
+        {
+            WidgetCenter.shared.reloadAllTimelines()
         }
     }
 
@@ -442,6 +802,7 @@ final class AppState: ObservableObject {
         accountOAuthFailures = [:]
         hasEnabledDataSource = AppSettings.hasEnabledDataSource
         pipeline = AppState.makePipeline(store: store)
+        if mainMeterProvider == .claude { mainMeterSelectionChanged() }
         if canPoll && pollTask == nil {
             // startPolling reconciles bridges + (re)starts the attention watcher.
             startPolling()
@@ -472,50 +833,6 @@ final class AppState: ObservableObject {
             startAttentionWatcher()  // self-cancels now that isActive == false
             isLoading = false
         }
-    }
-
-    /// Limit sets the menu bar considers: the **pinned account** when the user set
-    /// one (`AppGroupConfig.menuBarAccount`), else **every account** (nearest-limit,
-    /// since rate limits are per-account). Cursor is added separately by callers.
-    var menuBarLimitSets: [LimitInfo] {
-        guard let snap = snapshot else { return [] }
-        guard let accounts = snap.accounts, !accounts.isEmpty else { return [snap.limits] }
-        if case .account(let pinned) = AppGroupConfig.menuBarAccountSelection,
-            let acc = accounts.first(where: { $0.id == pinned })
-        {
-            return [acc.limits]
-        }
-        return accounts.map(\.limits)
-    }
-
-    /// The single account the menu bar speaks for when showing a specific window
-    /// (5h / 7d / both): the pinned account if set, else the active account (the
-    /// snapshot's top-level mirror). Nil with no snapshot.
-    var menuBarActiveLimits: LimitInfo? {
-        guard let snap = snapshot else { return nil }
-        if case .account(let pinned) = AppGroupConfig.menuBarAccountSelection,
-            let acc = snap.accounts?.first(where: { $0.id == pinned })
-        {
-            return acc.limits
-        }
-        return snap.limits
-    }
-
-    /// Highest severity across the menu-bar limit sets — the "nearest-limit" signal.
-    /// **Claude only**: Cursor is a separate source with its own popover card and is
-    /// never folded into the menu bar (it would otherwise dominate the dot/number).
-    var severity: UsageSeverity {
-        let thresholds = Self.currentThresholds()
-        let now = Date()
-        var result: UsageSeverity = .unknown
-        for limits in menuBarLimitSets {
-            for descriptor in limits.bindingWindows {
-                result = UsageSeverity.highest(
-                    result,
-                    thresholds.severity(for: descriptor.window.resolved(asOf: now).percentUsed))
-            }
-        }
-        return result
     }
 
     static func currentThresholds() -> UsageThresholds {
@@ -560,8 +877,12 @@ final class AppState: ObservableObject {
     }
 
     private func pollClaude(configuration: PollConfiguration) async {
+        claudeIsLoading = true
+        defer { claudeIsLoading = false }
         let pipeline = self.pipeline
         let now = Date()
+        let previousPublishedReading = publishedMainMeterReading
+        let previousNotificationReading = lastNotificationReading
         scheduleServiceStatusRefresh(generation: configuration.generation)
         do {
             let result = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
@@ -575,11 +896,10 @@ final class AppState: ObservableObject {
             if result.isFatal {
                 lastError = DiagnosticsSanitizer.sanitize(
                     result.errors.map(\.message).joined(separator: "; "))
-                await notificationEngine.pollFailed()
+                if mainMeterProvider == .claude { await notificationEngine.pollFailed() }
                 return
             }
 
-            let previous = snapshot
             if var snap = result.snapshot {
                 // Enrich with per-model token/cost usage scanned from local logs.
                 // Independent of which tier produced the rate-limit snapshot.
@@ -603,24 +923,36 @@ final class AppState: ObservableObject {
                 }
                 snapshot = snap
                 lastPolledAt = snap.lastSuccessfulPollAt ?? Date()
-                await notificationEngine.process(
-                    snapshot: snap,
-                    previous: didPollInSession ? previous : nil,
-                    // Recovery diffs against the real previous even on the first poll, so
-                    // a window that reset while the app was quit still fires "refueled"
-                    // (escalation stays suppressed by the nil above to avoid a stale
-                    // cross-window crossing).
-                    recoveryBaseline: previous,
-                    isStale: claudeIsStale || snap.state.isStale
-                )
-                didPollInSession = true
-                if shouldReloadWidget(previous: previous, current: snap) {
-                    WidgetCenter.shared.reloadAllTimelines()
+                if mainMeterProvider == .claude {
+                    var currentReading = mainMeterReading
+                    if MainMeterPolicy.shouldBumpSelectionRevision(
+                        previous: previousPublishedReading,
+                        current: currentReading,
+                        configurationChanged: false)
+                    {
+                        AppGroupConfig.bumpMainMeterRevision()
+                        notificationIdentity = nil
+                        allowsPersistedNotificationRecovery = false
+                        currentReading = mainMeterReading
+                    }
+                    if let currentReading {
+                        await processMainMeterObservation(
+                            currentReading,
+                            previous: previousNotificationReading,
+                            isStale: claudeIsStale || snap.state.isStale)
+                    }
+                    publishMainMeterReading()
+                    if MainMeterPolicy.shouldReloadWidget(
+                        previous: previousPublishedReading,
+                        current: currentReading)
+                    {
+                        WidgetCenter.shared.reloadAllTimelines()
+                    }
                 }
             } else {
                 // No snapshot at all — not a fresh reading, so it must not count
-                // toward the predictive tracker's consecutive-poll confirmation.
-                await notificationEngine.pollFailed()
+                // toward the selected meter's predictive confirmation.
+                if mainMeterProvider == .claude { await notificationEngine.pollFailed() }
             }
 
             // A successful poll clears the error; tier failures remain available
@@ -630,7 +962,7 @@ final class AppState: ObservableObject {
             guard configuration.generation == pipelineGeneration, canPoll else { return }
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             lastError = DiagnosticsSanitizer.sanitize(message)
-            await notificationEngine.pollFailed()
+            if mainMeterProvider == .claude { await notificationEngine.pollFailed() }
         }
     }
 
@@ -669,11 +1001,15 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Codex runs independently of Claude and Cursor so failures never affect
-    /// Claude state, menu-bar severity, widget data, or notifications.
+    /// Codex runs independently of Claude and Cursor. It owns shared meter output
+    /// only when the user explicitly selects Codex as the main meter.
     private func pollCodex(configuration: PollConfiguration) async {
+        codexIsLoading = true
+        defer { codexIsLoading = false }
         let now = Date()
         let previous = Dictionary(uniqueKeysWithValues: codexAccounts.map { ($0.id, $0) })
+        let previousPublishedReading = publishedMainMeterReading
+        let previousNotificationReading = lastNotificationReading
         let accounts = configuration.codexAccounts
         var readings: [CodexAccountReading] = []
         for batch in accounts.chunked(into: 3) {
@@ -687,21 +1023,26 @@ final class AppState: ObservableObject {
                                 try await provider.fetchUsage(
                                     mode: configuration.codexMode, now: now)
                             }
+                            let completedAt = Date()
                             return CodexAccountReading(
-                                account: account, state: .current(value: usage, polledAt: Date()))
+                                account: account,
+                                state: .current(value: usage, polledAt: completedAt),
+                                lastAttemptAt: completedAt)
                         } catch {
                             let message = DiagnosticsSanitizer.sanitize(
                                 (error as? LocalizedError)?.errorDescription
                                     ?? error.localizedDescription)
-                            if let usage = prior?.usage, let polledAt = prior?.lastPolledAt {
+                            if let usage = prior?.usage, let polledAt = prior?.lastSuccessfulAt {
                                 return CodexAccountReading(
                                     account: account,
                                     state: .stale(
-                                        value: usage, polledAt: polledAt, error: message))
+                                        value: usage, polledAt: polledAt, error: message),
+                                    lastAttemptAt: Date())
                             }
                             return CodexAccountReading(
                                 account: account,
-                                state: .failed(error: message, lastPolledAt: nil))
+                                state: .failed(error: message, lastPolledAt: nil),
+                                lastAttemptAt: Date())
                         }
                     }
                 }
@@ -719,6 +1060,41 @@ final class AppState: ObservableObject {
         else { return }
         let byID = Dictionary(uniqueKeysWithValues: readings.map { ($0.id, $0) })
         codexAccounts = accounts.compactMap { byID[$0.id] }
+        codexReadingStore.save(codexAccounts)
+
+        guard mainMeterProvider == .codex else { return }
+        var currentSelected = mainMeterReading
+        if MainMeterPolicy.shouldBumpSelectionRevision(
+            previous: previousPublishedReading,
+            current: currentSelected,
+            configurationChanged: false)
+        {
+            AppGroupConfig.bumpMainMeterRevision()
+            notificationIdentity = nil
+            allowsPersistedNotificationRecovery = false
+            currentSelected = mainMeterReading
+        }
+        publishMainMeterReading()
+        if let currentSelected,
+            let lifecycle = codexAccounts.first(where: { $0.id == currentSelected.accountID })
+        {
+            if case .current = lifecycle.state {
+                await processMainMeterObservation(
+                    currentSelected,
+                    previous: previousNotificationReading,
+                    isStale: mainMeterIsStale)
+            } else {
+                await notificationEngine.pollFailed()
+            }
+        } else {
+            await notificationEngine.pollFailed()
+        }
+        if MainMeterPolicy.shouldReloadWidget(
+            previous: previousPublishedReading,
+            current: currentSelected)
+        {
+            WidgetCenter.shared.reloadAllTimelines()
+        }
     }
 
     /// Grok runs independently of Claude, Cursor, and Codex so failures never
@@ -954,19 +1330,6 @@ final class AppState: ObservableObject {
         activityHeatmapTask = nil
         activityHeatmapGeneration += 1
         activityHeatmapLoading = false
-    }
-
-    private func shouldReloadWidget(
-        previous: ClaudeUsageSnapshot?,
-        current: ClaudeUsageSnapshot
-    ) -> Bool {
-        guard let previous else { return true }
-        // Deliberately NOT comparing `lastSuccessfulPollAt`: on the statusline tier
-        // that's the bridge file's mtime, which the snippet advances every second,
-        // so including it made this always true and burned a WidgetKit timeline
-        // reload every poll (~1440/day) even when nothing on screen changed.
-        return previous.limits != current.limits
-            || previous.state.severity != current.state.severity
     }
 
     // MARK: - Pipeline factory

@@ -85,6 +85,7 @@ public enum AppGroupConfig {
         case fiveHour = "5h"
         case sevenDay = "7d"
         case both
+        case forecast
     }
 
     public enum MenuBarAccountSelection: Sendable, Equatable {
@@ -114,7 +115,8 @@ public enum AppGroupConfig {
     /// Claude keeps the legacy menu-bar account key so existing pins migrate without work.
     public static let menuBarAccountKey = "menuBarAccount"  // "" / "nearest" | account key
     public static let codexMainMeterAccountKey = "codexMainMeterAccount"
-    public static let menuBarWindowKey = "menuBarWindow"  // "nearest" | "5h" | "7d" | "both"
+    /// "nearest" | "5h" | "7d" | "both" | "forecast"
+    public static let menuBarWindowKey = "menuBarWindow"
 
     /// Typed popover card style, shared-first so app processes observe one value.
     public static func resolvedCardStyle(

@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A Forecast menu-bar option** pairs the nearest quota percentage with its
+  projected run-out time.
+
+### Changed
+
+- **Account-card forecasts are concrete.** When the current burn rate may exhaust
+  quota before refill, cards now say when instead of showing an abstract pace gap.
+
 ## [2.13.1] - 2026-08-28
 
 ### Fixed

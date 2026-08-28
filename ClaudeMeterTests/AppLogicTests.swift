@@ -98,6 +98,44 @@ struct AppLogicTests {
         #expect("it-oneone_build".friendlyAccountLabel == "It Oneone Build")
     }
 
+    @Test("Forecast menu-bar text pairs nearest energy with run-out time")
+    func forecastMenuBarText() {
+        let now = Date(timeIntervalSince1970: 1_782_269_456)
+        let limits = LimitInfo(
+            currentSession: LimitWindow(
+                percentUsed: 80,
+                resetsAt: now.addingTimeInterval(2.5 * 3600)))
+
+        #expect(
+            MenuBarText.forecast(
+                consideredLimits: [limits],
+                progression: .left,
+                now: now)
+                == "20% · out 38m")
+        #expect(
+            MenuBarText.forecast(
+                consideredLimits: [limits],
+                progression: .used,
+                now: now)
+                == "80% · out 38m")
+    }
+
+    @Test("Forecast menu-bar text falls back to nearest percentage")
+    func forecastMenuBarFallback() {
+        let now = Date(timeIntervalSince1970: 1_782_269_456)
+        let limits = LimitInfo(
+            currentSession: LimitWindow(
+                percentUsed: 20,
+                resetsAt: now.addingTimeInterval(2.5 * 3600)))
+
+        #expect(
+            MenuBarText.forecast(
+                consideredLimits: [limits],
+                progression: .left,
+                now: now)
+                == "80%")
+    }
+
     @Test("Codex account names prefer a non-empty override")
     func codexDisplayName() {
         let home = URL(fileURLWithPath: "/tmp/codex-work")

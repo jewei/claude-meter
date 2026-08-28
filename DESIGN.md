@@ -136,6 +136,8 @@ window elapsed. It never changes `EnergyBand`, severity, notifications, or thres
   comparison is available.
 - Ring cards keep their reset phrase and add the same neutral text below the primary 5-hour and
   weekly rows. Opus and dynamic scoped rows do not repeat it.
+- When straight-line burn projects depletion before reset, `May run out in …` replaces pace copy.
+  The expected-position marker remains neutral, and an early-window guard prevents bursty false alarms.
 - Missing, expired, or implausible reset times produce no marker or pace text. Bar cards retain
   their existing energy phrase in that case.
 
@@ -286,9 +288,10 @@ status dot (top-right), severity from the same engine as the rings:
 | Error       | bolt.trianglebadge.exclamationmark | —       |
 
 Retain a compact "{percentLeft}% left" text after the glyph for glanceability (design omits it; it's
-trivial to hide via a setting). The **"Menu bar shows"** setting picks which window the number
-reflects — nearest limit (default, unsuffixed), `5h`, `7d`, or `both` (`99% 5h · 73% 7d`); the dot
-color always tracks severity across all windows, so a single-window number can differ from the dot.
+trivial to hide via a setting). The **"Menu bar shows"** setting picks nearest limit (default, unsuffixed), `5h`, `7d`,
+`both` (`99% 5h · 73% 7d`), or `forecast` (`20% · out 38m`). Forecast uses the nearest binding
+window and falls back to its percentage when projection is unavailable. The dot color always tracks
+severity across all windows, so a single-window number can differ from the dot.
 Pause = dimmed glyph, no dot/number. Reduce Motion disables the pulse. Colors render in the menu bar
 (SwiftUI MenuBarExtra label is not force-templated).
 

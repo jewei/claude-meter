@@ -96,6 +96,30 @@ struct LimitWindowPaceTests {
 
 }
 
+@Suite("RunsOutPhrase")
+struct RunsOutPhraseTests {
+    @Test("Formats a projected run-out using reset duration rules")
+    func projectedRunOut() {
+        #expect(
+            RunsOutPhrase.spoken(.runsOut(seconds: 2_250))
+                == "May run out in 38m")
+    }
+
+    @Test("Formats compact menu-bar copy")
+    func compactRunOut() {
+        #expect(RunsOutPhrase.compact(.runsOut(seconds: 2_250)) == "out 38m")
+        #expect(RunsOutPhrase.compact(.runsOut(seconds: 4 * 86_400)) == "out 4d")
+    }
+
+    @Test("Keeps non-run-out estimates silent")
+    func nonRunOut() {
+        #expect(RunsOutPhrase.spoken(.lastsUntilReset) == nil)
+        #expect(RunsOutPhrase.spoken(.depleted) == nil)
+        #expect(RunsOutPhrase.spoken(.unknown) == nil)
+        #expect(RunsOutPhrase.compact(.lastsUntilReset) == nil)
+    }
+}
+
 @Suite("RunsOutEstimate forecast")
 struct RunsOutEstimateTests {
     private let now = Date(timeIntervalSince1970: 1_782_269_456)

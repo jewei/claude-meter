@@ -191,15 +191,14 @@ actor NotificationEngine {
             : nil
         guard !hasFired(key: key, legacyKey: legacyKey) else { return }
         let energy = energyName(for: scope, reading: reading)
-        let estimate = RunsOutText.formatted(
-            trigger.secondsUntilDepleted,
-            kind: scope.kind
-        )
+        let estimate =
+            RunsOutPhrase.spoken(.runsOut(seconds: trigger.secondsUntilDepleted))?
+            .lowercased() ?? "may run out soon"
         let delivered = await post(
             id: key,
             title: "Running hot ⚡",
             body:
-                "At this pace, \(reading.accountLabel)'s \(energy) may run out in about \(estimate), before it refills."
+                "At this pace, \(reading.accountLabel)'s \(energy) \(estimate), before it refills."
         )
         if delivered { markFired(key: key) }
     }
@@ -347,30 +346,4 @@ actor NotificationEngine {
     private func resetDescription(_ date: Date) -> String {
         ResetPhrase.spoken(until: date, asOf: Date()) ?? "soon"
     }
-}
-
-private enum RunsOutText {
-    static func formatted(_ seconds: TimeInterval, kind: LimitWindowKind) -> String {
-        let formatter = kind == .weekly ? dayHourFormatter : durationFormatter
-        let text = formatter.string(from: seconds) ?? ""
-        return text.isEmpty ? "under a minute" : text
-    }
-
-    private static let dayHourFormatter: DateComponentsFormatter = {
-        let formatter = DateComponentsFormatter()
-        formatter.unitsStyle = .abbreviated
-        formatter.allowedUnits = [.day, .hour]
-        formatter.maximumUnitCount = 2
-        formatter.zeroFormattingBehavior = .dropAll
-        return formatter
-    }()
-
-    private static let durationFormatter: DateComponentsFormatter = {
-        let formatter = DateComponentsFormatter()
-        formatter.unitsStyle = .abbreviated
-        formatter.allowedUnits = [.hour, .minute]
-        formatter.maximumUnitCount = 2
-        formatter.zeroFormattingBehavior = .dropAll
-        return formatter
-    }()
 }

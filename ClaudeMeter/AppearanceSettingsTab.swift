@@ -66,11 +66,14 @@ struct AppearanceSettingsTab: View {
                 settingCard(
                     icon: "gauge.with.dots.needle.bottom.50percent", color: Color(hex: "4FC51C"),
                     title: "Main meter shows",
-                    subtitle: "Which window the menu-bar percentage reflects."
+                    subtitle: "Choose a window or pair the nearest percentage with its forecast."
                 ) {
                     segmented(
                         $menuBarWindow,
-                        [("nearest", "Nearest"), ("5h", "5h"), ("7d", "7d"), ("both", "Both")])
+                        [
+                            ("nearest", "Nearest"), ("5h", "5h"), ("7d", "7d"),
+                            ("both", "Both"), ("forecast", "Forecast"),
+                        ])
                 }
             }
             .padding(20)

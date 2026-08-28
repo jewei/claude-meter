@@ -395,14 +395,23 @@ struct AccountRingCard: View {
                 }
                 Spacer(minLength: 0)
             }
-            if let paceKind,
-                let insight = window.resolved(asOf: now).paceInsight(kind: paceKind, asOf: now)
-            {
-                Text(insight.displayText)
-                    .font(PFont.body(10, .bold))
-                    .foregroundStyle(Color.pfInkMuted)
-                    .padding(.leading, 15)
-                    .lineLimit(1)
+            if let paceKind {
+                let resolved = window.resolved(asOf: now)
+                let forecast = RunsOutPhrase.spoken(
+                    resolved.runsOutEstimate(kind: paceKind, asOf: now))
+                if let forecast {
+                    Text(forecast)
+                        .font(PFont.body(10, .bold))
+                        .foregroundStyle(Color.pfInkMuted)
+                        .padding(.leading, 15)
+                        .lineLimit(1)
+                } else if let insight = resolved.paceInsight(kind: paceKind, asOf: now) {
+                    Text(insight.displayText)
+                        .font(PFont.body(10, .bold))
+                        .foregroundStyle(Color.pfInkMuted)
+                        .padding(.leading, 15)
+                        .lineLimit(1)
+                }
             }
         }
     }
@@ -423,9 +432,10 @@ struct AccountRingCard: View {
     }
 
     private func accessibilityPace(_ window: LimitWindow, kind: LimitWindowKind) -> String {
-        guard let insight = window.resolved(asOf: now).paceInsight(kind: kind, asOf: now) else {
-            return ""
-        }
+        let resolved = window.resolved(asOf: now)
+        let estimate = resolved.runsOutEstimate(kind: kind, asOf: now)
+        if let forecast = RunsOutPhrase.spoken(estimate) { return ", \(forecast)" }
+        guard let insight = resolved.paceInsight(kind: kind, asOf: now) else { return "" }
         return ", \(insight.displayText)"
     }
 }
@@ -483,7 +493,10 @@ struct AccountBarCard: View {
         _ label: String, icon: String, window: LimitWindow, kind: LimitWindowKind
     ) -> some View {
         let band = window.energyBand(thresholds: thresholds, asOf: now)
-        let insight = window.resolved(asOf: now).paceInsight(kind: kind, asOf: now)
+        let resolved = window.resolved(asOf: now)
+        let insight = resolved.paceInsight(kind: kind, asOf: now)
+        let forecast = RunsOutPhrase.spoken(
+            resolved.runsOutEstimate(kind: kind, asOf: now))
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 7) {
                 Text(icon).font(.system(size: 13))
@@ -500,7 +513,10 @@ struct AccountBarCard: View {
                 expectedFraction: insight?.expectedDisplayFraction(usage: usage)
             )
             HStack {
-                if let insight {
+                if let forecast {
+                    Text(forecast)
+                        .font(PFont.body(11, .bold)).foregroundStyle(Color.pfInkMuted)
+                } else if let insight {
                     Text(insight.displayText)
                         .font(PFont.body(11, .bold)).foregroundStyle(Color.pfInkMuted)
                 } else if let left = window.percentLeft(asOf: now) {

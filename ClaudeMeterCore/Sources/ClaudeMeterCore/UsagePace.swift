@@ -100,6 +100,34 @@ public enum RunsOutEstimate: Sendable, Equatable {
     case unknown
 }
 
+/// Shared display copy for projected depletion. Non-run-out estimates stay silent;
+/// existing pace, severity, and reset presentation remain authoritative for them.
+public enum RunsOutPhrase {
+    /// "May run out in 38m", using the same duration rules as reset/refill copy.
+    public static func spoken(_ estimate: RunsOutEstimate) -> String? {
+        guard case .runsOut(let seconds) = estimate else { return nil }
+        let origin = Date(timeIntervalSinceReferenceDate: 0)
+        guard
+            let duration = ResetPhrase.duration(
+                until: origin.addingTimeInterval(seconds),
+                asOf: origin)
+        else { return nil }
+        return "May run out in \(duration)"
+    }
+
+    /// "out 38m" for constrained menu-bar presentation.
+    public static func compact(_ estimate: RunsOutEstimate) -> String? {
+        guard case .runsOut(let seconds) = estimate else { return nil }
+        let origin = Date(timeIntervalSinceReferenceDate: 0)
+        guard
+            let duration = ResetPhrase.compact(
+                until: origin.addingTimeInterval(seconds),
+                asOf: origin)
+        else { return nil }
+        return "out \(duration)"
+    }
+}
+
 extension LimitWindow {
     private struct PaceMetrics {
         let used: Double

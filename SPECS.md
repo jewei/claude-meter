@@ -219,14 +219,18 @@ never use an empty/tapped-out phrase.
 Pace presentation compares percent used with percent of the fixed rolling window elapsed.
 Bar cards show a neutral expected-position marker plus compact pace text; the marker mirrors
 between `used` and `left` progression modes. Ring cards show text only for the primary session
-and weekly rings while retaining reset timing. Pace never affects severity or color. If the
-reset time is absent, expired, or outside the window span, pace presentation disappears and
-the bar falls back to its energy phrase.
+and weekly rings while retaining reset timing. When the current burn rate projects depletion
+before reset, both card styles replace pace copy with `May run out in …`; an eight-percent
+elapsed-time guard suppresses early-window extrapolation. Pace and forecasts never affect severity
+or color. If the reset time is absent, expired, or outside the window span, pace presentation
+disappears and the bar falls back to its energy phrase.
 
 The menu-bar dot uses the highest severity from the selected main provider across all
 binding windows of the pinned account, or all of that provider's accounts when unpinned.
-Its number follows `menuBarWindow`: nearest, short/session, long/weekly, or both. A
-single-window number may intentionally differ from the all-window dot. Selecting a provider
+Its number follows `menuBarWindow`: nearest, short/session, long/weekly, both, or forecast.
+Forecast pairs the nearest binding percentage with that same window's compact projected run-out
+and falls back to percentage-only when projection is unavailable. A single-window number may
+intentionally differ from the all-window dot. Selecting a provider
 or account with no reading produces an explicit unavailable/error state, never fallback.
 
 The popover is 360 points wide with a screen-derived scrolling height. Header controls are
@@ -262,7 +266,7 @@ value removes the mirrored value so defaults cannot become stale.
 | `mainMeterProvider` | `claude`, `codex` | `claude` |
 | `menuBarAccount` | nearest or Claude account key | nearest |
 | `codexMainMeterAccount` | nearest or Codex home id | nearest |
-| `menuBarWindow` | `nearest`, `5h`, `7d`, `both` | `nearest` |
+| `menuBarWindow` | `nearest`, `5h`, `7d`, `both`, `forecast` | `nearest` |
 | warning threshold | percent used | 80 |
 | critical threshold | percent used | 95 |
 | stale interval | seconds | 180 |

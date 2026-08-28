@@ -1,6 +1,33 @@
 import ClaudeMeterCore
 import SwiftUI
 
+enum MenuBarText {
+    private struct Candidate {
+        let window: LimitWindow
+        let kind: LimitWindowKind
+        let left: Double
+    }
+
+    static func forecast(
+        consideredLimits: [LimitInfo],
+        progression: AppGroupConfig.ProgressionMode,
+        now: Date
+    ) -> String? {
+        let candidates: [Candidate] = consideredLimits.flatMap(\.bindingWindows).compactMap {
+            descriptor in
+            let window = descriptor.window.resolved(asOf: now)
+            guard let left = window.percentLeft(asOf: now) else { return nil }
+            return Candidate(window: window, kind: descriptor.scope.kind, left: left)
+        }
+        guard let nearest = candidates.min(by: { $0.left < $1.left }) else { return nil }
+        let percent = progression == .used ? 100 - nearest.left : nearest.left
+        let percentText = "\(Int(percent.rounded()))%"
+        let estimate = nearest.window.runsOutEstimate(kind: nearest.kind, asOf: now)
+        guard let forecast = RunsOutPhrase.compact(estimate) else { return percentText }
+        return "\(percentText) · \(forecast)"
+    }
+}
+
 /// Menu-bar item for the explicitly selected main meter. Provider selection is
 /// stable until the user changes it; missing data never falls back to another source.
 struct MenuBarLabel: View {
@@ -145,6 +172,11 @@ struct MenuBarLabel: View {
             return parts.isEmpty ? nil : parts.joined(separator: " · ")
         case .nearest:
             return nearestText(now: now)
+        case .forecast:
+            return MenuBarText.forecast(
+                consideredLimits: appState.mainMeterLimitSets,
+                progression: progression,
+                now: now)
         }
     }
 

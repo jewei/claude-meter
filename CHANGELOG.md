@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Provider cards now open and close smoothly while the popover follows their size.**
+  Expanded details are revealed without shaking the fixed header, Reduce Motion is
+  respected, and the window stays attached to its menu-bar item through rapid
+  reversals and display changes.
+- **Cursor and Codex use refreshed, dark-mode-friendly provider icons.**
+
+### Fixed
+
+- **An expired reading from a stale cache no longer looks like a full tank.** When
+  Claude Meter cannot observe usage accumulated after a reset, it now shows that
+  window as unknown and explains how to refresh instead of claiming 100% energy.
+- **Enabling the OAuth source no longer looks like completing its connection.**
+  Settings now labels the source as not connected and always exposes the required
+  Connect or manual-entry actions instead of leaving the setup area blank.
+
 ## [2.12.1] - 2026-08-22
 
 ### Fixed

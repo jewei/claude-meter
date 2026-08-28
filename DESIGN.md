@@ -250,7 +250,9 @@ Chunky card, flex row, gap 14.
 
 **Per-account data reality:** label, 5-hr %, week %, reset/refill exist for every account. Email,
 plan badge, and weekly-Opus are OAuth-only → present only on the active account. Never fabricate
-them; the card degrades gracefully (name + rings + two rows).
+them; the card degrades gracefully (name + rings + two rows). When Claude is the secondary
+provider, keep one compact summary card: show the nearest-limit account's known plan in its header,
+then expand in place for per-account session/week/Opus/scoped rows and known identity metadata.
 
 ### Energy-bar card (alt — Frame A, keep available)
 Same card; replaces rings with two stacked rows, each: icon (⚡/📅) + label + "78% left", a 14pt

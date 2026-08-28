@@ -233,9 +233,11 @@ The popover is 360 points wide with a screen-derived scrolling height. Header co
 Settings and Quit; opening performs refresh, so there is no redundant refresh button.
 The selected provider owns the hero and first account section. An exact account pin wins;
 otherwise the account nearest its limit owns every primary surface. The other eligible
-provider remains visible below as one compact secondary summary. Claude
-account cards are always expanded. Primary Codex, Cursor, and Grok account cards remember
-their expanded state.
+provider remains visible below as one compact secondary summary. When Claude is secondary,
+the summary shows the nearest account's plan when known and expands in place to reveal each
+account's session, weekly, Opus/scoped windows, reset timing, and known identity metadata.
+Primary Claude account cards are always expanded. Primary Codex, Cursor, and Grok account cards
+remember their expanded state.
 The header timestamp belongs only to the selected reading. The last-seven-days cost card
 opens the activity heatmap. There is no footer or Add Account button.
 

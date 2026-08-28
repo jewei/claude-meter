@@ -34,6 +34,7 @@ struct PopoverView: View {
 
     static let cursorCardID = "cursor"
     static let grokCardID = "grok"
+    static let claudeSecondaryCardID = "secondary:claude"
     static func codexCardID(_ accountID: String) -> String { "codex:\(accountID)" }
 
     private func isExpanded(_ id: String) -> Bool { expandedCards.contains(id) }
@@ -376,7 +377,8 @@ struct PopoverView: View {
             name: "Claude",
             models: models,
             hasError: appState.lastError != nil,
-            isStale: appState.claudeIsStale
+            isStale: appState.claudeIsStale,
+            cardID: Self.claudeSecondaryCardID
         ) {
             claudeMark
         }
@@ -387,6 +389,7 @@ struct PopoverView: View {
         models: [AccountCardModel],
         hasError: Bool,
         isStale: Bool,
+        cardID: String? = nil,
         @ViewBuilder mark: () -> Mark
     ) -> some View {
         let nearest = models.min { $0.minLeft(now) < $1.minLeft(now) }
@@ -398,17 +401,32 @@ struct PopoverView: View {
             hasError: hasError,
             isStale: isStale,
             accountCount: models.count)
+        let expanded = cardID.map(isExpanded) ?? false
         return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 7) {
-                mark()
-                Text(name)
-                    .font(PFont.display(14, .semibold))
-                    .foregroundStyle(Color.pfInk)
-                Spacer()
-                Text(displayedPercent.map { "\(Int($0.rounded()))%" } ?? "—")
-                    .font(PFont.display(14, .bold))
-                    .foregroundStyle(band == .full ? Color.pfInk : tint)
-                    .monospacedDigit()
+            if let cardID {
+                Button {
+                    toggleCard(cardID)
+                } label: {
+                    secondaryProviderHeader(
+                        name: name,
+                        plan: Self.secondaryProviderPlan(from: models, asOf: now),
+                        displayedPercent: displayedPercent,
+                        band: band,
+                        tint: tint,
+                        expanded: expanded,
+                        mark: mark)
+                }
+                .buttonStyle(.plain)
+                .help(expanded ? "Hide \(name) details" : "Show \(name) details")
+            } else {
+                secondaryProviderHeader(
+                    name: name,
+                    plan: Self.secondaryProviderPlan(from: models, asOf: now),
+                    displayedPercent: displayedPercent,
+                    band: band,
+                    tint: tint,
+                    expanded: nil,
+                    mark: mark)
             }
             EnergyBar(
                 fraction: (displayedPercent ?? 0) / 100,
@@ -417,10 +435,106 @@ struct PopoverView: View {
             Text(detail)
                 .font(PFont.body(11, .semibold))
                 .foregroundStyle(Color.pfInkMuted)
+            if let cardID, expanded {
+                Group {
+                    Divider().overlay(Color.pfCardBorder)
+                    secondaryAccountDetails(models)
+                }
+                .popoverDisclosure(id: cardID)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
         .chunkyCard()
+    }
+
+    private func secondaryProviderHeader<Mark: View>(
+        name: String,
+        plan: String?,
+        displayedPercent: Double?,
+        band: EnergyBand,
+        tint: Color,
+        expanded: Bool?,
+        @ViewBuilder mark: () -> Mark
+    ) -> some View {
+        HStack(spacing: 7) {
+            mark()
+            Text(name)
+                .font(PFont.display(14, .semibold))
+                .foregroundStyle(Color.pfInk)
+            if let plan { PlanBadge(plan: plan) }
+            if let expanded { disclosure(expanded) }
+            Spacer(minLength: 4)
+            Text(displayedPercent.map { "\(Int($0.rounded()))%" } ?? "—")
+                .font(PFont.display(14, .bold))
+                .foregroundStyle(band == .full ? Color.pfInk : tint)
+                .monospacedDigit()
+        }
+        .contentShape(Rectangle())
+    }
+
+    private func secondaryAccountDetails(_ models: [AccountCardModel]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(models) { model in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 7) {
+                        Text(model.label)
+                            .font(PFont.display(12, .semibold))
+                            .foregroundStyle(Color.pfInk)
+                            .lineLimit(1)
+                        if model.isLive { LiveDot() }
+                        if let plan = model.plan { PlanBadge(plan: plan) }
+                        if model.isDuplicateLogin { DuplicateLoginBadge() }
+                        Spacer(minLength: 0)
+                    }
+                    if let subtitle = model.subtitle {
+                        Text(subtitle)
+                            .font(PFont.body(10, .semibold))
+                            .foregroundStyle(Color.pfInkMuted)
+                            .lineLimit(1)
+                    }
+                    secondaryLimitRow("5-hr", window: model.session)
+                    secondaryLimitRow("week", window: model.week)
+                    if let opus = model.opus {
+                        secondaryLimitRow("opus", window: opus)
+                    }
+                    ForEach(model.scoped) { scoped in
+                        secondaryLimitRow(scoped.displayName.lowercased(), window: scoped.window)
+                    }
+                }
+            }
+        }
+    }
+
+    private func secondaryLimitRow(_ label: String, window: LimitWindow) -> some View {
+        let resolved = window.resolved(asOf: now)
+        let band = resolved.energyBand(thresholds: usageThresholds, asOf: now)
+        return HStack(spacing: 6) {
+            EnergyDot(color: band.color)
+            Text(label)
+                .font(PFont.body(11, .bold))
+                .foregroundStyle(Color.pfInk)
+            Text(resolved.displayText(usage: showsUsage, asOf: now) ?? "—")
+                .font(PFont.display(11, .heavy))
+                .foregroundStyle(resolved.percentUsed == nil ? Color.pfInkMuted : band.color)
+                .monospacedDigit()
+            if let resetsAt = resolved.resetsAt,
+                let phrase = ResetPhrase.spoken(until: resetsAt, asOf: now)
+            {
+                Text("· \(phrase)")
+                    .font(PFont.body(11, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+                    .monospacedDigit()
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    nonisolated static func secondaryProviderPlan(
+        from models: [AccountCardModel],
+        asOf now: Date
+    ) -> String? {
+        models.min { $0.minLeft(now) < $1.minLeft(now) }?.plan
     }
 
     nonisolated static func secondaryProviderDetail(

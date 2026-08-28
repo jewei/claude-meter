@@ -326,6 +326,25 @@ struct AppLogicTests {
         }
     }
 
+    @Test("Secondary provider badge follows the nearest-limit account")
+    func secondaryProviderPlanFollowsNearestLimit() {
+        let models = [
+            AccountCardModel(
+                id: "roomy", label: "Roomy", plan: "Pro", subtitle: nil,
+                session: LimitWindow(percentUsed: 10),
+                week: LimitWindow(percentUsed: 20), opus: nil),
+            AccountCardModel(
+                id: "nearest", label: "Nearest", plan: "Max 5x", subtitle: nil,
+                session: LimitWindow(percentUsed: 80),
+                week: LimitWindow(percentUsed: 70), opus: nil),
+        ]
+
+        #expect(
+            PopoverView.secondaryProviderPlan(
+                from: models,
+                asOf: Date(timeIntervalSince1970: 100)) == "Max 5x")
+    }
+
     @Test("Failed secondary provider state remains renderable without claiming cached data")
     func failedSecondaryProviderPresentation() {
         #expect(

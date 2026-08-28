@@ -11,10 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.14] - 2026-08-28
+
 ### Added
 
 - **A Forecast menu-bar option** pairs the nearest quota percentage with its
   projected run-out time.
+- **Secondary Claude details can now expand in place.** When Codex is the main
+  meter, Claude’s compact card can reveal each account’s limits, reset timing,
+  plan, and identity details without taking over the popover.
 
 ### Changed
 
@@ -616,7 +621,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.13.1...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.14...HEAD
+[2.14]: https://github.com/jewei/claude-meter/compare/v2.13.1...v2.14
 [2.13.1]: https://github.com/jewei/claude-meter/compare/v2.13...v2.13.1
 [2.13]: https://github.com/jewei/claude-meter/compare/v2.12.1...v2.13
 [2.12.1]: https://github.com/jewei/claude-meter/compare/v2.12...v2.12.1

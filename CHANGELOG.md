@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.13] - 2026-08-28
+
 ### Changed
 
 - **Provider cards now open and close smoothly while the popover follows their size.**
@@ -596,7 +598,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.12.1...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.13...HEAD
+[2.13]: https://github.com/jewei/claude-meter/compare/v2.12.1...v2.13
 [2.12.1]: https://github.com/jewei/claude-meter/compare/v2.12...v2.12.1
 [2.12]: https://github.com/jewei/claude-meter/compare/v2.11...v2.12
 [2.11]: https://github.com/jewei/claude-meter/compare/v2.10...v2.11

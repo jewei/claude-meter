@@ -575,7 +575,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
 // MARK: - Errors
 
-enum OAuthError: Error {
+enum OAuthError: LocalizedError {
     case unauthorized
     case rateLimited
     case httpError(Int)
@@ -584,6 +584,21 @@ enum OAuthError: Error {
     /// Terminal refresh rejection (`invalid_grant`) — the refresh token is dead
     /// (e.g. user ran `claude logout`); don't retry until credentials change.
     case refreshRejected
+
+    var errorDescription: String? {
+        switch self {
+        case .unauthorized:
+            "Claude Code sign-in was rejected — run `claude auth login`, then retry"
+        case .rateLimited:
+            "Anthropic is rate-limiting usage checks — retrying automatically"
+        case .httpError(let status):
+            "Anthropic usage check failed (HTTP \(status))"
+        case .refreshFailed:
+            "Claude Code sign-in could not be refreshed — try again shortly"
+        case .refreshRejected:
+            "Claude Code sign-in expired — run `claude auth login`, then retry"
+        }
+    }
 }
 
 // MARK: - Codable models

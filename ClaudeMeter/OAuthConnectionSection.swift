@@ -19,6 +19,13 @@ enum OAuthSetupState: Equatable {
         default: .promptAuto
         }
     }
+
+    static func afterAutomaticVerificationFailure(
+        oauthMode: String,
+        message: String
+    ) -> OAuthSetupState {
+        oauthMode == "auto" ? .connectedAuto : .error(message)
+    }
 }
 
 struct OAuthConnectionSection: View {
@@ -281,7 +288,10 @@ struct OAuthConnectionSection: View {
                 appState.rebuildPipeline()
                 appState.refreshNow()
             } catch {
-                state = .error(DiagnosticsSanitizer.sanitize(error.localizedDescription))
+                let message = DiagnosticsSanitizer.sanitize(error.localizedDescription)
+                testResult = "Error: \(message)"
+                state = .afterAutomaticVerificationFailure(
+                    oauthMode: oauthMode, message: message)
             }
         }
     }

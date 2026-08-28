@@ -253,6 +253,16 @@ struct AppLogicTests {
         return (coordinator, adapter)
     }
 
+    @Test("Failed OAuth re-verification keeps an existing connection")
+    func failedOAuthReverificationKeepsConnection() {
+        #expect(
+            OAuthSetupState.afterAutomaticVerificationFailure(
+                oauthMode: "auto", message: "retrying") == .connectedAuto)
+        #expect(
+            OAuthSetupState.afterAutomaticVerificationFailure(
+                oauthMode: "", message: "failed") == .error("failed"))
+    }
+
     @Test("Disconnected OAuth setup is immediately actionable")
     func disconnectedOAuthSetupIsActionable() {
         #expect(OAuthSetupState.initial(oauthMode: "") == .promptAuto)

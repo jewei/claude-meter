@@ -8,6 +8,12 @@ import Testing
 // credentials map), so running them in parallel races on shared global state.
 @Suite("OAuthPipeline", .serialized)
 struct OAuthPipelineTests {
+    @Test func rateLimitErrorExplainsThatItWillRetry() {
+        #expect(
+            OAuthError.rateLimited.localizedDescription
+                == "Anthropic is rate-limiting usage checks — retrying automatically")
+    }
+
     @Test func enrichmentRetainsWhyNoObservationWasAvailable() async {
         let defaults = UserDefaults.standard
         let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)

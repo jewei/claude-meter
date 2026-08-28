@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **OAuth throttling no longer looks like a broken connection.** Settings now says
+  Anthropic is rate-limiting usage checks and will retry automatically, while an
+  already verified Keychain connection remains shown as connected.
+
 ## [2.13] - 2026-08-28
 
 ### Changed

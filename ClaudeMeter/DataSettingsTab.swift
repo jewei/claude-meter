@@ -54,6 +54,7 @@ struct DataSettingsTab: View {
 
     @AppStorage(AppSettings.statuslineSourceEnabledKey) private var statuslineSourceEnabled = true
     @AppStorage(AppSettings.oauthSourceEnabledKey) private var oauthSourceEnabled = true
+    @AppStorage(AppSettings.oauthModeKey) private var oauthMode = ""
     @AppStorage(AppSettings.cursorSourceEnabledKey) private var cursorSourceEnabled = false
     @AppStorage(AppSettings.codexSourceEnabledKey) private var codexSourceEnabled = false
     @AppStorage(AppSettings.grokSourceEnabledKey) private var grokSourceEnabled = false
@@ -69,6 +70,17 @@ struct DataSettingsTab: View {
     @State private var grokStatus = ""
     @State private var grokStatusGeneration = 0
     @State private var grokStatusTask: Task<Void, Never>?
+
+    private var oauthSubtitle: String {
+        guard !oauthMode.isEmpty else {
+            return oauthSourceEnabled
+                ? "Not connected — complete setup below."
+                : "Not connected — enable this source to set it up."
+        }
+        return oauthSourceEnabled
+            ? "Connected; reads credentials from Keychain."
+            : "Connected; usage source paused."
+    }
 
     var body: some View {
         ScrollView {
@@ -102,7 +114,7 @@ struct DataSettingsTab: View {
                     icon: "key.fill",
                     iconColor: Color(hex: "F4B400"),
                     title: "Claude Code OAuth",
-                    subtitle: "Use OAuth credentials from Keychain.",
+                    subtitle: oauthSubtitle,
                     isEnabled: $oauthSourceEnabled
                 ) {
                     OAuthConnectionSection(appState: appState)

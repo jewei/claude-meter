@@ -3,8 +3,7 @@ import ClaudeMeterProviders
 import Foundation
 import SwiftUI
 
-private enum OAuthSetupState: Equatable {
-    case idle
+enum OAuthSetupState: Equatable {
     case promptAuto
     case promptNoAuto
     case manualEntry
@@ -12,6 +11,14 @@ private enum OAuthSetupState: Equatable {
     case connectedAuto
     case connectedManual
     case error(String)
+
+    static func initial(oauthMode: String) -> OAuthSetupState {
+        switch oauthMode {
+        case "auto": .connectedAuto
+        case "manual": .connectedManual
+        default: .promptAuto
+        }
+    }
 }
 
 struct OAuthConnectionSection: View {
@@ -21,7 +28,8 @@ struct OAuthConnectionSection: View {
 
     @AppStorage(AppSettings.oauthSourceEnabledKey) private var oauthSourceEnabled = true
     @AppStorage(AppSettings.oauthModeKey) private var oauthMode = ""
-    @State private var state: OAuthSetupState = .idle
+    @State private var state = OAuthSetupState.initial(
+        oauthMode: UserDefaults.standard.string(forKey: AppSettings.oauthModeKey) ?? "")
     @State private var showAccessToken = false
     @State private var showRefreshToken = false
     @State private var manualAccess = ""
@@ -38,6 +46,10 @@ struct OAuthConnectionSection: View {
             }
         }
         .onAppear { loadState() }
+        .onChange(of: oauthSourceEnabled) { _, enabled in
+            if enabled { loadState() }
+        }
+        .onChange(of: oauthMode) { _, _ in loadState() }
         .alert("Connect Claude Code?", isPresented: $showKeychainConsent) {
             Button("Cancel", role: .cancel) {}
             Button("Continue") {
@@ -58,9 +70,6 @@ struct OAuthConnectionSection: View {
     @ViewBuilder
     private var stateContent: some View {
         switch state {
-        case .idle:
-            EmptyView()
-
         case .promptAuto:
             HStack(spacing: 10) {
                 Button("Connect") { requestAutoConnection() }

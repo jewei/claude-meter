@@ -253,6 +253,11 @@ struct AppLogicTests {
         return (coordinator, adapter)
     }
 
+    @Test("Disconnected OAuth setup is immediately actionable")
+    func disconnectedOAuthSetupIsActionable() {
+        #expect(OAuthSetupState.initial(oauthMode: "") == .promptAuto)
+    }
+
     @Test("Stale hero does not promise available capacity")
     func staleHeroCopy() {
         #expect(HeroSummary.stale(oauthConnected: false).title == "Refresh needed")

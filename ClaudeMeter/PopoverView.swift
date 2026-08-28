@@ -89,7 +89,7 @@ struct PopoverView: View {
         }
     }
 
-    private var usage: Bool {
+    private var showsUsage: Bool {
         (AppGroupConfig.ProgressionMode(rawValue: progressionMode) ?? .left) == .used
     }
 
@@ -391,7 +391,7 @@ struct PopoverView: View {
     ) -> some View {
         let nearest = models.min { $0.minLeft(now) < $1.minLeft(now) }
         let left = nearest?.minLeft(now)
-        let displayedPercent = left.map { usage ? 100 - $0 : $0 }
+        let displayedPercent = left.map { showsUsage ? 100 - $0 : $0 }
         let band = nearest?.band(usageThresholds, now) ?? .unknown
         let tint: Color = band == .full ? .pfEnergyFull : band.color
         let detail = Self.secondaryProviderDetail(
@@ -501,10 +501,10 @@ struct PopoverView: View {
             ForEach(models) { model in
                 if style == .bars {
                     AccountBarCard(
-                        model: model, now: now, thresholds: usageThresholds, usage: usage)
+                        model: model, now: now, thresholds: usageThresholds, usage: showsUsage)
                 } else {
                     AccountRingCard(
-                        model: model, now: now, thresholds: usageThresholds, usage: usage)
+                        model: model, now: now, thresholds: usageThresholds, usage: showsUsage)
                 }
             }
         }
@@ -811,10 +811,11 @@ struct PopoverView: View {
         }
     }
 
-    // MARK: - Cursor card (spend-based — shows % used, fills up)
+    // MARK: - Cursor card (spend-based, shared left/used progression)
 
-    private func cursorCard(_ usage: CursorUsage) -> some View {
-        let band = EnergyBand(severity: usageThresholds.severity(for: usage.percentUsed))
+    private func cursorCard(_ cursor: CursorUsage) -> some View {
+        let displayPercent = cursor.displayPercent(showUsage: showsUsage)
+        let band = EnergyBand(severity: usageThresholds.severity(for: cursor.percentUsed))
         let tint: Color = band == .full ? .pfEnergyFull : band.color
         let expanded = isExpanded(Self.cursorCardID)
         return VStack(alignment: .leading, spacing: 8) {
@@ -831,12 +832,12 @@ struct PopoverView: View {
                     Text("Cursor")
                         .font(PFont.display(14, .semibold))
                         .foregroundStyle(Color.pfInk)
-                    if let planName = usage.displayPlanName {
+                    if let planName = cursor.displayPlanName {
                         PlanBadge(plan: planName, verbatim: true)
                     }
                     disclosure(expanded)
                     Spacer(minLength: 4)
-                    Text(usage.clampedPercent.map { "\(Int($0.rounded()))%" } ?? "—")
+                    Text(displayPercent.map { "\(Int($0.rounded()))%" } ?? "—")
                         .font(PFont.display(14, .bold))
                         .foregroundStyle(band == .full ? Color.pfInk : tint)
                         .monospacedDigit()
@@ -847,22 +848,34 @@ struct PopoverView: View {
             .help(expanded ? "Hide Cursor details" : "Show Cursor details")
             // Percent, bar and reset timing all stay visible when collapsed —
             // that's what makes collapsing safe as the default.
-            EnergyBar(fraction: (usage.clampedPercent ?? 0) / 100, color: tint, height: 12)
-            if let subtitle = cursorSubtitle(usage) {
+            EnergyBar(fraction: (displayPercent ?? 0) / 100, color: tint, height: 12)
+            if let subtitle = cursorSubtitle(cursor) {
                 Text(subtitle)
                     .font(PFont.body(11, .semibold))
                     .foregroundStyle(Color.pfInkMuted)
             }
             if expanded {
                 Group {
-                    if usage.clampedAutoPercent != nil || usage.clampedAPIPercent != nil {
+                    if cursor.clampedAutoPercent != nil || cursor.clampedAPIPercent != nil {
                         Divider().overlay(Color.pfCardBorder)
                         VStack(spacing: 7) {
-                            if let percent = usage.clampedAutoPercent {
-                                cursorUsageRow("Auto + Composer", percent: percent)
+                            if let percentUsed = cursor.clampedAutoPercent,
+                                let displayedPercent = cursor.displayAutoPercent(
+                                    showUsage: showsUsage)
+                            {
+                                cursorUsageRow(
+                                    "Auto + Composer",
+                                    percentUsed: percentUsed,
+                                    displayedPercent: displayedPercent)
                             }
-                            if let percent = usage.clampedAPIPercent {
-                                cursorUsageRow("API", percent: percent)
+                            if let percentUsed = cursor.clampedAPIPercent,
+                                let displayedPercent = cursor.displayAPIPercent(
+                                    showUsage: showsUsage)
+                            {
+                                cursorUsageRow(
+                                    "API",
+                                    percentUsed: percentUsed,
+                                    displayedPercent: displayedPercent)
                             }
                         }
                     }
@@ -875,25 +888,30 @@ struct PopoverView: View {
         .chunkyCard()
     }
 
-    private func cursorUsageRow(_ label: String, percent: Double) -> some View {
-        let band = EnergyBand(severity: usageThresholds.severity(for: percent))
+    private func cursorUsageRow(
+        _ label: String,
+        percentUsed: Double,
+        displayedPercent: Double
+    ) -> some View {
+        let band = EnergyBand(severity: usageThresholds.severity(for: percentUsed))
         let tint: Color = band == .full ? .pfEnergyFull : band.color
+        let modeLabel = showsUsage ? "usage" : "energy left"
         return VStack(spacing: 4) {
             HStack {
                 Text(label)
                     .font(PFont.body(11, .semibold))
                     .foregroundStyle(Color.pfInkMuted)
                 Spacer()
-                Text("\(Int(percent.rounded()))%")
+                Text("\(Int(displayedPercent.rounded()))%")
                     .font(PFont.body(11, .bold))
                     .foregroundStyle(Color.pfInk)
                     .monospacedDigit()
             }
-            EnergyBar(fraction: percent / 100, color: tint, height: 7)
+            EnergyBar(fraction: displayedPercent / 100, color: tint, height: 7)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label) usage")
-        .accessibilityValue("\(Int(percent.rounded())) percent")
+        .accessibilityLabel("\(label) \(modeLabel)")
+        .accessibilityValue("\(Int(displayedPercent.rounded())) percent")
     }
 
     private func cursorSubtitle(_ usage: CursorUsage) -> String? {
@@ -919,7 +937,7 @@ struct PopoverView: View {
                 model: AccountCardModel(mainMeterReading: normalized),
                 now: now,
                 thresholds: usageThresholds,
-                usage: usage)
+                usage: showsUsage)
         } else if let usage = reading.usage {
             codexCard(usage, account: reading.account)
         }
@@ -1023,7 +1041,7 @@ struct PopoverView: View {
     }
 
     private func codexDisplayPercent(_ window: CodexLimitWindow?) -> Double? {
-        window?.displayPercent(showUsage: usage)
+        window?.displayPercent(showUsage: showsUsage)
     }
 
     private func codexSubtitle(_ usage: CodexUsage) -> String? {
@@ -1031,7 +1049,7 @@ struct PopoverView: View {
         if let secondary = usage.secondaryWindow,
             let percent = codexDisplayPercent(secondary)
         {
-            let modeLabel = self.usage ? "used" : "left"
+            let modeLabel = showsUsage ? "used" : "left"
             parts.append("\(secondary.displayLabel) \(Int(percent.rounded()))% \(modeLabel)")
         }
         if let credits = usage.usageCredits {
@@ -1073,6 +1091,7 @@ struct PopoverView: View {
     }
 
     private func grokCard(_ usage: GrokUsage) -> some View {
+        let displayPercent = usage.displayPercent(showUsage: showsUsage)
         let band = EnergyBand(severity: usageThresholds.severity(for: usage.usedPercent))
         let tint: Color = band == .full ? .pfEnergyFull : band.color
         let expanded = isExpanded(Self.grokCardID)
@@ -1089,7 +1108,7 @@ struct PopoverView: View {
                         .foregroundStyle(Color.pfInk)
                     disclosure(expanded)
                     Spacer()
-                    Text("\(Int(usage.cardDisplayPercent.rounded()))%")
+                    Text("\(Int(displayPercent.rounded()))%")
                         .font(PFont.display(14, .bold))
                         .foregroundStyle(band == .full ? Color.pfInk : tint)
                         .monospacedDigit()
@@ -1098,7 +1117,7 @@ struct PopoverView: View {
             }
             .buttonStyle(.plain)
             .help(expanded ? "Hide Grok details" : "Show Grok details")
-            EnergyBar(fraction: usage.cardDisplayPercent / 100, color: tint, height: 12)
+            EnergyBar(fraction: displayPercent / 100, color: tint, height: 12)
             if let subtitle = grokSubtitle(usage) {
                 Text(subtitle)
                     .font(PFont.body(11, .semibold))

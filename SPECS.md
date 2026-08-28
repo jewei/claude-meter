@@ -210,7 +210,8 @@ Canonical data stores percent used. Presentation defaults to energy remaining:
 percentLeft = clamp(100 - resolved.percentUsed, 0...100)
 ```
 
-Rings and bars deplete in `left` mode and fill in `used` mode, including Codex windows.
+Rings and bars deplete in `left` mode and fill in `used` mode across Claude, Codex,
+Cursor, and Grok usage cards.
 Severity always uses percent used and the configured warning/critical thresholds;
 progression mode does not change policy. Unknown values render neutral placeholders and
 never use an empty/tapped-out phrase.

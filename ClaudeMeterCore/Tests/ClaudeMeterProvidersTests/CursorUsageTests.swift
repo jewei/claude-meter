@@ -60,6 +60,19 @@ struct CursorUsageTests {
         #expect(usage.displayPlanName == "Pro+")
     }
 
+    @Test func displayPercentagesRespectProgressionMode() {
+        let usage = CursorUsage(
+            percentUsed: 0,
+            autoPercentUsed: 25,
+            apiPercentUsed: 100)
+
+        #expect(usage.displayPercent(showUsage: true) == 0)
+        #expect(usage.displayPercent(showUsage: false) == 100)
+        #expect(usage.displayAutoPercent(showUsage: false) == 75)
+        #expect(usage.displayAPIPercent(showUsage: false) == 0)
+        #expect(CursorUsage().displayPercent(showUsage: false) == nil)
+    }
+
     @Test func clampsBreakdownPercentagesForDisplay() {
         let usage = CursorUsage(
             percentUsed: 101,

@@ -42,7 +42,10 @@ public struct GrokUsage: Codable, Equatable, Sendable {
     }
 
     public var energyLeftPercent: Double { min(100, max(0, 100 - usedPercent)) }
-    public var cardDisplayPercent: Double { min(100, max(0, usedPercent)) }
+
+    public func displayPercent(showUsage: Bool) -> Double {
+        showUsage ? min(100, max(0, usedPercent)) : energyLeftPercent
+    }
 }
 
 public enum GrokUsageError: Error, LocalizedError, Equatable {

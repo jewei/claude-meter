@@ -79,7 +79,8 @@ struct GrokUsageTests {
             onDemandUsedCents: 0, onDemandCapCents: 0, prepaidBalanceCents: 0,
             accountEmail: nil, updatedAt: Date(timeIntervalSince1970: 0))
         #expect(usage.energyLeftPercent == 0)
-        #expect(usage.cardDisplayPercent == 100)
+        #expect(usage.displayPercent(showUsage: true) == 100)
+        #expect(usage.displayPercent(showUsage: false) == 0)
     }
 
     @Test func providerSendsBearerAndDecodesUsage() async throws {

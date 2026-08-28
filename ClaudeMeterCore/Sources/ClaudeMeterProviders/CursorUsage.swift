@@ -51,6 +51,18 @@ public struct CursorUsage: Codable, Equatable, Sendable {
         apiPercentUsed.map { min(100, max(0, $0)) }
     }
 
+    public func displayPercent(showUsage: Bool) -> Double? {
+        Self.displayPercent(clampedPercent, showUsage: showUsage)
+    }
+
+    public func displayAutoPercent(showUsage: Bool) -> Double? {
+        Self.displayPercent(clampedAutoPercent, showUsage: showUsage)
+    }
+
+    public func displayAPIPercent(showUsage: Bool) -> Double? {
+        Self.displayPercent(clampedAPIPercent, showUsage: showUsage)
+    }
+
     public var displayPlanName: String? {
         guard let planName else { return nil }
         let trimmed = planName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -73,6 +85,13 @@ public struct CursorUsage: Codable, Equatable, Sendable {
     /// figure while raw spend can exceed the nominal limit.
     public var spendText: String? {
         spendUsd.map(Self.dollars)
+    }
+
+    private static func displayPercent(
+        _ percentUsed: Double?,
+        showUsage: Bool
+    ) -> Double? {
+        percentUsed.map { showUsage ? $0 : 100 - $0 }
     }
 
     private static func dollars(_ value: Double) -> String {

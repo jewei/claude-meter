@@ -265,11 +265,6 @@ hour (empty = `track`). Weekday labels at left, a 6-hour axis below, and a "Less
 **Back** button returns to the main view. Data is scanned on demand from local transcripts (last 30
 days, local time); shows "Scanning…" / "No activity" placeholders.
 
-### Version placement
-The **Claude Code version** (for example, "Claude Code v2.1.0 ↗") appears in the
-cost section and links to the changelog when available. There is no footer and no
-Add Account button; account management and pause/resume live in Settings.
-
 ---
 
 ## Menu Bar Icon (Frame C)

@@ -237,8 +237,7 @@ provider remains visible below as one compact secondary summary. Claude
 account cards are always expanded. Primary Codex, Cursor, and Grok account cards remember
 their expanded state.
 The header timestamp belongs only to the selected reading. The last-seven-days cost card
-opens the activity heatmap. Claude Code
-version appears with the cost section when known; there is no footer or Add Account button.
+opens the activity heatmap. There is no footer or Add Account button.
 
 First-run onboarding pauses polling and directs the user to Settings. Existing users skip
 onboarding when a snapshot, attributes-only OAuth credential presence, Cursor state, an

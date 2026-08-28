@@ -43,8 +43,7 @@ public struct AnthropicStatusClient: Sendable {
     /// How long a fetched status is reused before hitting the network again.
     /// The app polls Claude every 60 s, but Statuspage asks integrators not to
     /// poll faster than every 5 minutes — and this is advisory data that only
-    /// renders a banner. Mirrors the memo used by `ModelsDevPricing` (24 h) and
-    /// `ClaudeCodeVersionCheck` (6 h); without it this was the app's
+    /// renders a banner. Without this cache it would be the app's
     /// highest-frequency third-party request at ~1440/day.
     static let cacheTTL: TimeInterval = 5 * 60
 

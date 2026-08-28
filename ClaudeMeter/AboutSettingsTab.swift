@@ -1,29 +1,11 @@
-import ClaudeMeterCore
-import ClaudeMeterProviders
 import SwiftUI
 
 struct AboutSettingsTab: View {
-    /// Observed for the detected Claude Code version, which arrives from a poll.
-    @ObservedObject var appState: AppState
-
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
     }
 
     private let githubURL = URL(string: "https://github.com/jewei/claude-meter")!
-    private let claudeCodeChangelogURL = URL(
-        string: "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md")!
-
-    /// Claude Code's version moved here from the popover footer, where it cost a
-    /// line on every open to show something that changes a few times a month. The
-    /// actionable half — "you're behind" — is kept and highlighted.
-    private var claudeCodeVersion: String? { appState.snapshot?.source.cliVersion }
-
-    private var claudeCodeOutdated: Bool {
-        guard let current = claudeCodeVersion, let latest = appState.latestClaudeCodeVersion
-        else { return false }
-        return ClaudeCodeVersionCheck.isOutdated(current: current, latest: latest)
-    }
 
     var body: some View {
         VStack(spacing: 18) {
@@ -49,27 +31,6 @@ struct AboutSettingsTab: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
                 .background(Capsule().fill(Color.pfHeroFullBG))
-
-            if let cliVersion = claudeCodeVersion {
-                Link(destination: claudeCodeChangelogURL) {
-                    HStack(spacing: 5) {
-                        Text("Claude Code v\(cliVersion)")
-                            .font(PFont.body(11, .semibold))
-                        if claudeCodeOutdated {
-                            Text("update available")
-                                .font(PFont.body(10, .bold))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.pfEnergyLow.opacity(0.18)))
-                        }
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 8, weight: .bold))
-                    }
-                    .foregroundStyle(claudeCodeOutdated ? Color.pfEnergyLow : Color.pfInkMuted)
-                }
-                .buttonStyle(.plain)
-                .help("Claude Code changelog")
-            }
 
             Link(destination: githubURL) {
                 HStack(spacing: 10) {

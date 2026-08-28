@@ -15,9 +15,6 @@ final class AppState: ObservableObject {
     @Published var lastPolledAt: Date? = nil
     @Published var isPopoverOpen = false
     @Published var updateAvailable = false
-    /// Latest published Claude Code version (npm), refreshed periodically. Lets the
-    /// footer flag when the user's running CLI is behind. nil = unknown (no flag).
-    @Published var latestClaudeCodeVersion: String? = nil
     /// Anthropic service status, refreshed alongside Claude polls. Surfaced only
     /// during incidents to distinguish an outage from bad credentials.
     @Published var serviceStatus: ServiceStatus? = nil
@@ -891,7 +888,6 @@ final class AppState: ObservableObject {
             guard configuration.generation == pipelineGeneration, canPoll else { return }
 
             lastPollResult = result
-            refreshClaudeCodeVersion(now: now)
 
             if result.isFatal {
                 lastError = DiagnosticsSanitizer.sanitize(
@@ -1264,17 +1260,6 @@ final class AppState: ObservableObject {
     /// days), unioned across every discovered config dir (cost is additive).
     /// Discovery happens here, off-main, rather than reusing a cached list — so the
     /// union is correct from the very first poll, independent of the statusline source.
-    /// Refreshes the latest-known Claude Code version (npm, 6 h cached). Fire-and-
-    /// forget: the network call runs off the main actor and only the published
-    /// string update lands back on it. Cheap to call each poll thanks to the cache.
-    private func refreshClaudeCodeVersion(now: Date) {
-        Task { [weak self] in
-            let latest = await ClaudeCodeVersionCheck.latestVersion(now: now)
-            guard let self, let latest else { return }
-            self.latestClaudeCodeVersion = latest
-        }
-    }
-
     private static func scanCostModels(now: Date) async -> CostUsageResult {
         await Task.detached(priority: .utility) {
             // Live per-model prices from models.dev (24 h disk cache, static family

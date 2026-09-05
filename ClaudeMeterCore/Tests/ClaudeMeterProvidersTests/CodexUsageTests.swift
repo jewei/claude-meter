@@ -14,7 +14,10 @@ struct CodexUsageTests {
                 == ["-s", "read-only", "-a", "never", "app-server"])
     }
 
-    @Test func appServerTimeoutKillsAndReapsAChildThatIgnoresTerm() async throws {
+    // Repeat process cleanup in one host: waitUntilExit() stalled intermittently
+    // after several successful terminations, which a single fixture missed.
+    @Test(arguments: 0..<5)
+    func appServerTimeoutKillsAndReapsAChildThatIgnoresTerm(iteration _: Int) async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("codex-shutdown-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(
@@ -69,7 +72,8 @@ struct CodexUsageTests {
         await client.shutdown()
     }
 
-    @Test func appServerTimeoutRejectsAResponseDuringTerminationGrace() async throws {
+    @Test(arguments: 0..<5)
+    func appServerTimeoutRejectsAResponseDuringTerminationGrace(iteration _: Int) async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("codex-timeout-race-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(

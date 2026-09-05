@@ -139,6 +139,7 @@ final class CodexAppServerClient: @unchecked Sendable {
     }
 
     private let process = Process()
+    private let processExited = DispatchSemaphore(value: 0)
     private let stdinPipe = Pipe()
     private let stdoutPipe = Pipe()
     private let stderrPipe = Pipe()
@@ -184,6 +185,8 @@ final class CodexAppServerClient: @unchecked Sendable {
         process.standardInput = stdinPipe
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
+        let processExited = self.processExited
+        process.terminationHandler = { _ in processExited.signal() }
 
         try process.run()
         installReaders()
@@ -253,9 +256,10 @@ final class CodexAppServerClient: @unchecked Sendable {
             }
         }
 
-        // SIGKILL cannot be ignored. Wait here so the terminated child is reaped
-        // instead of remaining as a zombie for the lifetime of the app.
-        process.waitUntilExit()
+        // Foundation reaps the child before calling its termination handler.
+        // Avoid waitUntilExit(): its run-loop wait can stall during
+        // repeated termination.
+        processExited.wait()
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
         stderrPipe.fileHandleForReading.readabilityHandler = nil
         stdoutLineContinuation.finish()

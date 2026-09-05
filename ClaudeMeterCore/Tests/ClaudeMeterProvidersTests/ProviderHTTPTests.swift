@@ -163,8 +163,8 @@ struct ProviderHTTPClientBoundsTests {
     }
 
     @Test func totalDeadlineDoesNotAwaitCancellationIgnoringReceiver() async {
-        let started = DispatchSemaphore(value: 0)
-        let release = DispatchSemaphore(value: 0)
+        let started = LockedFlag()
+        let release = CancellationIgnoringWait()
         let receiverFinished = LockedFlag()
         let url = URL(string: "https://provider-http.test/cancellation-ignoring")!
         let session = URLSession(configuration: .ephemeral)
@@ -173,8 +173,8 @@ struct ProviderHTTPClientBoundsTests {
             maximumResponseByteCount: 8,
             resourceTimeoutSeconds: 0.05,
             responseLoader: { request, _, _ in
-                started.signal()
-                waitIgnoringCancellation(release)
+                started.set()
+                await release.wait()
                 receiverFinished.set()
                 let response = HTTPURLResponse(
                     url: request.url!,
@@ -199,7 +199,7 @@ struct ProviderHTTPClientBoundsTests {
             session.invalidateAndCancel()
         }
 
-        #expect(waitForSignal(started, timeout: .now() + 1))
+        #expect(await waitForFlag(started))
         await expectURLError(.timedOut) {
             _ = try await requestTask.value
         }
@@ -454,12 +454,34 @@ private func expectURLError(
     }
 }
 
-private func waitIgnoringCancellation(_ semaphore: DispatchSemaphore) {
-    semaphore.wait()
-}
+/// Models an async receiver that ignores cancellation without blocking a Swift
+/// worker. Blocking both the receiver and its test can starve CI's small pool.
+private final class CancellationIgnoringWait: @unchecked Sendable {
+    private let lock = NSLock()
+    private var released = false
+    private var continuation: CheckedContinuation<Void, Never>?
 
-private func waitForSignal(_ semaphore: DispatchSemaphore, timeout: DispatchTime) -> Bool {
-    semaphore.wait(timeout: timeout) == .success
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if released {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                self.continuation = continuation
+                lock.unlock()
+            }
+        }
+    }
+
+    func signal() {
+        lock.lock()
+        released = true
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume()
+    }
 }
 
 private func waitForFlag(_ flag: LockedFlag) async -> Bool {

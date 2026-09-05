@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Cursor credential reads no longer crash or launch abandoned commands when startup times out.
 - Valid Codex quotas remain available when optional credit or reset metadata is malformed.
 - Claude usage backoff survives an app restart and still applies to all accounts.
 - Copied transcript history counts once within each account. Unique continuations and

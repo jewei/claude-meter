@@ -153,12 +153,15 @@ struct CodexUsageTests {
 
         let source = CodexAppServerSource(
             env: ["ACCOUNT_MARKER": accountMarker.path, "LIMITS_MARKER": limitsMarker.path],
-            startupTimeout: 1,
-            requestTimeout: 2,
+            // This test cancels on the account marker. Process startup under CI
+            // load must not turn it into a startup- or request-timeout test.
+            startupTimeout: 10,
+            requestTimeout: 20,
             resolver: { _ in executable.path })
         let task = Task { try await source.fetchUsage(now: Date()) }
+        defer { task.cancel() }
 
-        let markerDeadline = ProcessInfo.processInfo.systemUptime + 5
+        let markerDeadline = ProcessInfo.processInfo.systemUptime + 10
         while !FileManager.default.fileExists(atPath: accountMarker.path),
             ProcessInfo.processInfo.systemUptime < markerDeadline
         {

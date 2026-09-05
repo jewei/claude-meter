@@ -25,6 +25,8 @@ public enum CursorTokenStore {
 
     private static let sqlite3Path = "/usr/bin/sqlite3"
     private static let processTimeoutSeconds: TimeInterval = 10
+    private static let processTerminationQueue = DispatchQueue(
+        label: "com.jewei.claudemeter.cursor.process-termination", qos: .utility)
 
     struct DetectionCacheIdentity: Sendable, Equatable {
         struct FileIdentity: Sendable, Equatable {
@@ -466,65 +468,100 @@ public enum CursorTokenStore {
     }
 
     private static func run(_ launchPath: String, _ arguments: [String]) -> String? {
+        run(
+            launchPath, arguments, timeout: processTimeoutSeconds,
+            launchQueue: DispatchQueue(
+                label: "com.jewei.claudemeter.cursor.process-launch", qos: .utility))
+    }
+
+    static func run(
+        _ launchPath: String, _ arguments: [String], timeout: TimeInterval,
+        launchQueue: DispatchQueue
+    ) -> String? {
         guard FileManager.default.isExecutableFile(atPath: launchPath) else { return nil }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: launchPath)
         process.arguments = arguments
         let stdout = Pipe()
-        let stderr = Pipe()
+        process.standardInput = FileHandle.nullDevice
         process.standardOutput = stdout
-        process.standardError = stderr
+        process.standardError = FileHandle.nullDevice
 
-        // Drain both pipes on their own queues *concurrently with the child*, so a
-        // child that emits more than the ~64 KB pipe buffer can't block on write and
-        // wedge waitUntilExit() (a deadlock the post-exit read pattern is prone to).
-        // Keep draining after stdout exceeds its budget, but reject the result.
-        let outBuffer = BoundedProcessOutputCapture()
-        let drainGroup = DispatchGroup()
-        drainGroup.enter()
-        DispatchQueue.global(qos: .utility).async {
-            while true {
-                let chunk = stdout.fileHandleForReading.availableData
-                guard !chunk.isEmpty else { break }
-                outBuffer.append(chunk)
+        // The timeout can expire while launch is queued or while Process.run() is
+        // still starting the child. Only a successful launch permits termination.
+        final class LaunchState: @unchecked Sendable {
+            private let lock = NSLock()
+            private var cancelled = false
+            private var launched = false
+            // Written before completion.signal(), read only after a successful wait.
+            var status: Int32 = -1
+
+            var mayLaunch: Bool { lock.withLock { !cancelled } }
+
+            func didLaunch() -> Bool {
+                lock.withLock {
+                    launched = true
+                    return cancelled
+                }
             }
-            drainGroup.leave()
+
+            func cancel() -> Bool {
+                lock.withLock {
+                    cancelled = true
+                    return launched
+                }
+            }
         }
-        drainGroup.enter()
-        DispatchQueue.global(qos: .utility).async {
-            while !stderr.fileHandleForReading.availableData.isEmpty {}
-            drainGroup.leave()
+        let state = LaunchState()
+        let completion = DispatchSemaphore(value: 0)
+        let outBuffer = BoundedProcessOutputCapture()
+
+        @Sendable func stopLaunchedProcess() {
+            guard process.isRunning else { return }
+            process.terminate()
+            processTerminationQueue.asyncAfter(deadline: .now() + 0.4) {
+                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            }
         }
 
-        let semaphore = DispatchSemaphore(value: 0)
-        final class TerminationBox: @unchecked Sendable { var status: Int32 = -1 }
-        let box = TerminationBox()
-        DispatchQueue.global(qos: .utility).async {
-            defer { semaphore.signal() }
+        launchQueue.async {
+            defer { completion.signal() }
+            guard state.mayLaunch else {
+                try? stdout.fileHandleForWriting.close()
+                return
+            }
             do {
                 try process.run()
             } catch {
-                // No child inherited the pipe write ends, so close our copies to
-                // release the already-started drain workers.
                 try? stdout.fileHandleForWriting.close()
-                try? stderr.fileHandleForWriting.close()
                 return
             }
-            process.waitUntilExit()
-            box.status = process.terminationStatus
-        }
-        if semaphore.wait(timeout: .now() + processTimeoutSeconds) == .timedOut {
-            // Escalate: SIGTERM, then SIGKILL if the child ignores the polite request.
-            process.terminate()
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.4) {
-                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            try? stdout.fileHandleForWriting.close()
+            if state.didLaunch() { stopLaunchedProcess() }
+
+            // Start the reader after launch, on its own queue. Blocking pipe reads
+            // must not occupy shared workers needed to launch the writer. Keep
+            // draining after overflow, but never return truncated credentials.
+            let drained = DispatchSemaphore(value: 0)
+            DispatchQueue(
+                label: "com.jewei.claudemeter.cursor.process-stdout", qos: .utility
+            ).async {
+                defer { drained.signal() }
+                while true {
+                    let chunk = stdout.fileHandleForReading.availableData
+                    guard !chunk.isEmpty else { break }
+                    outBuffer.append(chunk)
+                }
             }
+            process.waitUntilExit()
+            state.status = process.terminationStatus
+            drained.wait()
+        }
+        if completion.wait(timeout: .now() + timeout) == .timedOut {
+            if state.cancel() { stopLaunchedProcess() }
             return nil
         }
-        guard box.status == 0 else { return nil }
-        // The child has exited, so both pipes are at EOF; wait for the drains to flush.
-        drainGroup.wait()
-        guard let data = outBuffer.data else { return nil }
+        guard state.status == 0, let data = outBuffer.data else { return nil }
         return String(data: data, encoding: .utf8)
     }
 }

@@ -42,6 +42,51 @@ struct CursorTokenStoreTests {
         }
     }
 
+    @Test func timeoutBeforeProcessLaunchDoesNotLaunchAnAbandonedCommand() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = directory.appendingPathComponent("unexpected-launch")
+        let launchQueue = DispatchQueue(label: "CursorTokenStoreTests.delayed-launch")
+        launchQueue.suspend()
+        let result = CursorTokenStore.run(
+            "/usr/bin/touch", [marker.path], timeout: 0.01, launchQueue: launchQueue)
+        launchQueue.resume()
+        launchQueue.sync {}
+
+        #expect(result == nil)
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+    }
+
+    @Test func failedProcessLaunchReturnsNoOutput() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = directory.appendingPathComponent("invalid-executable")
+        try Data("Not an executable format".utf8).write(to: executable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let launchQueue = DispatchQueue(label: "CursorTokenStoreTests.failed-launch")
+
+        #expect(
+            CursorTokenStore.run(executable.path, [], timeout: 1, launchQueue: launchQueue) == nil)
+        launchQueue.sync {}
+    }
+
+    @Test func sqliteOutputBeyondTheLimitIsDrainedAndRejected() {
+        let launchQueue = DispatchQueue(label: "CursorTokenStoreTests.large-output")
+        let result = CursorTokenStore.run(
+            "/usr/bin/sqlite3", ["-batch", ":memory:", "SELECT hex(zeroblob(600000));"],
+            timeout: 3, launchQueue: launchQueue)
+        let completed = DispatchSemaphore(value: 0)
+        launchQueue.async { completed.signal() }
+
+        #expect(result == nil)
+        #expect(completed.wait(timeout: .now() + 1) == .success)
+    }
+
     @Test func unchangedDatabaseAndWalReuseCachedDetection() throws {
         let fixture = try makeDatabase()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }

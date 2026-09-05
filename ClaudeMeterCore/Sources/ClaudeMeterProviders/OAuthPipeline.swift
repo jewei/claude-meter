@@ -359,6 +359,14 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         OAuthSharedState.clearRateLimit()
     }
 
+    /// App startup installs persistence before starting any provider work. Test
+    /// initializers omit this call, so their shared gate never touches live defaults.
+    public static func enableRateLimitPersistence(defaults: UserDefaults = .standard) {
+        guard !KeychainGateway.testFrameworkIsLoaded() else { return }
+        OAuthSharedState.rateLimitGate.enablePersistence(
+            .defaults(defaults), now: Date())
+    }
+
     // MARK: - Settings verification
 
     /// Verifies credentials by calling the usage API once, refreshing first when
@@ -1030,6 +1038,119 @@ internal struct ExtraUsageEntry: Decodable {
 
 // MARK: - Shared OAuth session state
 
+/// One provider-wide deadline, with optional persistence and no credential data.
+/// The lock also orders storage writes, so a shorter concurrent 429 cannot win.
+final class OAuthRateLimitGate: @unchecked Sendable {
+    struct Record: Codable, Equatable {
+        let recordedAt: Date
+        let until: Date
+
+        func isValid(asOf now: Date) -> Bool {
+            let duration = until.timeIntervalSince(recordedAt)
+            return PersistedDateBounds.contains(recordedAt)
+                && PersistedDateBounds.contains(until)
+                && PersistedDateBounds.contains(now)
+                && duration > 0 && duration <= OAuthPipeline.maximumRateLimitBackoff
+                // A large backward clock change must not create an unbounded block.
+                && until.timeIntervalSince(now) <= OAuthPipeline.maximumRateLimitBackoff
+        }
+    }
+
+    /// Closures run only under the gate lock. Defaults itself supports concurrent
+    /// access; no test needs to use the standard defaults domain.
+    struct Storage: @unchecked Sendable {
+        var load: () throws -> Data?
+        var save: (Data?) throws -> Void
+
+        static let key = "claudeOAuthRateLimitDeadline.v1"
+
+        static func defaults(_ defaults: UserDefaults) -> Self {
+            Self(
+                load: { defaults.data(forKey: key) },
+                save: { data in
+                    if let data {
+                        defaults.set(data, forKey: key)
+                    } else {
+                        defaults.removeObject(forKey: key)
+                    }
+                })
+        }
+    }
+
+    private let lock = NSLock()
+    private var record: Record?
+    private var storage: Storage?
+
+    func enablePersistence(_ storage: Storage, now: Date) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard self.storage == nil else { return }
+        self.storage = storage
+        let savedData: Data?
+        // Do not overwrite a record that could not be read.
+        do { savedData = try storage.load() } catch { return }
+        if let data = savedData, data.count <= 512,
+            let saved = try? JSONDecoder().decode(Record.self, from: data),
+            saved.isValid(asOf: now), saved.until > now,
+            saved.until > (record?.until ?? .distantPast)
+        {
+            record = saved
+        }
+        if let current = record, !current.isValid(asOf: now) || current.until <= now {
+            record = nil
+        }
+        persist()
+    }
+
+    func deadline(now: Date) -> Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let record, record.isValid(asOf: now), now < record.until else { return nil }
+        return record.until
+    }
+
+    func isRateLimited(now: Date) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let record else { return false }
+        guard record.isValid(asOf: now), now < record.until else {
+            self.record = nil
+            persist()
+            return false
+        }
+        return true
+    }
+
+    func recordRateLimit(retryAfter: Date?, now: Date) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard PersistedDateBounds.contains(now) else { return }
+        let requested = retryAfter?.timeIntervalSince(now) ?? 0
+        let duration =
+            requested.isFinite && requested > 0
+            ? min(requested, OAuthPipeline.maximumRateLimitBackoff)
+            : OAuthPipeline.defaultRateLimitBackoff
+        let candidate = Record(recordedAt: now, until: now.addingTimeInterval(duration))
+        guard candidate.isValid(asOf: now) else { return }
+        if let record, record.isValid(asOf: now), record.until >= candidate.until { return }
+        record = candidate
+        persist()
+    }
+
+    func clearForTesting() {
+        lock.lock()
+        defer { lock.unlock() }
+        record = nil
+        persist()
+    }
+
+    private func persist() {
+        // A storage failure never releases an active in-memory block.
+        let data = record.flatMap { try? JSONEncoder().encode($0) }
+        try? storage?.save(data)
+    }
+}
+
 /// Process-wide OAuth backoff + in-memory token cache shared by the instance
 /// pipeline and static enrichment fetches.
 private enum OAuthSharedState {
@@ -1055,7 +1176,7 @@ private enum OAuthSharedState {
     }
 
     private static let lock = NSLock()
-    private static nonisolated(unsafe) var blockedUntil: Date?
+    static let rateLimitGate = OAuthRateLimitGate()
     private static nonisolated(unsafe) var cachedCredsByMode: [String: CachedCredentialChain] = [:]
     private static nonisolated(unsafe) var observedSourceTokensByMode: [String: String] = [:]
     private static nonisolated(unsafe) var credentialRevision: UInt64 = 0
@@ -1068,25 +1189,11 @@ private enum OAuthSharedState {
         (@Sendable () -> KeychainReadResult<OAuthCredentials>)?
 
     static func isRateLimited(now: Date) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let until = blockedUntil else { return false }
-        if now >= until {
-            blockedUntil = nil
-            return false
-        }
-        return true
+        rateLimitGate.isRateLimited(now: now)
     }
 
     static func recordRateLimit(retryAfter: Date?, now: Date) {
-        lock.lock()
-        defer { lock.unlock() }
-        let candidate = retryAfter ?? now.addingTimeInterval(OAuthPipeline.defaultRateLimitBackoff)
-        // Never shorten an active backoff. The gate is process-wide, so a second
-        // 429 carrying no `Retry-After` (default 60 s) must not undo a longer
-        // window an earlier response explicitly asked us to wait out.
-        if let existing = blockedUntil, existing > candidate { return }
-        blockedUntil = candidate
+        rateLimitGate.recordRateLimit(retryAfter: retryAfter, now: now)
     }
 
     static func cachedCredentials(for oauthMode: String) -> OAuthCredentials? {
@@ -1397,18 +1504,13 @@ private enum OAuthSharedState {
     /// non-mutating (`isRateLimited` clears an elapsed gate as a side effect), so
     /// a UI read can't disturb the pipeline's own bookkeeping.
     static func blockedUntilIfActive(now: Date) -> Date? {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let until = blockedUntil, now < until else { return nil }
-        return until
+        rateLimitGate.deadline(now: now)
     }
 
     /// Clears the 429 gate. Test-only: production reopens it by elapsing
     /// `blockedUntil`, never by fiat.
     static func clearRateLimit() {
-        lock.lock()
-        blockedUntil = nil
-        lock.unlock()
+        rateLimitGate.clearForTesting()
     }
 }
 
@@ -1419,8 +1521,8 @@ private enum OAuthSharedState {
 /// changes — i.e. the user re-authenticates and the Keychain holds a new token,
 /// which differs from the dead one, so the gate reopens automatically with no
 /// manual reset. Transient failures use exponential backoff. In-memory and
-/// process-wide, mirroring `OAuthSharedState` (consistent with our in-memory-only
-/// refresh policy). User-initiated refreshes (`verify`) bypass this gate.
+/// process-wide, consistent with our in-memory-only token refresh policy. The
+/// separate usage-429 gate is persisted. User verification bypasses only this gate.
 enum OAuthRefreshGate {
     private static let lock = NSLock()
     private static nonisolated(unsafe) var deadRefreshToken: String?

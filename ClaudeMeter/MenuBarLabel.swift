@@ -1,3 +1,4 @@
+import AppKit
 import ClaudeMeterCore
 import SwiftUI
 
@@ -6,6 +7,82 @@ enum MenuBarText {
         let window: LimitWindow
         let kind: LimitWindowKind
         let left: Double
+    }
+
+    /// Spoken state is separate from the compact visual title and its color dot.
+    static func accessibilitySummary(
+        provider: MainMeterProvider,
+        reading: MainMeterReading?,
+        progression: AppGroupConfig.ProgressionMode,
+        selection: AppGroupConfig.MenuBarWindow,
+        isActive: Bool,
+        isStale: Bool,
+        isLoading: Bool,
+        severity: UsageSeverity,
+        now: Date
+    ) -> String {
+        let title = "Claude Meter. \(provider.displayName)."
+        guard isActive else { return "\(title) Paused." }
+        if isStale {
+            return "\(title) Data is stale." + (isLoading ? " Refreshing." : "")
+        }
+        guard let reading, reading.provider == provider else {
+            return "\(title) " + (isLoading ? "Loading." : "Usage unavailable.")
+        }
+
+        func name(_ scope: LimitWindowScope) -> String {
+            switch scope {
+            case .session: reading.sessionLabel == "5-hr" ? "Session" : reading.sessionLabel
+            case .weekly: reading.weeklyLabel == "week" ? "Weekly" : reading.weeklyLabel
+            case .weeklyOpus: "Opus weekly"
+            }
+        }
+        func describe(_ descriptor: LimitWindowDescriptor, forecast: Bool = false) -> String {
+            let window = descriptor.window.resolved(asOf: now)
+            let label = name(descriptor.scope)
+            guard let left = window.percentLeft(asOf: now) else { return "\(label) unavailable." }
+            let percent = Int((progression == .used ? 100 - left : left).rounded())
+            var text = "\(label) \(percent) percent \(progression == .used ? "used" : "left")."
+            if forecast,
+                let phrase = RunsOutPhrase.spoken(
+                    window.runsOutEstimate(kind: descriptor.scope.kind, asOf: now))
+            {
+                text += " \(phrase)."
+            }
+            return text
+        }
+
+        let details: String
+        switch selection {
+        case .fiveHour:
+            details = describe(.init(scope: .session, window: reading.limits.currentSession))
+        case .sevenDay:
+            details = describe(.init(scope: .weekly, window: reading.limits.currentWeekAllModels))
+        case .both:
+            details = [
+                describe(.init(scope: .session, window: reading.limits.currentSession)),
+                describe(.init(scope: .weekly, window: reading.limits.currentWeekAllModels)),
+            ].joined(separator: " ")
+        case .nearest, .forecast:
+            let nearest = reading.limits.bindingWindows.filter {
+                $0.window.percentLeft(asOf: now) != nil
+            }.max {
+                ($0.window.resolved(asOf: now).percentUsed ?? -1)
+                    < ($1.window.resolved(asOf: now).percentUsed ?? -1)
+            }
+            details =
+                nearest.map { describe($0, forecast: selection == .forecast) }
+                ?? "Usage unavailable."
+        }
+        let status: String
+        switch severity {
+        case .normal: status = "Overall quota is normal."
+        case .warning: status = "Overall quota warning."
+        case .critical: status = "Overall quota is critical."
+        case .overLimit: status = "Quota limit reached."
+        case .unknown: status = "Overall quota status is unknown."
+        }
+        return "\(title) \(details) \(status)" + (isLoading ? " Refreshing." : "")
     }
 
     static func forecast(
@@ -25,6 +102,41 @@ enum MenuBarText {
         let estimate = nearest.window.runsOutEstimate(kind: nearest.kind, asOf: now)
         guard let forecast = RunsOutPhrase.compact(estimate) else { return percentText }
         return "\(percentText) · \(forecast)"
+    }
+}
+
+@MainActor
+enum MenuBarAccessibility {
+    /// MenuBarExtra renders its label into a native button. SwiftUI's accessibility
+    /// modifiers do not reach the menu-extra proxy on all supported macOS versions.
+    static func update(_ summary: String, in windows: [NSWindow]) -> Bool {
+        func update(_ view: NSView) -> Bool {
+            if let button = view as? NSStatusBarButton {
+                button.setAccessibilityTitle(summary)
+                if button.accessibilityTitle() != summary {
+                    // The modern setter can leave AXTitle tied to the visual text.
+                    // This public instance override also reaches AppKit's AX proxy.
+                    _ = button.accessibilitySetOverrideValue(summary, forAttribute: .title)
+                }
+                return true
+            }
+            return view.subviews.reduce(false) { update($1) || $0 }
+        }
+        return windows.reduce(false) { windowFound, window in
+            guard let content = window.contentView else { return windowFound }
+            return update(content) || windowFound
+        }
+    }
+
+    static func publish(_ summary: String) async {
+        // The label can appear just before AppKit attaches the status button.
+        // Each new summary cancels its previous SwiftUI task; startup retries are bounded.
+        for _ in 0..<5 {
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            if update(summary, in: NSApp.windows) { return }
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+        }
     }
 }
 
@@ -48,6 +160,16 @@ struct MenuBarLabel: View {
     }
 
     var body: some View {
+        let accessibilitySummary = MenuBarText.accessibilitySummary(
+            provider: appState.mainMeterProvider,
+            reading: appState.mainMeterReading,
+            progression: progression,
+            selection: selectedWindow,
+            isActive: appState.isActive,
+            isStale: appState.mainMeterIsStale,
+            isLoading: appState.mainMeterIsLoading,
+            severity: appState.mainMeterSeverity,
+            now: Date())
         HStack(spacing: 4) {
             iconView
             if let text = leftText {
@@ -58,6 +180,11 @@ struct MenuBarLabel: View {
         }
         .foregroundStyle(appState.isActive ? .primary : .secondary)
         .opacity(appState.isActive ? 1 : 0.55)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilitySummary)
+        .task(id: accessibilitySummary) {
+            await MenuBarAccessibility.publish(accessibilitySummary)
+        }
     }
 
     // MARK: - Icon

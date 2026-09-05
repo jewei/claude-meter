@@ -444,6 +444,62 @@ struct CodexUsageTests {
         }
     }
 
+    @Test(arguments: [#"{"balance":[]}"#, #"{"unlimited":"invalid"}"#, "[]", "null"])
+    func malformedOAuthCreditsPreserveQuota(credits: String) throws {
+        let json = """
+            {"rate_limit":{"primary_window":{"used_percent":37}},
+             "plan_type":[],"credits":\(credits)}
+            """
+        let response = try JSONDecoder().decode(CodexOAuthUsageResponse.self, from: Data(json.utf8))
+        let usage = try response.usage(accountEmail: nil, now: Date(), source: .directOAuth)
+        #expect(usage.primaryWindow?.usedPercent == 37)
+        #expect(usage.usageCredits == nil)
+        #expect(usage.plan == nil)
+    }
+
+    @Test func malformedOptionalMetadataDoesNotCreateUsage() throws {
+        let oauth = try JSONDecoder().decode(
+            CodexOAuthUsageResponse.self, from: Data(#"{"credits":{"balance":[]}}"#.utf8))
+        #expect(throws: CodexUsageError.noUsageData) {
+            try oauth.usage(accountEmail: nil, now: Date(), source: .directOAuth)
+        }
+        let appServer = try JSONDecoder().decode(
+            CodexAppServerRateLimitsResponse.self,
+            from: Data(#"{"rateLimits":{},"rateLimitResetCredits":{"availableCount":[]}}"#.utf8))
+        #expect(throws: CodexUsageError.noUsageData) {
+            try appServer.usage(account: nil, now: Date(), source: .appServer)
+        }
+    }
+
+    @Test func malformedOAuthQuotaStillFails() {
+        let json = #"{"rate_limit":{"primary_window":{"used_percent":[]}},"credits":null}"#
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(CodexOAuthUsageResponse.self, from: Data(json.utf8))
+        }
+    }
+
+    @Test(arguments: [#"{"availableCount":[]}"#, "[]", "null"])
+    func malformedResetMetadataPreservesQuota(metadata: String) throws {
+        let json = """
+            {"rateLimits":{"primary":{"usedPercent":37}},"rateLimitResetCredits":\(metadata)}
+            """
+        let response = try JSONDecoder().decode(
+            CodexAppServerRateLimitsResponse.self, from: Data(json.utf8))
+        let usage = try response.usage(account: nil, now: Date(), source: .appServer)
+        #expect(usage.primaryWindow?.usedPercent == 37)
+        #expect(usage.rateLimitResets == nil)
+    }
+
+    @Test func malformedResetDetailsPreserveAuthoritativeCount() throws {
+        let json =
+            #"{"rateLimits":{},"rateLimitResetCredits":{"availableCount":3,"credits":"invalid"}}"#
+        let response = try JSONDecoder().decode(
+            CodexAppServerRateLimitsResponse.self, from: Data(json.utf8))
+        let usage = try response.usage(account: nil, now: Date(), source: .appServer)
+        #expect(usage.rateLimitResets?.availableCount == 3)
+        #expect(usage.rateLimitResets?.credits == nil)
+    }
+
     @Test func displayPercentRespectsProgressionMode() {
         let window = CodexLimitWindow(
             kind: .primary,

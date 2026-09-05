@@ -1,3 +1,4 @@
+import AppKit
 import ClaudeMeterCore
 import ClaudeMeterProviders
 import Foundation
@@ -1194,6 +1195,109 @@ struct AppLogicTests {
                 progression: .left,
                 now: now)
                 == "80%")
+    }
+
+    @Test("Spoken menu-bar text names the window, progression, and overall severity")
+    func spokenMenuBarQuota() {
+        let now = Date(timeIntervalSince1970: 1_782_269_456)
+        let reading = MainMeterReading(
+            provider: .codex, accountID: "test", accountLabel: "Test",
+            limits: LimitInfo(
+                currentSession: LimitWindow(percentUsed: 30),
+                currentWeekAllModels: LimitWindow(percentUsed: 96)), observedAt: now)
+        for progression in AppGroupConfig.ProgressionMode.allCases {
+            for selection in AppGroupConfig.MenuBarWindow.allCases {
+                let text = MenuBarText.accessibilitySummary(
+                    provider: .codex, reading: reading, progression: progression,
+                    selection: selection, isActive: true, isStale: false, isLoading: false,
+                    severity: .critical, now: now)
+                #expect(text.hasPrefix("Claude Meter. Codex."))
+                #expect(text.contains("Overall quota is critical."))
+                if selection == .fiveHour || selection == .both {
+                    #expect(
+                        text.contains(
+                            progression == .left
+                                ? "Session 70 percent left." : "Session 30 percent used."))
+                }
+                if selection != .fiveHour {
+                    #expect(
+                        text.contains(
+                            progression == .left
+                                ? "Weekly 4 percent left." : "Weekly 96 percent used."))
+                }
+            }
+        }
+    }
+
+    @Test("Spoken menu-bar states never describe stale or paused usage as current")
+    func spokenMenuBarStates() {
+        let now = Date()
+        let reading = MainMeterReading(
+            provider: .claude, accountID: "test", accountLabel: "Test",
+            limits: LimitInfo(currentSession: LimitWindow(percentUsed: 30)), observedAt: now)
+        func summary(
+            active: Bool = true, stale: Bool = false, loading: Bool = false,
+            value: MainMeterReading? = nil, provider: MainMeterProvider = .claude
+        ) -> String {
+            MenuBarText.accessibilitySummary(
+                provider: provider, reading: value, progression: .left, selection: .both,
+                isActive: active, isStale: stale, isLoading: loading, severity: .normal, now: now)
+        }
+        #expect(summary(active: false, value: reading) == "Claude Meter. Claude. Paused.")
+        #expect(summary(stale: true, value: reading) == "Claude Meter. Claude. Data is stale.")
+        #expect(
+            summary(stale: true, loading: true, value: reading)
+                == "Claude Meter. Claude. Data is stale. Refreshing.")
+        #expect(summary(loading: true) == "Claude Meter. Claude. Loading.")
+        #expect(summary() == "Claude Meter. Claude. Usage unavailable.")
+        #expect(
+            summary(value: reading, provider: .codex) == "Claude Meter. Codex. Usage unavailable.")
+        #expect(summary(value: reading).contains("Weekly unavailable."))
+        #expect(summary(loading: true, value: reading).hasSuffix("Refreshing."))
+    }
+
+    @Test("Spoken menu-bar forecast includes its meaning and clears an expired forecast")
+    func spokenMenuBarForecast() {
+        let now = Date(timeIntervalSince1970: 1_782_269_456)
+        let reset = now.addingTimeInterval(2.5 * 3600)
+        let reading = MainMeterReading(
+            provider: .claude, accountID: "test", accountLabel: "Test",
+            limits: LimitInfo(currentSession: LimitWindow(percentUsed: 80, resetsAt: reset)),
+            observedAt: now)
+        func summary(_ time: Date) -> String {
+            MenuBarText.accessibilitySummary(
+                provider: .claude, reading: reading, progression: .left, selection: .forecast,
+                isActive: true, isStale: false, isLoading: false, severity: .warning, now: time)
+        }
+        #expect(summary(now).contains("May run out in 38m."))
+        #expect(!summary(reset).contains("May run out"))
+        #expect(summary(reset).contains("Session 100 percent left."))
+    }
+
+    @Test("Native menu-bar accessibility updates without changing visible text")
+    @MainActor
+    func nativeMenuBarAccessibility() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 100, height: 30),
+            styleMask: [], backing: .buffered, defer: true)
+        let container = NSView()
+        let button = NSStatusBarButton(frame: .zero)
+        let otherButton = NSButton(title: "Other", target: nil, action: nil)
+        button.title = "42%"
+        container.addSubview(otherButton)
+        container.addSubview(button)
+        window.contentView = container
+
+        let summary = "Claude Meter. Claude. Session 42 percent left."
+        #expect(MenuBarAccessibility.update(summary, in: [window]))
+        #expect(button.accessibilityTitle() == summary)
+        #expect(button.title == "42%")
+        #expect(otherButton.accessibilityTitle() != summary)
+
+        let paused = "Claude Meter. Claude. Paused."
+        #expect(MenuBarAccessibility.update(paused, in: [window]))
+        #expect(button.accessibilityTitle() == paused)
+        #expect(!MenuBarAccessibility.update(paused, in: []))
     }
 
     @Test("Codex account names prefer a non-empty override")

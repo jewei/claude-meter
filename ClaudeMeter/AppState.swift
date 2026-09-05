@@ -545,6 +545,7 @@ final class AppState: ObservableObject {
     }
 
     init() {
+        OAuthPipeline.enableRateLimitPersistence()
         UserDefaults.standard.register(defaults: [
             AppSettings.statuslineSourceEnabledKey: true,
             AppSettings.isActiveKey: true,

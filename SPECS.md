@@ -122,6 +122,11 @@ OAuth is used only when mode is `auto` or `manual`.
 - The process-wide 429 gate is shared by polling, verification, and enrichment. It honors
   positive `Retry-After` delta or HTTP-date values up to a 24-hour safety maximum. This
   maximum prevents an invalid server value from disabling OAuth for the life of the app.
+  App startup restores one provider-wide deadline from standard defaults. The record
+  contains no credentials, survives restarts, and is never extended by loading it.
+  Invalid/expired records and clock changes that imply more than 24 hours remaining
+  are rejected. Storage failure preserves the in-memory block. Test app initializers
+  do not install persistence. Interactive refresh and account changes never bypass it.
 
 The usage response maps `five_hour`, `seven_day`, `seven_day_opus`, dynamic scoped weekly
 limits, `extra_usage`, and plan metadata. Flat scoped fields win over equivalent entries
@@ -181,11 +186,21 @@ workflow journals are excluded. One unreadable root or file marks the result par
 does not erase readable data.
 
 Cost scans assistant usage chunks for the last seven days. Within each file, chunks with
-the same message/request identity are combined globally by maximum token fields. Cache
-creation tier breakdown wins over the legacy total; legacy-only writes count as 5-minute
-cache writes. Large files are tail-read and reported partial. Incremental reuse is allowed
-only when file identity/prefix continuity proves an append; incomplete trailing lines are
-revisited after append. Model output is deterministically ordered.
+the same message/request identity are combined globally by maximum token fields. Complete
+message/request pairs are also reconciled across files within each canonical account root,
+so copied history counts once while unique continuations count separately. Missing IDs
+remain separate across files. Accounts remain additive, even with matching request IDs.
+Cache creation tier breakdown wins over the legacy total across both chunks and files;
+legacy-only writes count as 5-minute cache writes. Paths use stable order when duplicate
+metadata differs. Large files are tail-read and reported partial. Every changed file is
+reparsed; growth alone cannot prove an append. Model output is deterministically ordered.
+
+The version-5 cost cache retains request records as compact tuples instead of day/model
+totals. Older versions are rebuilt. Parsing accepts at most 20,000 records and 8 MiB of accounted record
+storage per file. Reconciliation accepts at most 100,000 records and 32 MiB per root.
+Limits produce explicit partial estimates. The LRU cache retains at most 2,048 files and
+32 MiB of accounted record storage, including path/record overhead. These accounting
+bounds do not measure the allocator's total memory use.
 
 Activity is loaded on demand from the cost card. It reports a 7×24 local-time grid over the
 last 30 days, Monday at index zero, deduping message identity within each file. Its total is
@@ -216,6 +231,10 @@ does not cross a detected credential replacement. Cursor errors and staleness ap
 on its popover/settings/diagnostics surfaces.
 
 ### 5.2 Codex
+
+Malformed optional credit, reset, or plan metadata does not discard valid quota windows.
+Unusable metadata stays unknown. A valid reset count remains available when optional
+detail rows cannot be decoded. Direct OAuth quota decoding remains strict.
 
 Codex is opt-in and supports one implicit `CODEX_HOME` plus explicitly configured homes.
 Each home has its own subprocess/provider state and display name. Provider subprocesses
@@ -277,6 +296,11 @@ Forecast pairs the nearest binding percentage with that same window's compact pr
 and falls back to percentage-only when projection is unavailable. A single-window number may
 intentionally differ from the all-window dot. Selecting a provider
 or account with no reading produces an explicit unavailable/error state, never fallback.
+
+The menu-bar item exposes one spoken accessibility summary. It names the selected
+provider, quota window, percentage used/left, and overall severity separately. Paused,
+stale, loading, and unavailable states use explicit words; stale and paused summaries
+omit the percentage. Forecast speech uses `RunsOutPhrase.spoken`.
 
 The popover is 360 points wide with a screen-derived scrolling height. Header controls are
 Settings and Quit; opening performs refresh, so there is no redundant refresh button.

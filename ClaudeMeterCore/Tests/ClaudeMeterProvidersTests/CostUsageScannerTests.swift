@@ -530,7 +530,7 @@ struct CostUsageScannerTests {
             Issue.record("expected an exact cache hit after reload")
             return
         }
-        let total = value.values.reduce(0) { $0 + $1.input }
+        let total = value.reduce(0) { $0 + $1.totals.input }
         #expect(total == 1_000_000)
         #expect(first.models.first?.inputTokens == 1_000_000)
     }
@@ -581,10 +581,8 @@ struct CostUsageScannerTests {
             let modDate: Double = 0
             let fileSize: UInt64 = 0
             let timeZoneIdentifier = "UTC"
-            let parsedBytes: UInt64 = 0
             let isPartial = false
-            let committed: [Int] = []
-            let value: [Int] = []
+            let records: [Int] = []
         }
 
         let root = FileManager.default.temporaryDirectory
@@ -599,7 +597,7 @@ struct CostUsageScannerTests {
         }
         let diskURL = root.appendingPathComponent("cache.json")
         try JSONEncoder().encode(
-            Disk(version: 4, entries: paths.map { Entry(path: $0) })
+            Disk(version: 5, entries: paths.map { Entry(path: $0) })
         ).write(to: diskURL)
 
         let cache = CostUsageCache(persistenceURL: diskURL)

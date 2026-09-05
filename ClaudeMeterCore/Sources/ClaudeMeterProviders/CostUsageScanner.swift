@@ -23,6 +23,10 @@ public struct CostUsageScanner: Sendable {
     /// activity lives at the end.
     private static let maxFullReadBytes: UInt64 = 8 * 1024 * 1024
     private static let tailReadBytes: UInt64 = 4 * 1024 * 1024
+    static let maximumFileRecords = 20_000
+    static let maximumFileRecordBytes = 8 * 1024 * 1024
+    static let maximumRootRecords = 100_000
+    static let maximumRootRecordBytes = 32 * 1024 * 1024
 
     /// Multi-root: unions usage across several config dirs' `projects/` folders.
     public init(
@@ -116,7 +120,23 @@ public struct CostUsageScanner: Sendable {
             return
         }
 
-        for projectDir in projectDirs {
+        let cutoffDay = cutoffDayString(cutoff, calendar: calendar)
+        var requests: [RequestIdentity: RequestRecord] = [:]
+        var recordCount = 0
+        var recordBytes = 0
+        // Keep identities until this account root is complete. The next root gets
+        // a new dictionary, even when two accounts happen to contain matching IDs.
+        defer {
+            for record in requests.values {
+                let key = DayModelKey(day: record.day, model: record.model)
+                var combined = byDayModel[key, default: .zero]
+                if combined.add(record.totals) { isPartial = true }
+                byDayModel[key] = combined
+            }
+        }
+        // Stable traversal also makes metadata selection and bounded partial
+        // results deterministic when duplicate records disagree about day/model.
+        for projectDir in projectDirs.sorted(by: { $0.path < $1.path }) {
             do {
                 guard try JournalReader.isDirectory(projectDir, fm: fm) else { continue }
             } catch {
@@ -126,14 +146,13 @@ public struct CostUsageScanner: Sendable {
 
             let discovery = JournalReader.transcriptFiles(inProjectDir: projectDir, fm: fm)
             if discovery.isPartial { isPartial = true }
-            for file in discovery.files {
+            for file in discovery.files.sorted(by: { $0.path < $1.path }) {
                 if Task.isCancelled {
                     isPartial = true
                     return
                 }
-                // Bound peak memory to ~one file: each parse reads megabytes into
-                // Data/String, so without draining per file the transients pile up
-                // across every file in every account.
+                // Drain transient Data/String allocations after each file. Retained
+                // request records have separate file, root, and cache bounds.
                 autoreleasepool {
                     let metadata: JournalReader.TranscriptMetadata
                     do {
@@ -151,7 +170,7 @@ public struct CostUsageScanner: Sendable {
                     }
                     guard metadata.modificationDate >= cutoff else { return }
 
-                    let perFile: [DayModelKey: TokenTotals]
+                    let perFile: [RequestRecord]
                     switch cache.lookup(
                         path: file.path,
                         modDate: metadata.modificationDate,
@@ -163,7 +182,7 @@ public struct CostUsageScanner: Sendable {
                         if wasPartial { isPartial = true }
                     case .miss:
                         let parse = parseFull(file: file, calendar: calendar)
-                        perFile = parse.scan.value
+                        perFile = parse.scan.records
                         if parse.scan.isPartial { isPartial = true }
                         // A transient open/read failure is not a statement that the
                         // unchanged transcript is empty. Do not turn that failure
@@ -178,11 +197,31 @@ public struct CostUsageScanner: Sendable {
                                 scan: parse.scan)
                         }
                     }
-                    for (key, totals) in perFile
-                    where key.day >= cutoffDayString(cutoff, calendar: calendar) {
-                        var combined = byDayModel[key, default: .zero]
-                        if combined.add(totals) { isPartial = true }
-                        byDayModel[key] = combined
+                    for record in perFile where record.day >= cutoffDay {
+                        if let identity = record.identity, var existing = requests[identity] {
+                            if existing.merge(record) { isPartial = true }
+                            requests[identity] = existing
+                            continue
+                        }
+                        let bytes = record.estimatedBytes
+                        guard recordCount < Self.maximumRootRecords,
+                            bytes <= Self.maximumRootRecordBytes - recordBytes
+                        else {
+                            isPartial = true
+                            continue
+                        }
+                        recordCount += 1
+                        recordBytes += bytes
+                        if let identity = record.identity {
+                            requests[identity] = record
+                        } else {
+                            // Missing IDs cannot prove that two files describe the
+                            // same request. Keep those per-file contributions separate.
+                            let key = DayModelKey(day: record.day, model: record.model)
+                            var combined = byDayModel[key, default: .zero]
+                            if combined.add(record.totals) { isPartial = true }
+                            byDayModel[key] = combined
+                        }
                     }
                 }
             }
@@ -192,14 +231,39 @@ public struct CostUsageScanner: Sendable {
     /// The result of scanning one transcript. Message chunks are deduplicated across
     /// the entire parsed range, not merely when adjacent.
     struct FileScan: Sendable {
-        /// Retained in the disk format for compatibility; equal to `value` now that
-        /// growth is conservatively re-parsed instead of assuming append identity.
-        var committed: [DayModelKey: TokenTotals]
-        /// End of the parsed range. Retained for the v2 disk representation.
-        var pendingStart: UInt64
         var isPartial: Bool
-        /// Complete deduplicated answer for this file.
-        var value: [DayModelKey: TokenTotals]
+        var records: [RequestRecord]
+    }
+
+    struct RequestIdentity: Codable, Hashable, Sendable {
+        let messageID: String
+        let requestID: String
+    }
+
+    struct RequestRecord: Codable, Sendable {
+        let identity: RequestIdentity?
+        let day: String
+        let model: String
+        var totals: TokenTotals
+        var hasCacheWriteBreakdown: Bool
+
+        /// Accounting bound for retained strings and record/dictionary overhead.
+        /// It is not a measurement of allocator or Foundation memory use.
+        var estimatedBytes: Int {
+            256 + day.utf8.count + model.utf8.count
+                + (identity?.messageID.utf8.count ?? 0) + (identity?.requestID.utf8.count ?? 0)
+        }
+
+        mutating func merge(_ other: Self) -> Bool {
+            var incoming = other.totals
+            if other.hasCacheWriteBreakdown {
+                if !hasCacheWriteBreakdown { totals.cacheWrite5m = 0 }
+                hasCacheWriteBreakdown = true
+            } else if hasCacheWriteBreakdown {
+                incoming.cacheWrite5m = 0
+            }
+            return totals.takeMax(incoming)
+        }
     }
 
     /// Separates an incomplete but valid tail read from a transient I/O failure.
@@ -221,22 +285,18 @@ public struct CostUsageScanner: Sendable {
                 tailReadBytes: Self.tailReadBytes)
         else {
             return FileParse(
-                scan: FileScan(
-                    committed: [:], pendingStart: 0, isPartial: true, value: [:]),
+                scan: FileScan(isPartial: true, records: []),
                 isCacheable: false)
         }
         guard !read.data.isEmpty else {
             return FileParse(
-                scan: FileScan(
-                    committed: [:], pendingStart: read.fileSize,
-                    isPartial: read.isPartial, value: [:]),
+                scan: FileScan(isPartial: read.isPartial, records: []),
                 isCacheable: true)
         }
         // A tail read may start mid-line; drop the first partial line.
         return FileParse(
             scan: scanBytes(
                 read.data,
-                baseOffset: read.baseOffset,
                 dropFirstLine: read.baseOffset > 0,
                 wasPartial: read.isPartial,
                 calendar: calendar),
@@ -247,7 +307,6 @@ public struct CostUsageScanner: Sendable {
     /// entire range so interleaved messages still contribute one per-field maximum.
     private func scanBytes(
         _ data: Data,
-        baseOffset: UInt64,
         dropFirstLine: Bool,
         wasPartial: Bool,
         calendar: Calendar
@@ -269,13 +328,13 @@ public struct CostUsageScanner: Sendable {
         }
 
         let decoder = JSONDecoder()
-        struct MessageAggregate {
-            var day: String
-            var model: String
-            var totals: TokenTotals
-            var hasCacheWriteBreakdown: Bool
+        enum MessageKey: Hashable {
+            case message(String, String)
+            case line(Int)
         }
-        var messages: [String: MessageAggregate] = [:]
+        var messages: [MessageKey: RequestRecord] = [:]
+        var order: [MessageKey] = []
+        var recordBytes = 0
 
         for (lineIndex, range) in lineRanges.enumerated() {
             if dropFirstLine && lineIndex == 0 { continue }
@@ -291,11 +350,17 @@ public struct CostUsageScanner: Sendable {
             else { continue }
 
             let model = message.model ?? "unknown"
-            let key = dedupeKey(
-                messageId: message.id, requestId: entry.requestId, lineIndex: lineIndex)
+            let messageID = message.id.flatMap { $0.isEmpty ? nil : $0 }
+            let requestID = entry.requestId.flatMap { $0.isEmpty ? nil : $0 }
+            let key =
+                messageID.map { MessageKey.message($0, requestID ?? "") }
+                ?? .line(lineIndex)
+            let identity = messageID.flatMap { mid in
+                requestID.map { RequestIdentity(messageID: mid, requestID: $0) }
+            }
             if usage.hasInvalidCounter { isPartial = true }
             let cacheWrite = usage.cacheWriteSplit
-            var totals = TokenTotals(
+            let totals = TokenTotals(
                 input: max(usage.inputTokens ?? 0, 0),
                 output: max(usage.outputTokens ?? 0, 0),
                 cacheRead: max(usage.cacheReadInputTokens ?? 0, 0),
@@ -303,46 +368,28 @@ public struct CostUsageScanner: Sendable {
                 cacheWrite1h: cacheWrite.oneHour
             )
 
+            let record = RequestRecord(
+                identity: identity,
+                day: JournalReader.dayString(from: date, calendar: calendar),
+                model: model, totals: totals, hasCacheWriteBreakdown: cacheWrite.hasBreakdown)
             if var existing = messages[key] {
-                // Legacy totals are provisional 5m values. An explicit breakdown
-                // on any chunk replaces that fallback for the complete message.
-                if cacheWrite.hasBreakdown {
-                    if !existing.hasCacheWriteBreakdown {
-                        existing.totals.cacheWrite5m = 0
-                    }
-                    existing.hasCacheWriteBreakdown = true
-                } else if existing.hasCacheWriteBreakdown {
-                    totals.cacheWrite5m = 0
-                }
-                if existing.totals.takeMax(totals) { isPartial = true }
+                if existing.merge(record) { isPartial = true }
                 messages[key] = existing
             } else {
-                messages[key] = MessageAggregate(
-                    day: JournalReader.dayString(from: date, calendar: calendar),
-                    model: model,
-                    totals: totals,
-                    hasCacheWriteBreakdown: cacheWrite.hasBreakdown)
+                let bytes = record.estimatedBytes
+                guard messages.count < Self.maximumFileRecords,
+                    bytes <= Self.maximumFileRecordBytes - recordBytes
+                else {
+                    isPartial = true
+                    continue
+                }
+                recordBytes += bytes
+                order.append(key)
+                messages[key] = record
             }
         }
 
-        var value: [DayModelKey: TokenTotals] = [:]
-        for message in messages.values {
-            let key = DayModelKey(day: message.day, model: message.model)
-            var combined = value[key, default: .zero]
-            if combined.add(message.totals) { isPartial = true }
-            value[key] = combined
-        }
-        return FileScan(
-            committed: value, pendingStart: baseOffset + UInt64(data.count),
-            isPartial: isPartial, value: value)
-    }
-
-    /// Stable dedupe key for streaming chunks. Lines without ids are keyed by
-    /// line index so distinct messages aren't collapsed.
-    private func dedupeKey(messageId: String?, requestId: String?, lineIndex: Int) -> String {
-        if let id = messageId, !id.isEmpty { return "\(id)|\(requestId ?? "")" }
-        if let rid = requestId, !rid.isEmpty { return "|\(rid)|\(lineIndex)" }
-        return "line:\(lineIndex)"
+        return FileScan(isPartial: isPartial, records: order.compactMap { messages[$0] })
     }
 
     // MARK: - Aggregation
@@ -571,9 +618,51 @@ private struct CacheCreationBreakdown: Decodable {
     }
 }
 
-// MARK: - Incremental cache
+/// Compact tuples reduce encoding memory and disk size. Field order belongs to
+/// the version-5 cache schema; change the version when changing this layout.
+extension CostUsageScanner.RequestRecord {
+    init(from decoder: Decoder) throws {
+        var fields = try decoder.unkeyedContainer()
+        let messageID = try fields.decodeIfPresent(String.self)
+        let requestID = try fields.decodeIfPresent(String.self)
+        guard (messageID == nil) == (requestID == nil) else {
+            throw DecodingError.dataCorruptedError(
+                in: fields, debugDescription: "Incomplete request identity")
+        }
+        self.init(
+            identity: messageID.flatMap { message in
+                requestID.map { .init(messageID: message, requestID: $0) }
+            },
+            day: try fields.decode(String.self), model: try fields.decode(String.self),
+            totals: .init(
+                input: try fields.decode(Int.self), output: try fields.decode(Int.self),
+                cacheRead: try fields.decode(Int.self), cacheWrite5m: try fields.decode(Int.self),
+                cacheWrite1h: try fields.decode(Int.self)),
+            hasCacheWriteBreakdown: try fields.decode(Bool.self))
+        guard fields.isAtEnd else {
+            throw DecodingError.dataCorruptedError(
+                in: fields, debugDescription: "Unexpected request fields")
+        }
+    }
 
-/// Caches per-file `(day, model) -> tokens` aggregations, invalidated by file
+    func encode(to encoder: Encoder) throws {
+        var fields = encoder.unkeyedContainer()
+        try fields.encode(identity?.messageID)
+        try fields.encode(identity?.requestID)
+        try fields.encode(day)
+        try fields.encode(model)
+        try fields.encode(totals.input)
+        try fields.encode(totals.output)
+        try fields.encode(totals.cacheRead)
+        try fields.encode(totals.cacheWrite5m)
+        try fields.encode(totals.cacheWrite1h)
+        try fields.encode(hasCacheWriteBreakdown)
+    }
+}
+
+// MARK: - Per-file cache
+
+/// Caches per-file request records for account-root reconciliation, invalidated by file
 /// mtime + size. Window filtering happens at read time so the same cache serves
 /// any `daysBack`. Persisted to disk (Application Support, `0o600`) so a relaunch
 /// avoids re-parsing unchanged transcripts. Changed files are conservatively
@@ -583,8 +672,8 @@ public final class CostUsageCache: @unchecked Sendable {
 
     /// Result of a per-file lookup.
     enum Lookup {
-        /// File unchanged (mtime + size match) — totals served directly.
-        case exact(value: [DayModelKey: TokenTotals], isPartial: Bool)
+        /// File unchanged. Request records still need account-root reconciliation.
+        case exact(records: [CostUsageScanner.RequestRecord], isPartial: Bool)
         /// No usable entry (absent, shrunk, or rewritten in place) — full parse needed.
         case miss
     }
@@ -593,24 +682,25 @@ public final class CostUsageCache: @unchecked Sendable {
         var modDate: Date
         var fileSize: UInt64
         var timeZoneIdentifier: String
-        var parsedBytes: UInt64
-        var committed: [DayModelKey: TokenTotals]
-        var value: [DayModelKey: TokenTotals]
+        var records: [CostUsageScanner.RequestRecord]
+        var retainedBytes: Int
         var isPartial: Bool
     }
 
     // Subagent transcripts roughly triple the file count vs top-level-only scans,
     // so the cap is sized to keep a heavy month fully resident.
     static let maxEntries = 2048
+    static let maximumRetainedBytes = 32 * 1024 * 1024
     private static let maximumPersistenceFileBytes = 64 * 1_024 * 1_024
-    // v4: explicit cache-write tiers also replace legacy totals across streaming
-    // chunks. Discard v3's potentially double-counted aggregates, as well as v1
-    // without cache-write tiers and v2 without time-zone identity.
-    private static let diskVersion = 4
+    // v5 retains request identities and tier provenance. Older aggregate-only
+    // entries cannot reconcile copied history and must be rebuilt.
+    private static let diskVersion = 5
 
     private let persistenceURL: URL?
+    private let byteLimit: Int
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
+    private var retainedBytes = 0
     private var recency = LRUKeyIndex<String>()
     private var didLoad: Bool
     private var dirty = false
@@ -619,11 +709,13 @@ public final class CostUsageCache: @unchecked Sendable {
     /// In-memory only (used by tests); no disk I/O. Use `shared` for the persisted cache.
     public init() {
         self.persistenceURL = nil
+        self.byteLimit = Self.maximumRetainedBytes
         self.didLoad = true
     }
 
-    init(persistenceURL: URL?) {
+    init(persistenceURL: URL?, maximumRetainedBytes: Int = CostUsageCache.maximumRetainedBytes) {
         self.persistenceURL = persistenceURL
+        self.byteLimit = max(0, min(maximumRetainedBytes, Self.maximumRetainedBytes))
         self.didLoad = false
     }
 
@@ -631,6 +723,13 @@ public final class CostUsageCache: @unchecked Sendable {
         lock.withLock {
             loadIfNeededLocked()
             return entries.count
+        }
+    }
+
+    var retainedByteCount: Int {
+        lock.withLock {
+            loadIfNeededLocked()
+            return retainedBytes
         }
     }
 
@@ -649,7 +748,7 @@ public final class CostUsageCache: @unchecked Sendable {
             entry.timeZoneIdentifier == timeZoneIdentifier
         {
             recency.touch(path)
-            return .exact(value: entry.value, isPartial: entry.isPartial)
+            return .exact(records: entry.records, isPartial: entry.isPartial)
         }
         // mtime+size cannot prove that growth was append-only: editors and sync tools
         // can replace a transcript with a larger file. Re-parse on every stamp change
@@ -665,19 +764,36 @@ public final class CostUsageCache: @unchecked Sendable {
         scan: CostUsageScanner.FileScan
     ) {
         lock.lock()
+        defer { lock.unlock() }
         loadIfNeededLocked()
+        if let old = entries.removeValue(forKey: path) { retainedBytes -= old.retainedBytes }
+        recency.remove(path)
+        dirty = true
+        guard scan.records.count <= CostUsageScanner.maximumFileRecords else { return }
+        let bytes = Self.storageBytes(path: path, records: scan.records)
+        guard bytes <= byteLimit else { return }
         entries[path] = Entry(
             modDate: modDate,
             fileSize: fileSize,
             timeZoneIdentifier: timeZoneIdentifier,
-            parsedBytes: scan.pendingStart,
-            committed: scan.committed, value: scan.value, isPartial: scan.isPartial)
+            records: scan.records, retainedBytes: bytes, isPartial: scan.isPartial)
+        retainedBytes += bytes
         recency.touch(path)
-        dirty = true
-        while entries.count > Self.maxEntries, let oldest = recency.popLeastRecent() {
-            entries.removeValue(forKey: oldest)
+        evictIfNeededLocked()
+    }
+
+    private static func storageBytes(path: String, records: [CostUsageScanner.RequestRecord]) -> Int
+    {
+        records.reduce(128 + path.utf8.count) { $0 + $1.estimatedBytes }
+    }
+
+    private func evictIfNeededLocked() {
+        while entries.count > Self.maxEntries || retainedBytes > byteLimit {
+            guard let oldest = recency.popLeastRecent() else { break }
+            if let removed = entries.removeValue(forKey: oldest) {
+                retainedBytes -= removed.retainedBytes
+            }
         }
-        lock.unlock()
     }
 
     /// Minimum wall-clock gap between disk flushes. Losing up to this much cache
@@ -717,6 +833,7 @@ public final class CostUsageCache: @unchecked Sendable {
         defer { lock.unlock() }
         let removed = entries.count
         entries.removeAll(keepingCapacity: false)
+        retainedBytes = 0
         recency.removeAll()
         didLoad = true
         dirty = false
@@ -757,15 +874,22 @@ public final class CostUsageCache: @unchecked Sendable {
             if retained.count == Self.maxEntries { break }
         }
         for de in retained.reversed() {
+            guard de.records.count <= CostUsageScanner.maximumFileRecords,
+                PersistedDateBounds.contains(Date(timeIntervalSinceReferenceDate: de.modDate))
+            else { continue }
+            let bytes = Self.storageBytes(path: de.path, records: de.records)
+            guard bytes <= byteLimit else { continue }
+            if let old = entries[de.path] { retainedBytes -= old.retainedBytes }
             entries[de.path] = Entry(
                 modDate: Date(timeIntervalSinceReferenceDate: de.modDate),
                 fileSize: de.fileSize,
                 timeZoneIdentifier: de.timeZoneIdentifier,
-                parsedBytes: de.parsedBytes,
-                committed: Self.dict(from: de.committed),
-                value: Self.dict(from: de.value),
+                records: de.records,
+                retainedBytes: bytes,
                 isPartial: de.isPartial)
+            retainedBytes += bytes
             recency.touch(de.path)
+            evictIfNeededLocked()
         }
     }
 
@@ -778,10 +902,11 @@ public final class CostUsageCache: @unchecked Sendable {
                     path: path, modDate: e.modDate.timeIntervalSinceReferenceDate,
                     fileSize: e.fileSize,
                     timeZoneIdentifier: e.timeZoneIdentifier,
-                    parsedBytes: e.parsedBytes, isPartial: e.isPartial,
-                    committed: Self.rows(from: e.committed), value: Self.rows(from: e.value))
+                    isPartial: e.isPartial, records: e.records)
             })
-        guard let data = try? JSONEncoder().encode(disk) else { return }
+        guard let data = try? JSONEncoder().encode(disk),
+            data.count <= Self.maximumPersistenceFileBytes
+        else { return }
         let fm = FileManager.default
         try? fm.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -791,23 +916,6 @@ public final class CostUsageCache: @unchecked Sendable {
         } catch {
             // Best-effort cache; a failed write just means we re-parse next launch.
         }
-    }
-
-    private static func rows(from dict: [DayModelKey: TokenTotals]) -> [DiskRow] {
-        dict.map { key, t in
-            DiskRow(
-                d: key.day, m: key.model, i: t.input, o: t.output, cr: t.cacheRead,
-                cw: t.cacheWrite5m, c1: t.cacheWrite1h)
-        }
-    }
-
-    private static func dict(from rows: [DiskRow]) -> [DayModelKey: TokenTotals] {
-        var out: [DayModelKey: TokenTotals] = [:]
-        for r in rows {
-            out[DayModelKey(day: r.d, model: r.m)] = TokenTotals(
-                input: r.i, output: r.o, cacheRead: r.cr, cacheWrite5m: r.cw, cacheWrite1h: r.c1)
-        }
-        return out
     }
 
     private struct DiskCache: Codable {
@@ -820,21 +928,7 @@ public final class CostUsageCache: @unchecked Sendable {
         var modDate: Double
         var fileSize: UInt64
         var timeZoneIdentifier: String
-        var parsedBytes: UInt64
         var isPartial: Bool
-        var committed: [DiskRow]
-        var value: [DiskRow]
-    }
-
-    private struct DiskRow: Codable {
-        var d: String
-        var m: String
-        var i: Int
-        var o: Int
-        var cr: Int
-        /// 5m-tier cache-write tokens.
-        var cw: Int
-        /// 1h-tier cache-write tokens.
-        var c1: Int
+        var records: [CostUsageScanner.RequestRecord]
     }
 }

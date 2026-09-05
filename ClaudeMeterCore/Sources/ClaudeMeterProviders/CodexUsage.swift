@@ -262,6 +262,18 @@ public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
     let rateLimits: AppServerRateLimitSnapshot
     let rateLimitResetCredits: AppServerRateLimitResetCredits?
 
+    enum CodingKeys: String, CodingKey {
+        case rateLimits, rateLimitResetCredits
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        rateLimits = try container.decode(AppServerRateLimitSnapshot.self, forKey: .rateLimits)
+        // Reset metadata is advisory. A format change must not discard quota data.
+        rateLimitResetCredits = try? container.decodeIfPresent(
+            AppServerRateLimitResetCredits.self, forKey: .rateLimitResetCredits)
+    }
+
     public func usage(
         account: CodexAppServerAccount?,
         now: Date,
@@ -384,6 +396,18 @@ public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
         let availableCount: Int
         let credits: [AppServerRateLimitResetCredit]?
 
+        enum CodingKeys: String, CodingKey {
+            case availableCount, credits
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            availableCount = try container.decode(Int.self, forKey: .availableCount)
+            // The count is authoritative even when optional detail rows are unusable.
+            credits = try? container.decodeIfPresent(
+                [AppServerRateLimitResetCredit].self, forKey: .credits)
+        }
+
         var codexRateLimitResets: CodexRateLimitResets {
             CodexRateLimitResets(
                 availableCount: availableCount,
@@ -414,6 +438,14 @@ public struct CodexOAuthUsageResponse: Decodable, Sendable {
         case planType = "plan_type"
         case rateLimit = "rate_limit"
         case credits
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Keep quota decoding strict; only unrelated display metadata may fail alone.
+        rateLimit = try container.decodeIfPresent(RateLimit.self, forKey: .rateLimit)
+        planType = try? container.decodeIfPresent(String.self, forKey: .planType)
+        credits = try? container.decodeIfPresent(Credits.self, forKey: .credits)
     }
 
     public func usage(accountEmail: String?, now: Date, source: CodexUsageSource) throws

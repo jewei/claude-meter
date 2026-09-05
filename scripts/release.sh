@@ -91,6 +91,7 @@ EXPORT_DIR="$BUILD_DIR/export"
 APP_PATH="$EXPORT_DIR/$APP_NAME.app"
 ZIP_PATH="$BUILD_DIR/$APP_NAME-notarize.zip"
 DMG_PATH="$BUILD_DIR/$DMG_NAME"
+SYMBOLS_PATH="$BUILD_DIR/$APP_NAME-$VERSION-$BUILD.dSYMs.zip"
 EXPORT_OPTIONS="$BUILD_DIR/ExportOptions.plist"
 
 rm -rf "$BUILD_DIR"
@@ -218,7 +219,8 @@ XML
 
 # Fail before changing git state or publishing anything if the signed artifacts,
 # mounted DMG, or appcast metadata do not agree.
-"$SCRIPT_DIR/validate-release.sh" "$APP_PATH" "$DMG_PATH" "$PROJECT_DIR/appcast.xml"
+"$SCRIPT_DIR/release-symbols.sh" package "$APP_PATH" "$ARCHIVE_PATH/dSYMs" "$SYMBOLS_PATH"
+"$SCRIPT_DIR/validate-release.sh" "$APP_PATH" "$DMG_PATH" "$PROJECT_DIR/appcast.xml" "$SYMBOLS_PATH"
 
 # ── Persist version + promote changelog + commit ──────────────────────────────
 # Bump project.pbxproj only after a successful build. Commit before creating the
@@ -264,7 +266,7 @@ git -C "$PROJECT_DIR" push origin "${RELEASE_COMMIT}:refs/heads/${STAGING_BRANCH
 # commit (including its matching appcast/changelog), not the pre-build HEAD.
 
 echo "▶ Creating GitHub release ${TAG}…"
-gh release create "$TAG" "$DMG_PATH" \
+gh release create "$TAG" "$DMG_PATH" "$SYMBOLS_PATH" \
     --repo "$GITHUB_REPO" \
     --target "$RELEASE_COMMIT" \
     --title "Claude Meter $VERSION" \

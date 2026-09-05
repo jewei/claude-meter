@@ -9,8 +9,7 @@ struct MemoryPressureCacheTests {
     func costCacheLRU() {
         let cache = CostUsageCache()
         let modDate = Date(timeIntervalSince1970: 100)
-        let scan = CostUsageScanner.FileScan(
-            committed: [:], pendingStart: 0, isPartial: false, value: [:])
+        let scan = CostUsageScanner.FileScan(isPartial: false, records: [])
         for index in 0..<CostUsageCache.maxEntries {
             cache.store(
                 file: "/tmp/cost-\(index)",
@@ -108,8 +107,7 @@ struct MemoryPressureCacheTests {
             file: "/tmp/session.jsonl",
             modDate: modDate,
             fileSize: 10,
-            scan: CostUsageScanner.FileScan(
-                committed: [:], pendingStart: 10, isPartial: false, value: [:]))
+            scan: CostUsageScanner.FileScan(isPartial: false, records: []))
         cache.flush()
         guard
             case .exact = cache.lookup(

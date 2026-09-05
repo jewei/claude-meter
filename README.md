@@ -48,6 +48,11 @@ Gatekeeper warnings. Updates are delivered automatically via Sparkle.
 Running the app requires a provisioning profile (App Group entitlement).
 For a faster focused check, run `swift test --package-path ClaudeMeterCore`.
 
+Release builds attach a versioned `.dSYMs.zip` to the GitHub release. The release
+script verifies app and widget symbol UUIDs against the shipped binaries before
+publication. Keep that archive for crash analysis; the local `build/` directory
+is replaced by the next release build.
+
 ## Docs
 
 - `SPECS.md` — full specification

@@ -2,22 +2,27 @@
 
 set -euo pipefail
 
-if [[ $# -ne 3 ]]; then
-    echo "usage: $0 <ClaudeMeter.app> <ClaudeMeter.dmg> <appcast.xml>" >&2
+if [[ $# -ne 4 ]]; then
+    echo "usage: $0 <ClaudeMeter.app> <ClaudeMeter.dmg> <appcast.xml> <symbols.zip>" >&2
     exit 2
 fi
 
 APP_PATH="$1"
 DMG_PATH="$2"
 APPCAST_PATH="$3"
+SYMBOLS_PATH="$4"
 WIDGET_PATH="$APP_PATH/Contents/PlugIns/ClaudeMeterWidgetExtension.appex"
 
-for path in "$APP_PATH" "$DMG_PATH" "$APPCAST_PATH" "$WIDGET_PATH"; do
+for path in "$APP_PATH" "$DMG_PATH" "$APPCAST_PATH" "$WIDGET_PATH" "$SYMBOLS_PATH"; do
     if [[ ! -e "$path" ]]; then
         echo "error: missing release artifact: $path" >&2
         exit 1
     fi
 done
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+echo "▶ Verifying retained app and widget symbols"
+"$SCRIPT_DIR/release-symbols.sh" verify "$APP_PATH" "$SYMBOLS_PATH"
 
 echo "▶ Verifying signatures and notarization"
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"

@@ -5,6 +5,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+echo "▶ Checking release-symbol validation"
+"$SCRIPT_DIR/test-release-symbols.sh"
+
 echo "▶ Checking Swift formatting"
 swift format lint --recursive --strict \
     "$PROJECT_DIR/ClaudeMeterCore" \

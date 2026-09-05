@@ -182,6 +182,8 @@ struct AccountCardModel: Identifiable {
     var session: LimitWindow
     var week: LimitWindow
     var opus: LimitWindow?
+    /// Popover-only Codex details, kept outside the persisted main-meter model.
+    var rateLimitResets: CodexRateLimitResets? = nil
     /// Scoped weekly windows (`seven_day_sonnet`, …) — display-only rows below
     /// Opus; they don't influence the card's band or the reset summary.
     var scoped: [ScopedLimitWindow] = []
@@ -321,49 +323,55 @@ struct AccountRingCard: View {
     var body: some View {
         let sBand = model.session.energyBand(thresholds: thresholds, asOf: now)
         let wBand = model.week.energyBand(thresholds: thresholds, asOf: now)
-        HStack(spacing: 14) {
-            ActivityRingsView(
-                weeklyFraction: fraction(model.week),
-                weeklyColor: wBand.color,
-                sessionFraction: fraction(model.session),
-                sessionColor: sBand.color,
-                letter: model.avatarLetter
-            )
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
-                    Text(model.label)
-                        .font(PFont.display(15, .semibold))
-                        .foregroundStyle(Color.pfInk)
-                        .lineLimit(1)
-                    if model.isLive { LiveDot() }
-                    Spacer(minLength: 4)
-                    if model.isDuplicateLogin { DuplicateLoginBadge() }
-                    if let plan = model.plan { PlanBadge(plan: plan) }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 14) {
+                ActivityRingsView(
+                    weeklyFraction: fraction(model.week),
+                    weeklyColor: wBand.color,
+                    sessionFraction: fraction(model.session),
+                    sessionColor: sBand.color,
+                    letter: model.avatarLetter
+                )
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
+                        Text(model.label)
+                            .font(PFont.display(15, .semibold))
+                            .foregroundStyle(Color.pfInk)
+                            .lineLimit(1)
+                        if model.isLive { LiveDot() }
+                        Spacer(minLength: 4)
+                        if model.isDuplicateLogin { DuplicateLoginBadge() }
+                        if let plan = model.plan { PlanBadge(plan: plan) }
+                    }
+                    if let subtitle = model.subtitle {
+                        Text(subtitle)
+                            .font(PFont.body(11, .bold))
+                            .foregroundStyle(Color.pfInkMuted)
+                            .lineLimit(1)
+                    }
+                    metricRow("5-hr", window: model.session, band: sBand, paceKind: .session)
+                    metricRow("week", window: model.week, band: wBand, paceKind: .weekly)
+                    if let opus = model.opus {
+                        let oBand = opus.energyBand(thresholds: thresholds, asOf: now)
+                        metricRow("opus", window: opus, band: oBand)
+                    }
+                    ForEach(model.scoped) { scoped in
+                        metricRow(
+                            scoped.displayName.lowercased(), window: scoped.window,
+                            band: scoped.window.energyBand(thresholds: thresholds, asOf: now))
+                    }
                 }
-                if let subtitle = model.subtitle {
-                    Text(subtitle)
-                        .font(PFont.body(11, .bold))
-                        .foregroundStyle(Color.pfInkMuted)
-                        .lineLimit(1)
-                }
-                metricRow("5-hr", window: model.session, band: sBand, paceKind: .session)
-                metricRow("week", window: model.week, band: wBand, paceKind: .weekly)
-                if let opus = model.opus {
-                    let oBand = opus.energyBand(thresholds: thresholds, asOf: now)
-                    metricRow("opus", window: opus, band: oBand)
-                }
-                ForEach(model.scoped) { scoped in
-                    metricRow(
-                        scoped.displayName.lowercased(), window: scoped.window,
-                        band: scoped.window.energyBand(thresholds: thresholds, asOf: now))
-                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(accessibilityText)
+            if let resets = model.rateLimitResets {
+                CodexUsageResetsView(resets: resets, now: now)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
         .chunkyCard()
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityText)
+        .accessibilityElement(children: .contain)
     }
 
     private func fraction(_ window: LimitWindow) -> Double {
@@ -437,6 +445,77 @@ struct AccountRingCard: View {
         if let forecast = RunsOutPhrase.spoken(estimate) { return ", \(forecast)" }
         guard let insight = resolved.paceInsight(kind: kind, asOf: now) else { return "" }
         return ", \(insight.displayText)"
+    }
+}
+
+struct CodexUsageResetsView: View {
+    let resets: CodexRateLimitResets
+    let now: Date
+
+    private var credits: [CodexRateLimitResetCredit] {
+        (resets.credits ?? []).sorted {
+            ($0.expiresAt ?? .distantFuture) < ($1.expiresAt ?? .distantFuture)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Divider().overlay(Color.pfCardBorder)
+            HStack {
+                Text("Usage limit resets")
+                    .font(PFont.body(11, .bold))
+                Spacer(minLength: 4)
+                Text("\(resets.availableCount) available")
+                    .font(PFont.body(11, .bold))
+                    .monospacedDigit()
+            }
+            .foregroundStyle(Color.pfInk)
+            .accessibilityElement(children: .combine)
+
+            if resets.availableCount > 0 {
+                ForEach(Array(credits.enumerated()), id: \.offset) { _, credit in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(Self.title(for: credit))
+                        Spacer(minLength: 0)
+                        Text(Self.expirationText(for: credit, asOf: now))
+                            .monospacedDigit()
+                            .multilineTextAlignment(.trailing)
+                    }
+                    .font(PFont.body(11, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+                    .accessibilityElement(children: .combine)
+                    .help(
+                        credit.expiresAt.map {
+                            "Expires \($0.formatted(date: .abbreviated, time: .shortened))"
+                        }
+                            ?? "Expiry date not provided")
+                }
+                if credits.isEmpty {
+                    Text("Expiry details unavailable")
+                        .font(PFont.body(10, .semibold))
+                        .foregroundStyle(Color.pfInkMuted)
+                } else if credits.count < resets.availableCount {
+                    Text(
+                        "Expiry details shown for \(credits.count) of \(resets.availableCount) resets"
+                    )
+                    .font(PFont.body(10, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+                }
+            }
+        }
+    }
+
+    private static func title(for credit: CodexRateLimitResetCredit) -> String {
+        let title = credit.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return title.isEmpty ? "Usage reset" : title
+    }
+
+    private static func expirationText(for credit: CodexRateLimitResetCredit, asOf now: Date)
+        -> String
+    {
+        guard let expiresAt = credit.expiresAt else { return "Expiry date not provided" }
+        guard let phrase = ResetPhrase.spoken(until: expiresAt, asOf: now) else { return "Expired" }
+        return "Expires \(phrase)"
     }
 }
 
@@ -714,7 +793,7 @@ struct HeroView: View {
 
 // MARK: - Shared reset wording
 
-/// "in 3h 12m" / "in 36h" / "in 4 days" — the app-wide `ResetPhrase` rule.
+/// "in 3h 12m" / "in 36h" / "in 6d 7h" — the app-wide `ResetPhrase` rule.
 func describeReset(_ date: Date, now: Date) -> String {
     ResetPhrase.spoken(until: date, asOf: now) ?? "soon"
 }

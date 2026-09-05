@@ -25,7 +25,7 @@ struct ResetPhraseTests {
 
     @Test func roundedUnitBoundariesDoNotEmitSixtyMinutesOrFortyEightHours() {
         #expect(ResetPhrase.duration(until: at(59 * 60 + 30), asOf: now) == "1h")
-        #expect(ResetPhrase.duration(until: at(47 * 3600 + 59 * 60 + 30), asOf: now) == "2 days")
+        #expect(ResetPhrase.duration(until: at(47 * 3600 + 59 * 60 + 30), asOf: now) == "2d")
     }
 
     @Test func underTwelveHoursKeepsMinuteDetail() {
@@ -40,10 +40,22 @@ struct ResetPhraseTests {
         #expect(ResetPhrase.compact(until: at(36 * 3600), asOf: now) == "36h")
     }
 
-    @Test func fortyEightHoursAndBeyondShowsDays() {
-        #expect(ResetPhrase.duration(until: at(48 * 3600), asOf: now) == "2 days")
-        #expect(ResetPhrase.duration(until: at(4 * 86400 + 3600), asOf: now) == "4 days")
-        #expect(ResetPhrase.spoken(until: at(4 * 86400), asOf: now) == "in 4 days")
+    @Test func fortyEightHoursAndBeyondKeepsHourDetail() {
+        #expect(ResetPhrase.duration(until: at(48 * 3600), asOf: now) == "2d")
+        #expect(ResetPhrase.duration(until: at(4 * 86400 + 3600), asOf: now) == "4d 1h")
+        #expect(ResetPhrase.spoken(until: at(4 * 86400), asOf: now) == "in 4d")
         #expect(ResetPhrase.compact(until: at(4 * 86400), asOf: now) == "4d")
+
+        let weeklySeconds = 6 * 86400 + 7 * 3600 + 45 * 60
+        let weeklyReset = at(TimeInterval(weeklySeconds))
+        #expect(ResetPhrase.duration(until: weeklyReset, asOf: now) == "6d 7h")
+        #expect(ResetPhrase.spoken(until: weeklyReset, asOf: now) == "in 6d 7h")
+        #expect(ResetPhrase.compact(until: weeklyReset, asOf: now) == "6d 7h")
+    }
+
+    @Test func dayRemaindersDoNotRoundUpToTheNextDay() {
+        #expect(ResetPhrase.duration(until: at(6 * 86400 + 23 * 3600), asOf: now) == "6d 23h")
+        #expect(
+            ResetPhrase.duration(until: at(7 * 86400 - 30), asOf: now) == "7d")
     }
 }

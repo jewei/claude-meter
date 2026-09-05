@@ -195,6 +195,13 @@ accounts continue updating when another account fails. Main-meter normalization 
 windows by reported duration (up to 24 hours is short/session; longer is weekly), falling back
 to primary/secondary position only when duration is absent.
 
+Codex account cards show usage limit resets from `rateLimitResetCredits`. The returned
+`availableCount` is authoritative because detail rows can be missing or capped. Ring cards
+show the count and each returned reset's title and time to expiry. Bar cards show the count
+when collapsed and reveal the rows when expanded. Expiry rows are sorted by date; a tooltip
+shows the exact local date and time. Missing expiry details remain explicit. Reset credits
+are display-only; the app never consumes them.
+
 ### 5.3 Grok
 
 Grok is opt-in and reads the Grok CLI auth file without writing or refreshing it. Candidate
@@ -240,8 +247,9 @@ otherwise the account nearest its limit owns every primary surface. The other el
 provider remains visible below as one compact secondary summary. When Claude is secondary,
 the summary shows the nearest account's plan when known and expands in place to reveal each
 account's session, weekly, Opus/scoped windows, reset timing, and known identity metadata.
-Primary Claude account cards are always expanded. Primary Codex, Cursor, and Grok account cards
-remember their expanded state.
+The secondary Codex summary also expands to show each account's limits and usage limit resets.
+Primary Claude and Codex ring cards are always expanded. Codex bar cards, secondary summaries,
+Cursor, and Grok cards remember their expanded state.
 The header timestamp belongs only to the selected reading. The last-seven-days cost card
 opens the activity heatmap. There is no footer or Add Account button.
 
@@ -250,8 +258,9 @@ onboarding when a snapshot, attributes-only OAuth credential presence, Cursor st
 enabled Codex home with `auth.json`/`config.toml`, or the Claude Meter data directory exists.
 Rendering onboarding never reads credential contents or secret Keychain data.
 
-All reset/refill copy uses Core `ResetPhrase`: minutes below one hour, hours below 48 hours,
-and days from 48 hours. Surfaces never introduce their own date/weekday formatter.
+All rolling-window reset/refill copy uses Core `ResetPhrase`: minutes below one hour, hours
+below 48 hours, and days plus remaining whole hours from 48 hours, such as `6d 7h`. Zero
+hours are omitted. Surfaces never introduce their own date/weekday formatter.
 
 ## 7. Settings
 

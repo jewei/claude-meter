@@ -35,6 +35,7 @@ struct PopoverView: View {
     static let cursorCardID = "cursor"
     static let grokCardID = "grok"
     static let claudeSecondaryCardID = "secondary:claude"
+    static let codexSecondaryCardID = "secondary:codex"
     static func codexCardID(_ accountID: String) -> String { "codex:\(accountID)" }
 
     private func isExpanded(_ id: String) -> Bool { expandedCards.contains(id) }
@@ -362,7 +363,8 @@ struct PopoverView: View {
                     hasError: orderedCodexReadings.contains(where: { $0.error != nil }),
                     isStale: orderedCodexReadings.contains(where: {
                         $0.observationIsStale(asOf: now)
-                    })
+                    }),
+                    cardID: Self.codexSecondaryCardID
                 ) {
                     codexMark
                 }
@@ -500,6 +502,9 @@ struct PopoverView: View {
                     }
                     ForEach(model.scoped) { scoped in
                         secondaryLimitRow(scoped.displayName.lowercased(), window: scoped.window)
+                    }
+                    if let resets = model.rateLimitResets {
+                        CodexUsageResetsView(resets: resets, now: now)
                     }
                 }
             }
@@ -672,8 +677,14 @@ struct PopoverView: View {
     }
 
     private var codexAccountModels: [AccountCardModel] {
-        orderedCodexReadings.compactMap(AppState.codexMainMeterReading)
-            .map(AccountCardModel.init(mainMeterReading:))
+        orderedCodexReadings.compactMap(Self.codexAccountModel)
+    }
+
+    static func codexAccountModel(_ reading: CodexAccountReading) -> AccountCardModel? {
+        guard let normalized = AppState.codexMainMeterReading(reading) else { return nil }
+        var model = AccountCardModel(mainMeterReading: normalized)
+        model.rateLimitResets = reading.usage?.rateLimitResets
+        return model
     }
 
     /// Builds the unified per-account list: `snapshot.accounts` when present
@@ -1044,11 +1055,9 @@ struct PopoverView: View {
         _ reading: CodexAccountReading,
         style: AppGroupConfig.CardStyle
     ) -> some View {
-        if style == .rings,
-            let normalized = AppState.codexMainMeterReading(reading)
-        {
+        if style == .rings, let model = Self.codexAccountModel(reading) {
             AccountRingCard(
-                model: AccountCardModel(mainMeterReading: normalized),
+                model: model,
                 now: now,
                 thresholds: usageThresholds,
                 usage: showsUsage)
@@ -1118,18 +1127,7 @@ struct PopoverView: View {
             if expanded {
                 Group {
                     if let resets = usage.rateLimitResets {
-                        Divider().overlay(Color.pfCardBorder)
-                        VStack(spacing: 5) {
-                            codexDetailRow(
-                                "Usage resets",
-                                value: "\(resets.availableCount) available")
-                            if let expiration = resets.nearestExpiration(after: now) {
-                                codexDetailRow(
-                                    "Next expiry",
-                                    value: ResetPhrase.spoken(until: expiration, asOf: now)
-                                        ?? "soon")
-                            }
-                        }
+                        CodexUsageResetsView(resets: resets, now: now)
                     }
                 }
                 .popoverDisclosure(id: cardID)
@@ -1138,20 +1136,6 @@ struct PopoverView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
         .chunkyCard()
-    }
-
-    private func codexDetailRow(_ label: String, value: String) -> some View {
-        HStack {
-            Text(label)
-                .font(PFont.body(11, .semibold))
-                .foregroundStyle(Color.pfInkMuted)
-            Spacer()
-            Text(value)
-                .font(PFont.body(11, .bold))
-                .foregroundStyle(Color.pfInk)
-                .monospacedDigit()
-        }
-        .accessibilityElement(children: .combine)
     }
 
     private func codexDisplayPercent(_ window: CodexLimitWindow?) -> Double? {
@@ -1180,6 +1164,9 @@ struct PopoverView: View {
             let phrase = ResetPhrase.spoken(until: reset, asOf: now)
         {
             parts.append("Resets \(phrase)")
+        }
+        if let resets = usage.rateLimitResets {
+            parts.append("\(resets.availableCount) usage resets available")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }

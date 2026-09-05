@@ -3,32 +3,32 @@ import Foundation
 /// The app-wide rule for describing when a rolling window resets, relative to now:
 /// after rounding to the nearest minute: under an hour → minutes ("42m"),
 /// under 48 hours → hours ("3h 20m", "36h"),
-/// otherwise → whole days ("4 days"). Never a calendar date or weekday — "20 Jul"
+/// otherwise → days and remaining whole hours ("6d 7h"). Never a calendar date or weekday — "20 Jul"
 /// makes the reader do the math, and a bare weekday is ambiguous a week out.
 public enum ResetPhrase {
-    /// "42m" | "3h 20m" | "36h" | "4 days" — nil once the reset has passed.
+    /// "42m" | "3h 20m" | "36h" | "6d 7h" — nil once the reset has passed.
     public static func duration(until reset: Date, asOf now: Date) -> String? {
         switch parts(until: reset, asOf: now) {
         case .none: return nil
         case .minutes(let m): return "\(m)m"
         case .hoursMinutes(let h, let m): return m > 0 ? "\(h)h \(m)m" : "\(h)h"
         case .hours(let h): return "\(h)h"
-        case .days(let d): return "\(d) days"
+        case .daysHours(let d, let h): return h > 0 ? "\(d)d \(h)h" : "\(d)d"
         }
     }
 
-    /// "in 42m" | "in 36h" | "in 4 days" — reads naturally after "resets"/"refills".
+    /// "in 42m" | "in 36h" | "in 6d 7h" — reads naturally after "resets"/"refills".
     public static func spoken(until reset: Date, asOf now: Date) -> String? {
         duration(until: reset, asOf: now).map { "in \($0)" }
     }
 
-    /// "42m" | "36h" | "4d" — for tight spaces (widget rows).
+    /// "42m" | "36h" | "6d 7h" — for tight spaces (widget rows).
     public static func compact(until reset: Date, asOf now: Date) -> String? {
         switch parts(until: reset, asOf: now) {
         case .none: return nil
         case .minutes(let m): return "\(m)m"
         case .hoursMinutes(let h, _), .hours(let h): return "\(h)h"
-        case .days(let d): return "\(d)d"
+        case .daysHours(let d, let h): return h > 0 ? "\(d)d \(h)h" : "\(d)d"
         }
     }
 
@@ -38,7 +38,7 @@ public enum ResetPhrase {
         /// Below 12 h the minute detail still matters ("3h 20m").
         case hoursMinutes(Int, Int)
         case hours(Int)
-        case days(Int)
+        case daysHours(Int, Int)
     }
 
     private static func parts(until reset: Date, asOf now: Date) -> Parts {
@@ -51,6 +51,7 @@ public enum ResetPhrase {
             if hours < 12 { return .hoursMinutes(hours, totalMinutes % 60) }
             return .hours(Int((Double(totalMinutes) / 60).rounded()))
         }
-        return .days(max(2, Int((Double(totalMinutes) / (24 * 60)).rounded())))
+        let totalHours = totalMinutes / 60
+        return .daysHours(totalHours / 24, totalHours % 24)
     }
 }

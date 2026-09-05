@@ -98,6 +98,29 @@ struct AppLogicTests {
         #expect("it-oneone_build".friendlyAccountLabel == "It Oneone Build")
     }
 
+    @MainActor
+    @Test("Pausing a test meter preserves the installed meter's activation setting")
+    func testMeterActivationIsIsolated() {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: AppSettings.isActiveKey)
+        let savedActive = previous as? NSNumber
+        defer {
+            if defaults.object(forKey: AppSettings.isActiveKey) as? NSNumber != savedActive {
+                if let previous {
+                    defaults.set(previous, forKey: AppSettings.isActiveKey)
+                } else {
+                    defaults.removeObject(forKey: AppSettings.isActiveKey)
+                }
+            }
+        }
+        let state = AppState(pipeline: UnusedPipeline())
+
+        state.setActive(false)
+
+        #expect(!state.isActive)
+        #expect(defaults.object(forKey: AppSettings.isActiveKey) as? NSNumber == savedActive)
+    }
+
     @Test("Forecast menu-bar text pairs nearest energy with run-out time")
     func forecastMenuBarText() {
         let now = Date(timeIntervalSince1970: 1_782_269_456)
@@ -205,10 +228,17 @@ struct AppLogicTests {
             isImplicit: false,
             customName: "Work")
         let success = Date(timeIntervalSince1970: 123)
+        var usage = codexUsage(accountEmail: "person@example.com")
+        usage.rateLimitResets = CodexRateLimitResets(
+            availableCount: 3,
+            credits: [
+                CodexRateLimitResetCredit(
+                    title: "Full reset", expiresAt: success.addingTimeInterval(86400))
+            ])
         let reading = CodexAccountReading(
             account: account,
             state: .current(
-                value: codexUsage(accountEmail: "person@example.com"),
+                value: usage,
                 polledAt: success),
             lastAttemptAt: success)
 
@@ -221,6 +251,9 @@ struct AppLogicTests {
         #expect(restored.first?.usage?.accountEmail == nil)
         #expect(restored.first?.usage?.maskedAccountEmail == nil)
         #expect(restored.first?.usage?.authMode == .chatGPT)
+        let card = restored.first.flatMap(PopoverView.codexAccountModel)
+        #expect(card?.rateLimitResets?.availableCount == 3)
+        #expect(card?.rateLimitResets?.credits == usage.rateLimitResets?.credits)
     }
 
     @Test("Codex readings normalize into the shared main-meter model")

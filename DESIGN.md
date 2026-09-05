@@ -248,7 +248,11 @@ Chunky card, flex row, gap 14.
   - Subtitle (Nunito 700/11 `ink-muted`): email when known, else nothing (or the config-dir key).
   - 5-hr row: 9×9 rounded dot (band color) · "5-hr" (Nunito 700/11 `ink`) · "78%" (Fredoka 800/11
     band color) · "· 3h 12m" (Nunito 600/11 `ink-muted`).
-  - week row: same, followed by a shared `ResetPhrase` duration such as "· 4d".
+  - week row: same, followed by a shared `ResetPhrase` duration such as "· in 6d 7h".
+  - Codex cards add a full-width section below the rings for "Usage limit resets" and the
+    available count. Each returned reset shows its title and time to expiry, sorted by expiry.
+    Hovering a row shows the exact local expiry date and time. Missing or partial expiry
+    details are stated below the count. The section uses the card's existing fonts and colors.
 
 **Per-account data reality:** label, 5-hr %, week %, reset/refill exist for every account. Email,
 plan badge, and weekly-Opus are OAuth-only → present only on the active account. Never fabricate

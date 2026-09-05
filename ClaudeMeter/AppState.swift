@@ -37,6 +37,8 @@ final class AppState: ObservableObject {
     let notificationEngine = NotificationEngine()
     private let store: SnapshotStore
     private let codexReadingStore: CodexReadingStore
+    /// Test meters keep pause/resume writes out of the installed app's settings.
+    private let activationDefaults: UserDefaults
     private let ephemeralDefaultsSuiteName: String?
     /// Present only for the dependency-injected initializer. Keeping each test in
     /// its own directory prevents parallel runs from sharing `current.json`.
@@ -469,6 +471,7 @@ final class AppState: ObservableObject {
         self.store = store
         let codexReadingStore = CodexReadingStore()
         self.codexReadingStore = codexReadingStore
+        self.activationDefaults = .standard
         self.ephemeralDefaultsSuiteName = nil
         self.ephemeralStoreDirectory = nil
         self.isActive = AppSettings.isActive
@@ -549,15 +552,11 @@ final class AppState: ObservableObject {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ClaudeMeter-AppState-\(id)", isDirectory: true)
         self.store = SnapshotStore(directory: directory)
-        if let codexReadingStore {
-            self.codexReadingStore = codexReadingStore
-            self.ephemeralDefaultsSuiteName = nil
-        } else {
-            let suiteName = "ClaudeMeter-AppState-\(id)"
-            self.codexReadingStore = CodexReadingStore(
-                defaults: UserDefaults(suiteName: suiteName)!)
-            self.ephemeralDefaultsSuiteName = suiteName
-        }
+        let suiteName = "ClaudeMeter-AppState-\(id)"
+        let testDefaults = UserDefaults(suiteName: suiteName)!
+        self.codexReadingStore = codexReadingStore ?? CodexReadingStore(defaults: testDefaults)
+        self.activationDefaults = testDefaults
+        self.ephemeralDefaultsSuiteName = suiteName
         self.ephemeralStoreDirectory = directory
         self.isActive = true
         self.hasEnabledDataSource = true
@@ -819,7 +818,7 @@ final class AppState: ObservableObject {
 
     func setActive(_ active: Bool) {
         guard isActive != active else { return }
-        AppSettings.isActive = active
+        activationDefaults.set(active, forKey: AppSettings.isActiveKey)
         isActive = active
         refreshPending = false
         pendingRefreshKind = .background

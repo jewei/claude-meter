@@ -87,18 +87,31 @@ struct NotificationsSettingsTab: View {
             }
             .padding(20)
         }
-        .onAppear { AppGroupConfig.syncDisplaySettings() }
+        .onAppear {
+            let thresholds = AppGroupConfig.repairThresholdSettings()
+            warningThresholdPercent = thresholds.warning
+            criticalThresholdPercent = thresholds.critical
+            AppGroupConfig.syncDisplaySettings()
+        }
+        .onChange(of: enableNotifications) { _, _ in
+            appState.notificationSettingsChanged()
+        }
+        .onChange(of: predictiveNotifications) { _, _ in
+            appState.notificationSettingsChanged()
+        }
         .onChange(of: warningThresholdPercent) { _, newWarning in
             if criticalThresholdPercent <= newWarning {
                 criticalThresholdPercent = min(100, newWarning + 5)
             }
             AppGroupConfig.syncDisplaySettings()
+            appState.notificationSettingsChanged()
         }
         .onChange(of: criticalThresholdPercent) { _, newCritical in
             if newCritical <= warningThresholdPercent {
                 criticalThresholdPercent = min(100, warningThresholdPercent + 5)
             }
             AppGroupConfig.syncDisplaySettings()
+            appState.notificationSettingsChanged()
         }
     }
 
@@ -111,19 +124,33 @@ struct NotificationsSettingsTab: View {
                 Text(subtitle).font(PFont.body(12, .regular)).foregroundStyle(Color.pfInkMuted)
             }
             Spacer(minLength: 8)
-            Toggle("", isOn: isOn).toggleStyle(.switch).labelsHidden()
+            Toggle("", isOn: isOn)
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .accessibilityLabel(title)
         }
     }
 
     private func thresholdRow(
         label: String, color: Color, value: Binding<Double>, range: ClosedRange<Double>
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let safeValue =
+            value.wrappedValue.isFinite
+            ? min(range.upperBound, max(range.lowerBound, value.wrappedValue))
+            : range.lowerBound
+        let safeBinding = Binding<Double>(
+            get: {
+                value.wrappedValue.isFinite
+                    ? min(range.upperBound, max(range.lowerBound, value.wrappedValue))
+                    : range.lowerBound
+            },
+            set: { value.wrappedValue = $0 })
+        return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 9) {
                 Circle().fill(color).frame(width: 12, height: 12)
                 Text(label).font(PFont.display(16, .semibold)).foregroundStyle(Color.pfInk)
                 Spacer()
-                Text("\(Int(value.wrappedValue))%")
+                Text("\(Int(safeValue))%")
                     .font(PFont.display(14, .bold))
                     .foregroundStyle(color)
                     .monospacedDigit()
@@ -131,7 +158,13 @@ struct NotificationsSettingsTab: View {
                     .padding(.vertical, 5)
                     .background(Capsule().fill(color.opacity(0.16)))
             }
-            ColorSlider(value: value, range: range, step: 5, color: color)
+            ColorSlider(
+                value: safeBinding,
+                range: range,
+                step: 5,
+                color: color,
+                accessibilityName: label,
+                accessibilityValueText: "\(Int(safeValue)) percent")
         }
     }
 }

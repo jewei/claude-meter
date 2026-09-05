@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -60,6 +61,32 @@ final class SnapshotStoreTests {
 
         #expect(recovered != nil)
         #expect(recovered == original)
+    }
+
+    @Test("Rejects unsafe dates before ISO-8601 formatting")
+    func rejectsUnsafeDatesBeforeFormatting() throws {
+        let store = try makeStore()
+        let unsafeDate = Date(timeIntervalSinceReferenceDate: .greatestFiniteMagnitude)
+
+        var snapshot = makeSnapshot()
+        snapshot.createdAt = unsafeDate
+        #expect(throws: EncodingError.self) {
+            try store.writeLatest(snapshot)
+        }
+
+        let reading = MainMeterReading(
+            provider: .codex,
+            accountID: "codex-test",
+            accountLabel: "Codex",
+            limits: LimitInfo(currentSession: LimitWindow(percentUsed: 10)),
+            observedAt: unsafeDate)
+        #expect(throws: EncodingError.self) {
+            try store.writeMainMeter(reading)
+        }
+
+        #expect(throws: EncodingError.self) {
+            try store.writeLastError(LastErrorRecord(occurredAt: unsafeDate, message: "fail"))
+        }
     }
 
     @Test("readLatest returns nil when no file exists")
@@ -259,6 +286,67 @@ final class SnapshotStoreTests {
 
         #expect(throws: (any Error).self) {
             try store.readLatest()
+        }
+    }
+
+    @Test("Every durable read rejects an oversized file before allocation")
+    func oversizedDurableFilesAreRejected() throws {
+        let store = try makeStore()
+        let readers: [(String, () throws -> Void)] = [
+            ("current.json", { _ = try store.readLatest() }),
+            ("main-meter.json", { _ = try store.readMainMeter() }),
+            ("last-error.json", { _ = try store.readLastError() }),
+        ]
+
+        for (filename, read) in readers {
+            let url = store.directory.appendingPathComponent(filename)
+            #expect(FileManager.default.createFile(atPath: url.path, contents: Data()))
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.truncate(atOffset: UInt64(SnapshotStore.maximumReadBytes + 1))
+            try handle.close()
+            defer { try? FileManager.default.removeItem(at: url) }
+
+            do {
+                try read()
+                Issue.record("Expected \(filename) to reject an oversized file")
+            } catch let error as SnapshotStoreIOError {
+                #expect(
+                    error
+                        == .storedFileTooLarge(
+                            maximumByteCount: SnapshotStore.maximumReadBytes))
+            } catch {
+                Issue.record("Expected a SnapshotStoreIOError for \(filename), got \(error)")
+            }
+            try FileManager.default.removeItem(at: url)
+        }
+    }
+
+    @Test("Every durable read rejects a FIFO without blocking")
+    func durableReadsRejectFIFO() throws {
+        let store = try makeStore()
+        let readers: [(String, () throws -> Void)] = [
+            ("current.json", { _ = try store.readLatest() }),
+            ("main-meter.json", { _ = try store.readMainMeter() }),
+            ("last-error.json", { _ = try store.readLastError() }),
+        ]
+
+        for (filename, read) in readers {
+            let url = store.directory.appendingPathComponent(filename)
+            let result = url.path.withCString { Darwin.mkfifo($0, 0o600) }
+            #expect(result == 0)
+            defer { try? FileManager.default.removeItem(at: url) }
+            let startedAt = Date()
+
+            do {
+                try read()
+                Issue.record("Expected \(filename) to reject a FIFO")
+            } catch let error as SnapshotStoreIOError {
+                #expect(error == .invalidStoredFile)
+            } catch {
+                Issue.record("Expected a SnapshotStoreIOError for \(filename), got \(error)")
+            }
+            #expect(Date().timeIntervalSince(startedAt) < 0.5)
+            try FileManager.default.removeItem(at: url)
         }
     }
 

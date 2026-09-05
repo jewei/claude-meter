@@ -48,6 +48,13 @@ public struct OAuthAccountReading: Sendable, Equatable {
 
 extension MultiAccountOAuth {
 
+    public static let defaultTotalTimeout: TimeInterval = 30
+    public static let defaultPerAccountTimeout: TimeInterval = 10
+
+    /// A blocked Keychain or transport operation can ignore task cancellation.
+    /// Keep those abandoned tasks out of `Timeout`'s process-wide default pool.
+    private static let accountTimeoutBudget = Timeout.TaskBudget(limit: 16)
+
     public enum AccountFetchFailure: Sendable, Equatable {
         case credentialsMissing
         case credentialsUnavailable
@@ -69,7 +76,8 @@ extension MultiAccountOAuth {
     /// (small N; keeps 429 handling simple). An account with no credentials, an
     /// expired token, or a failed request is skipped — statusline data still
     /// covers it. A 429 aborts the remaining accounts and records the
-    /// provider-wide backoff. Never throws.
+    /// provider-wide backoff. Each account and the complete loop have independent
+    /// deadlines, so one blocked read cannot discard earlier results. Never throws.
     ///
     /// No token refresh here (deliberate): Claude Code refreshes its own Keychain
     /// entries as the user works, and the active account keeps full refresh via
@@ -80,12 +88,18 @@ extension MultiAccountOAuth {
         home: URL,
         thresholds: UsageThresholds,
         transport: any HTTPTransport,
-        credentialsLoader: @Sendable (String, Bool) -> KeychainReadResult<OAuthCredentials>,
-        now: Date
+        credentialsLoader:
+            @escaping @Sendable (String, Bool) -> KeychainReadResult<
+                OAuthCredentials
+            >,
+        now: Date,
+        totalTimeout: TimeInterval = defaultTotalTimeout,
+        perAccountTimeout: TimeInterval = defaultPerAccountTimeout
     ) async -> [OAuthAccountReading] {
         await fetchAllResults(
             accounts: accounts, home: home, thresholds: thresholds, transport: transport,
-            credentialsLoader: credentialsLoader, now: now
+            credentialsLoader: credentialsLoader, now: now,
+            totalTimeout: totalTimeout, perAccountTimeout: perAccountTimeout
         ).compactMap(\.reading)
     }
 
@@ -96,72 +110,110 @@ extension MultiAccountOAuth {
         home: URL,
         thresholds: UsageThresholds,
         transport: any HTTPTransport,
-        credentialsLoader: @Sendable (String, Bool) -> KeychainReadResult<OAuthCredentials>,
-        now: Date
+        credentialsLoader:
+            @escaping @Sendable (String, Bool) -> KeychainReadResult<
+                OAuthCredentials
+            >,
+        now: Date,
+        totalTimeout: TimeInterval = defaultTotalTimeout,
+        perAccountTimeout: TimeInterval = defaultPerAccountTimeout
     ) async -> [AccountFetchResult] {
+        guard totalTimeout.isFinite, totalTimeout > 0,
+            perAccountTimeout.isFinite, perAccountTimeout > 0
+        else {
+            return accounts.map {
+                AccountFetchResult(
+                    accountKey: $0.id, reading: nil, failure: .requestFailed)
+            }
+        }
+
         var results: [AccountFetchResult] = []
+        let deadline = ProcessInfo.processInfo.systemUptime + totalTimeout
         for account in accounts {
-            // Cooperative cancellation: `Timeout.run` abandons this task on expiry,
-            // and the blanket `catch { continue }` below would otherwise swallow the
-            // CancellationError and keep issuing bearer-carrying requests for every
-            // remaining account long after the caller stopped waiting.
             if Task.isCancelled { break }
             if OAuthPipeline.isRateLimited(now: now) { break }
-            let dirPath = OAuthKeychain.standardizedConfigDirPath(account.configDir.path)
-            let isDefault = account.id == "claude"
-            let credentialResult = credentialsLoader(dirPath, isDefault)
-            guard let creds = credentialResult.value else {
-                let failure: AccountFetchFailure
-                switch credentialResult {
-                case .missing: failure = .credentialsMissing
-                case .temporarilyUnavailable: failure = .credentialsUnavailable
-                case .invalid, .found: failure = .credentialsInvalid
-                }
-                results.append(.init(accountKey: account.id, reading: nil, failure: failure))
-                continue
-            }
-            guard !creds.isExpired(asOf: now) else {
-                results.append(
-                    .init(accountKey: account.id, reading: nil, failure: .credentialsExpired))
-                continue
-            }
-            let identity = AccountIdentityReader.loadLocal(configDir: account.configDir, home: home)
+
+            let remaining = deadline - ProcessInfo.processInfo.systemUptime
+            guard remaining > 0 else { break }
+            let timeout = min(perAccountTimeout, remaining)
+
             do {
-                let (data, http) = try await transport.send(
-                    OAuthPipeline.usageRequest(token: creds.accessToken), retry: .none)
-                guard http.statusCode == 200 else {
-                    if http.statusCode == 429 {
-                        OAuthPipeline.recordRateLimit(
-                            retryAfter: OAuthPipeline.retryAfterDate(from: http, now: now),
-                            now: now)
-                        results.append(
-                            .init(accountKey: account.id, reading: nil, failure: .rateLimited))
-                        break
-                    }
-                    results.append(
-                        .init(
-                            accountKey: account.id, reading: nil,
-                            failure: http.statusCode == 401 || http.statusCode == 403
-                                ? .unauthorized : .requestFailed))
-                    continue
+                let result = try await Timeout.run(
+                    seconds: timeout,
+                    budget: accountTimeoutBudget
+                ) {
+                    await fetchResult(
+                        account: account, home: home, thresholds: thresholds,
+                        transport: transport, credentialsLoader: credentialsLoader, now: now)
                 }
-                do {
-                    let usage = try JSONDecoder().decode(UsageResponse.self, from: data)
-                    let value = reading(
-                        account: account, usage: usage, identity: identity, creds: creds,
-                        orgHeader: http.value(forHTTPHeaderField: "anthropic-organization-id"),
-                        thresholds: thresholds, fetchedAt: now)
-                    results.append(.init(accountKey: account.id, reading: value, failure: nil))
-                } catch {
-                    results.append(
-                        .init(accountKey: account.id, reading: nil, failure: .invalidResponse))
-                }
+                results.append(result)
+                if result.failure == .rateLimited { break }
             } catch {
+                if error is CancellationError || Task.isCancelled { break }
                 results.append(.init(accountKey: account.id, reading: nil, failure: .requestFailed))
-                continue
             }
         }
         return results
+    }
+
+    private static func fetchResult(
+        account: AccountConfig,
+        home: URL,
+        thresholds: UsageThresholds,
+        transport: any HTTPTransport,
+        credentialsLoader: @Sendable (String, Bool) -> KeychainReadResult<OAuthCredentials>,
+        now: Date
+    ) async -> AccountFetchResult {
+        let dirPath = OAuthKeychain.standardizedConfigDirPath(account.configDir.path)
+        let credentialResult = credentialsLoader(dirPath, account.id == "claude")
+        guard !Task.isCancelled else {
+            return .init(accountKey: account.id, reading: nil, failure: .requestFailed)
+        }
+        guard let creds = credentialResult.value else {
+            let failure: AccountFetchFailure
+            switch credentialResult {
+            case .missing: failure = .credentialsMissing
+            case .temporarilyUnavailable: failure = .credentialsUnavailable
+            case .invalid, .found: failure = .credentialsInvalid
+            }
+            return .init(accountKey: account.id, reading: nil, failure: failure)
+        }
+        guard !creds.isExpired(asOf: now) else {
+            return .init(accountKey: account.id, reading: nil, failure: .credentialsExpired)
+        }
+
+        let identity = AccountIdentityReader.loadLocal(configDir: account.configDir, home: home)
+        guard !Task.isCancelled else {
+            return .init(accountKey: account.id, reading: nil, failure: .requestFailed)
+        }
+        do {
+            let (data, http) = try await transport.send(
+                OAuthPipeline.usageRequest(token: creds.accessToken), retry: .none)
+            guard http.statusCode == 200 else {
+                if http.statusCode == 429 {
+                    OAuthPipeline.recordRateLimit(
+                        retryAfter: OAuthPipeline.retryAfterDate(from: http, now: now),
+                        now: now)
+                    return .init(accountKey: account.id, reading: nil, failure: .rateLimited)
+                }
+                return .init(
+                    accountKey: account.id, reading: nil,
+                    failure: http.statusCode == 401 || http.statusCode == 403
+                        ? .unauthorized : .requestFailed)
+            }
+            do {
+                let usage = try JSONDecoder().decode(UsageResponse.self, from: data)
+                let value = reading(
+                    account: account, usage: usage, identity: identity, creds: creds,
+                    orgHeader: http.value(forHTTPHeaderField: "anthropic-organization-id"),
+                    thresholds: thresholds, fetchedAt: now)
+                return .init(accountKey: account.id, reading: value, failure: nil)
+            } catch {
+                return .init(accountKey: account.id, reading: nil, failure: .invalidResponse)
+            }
+        } catch {
+            return .init(accountKey: account.id, reading: nil, failure: .requestFailed)
+        }
     }
 
     /// Pure assembly of one account's reading.
@@ -208,64 +260,268 @@ extension MultiAccountOAuth {
 extension MultiAccountOAuth {
 
     /// Merges per-account OAuth readings into a snapshot's `accounts` list.
-    /// Fill-only-missing: statusline data (near-real-time) wins on conflict;
-    /// OAuth contributes what the statusline can't see (Opus weekly, extra
-    /// usage, plan, email, org) and covers accounts with no live session.
-    /// The snapshot's TOP-LEVEL fields are never modified here.
+    /// Statusline data (near-real-time) wins on conflict. OAuth fills missing
+    /// fields and can replace only a statusline window whose recorded reset is
+    /// past with an observation made after that reset. A newer OAuth observation
+    /// replaces OAuth-visible fields in a stale cached account. This prevents an
+    /// idle statusline file from holding the active meter at an inferred 0% while
+    /// allowing a successful request to advance a cached fallback. Active-account
+    /// plan, Opus, scoped limits, and extra usage come from the newest complete
+    /// OAuth observation; the per-account request wins when timestamps match.
     public static func merge(
         readings: [OAuthAccountReading],
         into snapshot: ClaudeUsageSnapshot,
-        now: Date
+        now: Date,
+        thresholds: UsageThresholds = .default,
+        activeTopLevelOAuthDetailsObservedAt: Date? = nil
     ) -> ClaudeUsageSnapshot {
-        guard !readings.isEmpty else { return snapshot }
+        guard !readings.isEmpty || activeTopLevelOAuthDetailsObservedAt != nil else {
+            return snapshot
+        }
+        let topLevelOAuthDetails = activeTopLevelOAuthDetailsObservedAt.map {
+            OAuthDetailsObservation(snapshot: snapshot, observedAt: $0)
+        }
+        let usableReadings = readings.map {
+            usableReading($0, asOf: now, thresholds: thresholds)
+        }
         // `uniquingKeysWith`, not `uniqueKeysWithValues`: `fetchAll` is public and
         // maps 1:1 over a caller-supplied account list, so a duplicate account key
         // (two config dirs sharing a basename) would otherwise trap mid-poll.
         var byKey = Dictionary(
-            readings.map { ($0.accountKey, $0) }, uniquingKeysWith: { a, _ in a })
+            usableReadings.map { ($0.accountKey, $0) }, uniquingKeysWith: { a, _ in a })
+        let readingsByKey = byKey
         var snap = snapshot
 
         if var accounts = snap.accounts, !accounts.isEmpty {
+            var replacedCachedAccountKeys: Set<String> = []
             for index in accounts.indices {
                 guard let reading = byKey.removeValue(forKey: accounts[index].id) else {
                     continue
                 }
-                accounts[index] = filled(accounts[index], from: reading)
+                if snap.state.isStale,
+                    shouldReplaceCachedAccount(accounts[index], with: reading)
+                {
+                    accounts[index] = replacingCachedOAuthFields(
+                        in: accounts[index], from: reading)
+                    replacedCachedAccountKeys.insert(accounts[index].id)
+                } else {
+                    accounts[index] = filled(
+                        accounts[index], from: reading, now: now, thresholds: thresholds)
+                }
             }
             accounts.append(
                 contentsOf: byKey.values.sorted { $0.accountKey < $1.accountKey }
                     .map { newAccount(from: $0) })
             snap.accounts = sorted(accounts)
-            return snap
-        }
-
-        // No accounts list. Work from the deduped set — `AccountUsage` is
-        // `Identifiable`, so two entries sharing an id would break the popover's
-        // ForEach, and two readings for one key are one account anyway.
-        let deduped = byKey.values.sorted { $0.accountKey < $1.accountKey }
-
-        // A lone *non-default* account still needs an entry so the popover can key
-        // the user's name/plan overrides by its account key — without one the
-        // single-account fallback labels everything `claude` and the overrides
-        // silently don't apply. (Mirrors `StatuslinePipeline.buildSnapshot`.) A lone
-        // default `claude` account keeps `accounts == nil` so `current.json` stays
-        // byte-identical to the historical shape.
-        guard deduped.count >= 2 else {
-            if let only = deduped.first, only.accountKey != "claude" {
-                var account = newAccount(from: only)
-                account.isActive = true
-                snap.accounts = [account]
+            if let activeAccount = accounts.first(where: \.isActive),
+                let reading = readingsByKey[activeAccount.id]
+            {
+                if replacedCachedAccountKeys.contains(activeAccount.id) {
+                    replaceCachedTopLevelOAuthFields(in: &snap, from: activeAccount)
+                } else {
+                    repairExpiredTopLevelWindows(
+                        in: &snap, from: reading, now: now, thresholds: thresholds)
+                }
             }
-            return snap
+            return normalizingActiveOAuthDetails(
+                in: snap,
+                topLevel: topLevelOAuthDetails,
+                readingsByKey: readingsByKey,
+                now: now,
+                thresholds: thresholds)
         }
-        let activeKey = byKey["claude"] != nil ? "claude" : deduped[0].accountKey
-        let accounts = deduped.map { reading in
-            var account = newAccount(from: reading)
-            account.isActive = reading.accountKey == activeKey
-            return account
+
+        // `accounts == nil` is the historical shape for one default `claude`
+        // statusline account. Keep that identity even when only a secondary OAuth
+        // request succeeds. Otherwise the secondary account would become active
+        // and could repair the default account's top-level windows.
+        let defaultReading = byKey.removeValue(forKey: "claude")
+        guard !byKey.isEmpty else {
+            if let defaultReading {
+                let defaultAccount = accountFromTopLevelSnapshot(snap)
+                if snap.state.isStale,
+                    shouldReplaceCachedAccount(defaultAccount, with: defaultReading)
+                {
+                    replaceCachedTopLevelOAuthFields(
+                        in: &snap,
+                        from: replacingCachedOAuthFields(
+                            in: defaultAccount, from: defaultReading))
+                } else {
+                    repairExpiredTopLevelWindows(
+                        in: &snap, from: defaultReading, now: now, thresholds: thresholds)
+                }
+            }
+            return normalizingActiveOAuthDetails(
+                in: snap,
+                topLevel: topLevelOAuthDetails,
+                readingsByKey: readingsByKey,
+                now: now,
+                thresholds: thresholds)
         }
+
+        var defaultAccount = accountFromTopLevelSnapshot(snap)
+        var replacedCachedDefault = false
+        if let defaultReading {
+            if snap.state.isStale,
+                shouldReplaceCachedAccount(defaultAccount, with: defaultReading)
+            {
+                defaultAccount = replacingCachedOAuthFields(
+                    in: defaultAccount, from: defaultReading)
+                replacedCachedDefault = true
+            } else {
+                defaultAccount = filled(
+                    defaultAccount, from: defaultReading, now: now, thresholds: thresholds)
+            }
+        }
+        var accounts = [defaultAccount]
+        accounts.append(
+            contentsOf: byKey.values.sorted { $0.accountKey < $1.accountKey }
+                .map { newAccount(from: $0) })
         snap.accounts = sorted(accounts)
-        return snap
+        if let defaultReading {
+            if replacedCachedDefault {
+                replaceCachedTopLevelOAuthFields(in: &snap, from: defaultAccount)
+            } else {
+                repairExpiredTopLevelWindows(
+                    in: &snap, from: defaultReading, now: now, thresholds: thresholds)
+            }
+        }
+        return normalizingActiveOAuthDetails(
+            in: snap,
+            topLevel: topLevelOAuthDetails,
+            readingsByKey: readingsByKey,
+            now: now,
+            thresholds: thresholds)
+    }
+
+    /// The active account can have two complete OAuth-details observations: the
+    /// refreshable single-slot request and the per-account request. Keep one
+    /// complete value so nil fields from the newer response clear older data.
+    private struct OAuthDetailsObservation {
+        let observedAt: Date
+        let plan: String?
+        let opus: LimitWindow?
+        let scopedWeekly: [ScopedLimitWindow]?
+        let extraUsage: ExtraUsage?
+
+        init(snapshot: ClaudeUsageSnapshot, observedAt: Date) {
+            self.observedAt = observedAt
+            self.plan = snapshot.account?.plan
+            self.opus = snapshot.limits.currentWeekOpus
+            self.scopedWeekly = snapshot.limits.scopedWeekly
+            self.extraUsage = snapshot.limits.extraUsage
+        }
+
+        init(reading: OAuthAccountReading) {
+            self.observedAt = reading.fetchedAt
+            self.plan = reading.plan
+            self.opus = reading.limits.currentWeekOpus
+            self.scopedWeekly = reading.limits.scopedWeekly
+            self.extraUsage = reading.limits.extraUsage
+        }
+    }
+
+    private static func normalizingActiveOAuthDetails(
+        in snapshot: ClaudeUsageSnapshot,
+        topLevel: OAuthDetailsObservation?,
+        readingsByKey: [String: OAuthAccountReading],
+        now: Date,
+        thresholds: UsageThresholds
+    ) -> ClaudeUsageSnapshot {
+        let activeAccountKey: String
+        if let accounts = snapshot.accounts, !accounts.isEmpty {
+            guard let active = accounts.first(where: \.isActive) else { return snapshot }
+            activeAccountKey = active.id
+        } else {
+            activeAccountKey = "claude"
+        }
+
+        let perAccount = readingsByKey[activeAccountKey].map(OAuthDetailsObservation.init)
+        let newest: OAuthDetailsObservation?
+        switch (topLevel, perAccount) {
+        case (.some(let topLevel), .some(let perAccount)):
+            // The per-account request runs after enrichment. Prefer it when both
+            // responses have the same observation time.
+            newest = topLevel.observedAt > perAccount.observedAt ? topLevel : perAccount
+        case (.some(let topLevel), .none):
+            newest = topLevel
+        case (.none, .some(let perAccount)):
+            newest = perAccount
+        case (.none, .none):
+            newest = nil
+        }
+        guard let newest else { return snapshot }
+
+        var normalized = snapshot
+        normalized.account = replacingPlan(newest.plan, in: normalized.account)
+        normalized.limits.currentWeekOpus = newest.opus
+        normalized.limits.scopedWeekly = newest.scopedWeekly
+        normalized.limits.extraUsage = newest.extraUsage
+        normalized.state.severity = severity(
+            for: normalized.limits, thresholds: thresholds, now: now)
+
+        if var accounts = normalized.accounts,
+            let activeIndex = accounts.firstIndex(where: \.isActive)
+        {
+            accounts[activeIndex].account = replacingPlan(
+                newest.plan, in: accounts[activeIndex].account)
+            accounts[activeIndex].limits.currentWeekOpus = newest.opus
+            accounts[activeIndex].limits.scopedWeekly = newest.scopedWeekly
+            accounts[activeIndex].limits.extraUsage = newest.extraUsage
+            accounts[activeIndex].severity = severity(
+                for: accounts[activeIndex].limits,
+                thresholds: thresholds,
+                now: now)
+            normalized.accounts = accounts
+        }
+        return normalized
+    }
+
+    private static func replacingPlan(_ plan: String?, in account: AccountInfo?) -> AccountInfo? {
+        var updated = account ?? AccountInfo()
+        updated.plan = plan
+        return updated.isEmpty ? nil : updated
+    }
+
+    /// A retained per-account reading becomes stale when a later poll cannot
+    /// replace it. After one of its rolling windows resets, the old percentage
+    /// cannot describe the new window. Clear that percentage before it reaches a
+    /// snapshot, and keep the stored severity coherent with the usable windows.
+    private static func usableReading(
+        _ reading: OAuthAccountReading,
+        asOf now: Date,
+        thresholds: UsageThresholds
+    ) -> OAuthAccountReading {
+        func usableWindow(_ window: LimitWindow) -> LimitWindow {
+            guard let resetAt = window.resetsAt,
+                reading.fetchedAt < resetAt,
+                resetAt <= now
+            else { return window }
+            return LimitWindow()
+        }
+        let source = reading.limits
+        let limits = LimitInfo(
+            currentSession: usableWindow(source.currentSession),
+            currentWeekAllModels: usableWindow(source.currentWeekAllModels),
+            currentWeekOpus: source.currentWeekOpus.map(usableWindow),
+            scopedWeekly: source.scopedWeekly?.map {
+                ScopedLimitWindow(id: $0.id, window: usableWindow($0.window))
+            },
+            extraUsage: source.extraUsage)
+        let severity = limits.bindingWindows.reduce(UsageSeverity.unknown) { current, descriptor in
+            UsageSeverity.highest(
+                current,
+                thresholds.severity(for: descriptor.window.percentUsed))
+        }
+        return OAuthAccountReading(
+            accountKey: reading.accountKey,
+            label: reading.label,
+            email: reading.email,
+            plan: reading.plan,
+            organizationId: reading.organizationId,
+            limits: limits,
+            severity: severity,
+            fetchedAt: reading.fetchedAt)
     }
 
     /// Account keys that share an organization id with another account — two
@@ -280,9 +536,12 @@ extension MultiAccountOAuth {
         return Set(byOrg.values.filter { $0.count >= 2 }.flatMap { $0 })
     }
 
-    private static func filled(_ existing: AccountUsage, from reading: OAuthAccountReading)
-        -> AccountUsage
-    {
+    private static func filled(
+        _ existing: AccountUsage,
+        from reading: OAuthAccountReading,
+        now: Date,
+        thresholds: UsageThresholds
+    ) -> AccountUsage {
         var account = existing
         var info = account.account ?? AccountInfo()
         if info.email == nil { info.email = reading.email }
@@ -290,7 +549,17 @@ extension MultiAccountOAuth {
         if info.organization == nil { info.organization = reading.organizationId }
         if info.loginMethod == nil { info.loginMethod = "OAuth" }
         account.account = info.isEmpty ? nil : info
-        if account.limits.currentWeekOpus == nil {
+        var replacedExpiredWindow = false
+        if let existingOpus = account.limits.currentWeekOpus,
+            shouldReplaceExpiredWindow(
+                existingOpus,
+                with: reading.limits.currentWeekOpus,
+                fetchedAt: reading.fetchedAt,
+                now: now)
+        {
+            account.limits.currentWeekOpus = reading.limits.currentWeekOpus
+            replacedExpiredWindow = true
+        } else if account.limits.currentWeekOpus == nil {
             account.limits.currentWeekOpus = reading.limits.currentWeekOpus
         }
         if account.limits.scopedWeekly == nil {
@@ -299,28 +568,161 @@ extension MultiAccountOAuth {
         if account.limits.extraUsage == nil {
             account.limits.extraUsage = reading.limits.extraUsage
         }
-        if account.limits.currentSession.percentUsed == nil {
+        if shouldReplaceExpiredWindow(
+            account.limits.currentSession,
+            with: reading.limits.currentSession,
+            fetchedAt: reading.fetchedAt,
+            now: now)
+        {
+            account.limits.currentSession = reading.limits.currentSession
+            replacedExpiredWindow = true
+        } else if account.limits.currentSession.percentUsed == nil {
             account.limits.currentSession = reading.limits.currentSession
         }
-        if account.limits.currentWeekAllModels.percentUsed == nil {
+        if shouldReplaceExpiredWindow(
+            account.limits.currentWeekAllModels,
+            with: reading.limits.currentWeekAllModels,
+            fetchedAt: reading.fetchedAt,
+            now: now)
+        {
+            account.limits.currentWeekAllModels = reading.limits.currentWeekAllModels
+            replacedExpiredWindow = true
+        } else if account.limits.currentWeekAllModels.percentUsed == nil {
             account.limits.currentWeekAllModels = reading.limits.currentWeekAllModels
         }
+        if replacedExpiredWindow { account.lastSuccessfulPollAt = reading.fetchedAt }
+        account.severity = severity(for: account.limits, thresholds: thresholds, now: now)
         return account
+    }
+
+    private static func shouldReplaceCachedAccount(
+        _ existing: AccountUsage,
+        with reading: OAuthAccountReading
+    ) -> Bool {
+        guard let existingObservation = existing.lastSuccessfulPollAt else { return true }
+        return reading.fetchedAt > existingObservation
+    }
+
+    private static func replacingCachedOAuthFields(
+        in existing: AccountUsage,
+        from reading: OAuthAccountReading
+    ) -> AccountUsage {
+        var account = existing
+        account.account = oauthAccountInfo(from: reading)
+        account.limits = reading.limits
+        account.lastSuccessfulPollAt = reading.fetchedAt
+        account.severity = reading.severity
+        return account
+    }
+
+    private static func replaceCachedTopLevelOAuthFields(
+        in snapshot: inout ClaudeUsageSnapshot,
+        from account: AccountUsage
+    ) {
+        snapshot.account = account.account
+        snapshot.limits = account.limits
+        snapshot.lastSuccessfulPollAt = account.lastSuccessfulPollAt
+        snapshot.state.severity = account.severity
+    }
+
+    private static func repairExpiredTopLevelWindows(
+        in snapshot: inout ClaudeUsageSnapshot,
+        from reading: OAuthAccountReading,
+        now: Date,
+        thresholds: UsageThresholds
+    ) {
+        var replaced = false
+        if shouldReplaceExpiredWindow(
+            snapshot.limits.currentSession,
+            with: reading.limits.currentSession,
+            fetchedAt: reading.fetchedAt,
+            now: now)
+        {
+            snapshot.limits.currentSession = reading.limits.currentSession
+            replaced = true
+        }
+        if shouldReplaceExpiredWindow(
+            snapshot.limits.currentWeekAllModels,
+            with: reading.limits.currentWeekAllModels,
+            fetchedAt: reading.fetchedAt,
+            now: now)
+        {
+            snapshot.limits.currentWeekAllModels = reading.limits.currentWeekAllModels
+            replaced = true
+        }
+        if let existingOpus = snapshot.limits.currentWeekOpus,
+            shouldReplaceExpiredWindow(
+                existingOpus,
+                with: reading.limits.currentWeekOpus,
+                fetchedAt: reading.fetchedAt,
+                now: now)
+        {
+            snapshot.limits.currentWeekOpus = reading.limits.currentWeekOpus
+            replaced = true
+        }
+        guard replaced else { return }
+        snapshot.lastSuccessfulPollAt = reading.fetchedAt
+        snapshot.state.severity = severity(
+            for: snapshot.limits, thresholds: thresholds, now: now)
+    }
+
+    private static func shouldReplaceExpiredWindow(
+        _ existing: LimitWindow,
+        with candidate: LimitWindow?,
+        fetchedAt: Date,
+        now: Date
+    ) -> Bool {
+        guard let resetAt = existing.resetsAt,
+            resetAt <= now,
+            fetchedAt >= resetAt,
+            candidate?.percentUsed != nil
+        else { return false }
+        return true
+    }
+
+    private static func severity(
+        for limits: LimitInfo,
+        thresholds: UsageThresholds,
+        now: Date
+    ) -> UsageSeverity {
+        limits.bindingWindows.reduce(.unknown) { current, descriptor in
+            UsageSeverity.highest(
+                current,
+                thresholds.severity(for: descriptor.window.resolved(asOf: now).percentUsed))
+        }
     }
 
     private static func newAccount(from reading: OAuthAccountReading) -> AccountUsage {
         AccountUsage(
             id: reading.accountKey,
             label: reading.label,
-            account: AccountInfo(
-                loginMethod: "OAuth",
-                organization: reading.organizationId,
-                email: reading.email,
-                plan: reading.plan),
+            account: oauthAccountInfo(from: reading),
             limits: reading.limits,
             lastSuccessfulPollAt: reading.fetchedAt,
             severity: reading.severity,
             isActive: false)
+    }
+
+    private static func oauthAccountInfo(from reading: OAuthAccountReading) -> AccountInfo {
+        AccountInfo(
+            loginMethod: "OAuth",
+            organization: reading.organizationId,
+            email: reading.email,
+            plan: reading.plan)
+    }
+
+    private static func accountFromTopLevelSnapshot(
+        _ snapshot: ClaudeUsageSnapshot
+    ) -> AccountUsage {
+        AccountUsage(
+            id: "claude",
+            label: "default",
+            account: snapshot.account,
+            session: snapshot.session,
+            limits: snapshot.limits,
+            lastSuccessfulPollAt: snapshot.lastSuccessfulPollAt,
+            severity: snapshot.state.severity,
+            isActive: true)
     }
 
     private static func sorted(_ accounts: [AccountUsage]) -> [AccountUsage] {

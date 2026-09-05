@@ -38,6 +38,12 @@ struct PopoverView: View {
     static let codexSecondaryCardID = "secondary:codex"
     static func codexCardID(_ accountID: String) -> String { "codex:\(accountID)" }
 
+    struct SecondaryProviderPresentation {
+        let model: AccountCardModel?
+        let displayedPercent: Double?
+        let band: EnergyBand
+    }
+
     private func isExpanded(_ id: String) -> Bool { expandedCards.contains(id) }
 
     private func toggleCard(_ id: String) {
@@ -142,10 +148,6 @@ struct PopoverView: View {
         .onAppear {
             isVisible = true
             now = Date()
-            skipOnboardingForExistingUsers()
-            if needsOnboarding {
-                appState.setActive(false)
-            }
         }
         // The popover view is retained across dismissals (MenuBarExtra `.window`),
         // so reset to the main view on close — otherwise reopening lands on the
@@ -393,10 +395,13 @@ struct PopoverView: View {
         cardID: String? = nil,
         @ViewBuilder mark: () -> Mark
     ) -> some View {
-        let nearest = models.min { $0.minLeft(now) < $1.minLeft(now) }
-        let left = nearest?.minLeft(now)
-        let displayedPercent = left.map { showsUsage ? 100 - $0 : $0 }
-        let band = nearest?.band(usageThresholds, now) ?? .unknown
+        let presentation = Self.secondaryProviderPresentation(
+            from: models,
+            showsUsage: showsUsage,
+            thresholds: usageThresholds,
+            asOf: now)
+        let displayedPercent = presentation.displayedPercent
+        let band = presentation.band
         let tint: Color = band == .full ? .pfEnergyFull : band.color
         let detail = Self.secondaryProviderDetail(
             hasError: hasError,
@@ -410,7 +415,7 @@ struct PopoverView: View {
                 } label: {
                     secondaryProviderHeader(
                         name: name,
-                        plan: Self.secondaryProviderPlan(from: models, asOf: now),
+                        plan: presentation.model?.plan,
                         displayedPercent: displayedPercent,
                         band: band,
                         tint: tint,
@@ -422,7 +427,7 @@ struct PopoverView: View {
             } else {
                 secondaryProviderHeader(
                     name: name,
-                    plan: Self.secondaryProviderPlan(from: models, asOf: now),
+                    plan: presentation.model?.plan,
                     displayedPercent: displayedPercent,
                     band: band,
                     tint: tint,
@@ -538,7 +543,34 @@ struct PopoverView: View {
         from models: [AccountCardModel],
         asOf now: Date
     ) -> String? {
-        models.min { $0.minLeft(now) < $1.minLeft(now) }?.plan
+        secondaryProviderBinding(from: models, asOf: now)?.model.plan
+    }
+
+    nonisolated static func secondaryProviderPresentation(
+        from models: [AccountCardModel],
+        showsUsage: Bool,
+        thresholds: UsageThresholds,
+        asOf now: Date
+    ) -> SecondaryProviderPresentation {
+        guard let binding = secondaryProviderBinding(from: models, asOf: now) else {
+            return SecondaryProviderPresentation(
+                model: nil,
+                displayedPercent: nil,
+                band: .unknown)
+        }
+        return SecondaryProviderPresentation(
+            model: binding.model,
+            displayedPercent: showsUsage ? 100 - binding.left : binding.left,
+            band: binding.model.band(thresholds, now))
+    }
+
+    private nonisolated static func secondaryProviderBinding(
+        from models: [AccountCardModel],
+        asOf now: Date
+    ) -> (model: AccountCardModel, left: Double)? {
+        models.compactMap { model in
+            model.bindingLeft(now).map { (model: model, left: $0) }
+        }.min { $0.left < $1.left }
     }
 
     nonisolated static func secondaryProviderDetail(
@@ -715,7 +747,7 @@ struct PopoverView: View {
                     opus: acc.isActive
                         ? (snap.limits.currentWeekOpus ?? acc.limits.currentWeekOpus)
                         : acc.limits.currentWeekOpus,
-                    scoped: acc.isActive ? (snap.limits.scopedWeekly ?? []) : [],
+                    scoped: Self.scopedLimits(for: acc, topLevel: snap.limits),
                     isDuplicateLogin: duplicates.contains(acc.id),
                     isLive: acc.isActive && bridgeLive
                 )
@@ -737,6 +769,16 @@ struct PopoverView: View {
                 isLive: bridgeLive
             )
         ]
+    }
+
+    nonisolated static func scopedLimits(
+        for account: AccountUsage,
+        topLevel: LimitInfo
+    ) -> [ScopedLimitWindow] {
+        if account.isActive {
+            return topLevel.scopedWeekly ?? account.limits.scopedWeekly ?? []
+        }
+        return account.limits.scopedWeekly ?? []
     }
 
     // MARK: - Extra usage (pay-as-you-go overage)
@@ -784,7 +826,7 @@ struct PopoverView: View {
     /// Opens the activity heatmap and kicks off (or refreshes) its scan.
     private func openHeatmap() {
         appState.loadActivityHeatmap()
-        withAnimation(.easeInOut(duration: 0.2)) { showHeatmap = true }
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { showHeatmap = true }
     }
 
     /// Heatmap entry when there's no 7-day cost data (OAuth-only week, pricing
@@ -857,7 +899,9 @@ struct PopoverView: View {
         VStack(spacing: 12) {
             HStack(spacing: 8) {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) { showHeatmap = false }
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                        showHeatmap = false
+                    }
                     appState.cancelActivityHeatmapLoad()
                 } label: {
                     HStack(spacing: 4) {
@@ -1170,12 +1214,12 @@ struct PopoverView: View {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    private static let codexCreditsFormatter: NumberFormatter = {
+    private static var codexCreditsFormatter: NumberFormatter {
         let f = NumberFormatter()
         f.numberStyle = .decimal
         f.maximumFractionDigits = 1
         return f
-    }()
+    }
 
     // MARK: - Grok card (usage-based, local to the popover)
 
@@ -1448,14 +1492,18 @@ struct PopoverView: View {
     }
 
     private var updatedText: String {
-        guard let polledAt = appState.mainMeterLastSuccessfulAt else {
+        Self.updatedText(lastPollAt: appState.mainMeterLastSuccessfulAt, now: now)
+    }
+
+    nonisolated static func updatedText(lastPollAt: Date?, now: Date) -> String {
+        guard let polledAt = lastPollAt else {
             return "Not yet polled"
         }
         // No "Updated " prefix: the header is width-bound at 360pt once the title
         // is held to one line, and the prefix was ~55pt that pushed this label into
         // truncation ("Updated 12s a…"). A bare relative time is unambiguous beside
         // a live meter, and the label carries a tooltip.
-        let elapsed = Int(now.timeIntervalSince(polledAt))
+        let elapsed = now.boundedNonnegativeElapsedSeconds(since: polledAt)
         if elapsed < 5 { return "Just now" }
         if elapsed < 60 { return "\(elapsed)s ago" }
         let mins = elapsed / 60
@@ -1466,38 +1514,8 @@ struct PopoverView: View {
 
     private func openSettingsAndCompleteOnboarding() {
         hasCompletedOnboarding = true
+        appState.completeOnboarding()
         openSettings()
-    }
-
-    private func skipOnboardingForExistingUsers() {
-        guard !hasCompletedOnboarding else { return }
-        if appState.snapshot != nil
-            || OAuthKeychain.credentialAvailability() != .missing
-            || OAuthKeychain.manualCredentialAvailability() != .missing
-            || CursorTokenStore.isStateDBPresent()
-            || appState.codexAccounts.contains(where: { $0.usage != nil })
-            || Self.codexConfigurationExists
-            || Self.claudeMeterDirectoryExists
-        {
-            hasCompletedOnboarding = true
-        }
-    }
-
-    private static var codexConfigurationExists: Bool {
-        guard AppSettings.codexSourceEnabled else { return false }
-        return AppSettings.codexAccounts().contains { account in
-            FileManager.default.fileExists(
-                atPath: account.home.appendingPathComponent("auth.json").path)
-                || FileManager.default.fileExists(
-                    atPath: account.home.appendingPathComponent("config.toml").path)
-        }
-    }
-
-    private static var claudeMeterDirectoryExists: Bool {
-        FileManager.default.fileExists(
-            atPath: StatuslineBridge.statuslineFilePath.deletingLastPathComponent().path,
-            isDirectory: nil
-        )
     }
 
     // MARK: - Error helpers

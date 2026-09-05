@@ -88,7 +88,9 @@ public struct CachedSnapshotPipeline: Sendable {
 extension CachedSnapshotPipeline: ClaudeMeterPipeline {}
 
 extension LimitInfo {
-    fileprivate func hidingExpiredStaleWindows(asOf now: Date) -> LimitInfo {
+    /// Clears windows that reset after the cached observation. A stale value
+    /// cannot describe usage in the new rolling window.
+    public func hidingExpiredStaleWindows(asOf now: Date) -> LimitInfo {
         func display(_ window: LimitWindow) -> LimitWindow {
             guard let resetsAt = window.resetsAt, resetsAt <= now else { return window }
             return LimitWindow()

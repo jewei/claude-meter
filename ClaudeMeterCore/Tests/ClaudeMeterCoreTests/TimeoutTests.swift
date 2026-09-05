@@ -59,4 +59,55 @@ struct TimeoutTests {
             }
         }
     }
+
+    @Test("Caller cancellation returns without waiting for the deadline")
+    func callerCancellationReturnsPromptly() async {
+        let task = Task {
+            try await Timeout.run(seconds: 30) {
+                try await Task.sleep(for: .seconds(30))
+                return 1
+            }
+        }
+        await Task.yield()
+        let startedAt = Date()
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            Issue.record("expected CancellationError")
+        } catch is CancellationError {
+            // expected
+        } catch {
+            Issue.record("expected CancellationError, got \(error)")
+        }
+        #expect(Date().timeIntervalSince(startedAt) < 1)
+    }
+
+    @Test("An isolated budget cannot exhaust the default timeout pool")
+    func isolatedBudgetDoesNotAffectDefaultPool() async throws {
+        let budget = Timeout.TaskBudget(limit: 1)
+        let blocker = DispatchSemaphore(value: 0)
+        let first = Task {
+            try await Timeout.run(seconds: 0.05, budget: budget) {
+                waitIgnoringCancellation(blocker)
+                return 1
+            }
+        }
+        defer {
+            blocker.signal()
+            first.cancel()
+        }
+
+        await #expect(throws: TimeoutError.self) { try await first.value }
+        await #expect(throws: TimeoutCapacityError.self) {
+            try await Timeout.run(seconds: 1, budget: budget) { 2 }
+        }
+        #expect(try await Timeout.run(seconds: 1) { 3 } == 3)
+    }
+}
+
+/// Deliberately blocks the detached worker to model a filesystem call that does
+/// not observe Swift task cancellation.
+private func waitIgnoringCancellation(_ semaphore: DispatchSemaphore) {
+    semaphore.wait()
 }

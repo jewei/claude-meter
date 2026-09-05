@@ -16,6 +16,14 @@ struct ResetPhraseTests {
         #expect(ResetPhrase.compact(until: at(-60), asOf: now) == nil)
     }
 
+    @Test func unrepresentableIntervalReturnsNil() {
+        let invalid = Date(timeIntervalSinceReferenceDate: .greatestFiniteMagnitude)
+
+        #expect(ResetPhrase.duration(until: invalid, asOf: now) == nil)
+        #expect(ResetPhrase.spoken(until: invalid, asOf: now) == nil)
+        #expect(ResetPhrase.compact(until: invalid, asOf: now) == nil)
+    }
+
     @Test func underAnHourShowsMinutes() {
         #expect(ResetPhrase.duration(until: at(30), asOf: now) == "1m")
         #expect(ResetPhrase.duration(until: at(42 * 60), asOf: now) == "42m")

@@ -11,10 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The menu-bar item has a spoken summary for VoiceOver, including the provider,
+  quota window, percentage meaning, and paused or stale state.
+
 ### Changed
 
 - Remove the extra Claude heading when Codex is the main meter. Each provider
   card already shows its name.
+- Releases retain app and widget debug symbols that match the shipped binaries.
+
+### Fixed
+
+- Cursor credential reads no longer crash or launch abandoned commands when startup times out.
+- Codex process cleanup no longer blocks Swift workers after a timeout or cancellation.
+- Valid Codex quotas remain available when optional credit or reset metadata is malformed.
+- Claude usage backoff survives an app restart and still applies to all accounts.
+- Copied transcript history counts once within each account. Unique continuations and
+  separate accounts still contribute to cost totals.
 
 ## [2.15] - 2026-09-05
 

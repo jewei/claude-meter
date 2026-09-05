@@ -82,20 +82,17 @@ public struct HTTPRetryPolicy: Sendable {
     static func retryAfterSeconds(_ raw: String?, now: Date = Date()) -> TimeInterval? {
         guard let value = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty
         else { return nil }
-        if let seconds = TimeInterval(value) { return seconds > 0 ? seconds : nil }
-        guard let date = httpDateFormatter.date(from: value) else { return nil }
-        let delta = date.timeIntervalSince(now)
-        return delta > 0 ? delta : nil
-    }
-
-    // Read-only after creation; see the formatter-caching note in `JournalReader`.
-    private static let httpDateFormatter: DateFormatter = {
+        if let seconds = TimeInterval(value) {
+            return seconds.isFinite && seconds > 0 ? seconds : nil
+        }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.dateFormat = "EEE',' dd MMM yyyy HH':'mm':'ss zzz"
-        return formatter
-    }()
+        guard let date = formatter.date(from: value) else { return nil }
+        let delta = date.timeIntervalSince(now)
+        return delta > 0 ? delta : nil
+    }
 }
 
 /// Shared transport backed by a redirect-guarded, cookie-less ephemeral session.
@@ -106,20 +103,84 @@ public struct HTTPRetryPolicy: Sendable {
 public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
     public static let shared = ProviderHTTPClient()
 
-    private let session: URLSession
+    /// Provider responses are small JSON except the models.dev catalog, which is
+    /// larger than 4 MiB. Eight MiB gives that catalog headroom without permitting
+    /// an unbounded response allocation.
+    static let maximumResponseByteCount = 8 * 1_024 * 1_024
+    static let requestTimeoutSeconds: TimeInterval = 10
+    static let resourceTimeoutSeconds: TimeInterval = 30
 
-    public init(session: URLSession? = nil) {
-        self.session = session ?? Self.guardedSession()
+    /// A URL task should stop promptly when canceled, but keep a separate cap for
+    /// implementations that do not. Repeated network deadlines cannot consume the
+    /// process-wide timeout capacity or create an unbounded set of abandoned tasks.
+    private static let requestTaskBudget = Timeout.TaskBudget(limit: 16)
+
+    private let session: URLSession
+    private let responseByteLimit: Int
+    private let attemptTimeoutSeconds: TimeInterval
+    private let responseLoader:
+        @Sendable (
+            URLRequest, URLSession, Int
+        ) async throws -> (Data, HTTPURLResponse)
+
+    public init(session injectedSession: URLSession? = nil) {
+        if let injectedSession {
+            self.session = injectedSession
+            self.responseLoader = Self.receiveBytes
+        } else {
+            let delegate = ProviderHTTPSessionDelegate()
+            self.session = Self.guardedSession(delegate: delegate)
+            self.responseLoader = { request, session, maximumByteCount in
+                try await delegate.receive(
+                    request: request,
+                    session: session,
+                    maximumByteCount: maximumByteCount
+                )
+            }
+        }
+        self.responseByteLimit = Self.maximumResponseByteCount
+        self.attemptTimeoutSeconds = Self.resourceTimeoutSeconds
     }
 
-    static func guardedSession() -> URLSession {
+    init(
+        session: URLSession,
+        maximumResponseByteCount: Int,
+        resourceTimeoutSeconds: TimeInterval,
+        responseLoader: (
+            @Sendable (
+                URLRequest, URLSession, Int
+            ) async throws -> (Data, HTTPURLResponse)
+        )? = nil
+    ) {
+        precondition(maximumResponseByteCount >= 0)
+        precondition(resourceTimeoutSeconds.isFinite && resourceTimeoutSeconds > 0)
+        self.session = session
+        self.responseByteLimit = maximumResponseByteCount
+        self.attemptTimeoutSeconds = resourceTimeoutSeconds
+        if let responseLoader {
+            self.responseLoader = responseLoader
+        } else if let delegate = session.delegate as? ProviderHTTPSessionDelegate {
+            self.responseLoader = { request, session, maximumByteCount in
+                try await delegate.receive(
+                    request: request,
+                    session: session,
+                    maximumByteCount: maximumByteCount
+                )
+            }
+        } else {
+            self.responseLoader = Self.receiveBytes
+        }
+    }
+
+    static func guardedSession(delegate: ProviderHTTPSessionDelegate) -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.httpShouldSetCookies = false
         config.httpCookieAcceptPolicy = .never
-        config.timeoutIntervalForRequest = 10
+        config.timeoutIntervalForRequest = requestTimeoutSeconds
+        config.timeoutIntervalForResource = resourceTimeoutSeconds
         return URLSession(
             configuration: config,
-            delegate: RedirectGuardDelegate(),
+            delegate: delegate,
             delegateQueue: nil
         )
     }
@@ -127,13 +188,36 @@ public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
     public func send(_ request: URLRequest, retry: HTTPRetryPolicy) async throws -> (
         Data, HTTPURLResponse
     ) {
+        var boundedRequest = request
+        if !request.timeoutInterval.isFinite || request.timeoutInterval <= 0
+            || request.timeoutInterval > Self.requestTimeoutSeconds
+        {
+            boundedRequest.timeoutInterval = Self.requestTimeoutSeconds
+        }
+        let deadlineRequest = boundedRequest
+        let timeoutSeconds = attemptTimeoutSeconds
+        do {
+            return try await Timeout.run(
+                seconds: timeoutSeconds,
+                budget: Self.requestTaskBudget
+            ) {
+                try await self.sendWithinDeadline(deadlineRequest, retry: retry)
+            }
+        } catch is TimeoutError {
+            // Keep the transport's established URL-loading error contract when
+            // the hard resource deadline expires.
+            throw URLError(.timedOut)
+        }
+    }
+
+    private func sendWithinDeadline(
+        _ request: URLRequest,
+        retry: HTTPRetryPolicy
+    ) async throws -> (Data, HTTPURLResponse) {
         var attempt = 0
         while true {
             do {
-                let (data, response) = try await session.data(for: request)
-                guard let http = response as? HTTPURLResponse else {
-                    throw URLError(.badServerResponse)
-                }
+                let (data, http) = try await loadBoundedResponse(for: request)
                 guard
                     retry.shouldRetry(
                         attempt: attempt,
@@ -158,6 +242,84 @@ public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
         }
     }
 
+    private func loadBoundedResponse(for request: URLRequest) async throws -> (
+        Data, HTTPURLResponse
+    ) {
+        let session = session
+        let maximumByteCount = responseByteLimit
+        let load = responseLoader
+        return try await load(request, session, maximumByteCount)
+    }
+
+    private static func receiveBytes(
+        request: URLRequest,
+        session: URLSession,
+        maximumByteCount: Int
+    ) async throws -> (Data, HTTPURLResponse) {
+        let (bytes, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            bytes.task.cancel()
+            throw URLError(.badServerResponse)
+        }
+
+        let transferTask = bytes.task
+        return try await withTaskCancellationHandler {
+            guard !declaredLengthExceedsLimit(http, maximumByteCount: maximumByteCount) else {
+                transferTask.cancel()
+                throw responseTooLargeError()
+            }
+
+            var data = Data()
+            if response.expectedContentLength > 0 {
+                data.reserveCapacity(
+                    min(Int(response.expectedContentLength), maximumByteCount)
+                )
+            }
+
+            for try await byte in bytes {
+                guard data.count < maximumByteCount else {
+                    transferTask.cancel()
+                    throw responseTooLargeError()
+                }
+                data.append(byte)
+            }
+            return (data, http)
+        } onCancel: {
+            transferTask.cancel()
+        }
+    }
+
+    static func declaredLengthExceedsLimit(
+        _ response: HTTPURLResponse,
+        maximumByteCount: Int
+    ) -> Bool {
+        let expected = response.expectedContentLength
+        if expected > Int64(maximumByteCount) { return true }
+
+        // `expectedContentLength` can be unknown for malformed or very large
+        // values. Parse valid decimal header fields too, without integer overflow.
+        guard let raw = response.value(forHTTPHeaderField: "Content-Length") else {
+            return false
+        }
+        let maximum = String(maximumByteCount)
+        return raw.split(separator: ",").contains { component in
+            let value = component.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty, value.utf8.allSatisfy({ (48...57).contains($0) }) else {
+                return false
+            }
+            let normalized = String(value.drop(while: { $0 == "0" }))
+            guard !normalized.isEmpty else { return false }
+            if normalized.count != maximum.count {
+                return normalized.count > maximum.count
+            }
+            return normalized > maximum
+        }
+    }
+
+    private static func responseTooLargeError() -> URLError {
+        URLError(.dataLengthExceedsMaximum)
+    }
+
     private static func isRetryableTransportError(_ error: URLError) -> Bool {
         switch error.code {
         case .timedOut, .networkConnectionLost, .notConnectedToInternet,
@@ -169,9 +331,189 @@ public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
     }
 }
 
+/// Receives provider bodies in URLSession-sized chunks and stops the task before
+/// the retained body can grow past its fixed limit.
+final class ProviderHTTPSessionDelegate: RedirectGuardDelegate, URLSessionDataDelegate,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var receivers: [Int: ProviderHTTPResponseReceiver] = [:]
+
+    func receive(
+        request: URLRequest,
+        session: URLSession,
+        maximumByteCount: Int
+    ) async throws -> (Data, HTTPURLResponse) {
+        let task = session.dataTask(with: request)
+        let receiver = ProviderHTTPResponseReceiver(maximumByteCount: maximumByteCount)
+        lock.withLock { receivers[task.taskIdentifier] = receiver }
+
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                receiver.install(continuation)
+                if Task.isCancelled {
+                    cancel(task)
+                } else {
+                    task.resume()
+                }
+            }
+        } onCancel: {
+            self.cancel(task)
+        }
+    }
+
+    func urlSession(
+        _: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard let receiver = receiver(for: dataTask.taskIdentifier) else {
+            completionHandler(.cancel)
+            return
+        }
+        guard
+            let error = receiver.accept(
+                response: response,
+                taskExpectedContentLength: dataTask.countOfBytesExpectedToReceive
+            )
+        else {
+            completionHandler(.allow)
+            return
+        }
+
+        _ = takeReceiver(for: dataTask.taskIdentifier)
+        receiver.resolve(.failure(error))
+        completionHandler(.cancel)
+    }
+
+    func urlSession(_: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard let receiver = receiver(for: dataTask.taskIdentifier),
+            let error = receiver.append(data)
+        else { return }
+
+        _ = takeReceiver(for: dataTask.taskIdentifier)
+        dataTask.cancel()
+        receiver.resolve(.failure(error))
+    }
+
+    func urlSession(
+        _: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: (any Error)?
+    ) {
+        guard let receiver = takeReceiver(for: task.taskIdentifier) else { return }
+        if let error {
+            receiver.resolve(.failure(error))
+        } else {
+            receiver.resolve(receiver.completedResult())
+        }
+    }
+
+    private func receiver(for taskIdentifier: Int) -> ProviderHTTPResponseReceiver? {
+        lock.withLock { receivers[taskIdentifier] }
+    }
+
+    private func takeReceiver(for taskIdentifier: Int) -> ProviderHTTPResponseReceiver? {
+        lock.withLock { receivers.removeValue(forKey: taskIdentifier) }
+    }
+
+    private func cancel(_ task: URLSessionTask) {
+        let receiver = takeReceiver(for: task.taskIdentifier)
+        task.cancel()
+        receiver?.resolve(.failure(CancellationError()))
+    }
+}
+
+private final class ProviderHTTPResponseReceiver: @unchecked Sendable {
+    typealias Output = (Data, HTTPURLResponse)
+
+    private let lock = NSLock()
+    private let maximumByteCount: Int
+    private var body = Data()
+    private var response: HTTPURLResponse?
+    private var result: Result<Output, Error>?
+    private var continuation: CheckedContinuation<Output, Error>?
+
+    init(maximumByteCount: Int) {
+        self.maximumByteCount = maximumByteCount
+    }
+
+    func install(_ continuation: CheckedContinuation<Output, Error>) {
+        lock.lock()
+        if let result {
+            lock.unlock()
+            continuation.resume(with: result)
+        } else {
+            self.continuation = continuation
+            lock.unlock()
+        }
+    }
+
+    func accept(
+        response: URLResponse,
+        taskExpectedContentLength: Int64
+    ) -> (any Error)? {
+        guard let http = response as? HTTPURLResponse else {
+            return URLError(.badServerResponse)
+        }
+        guard taskExpectedContentLength <= Int64(maximumByteCount),
+            !ProviderHTTPClient.declaredLengthExceedsLimit(
+                http,
+                maximumByteCount: maximumByteCount
+            )
+        else {
+            return URLError(.dataLengthExceedsMaximum)
+        }
+
+        lock.withLock {
+            self.response = http
+            if response.expectedContentLength > 0 {
+                body.reserveCapacity(
+                    min(Int(response.expectedContentLength), maximumByteCount)
+                )
+            }
+        }
+        return nil
+    }
+
+    func append(_ chunk: Data) -> (any Error)? {
+        lock.withLock {
+            guard result == nil else { return nil }
+            guard chunk.count <= maximumByteCount - body.count else {
+                return URLError(.dataLengthExceedsMaximum)
+            }
+            body.append(chunk)
+            return nil
+        }
+    }
+
+    func completedResult() -> Result<Output, Error> {
+        lock.withLock {
+            guard let response else {
+                return .failure(URLError(.badServerResponse))
+            }
+            return .success((body, response))
+        }
+    }
+
+    func resolve(_ outcome: Result<Output, Error>) {
+        lock.lock()
+        guard result == nil else {
+            lock.unlock()
+            return
+        }
+        result = outcome
+        let waiter = continuation
+        continuation = nil
+        lock.unlock()
+        waiter?.resume(with: outcome)
+    }
+}
+
 /// Blocks redirects that aren't same-origin HTTPS, so credentials can't be
 /// replayed to a different host or over plaintext.
-final class RedirectGuardDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+class RedirectGuardDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(
         _: URLSession,
         task: URLSessionTask,

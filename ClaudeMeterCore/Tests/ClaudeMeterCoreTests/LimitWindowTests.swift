@@ -23,6 +23,16 @@ struct LimitWindowDisplayTests {
     @Test("Returns nil when percent missing") func missing() {
         #expect(LimitWindow().displayPercent == nil)
     }
+
+    @Test("Rejects non-finite percent values") func nonFinite() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        for value in [Double.nan, .infinity, -.infinity] {
+            let window = LimitWindow(percentUsed: value)
+            #expect(window.clampedPercent == nil)
+            #expect(window.displayPercent == nil)
+            #expect(window.percentLeft(asOf: now) == nil)
+        }
+    }
 }
 
 @Suite("LimitWindow resolved")
@@ -98,5 +108,21 @@ struct ExtraUsageMoneyTests {
         #expect(usage.usedMoney?.amount == Decimal(string: "12.34"))
         #expect(usage.usedMoney?.currency == "USD")
         #expect(ExtraUsage(isEnabled: true, decimalPlaces: -3).decimalPlaces == 0)
+        // `Double(Int64.max)` rounds up to 2^63. A direct Int64 conversion traps.
+        #expect(MinorUnitMoney(credits: Double(Int64.max), decimalPlaces: 0, currency: nil) == nil)
+    }
+
+    @Test("Persisted extra usage is validated through its public initializer")
+    func persistedValuesAreValidated() throws {
+        let json = """
+            {"isEnabled":true,"usedCredits":1e308,"monthlyLimit":1e-308,
+             "decimalPlaces":9223372036854775807,"utilization":null,"currency":"USD"}
+            """
+        let usage = try JSONDecoder().decode(ExtraUsage.self, from: Data(json.utf8))
+
+        #expect(usage.decimalPlaces == 18)
+        #expect(usage.percentUsed == nil)
+        #expect(
+            ExtraUsage(isEnabled: true, utilization: .infinity).utilization == nil)
     }
 }

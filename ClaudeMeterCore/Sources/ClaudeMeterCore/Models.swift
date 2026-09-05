@@ -1,5 +1,28 @@
 import Foundation
 
+extension Date {
+    /// Whole Unix epoch seconds when the value fits the platform integer type.
+    /// Provider and persisted dates are external input, so callers must not use
+    /// a trapping floating-point-to-integer conversion.
+    public var boundedUnixEpochSecond: Int? {
+        let seconds = timeIntervalSince1970
+        guard seconds.isFinite else { return nil }
+        return Int(exactly: seconds.rounded(.towardZero))
+    }
+
+    /// Whole elapsed seconds, clamped to the range of `Int`.
+    ///
+    /// Persisted dates are external input. A future or `NaN` date behaves like
+    /// an elapsed interval of zero. An interval too large for `Int` saturates
+    /// instead of trapping during conversion.
+    public func boundedNonnegativeElapsedSeconds(since earlier: Date) -> Int {
+        let elapsed = timeIntervalSince(earlier)
+        guard !elapsed.isNaN, elapsed > 0 else { return 0 }
+        guard elapsed < Double(Int.max) else { return Int.max }
+        return Int(elapsed)
+    }
+}
+
 // MARK: - Snapshot
 
 public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
@@ -334,9 +357,9 @@ public struct MinorUnitMoney: Equatable, Sendable {
 
     public init?(credits: Double, decimalPlaces: Int, currency: String?) {
         guard credits.isFinite, credits.rounded() == credits,
-            credits >= Double(Int64.min), credits <= Double(Int64.max)
+            let minorUnits = Int64(exactly: credits)
         else { return nil }
-        self.minorUnits = Int64(credits)
+        self.minorUnits = minorUnits
         self.decimalPlaces = min(18, max(0, decimalPlaces))
         self.currency = currency?.uppercased()
     }
@@ -366,11 +389,41 @@ public struct ExtraUsage: Codable, Equatable, Sendable {
         currency: String? = nil
     ) {
         self.isEnabled = isEnabled
-        self.usedCredits = usedCredits
-        self.monthlyLimit = monthlyLimit
+        self.usedCredits = usedCredits.flatMap { $0.isFinite ? $0 : nil }
+        self.monthlyLimit = monthlyLimit.flatMap { $0.isFinite ? $0 : nil }
         self.decimalPlaces = min(18, max(0, decimalPlaces))
-        self.utilization = utilization
+        self.utilization = utilization.flatMap { $0.isFinite ? $0 : nil }
         self.currency = currency
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case isEnabled
+        case usedCredits
+        case monthlyLimit
+        case decimalPlaces
+        case utilization
+        case currency
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            isEnabled: try container.decode(Bool.self, forKey: .isEnabled),
+            usedCredits: try container.decodeIfPresent(Double.self, forKey: .usedCredits),
+            monthlyLimit: try container.decodeIfPresent(Double.self, forKey: .monthlyLimit),
+            decimalPlaces: try container.decode(Int.self, forKey: .decimalPlaces),
+            utilization: try container.decodeIfPresent(Double.self, forKey: .utilization),
+            currency: try container.decodeIfPresent(String.self, forKey: .currency))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(isEnabled, forKey: .isEnabled)
+        try container.encodeIfPresent(usedCredits, forKey: .usedCredits)
+        try container.encodeIfPresent(monthlyLimit, forKey: .monthlyLimit)
+        try container.encode(decimalPlaces, forKey: .decimalPlaces)
+        try container.encodeIfPresent(utilization, forKey: .utilization)
+        try container.encodeIfPresent(currency, forKey: .currency)
     }
 
     private var divisor: Double { pow(10.0, Double(decimalPlaces)) }
@@ -399,7 +452,8 @@ public struct ExtraUsage: Codable, Equatable, Sendable {
     public var percentUsed: Double? {
         if let utilization { return utilization }
         guard let usedCredits, let monthlyLimit, monthlyLimit > 0 else { return nil }
-        return usedCredits / monthlyLimit * 100
+        let percentage = usedCredits / monthlyLimit * 100
+        return percentage.isFinite ? percentage : nil
     }
 
     /// `true` when there is positive spend worth surfacing.
@@ -426,7 +480,8 @@ public struct LimitWindow: Codable, Equatable, Sendable {
     }
 
     public var clampedPercent: Double? {
-        percentUsed.map { min(100.0, max(0.0, $0)) }
+        guard let percentUsed, percentUsed.isFinite else { return nil }
+        return min(100.0, max(0.0, percentUsed))
     }
 
     /// Returns the window as it should be interpreted at `now`. Claude's
@@ -447,15 +502,14 @@ public struct LimitWindow: Codable, Equatable, Sendable {
     /// reset reads 100 (it refilled), via `resolved(asOf:)`. Lives in Core so the
     /// notification engine doesn't depend on the UI layer for it.
     public func percentLeft(asOf now: Date) -> Double? {
-        guard let used = resolved(asOf: now).percentUsed else { return nil }
-        return 100 - min(100, max(0, used))
+        guard let used = resolved(asOf: now).clampedPercent else { return nil }
+        return 100 - used
     }
 
     /// UI-friendly percent string, e.g. `25%`, `84.5%`, `100%+`.
     public var displayPercent: String? {
-        guard percentUsed != nil else { return nil }
+        guard let clamped = clampedPercent else { return nil }
         if isOverLimit { return "100%+" }
-        let clamped = clampedPercent ?? 0
         let rounded = (clamped * 10).rounded() / 10
         if rounded.truncatingRemainder(dividingBy: 1) == 0 {
             return "\(Int(rounded))%"
@@ -724,7 +778,7 @@ public struct UsageThresholds: Sendable, Equatable {
     public static let `default` = UsageThresholds()
 
     public func severity(for percent: Double?) -> UsageSeverity {
-        guard let p = percent else { return .unknown }
+        guard let p = percent, p.isFinite else { return .unknown }
         switch p {
         case ..<0: return .unknown
         case ..<warning: return .normal

@@ -23,7 +23,7 @@ struct OAuthRefreshCoordinatorTests {
 
     @Test("Concurrent refreshes of the same token run perform exactly once")
     func coalescesSameToken() async throws {
-        OAuthRefreshCoordinator.resetForTesting()
+        let coordinator = RefreshResultHandoffCoordinator<String, OAuthCredentials>()
         let counter = Counter()
         let result = creds("rotated")
 
@@ -32,7 +32,7 @@ struct OAuthRefreshCoordinatorTests {
         let outcomes = try await withThrowingTaskGroup(of: OAuthCredentials.self) { group in
             for _ in 0..<8 {
                 group.addTask {
-                    try await OAuthRefreshCoordinator.refresh(token: "tok") {
+                    try await coordinator.run(key: "tok") {
                         await counter.increment()
                         try await Task.sleep(for: .milliseconds(50))
                         return result
@@ -51,13 +51,13 @@ struct OAuthRefreshCoordinatorTests {
 
     @Test("Different tokens each run their own perform")
     func distinctTokensDoNotCoalesce() async throws {
-        OAuthRefreshCoordinator.resetForTesting()
+        let coordinator = RefreshResultHandoffCoordinator<String, OAuthCredentials>()
         let counter = Counter()
 
         _ = try await withThrowingTaskGroup(of: OAuthCredentials.self) { group in
             for i in 0..<4 {
                 group.addTask { [self] in
-                    try await OAuthRefreshCoordinator.refresh(token: "tok-\(i)") {
+                    try await coordinator.run(key: "tok-\(i)") {
                         await counter.increment()
                         try await Task.sleep(for: .milliseconds(20))
                         return self.creds("tok-\(i)")
@@ -73,14 +73,14 @@ struct OAuthRefreshCoordinatorTests {
 
     @Test("A failing refresh propagates to every joined caller")
     func failurePropagatesToJoiners() async {
-        OAuthRefreshCoordinator.resetForTesting()
+        let coordinator = RefreshResultHandoffCoordinator<String, OAuthCredentials>()
         struct Boom: Error {}
 
         let results = await withTaskGroup(of: Bool.self) { group in
             for _ in 0..<4 {
                 group.addTask {
                     do {
-                        _ = try await OAuthRefreshCoordinator.refresh(token: "dead") {
+                        _ = try await coordinator.run(key: "dead") {
                             try await Task.sleep(for: .milliseconds(30))
                             throw Boom()
                         }
@@ -99,5 +99,90 @@ struct OAuthRefreshCoordinatorTests {
 
         #expect(results.count == 4)
         #expect(results.allSatisfy { $0 })
+    }
+
+    @Test("A completed rotation stays shared after cache adoption")
+    func completedRotationRemainsAvailableAfterAdoption() async throws {
+        let coordinator = RefreshResultHandoffCoordinator<String, OAuthCredentials>()
+        let counter = Counter()
+        let result = creds("rotated")
+
+        func request() async throws -> OAuthCredentials {
+            try await coordinator.run(key: "source") {
+                await counter.increment()
+                return result
+            }
+        }
+
+        _ = try await request()
+        _ = try await request()
+        _ = try await request()
+        #expect(await counter.count == 1)
+
+        coordinator.adopted(key: "source")
+        _ = try await request()
+        #expect(await counter.count == 1)
+
+        _ = try await coordinator.run(key: "next-generation-source") {
+            await counter.increment()
+            return result
+        }
+        #expect(await counter.count == 2)
+    }
+
+    @Test("Completed rotations for different tokens do not replace each other")
+    func completedRotationsStayIndependentAcrossTokens() async throws {
+        let coordinator = RefreshResultHandoffCoordinator<String, OAuthCredentials>()
+        let firstCounter = Counter()
+        let secondCounter = Counter()
+
+        func request(_ token: String, counter: Counter) async throws -> OAuthCredentials {
+            try await coordinator.run(key: token) { [self] in
+                await counter.increment()
+                return creds("rotated-\(token)")
+            }
+        }
+
+        _ = try await request("first", counter: firstCounter)
+        _ = try await request("second", counter: secondCounter)
+        _ = try await request("first", counter: firstCounter)
+        _ = try await request("second", counter: secondCounter)
+
+        #expect(await firstCounter.count == 1)
+        #expect(await secondCounter.count == 1)
+
+        coordinator.adopted(key: "first")
+        _ = try await request("first", counter: firstCounter)
+        _ = try await request("second", counter: secondCounter)
+        #expect(await firstCounter.count == 1)
+        #expect(await secondCounter.count == 1)
+    }
+
+    @Test("Abandoned completed handoffs stay within the configured cap")
+    func completedHandoffsAreBounded() async throws {
+        let coordinator = RefreshResultHandoffCoordinator<String, OAuthCredentials>(
+            maximumCompletedHandoffs: 2)
+        let firstCounter = Counter()
+        let secondCounter = Counter()
+        let thirdCounter = Counter()
+
+        func request(_ token: String, counter: Counter) async throws -> OAuthCredentials {
+            try await coordinator.run(key: token) { [self] in
+                await counter.increment()
+                return creds("rotated-\(token)")
+            }
+        }
+
+        _ = try await request("first", counter: firstCounter)
+        _ = try await request("second", counter: secondCounter)
+        _ = try await request("first", counter: firstCounter)  // refreshes LRU position
+        _ = try await request("third", counter: thirdCounter)
+        _ = try await request("first", counter: firstCounter)
+        _ = try await request("third", counter: thirdCounter)
+        _ = try await request("second", counter: secondCounter)
+
+        #expect(await firstCounter.count == 1)
+        #expect(await secondCounter.count == 2)
+        #expect(await thirdCounter.count == 1)
     }
 }

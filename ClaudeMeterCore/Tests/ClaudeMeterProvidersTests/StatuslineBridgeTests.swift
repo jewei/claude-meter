@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -32,6 +33,28 @@ struct StatuslineBridgeTests {
     @Test func ensureRefreshIntervalSkipsMissingStatusLine() {
         var settings: [String: Any] = [:]
         #expect(!StatuslineBridge.ensureRefreshInterval(in: &settings))
+    }
+
+    @Test func ensureRefreshIntervalRejectsNonfiniteNumberWithoutTrapping() {
+        var settings: [String: Any] = [
+            "statusLine": [
+                "type": "command",
+                "command": "echo test",
+                "refreshInterval": Double.infinity,
+            ] as [String: Any]
+        ]
+
+        #expect(StatuslineBridge.ensureRefreshInterval(in: &settings))
+        let statusLine = settings["statusLine"] as? [String: Any]
+        #expect(statusLine?["refreshInterval"] as? Int == 1)
+    }
+
+    @Test func boundedIntegerConversionRejectsExtremeValues() {
+        #expect(StatuslineBridge.boundedInt(Double.nan) == nil)
+        #expect(StatuslineBridge.boundedInt(Double.infinity) == nil)
+        #expect(StatuslineBridge.boundedInt(-Double.infinity) == nil)
+        #expect(StatuslineBridge.boundedInt(Double.greatestFiniteMagnitude) == nil)
+        #expect(StatuslineBridge.boundedInt(-12.9) == -12)
     }
 
     @Test func strippedOfAnyBridgeReturnsUserCommandUnchangedWhenNoBridge() {
@@ -83,6 +106,29 @@ struct StatuslineBridgeTests {
         let payload = try StatuslineBridge.readPayload(from: file)
         #expect(payload?.fiveHour?.usedPercentage == 25)
         #expect(payload?.fiveHour?.resetsAt == Date(timeIntervalSince1970: 1_770_000_000))
+    }
+
+    @Test func readDataDropsOutOfRangeIntegerCounters() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let file = dir.appendingPathComponent("statusline.json")
+        let json = """
+            {
+              "rate_limits": { "five_hour": { "used_percentage": 25 } },
+              "cost": {
+                "total_lines_added": 1.7976931348623157e308,
+                "total_lines_removed": -1.7976931348623157e308
+              }
+            }
+            """
+        try Data(json.utf8).write(to: file)
+
+        let payload = try StatuslineBridge.readPayload(from: file)
+        #expect(payload?.codeLinesAdded == nil)
+        #expect(payload?.codeLinesRemoved == nil)
     }
 
     @Test func readDataParsesOpusWeeklyWindow() throws {
@@ -316,6 +362,41 @@ struct StatuslineBridgeTests {
         #expect(cmd == StatuslineBridge.bridgeSnippet + " > /dev/null")
     }
 
+    @Test func uninstallReportsChangesMadeBeforeAnotherDirectoryFails() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        let good = base.appendingPathComponent("good", isDirectory: true)
+        let bad = base.appendingPathComponent("bad", isDirectory: true)
+        try fm.createDirectory(at: good, withIntermediateDirectories: true)
+        try fm.createDirectory(at: bad, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: base) }
+
+        let goodSettings: [String: Any] = [
+            "statusLine": [
+                "type": "command",
+                "command": StatuslineBridge.bridgeSnippet + " > /dev/null",
+            ]
+        ]
+        try JSONSerialization.data(withJSONObject: goodSettings)
+            .write(to: good.appendingPathComponent("settings.json"))
+        try Data("{ not json".utf8).write(to: bad.appendingPathComponent("settings.json"))
+
+        do {
+            _ = try StatuslineBridge.uninstall(configDirs: [good, bad])
+            Issue.record("Expected the malformed settings file to throw")
+        } catch let error as StatuslineBridge.UninstallError {
+            #expect(error.didChange)
+        } catch {
+            Issue.record("Expected StatuslineBridge.UninstallError, got \(error)")
+        }
+
+        let data = try Data(contentsOf: good.appendingPathComponent("settings.json"))
+        let settings = try #require(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(settings["statusLine"] == nil)
+    }
+
     @Test func directoryCreationFailureIsSurfaced() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -367,5 +448,282 @@ struct StatuslineBridgeTests {
         let groups = StatuslineBridge.readDataGrouped(
             sessionsRoot: root, legacyFile: nil, maxAge: 600)
         #expect(groups[StatuslineBridge.defaultAccountKey]?.fiveHour?.usedPercentage == 42)
+    }
+
+    @Test func statuslineReadsIgnoreFIFOWithoutBlocking() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        let fifo = root.appendingPathComponent("session.json")
+        let result = fifo.path.withCString { Darwin.mkfifo($0, S_IRUSR | S_IWUSR) }
+        #expect(result == 0)
+
+        let clock = ContinuousClock()
+        let start = clock.now
+        #expect(
+            !StatuslineBridge.isDataFresh(
+                sessionsRoot: root, legacyFile: fifo, maxAge: 600))
+        #expect(
+            StatuslineBridge.readDataGrouped(
+                sessionsRoot: root, legacyFile: fifo, maxAge: 600
+            ).isEmpty)
+        #expect(try StatuslineBridge.readPayload(from: fifo) == nil)
+        #expect(start.duration(to: clock.now) < .seconds(1))
+    }
+
+    @Test func statuslineReadsDoNotFollowSymbolicLinks() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        let root = base.appendingPathComponent("sessions", isDirectory: true)
+        let targetAccount = base.appendingPathComponent("target-account", isDirectory: true)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        try fm.createDirectory(at: targetAccount, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: base) }
+
+        let json =
+            #"{"rate_limits":{"five_hour":{"used_percentage":99,"resets_at":1900000000}}}"#
+        let targetFile = targetAccount.appendingPathComponent("target.json")
+        try Data(json.utf8).write(to: targetFile)
+
+        let linkedFile = root.appendingPathComponent("linked.json")
+        let linkedAccount = root.appendingPathComponent("linked-account", isDirectory: true)
+        let linkedLegacy = base.appendingPathComponent("legacy.json")
+        try fm.createSymbolicLink(at: linkedFile, withDestinationURL: targetFile)
+        try fm.createSymbolicLink(at: linkedAccount, withDestinationURL: targetAccount)
+        try fm.createSymbolicLink(at: linkedLegacy, withDestinationURL: targetFile)
+
+        #expect(
+            !StatuslineBridge.isDataFresh(
+                sessionsRoot: root, legacyFile: linkedLegacy, maxAge: 600))
+        #expect(
+            StatuslineBridge.readDataGrouped(
+                sessionsRoot: root, legacyFile: linkedLegacy, maxAge: 600
+            ).isEmpty)
+        #expect(try StatuslineBridge.readPayload(from: linkedFile) == nil)
+    }
+
+    @Test func statuslineReadsRejectSymbolicLinkRoot() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        let targetRoot = base.appendingPathComponent("target-sessions", isDirectory: true)
+        let targetAccount = targetRoot.appendingPathComponent("claude", isDirectory: true)
+        let linkedRoot = base.appendingPathComponent("sessions", isDirectory: true)
+        try fm.createDirectory(at: targetAccount, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: base) }
+
+        let json =
+            #"{"rate_limits":{"five_hour":{"used_percentage":99,"resets_at":1900000000}}}"#
+        try Data(json.utf8).write(to: targetAccount.appendingPathComponent("target.json"))
+        try fm.createSymbolicLink(at: linkedRoot, withDestinationURL: targetRoot)
+
+        #expect(
+            !StatuslineBridge.isDataFresh(
+                sessionsRoot: linkedRoot, legacyFile: nil, maxAge: 600))
+        #expect(
+            StatuslineBridge.readDataGrouped(
+                sessionsRoot: linkedRoot, legacyFile: nil, maxAge: 600
+            ).isEmpty)
+    }
+
+    @Test func statuslineReadsRejectOversizedPayloads() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        let file = root.appendingPathComponent("oversized.json")
+        try Data(repeating: 0x20, count: 1_048_577).write(to: file)
+
+        #expect(
+            !StatuslineBridge.isDataFresh(
+                sessionsRoot: root, legacyFile: nil, maxAge: 600))
+        #expect(
+            StatuslineBridge.readDataGrouped(
+                sessionsRoot: root, legacyFile: nil, maxAge: 600
+            ).isEmpty)
+        #expect(try StatuslineBridge.readPayload(from: file) == nil)
+    }
+
+    @Test func statuslineReadsRejectImplausiblyFuturePayloads() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        let sessions = base.appendingPathComponent("sessions/claude", isDirectory: true)
+        try fm.createDirectory(at: sessions, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: base) }
+
+        let json = #"{"rate_limits":{"five_hour":{"used_percentage":99}}}"#
+        let accountFile = sessions.appendingPathComponent("future.json")
+        let legacyFile = base.appendingPathComponent("statusline.json")
+        try Data(json.utf8).write(to: accountFile)
+        try Data(json.utf8).write(to: legacyFile)
+        let future = Date().addingTimeInterval(24 * 60 * 60)
+        try fm.setAttributes([.modificationDate: future], ofItemAtPath: accountFile.path)
+        try fm.setAttributes([.modificationDate: future], ofItemAtPath: legacyFile.path)
+
+        let sessionsRoot = base.appendingPathComponent("sessions", isDirectory: true)
+        #expect(
+            !StatuslineBridge.isDataFresh(
+                sessionsRoot: sessionsRoot, legacyFile: legacyFile, maxAge: 600))
+        #expect(
+            StatuslineBridge.readDataGrouped(
+                sessionsRoot: sessionsRoot, legacyFile: legacyFile, maxAge: 600
+            ).isEmpty)
+    }
+
+    @Test func productionReadsRejectLinkedDataRoot() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        let external = base.appendingPathComponent("external", isDirectory: true)
+        let account = external.appendingPathComponent("sessions/claude", isDirectory: true)
+        let linkedDataRoot = base.appendingPathComponent(".claude-meter", isDirectory: true)
+        try fm.createDirectory(at: account, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: base) }
+
+        let json = #"{"rate_limits":{"five_hour":{"used_percentage":99}}}"#
+        try Data(json.utf8).write(to: account.appendingPathComponent("outside.json"))
+        try Data(json.utf8).write(to: external.appendingPathComponent("statusline.json"))
+        try fm.createSymbolicLink(at: linkedDataRoot, withDestinationURL: external)
+
+        #expect(!StatuslineBridge.isDataFresh(dataRoot: linkedDataRoot, maxAge: 600))
+        #expect(
+            StatuslineBridge.readDataGrouped(dataRoot: linkedDataRoot, maxAge: 600).isEmpty)
+    }
+
+    @Test func purgeSessionDataRemovesOnlyManagedFiles() throws {
+        let fm = FileManager.default
+        let dataRoot = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        let sessions = dataRoot.appendingPathComponent("sessions", isDirectory: true)
+        let account = sessions.appendingPathComponent("claude", isDirectory: true)
+        try fm.createDirectory(at: account, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dataRoot) }
+
+        let accountFile = account.appendingPathComponent("account.json")
+        let flatFile = sessions.appendingPathComponent("flat.json")
+        let legacyFile = dataRoot.appendingPathComponent("statusline.json")
+        try Data("account".utf8).write(to: accountFile)
+        try Data("flat".utf8).write(to: flatFile)
+        try Data("legacy".utf8).write(to: legacyFile)
+
+        StatuslineBridge.purgeSessionData(dataRoot: dataRoot)
+
+        #expect(!fm.fileExists(atPath: accountFile.path))
+        #expect(!fm.fileExists(atPath: flatFile.path))
+        #expect(!fm.fileExists(atPath: legacyFile.path))
+        #expect(fm.fileExists(atPath: sessions.path))
+        #expect(fm.fileExists(atPath: account.path))
+    }
+
+    @Test func purgeSessionDataRejectsLinkedDataRoot() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        let external = base.appendingPathComponent("external", isDirectory: true)
+        let account = external.appendingPathComponent("sessions/claude", isDirectory: true)
+        let linkedDataRoot = base.appendingPathComponent(".claude-meter", isDirectory: true)
+        try fm.createDirectory(at: account, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: base) }
+
+        let sessionFile = account.appendingPathComponent("outside.json")
+        let legacyFile = external.appendingPathComponent("statusline.json")
+        try Data("outside".utf8).write(to: sessionFile)
+        try Data("legacy".utf8).write(to: legacyFile)
+        try fm.createSymbolicLink(at: linkedDataRoot, withDestinationURL: external)
+
+        StatuslineBridge.purgeSessionData(dataRoot: linkedDataRoot)
+
+        #expect(fm.fileExists(atPath: sessionFile.path))
+        #expect(fm.fileExists(atPath: legacyFile.path))
+        #expect(fm.fileExists(atPath: linkedDataRoot.path))
+    }
+
+    @Test func purgeSessionDataStopsWhenDataRootIsReplaced() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        let dataRoot = base.appendingPathComponent(".claude-meter", isDirectory: true)
+        let account = dataRoot.appendingPathComponent("sessions/claude", isDirectory: true)
+        let external = base.appendingPathComponent("external", isDirectory: true)
+        let externalAccount = external.appendingPathComponent("sessions/claude", isDirectory: true)
+        try fm.createDirectory(at: account, withIntermediateDirectories: true)
+        try fm.createDirectory(at: externalAccount, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: base) }
+
+        let originalFile = account.appendingPathComponent("old.json")
+        let externalFile = externalAccount.appendingPathComponent("outside.json")
+        try Data("old".utf8).write(to: originalFile)
+        try Data("outside".utf8).write(to: externalFile)
+        let displaced = base.appendingPathComponent("displaced", isDirectory: true)
+        var didSwap = false
+
+        StatuslineBridge.clearManagedSubdirectory(
+            named: "sessions",
+            in: dataRoot,
+            beforeUnlink: { _, _ in
+                guard !didSwap else { return }
+                didSwap = true
+                try? fm.moveItem(at: dataRoot, to: displaced)
+                try? fm.createSymbolicLink(at: dataRoot, withDestinationURL: external)
+            })
+
+        #expect(didSwap)
+        #expect(
+            try fm.destinationOfSymbolicLink(atPath: dataRoot.path) == external.path)
+        #expect(
+            fm.fileExists(
+                atPath: displaced.appendingPathComponent("sessions/claude/old.json").path))
+        #expect(fm.fileExists(atPath: externalFile.path))
+    }
+
+    @Test func purgeSessionDataUsesOneAnchorAcrossAllCleanup() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        let dataRoot = base.appendingPathComponent(".claude-meter", isDirectory: true)
+        let originalAccount = dataRoot.appendingPathComponent("sessions/claude", isDirectory: true)
+        let replacement = base.appendingPathComponent("replacement", isDirectory: true)
+        let replacementAccount = replacement.appendingPathComponent(
+            "sessions/claude", isDirectory: true)
+        try fm.createDirectory(at: originalAccount, withIntermediateDirectories: true)
+        try fm.createDirectory(at: replacementAccount, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: base) }
+
+        let originalSession = originalAccount.appendingPathComponent("old.json")
+        let originalLegacy = dataRoot.appendingPathComponent("statusline.json")
+        try Data("old".utf8).write(to: originalSession)
+        try Data("old legacy".utf8).write(to: originalLegacy)
+        try Data("outside".utf8).write(
+            to: replacementAccount.appendingPathComponent("outside.json"))
+        try Data("outside legacy".utf8).write(
+            to: replacement.appendingPathComponent("statusline.json"))
+        let displaced = base.appendingPathComponent("displaced", isDirectory: true)
+        var didSwap = false
+
+        StatuslineBridge.purgeSessionData(
+            dataRoot: dataRoot,
+            beforeUnlink: { _, _ in
+                guard !didSwap else { return }
+                didSwap = true
+                try? fm.moveItem(at: dataRoot, to: displaced)
+                try? fm.moveItem(at: replacement, to: dataRoot)
+            })
+
+        #expect(didSwap)
+        #expect(
+            fm.fileExists(
+                atPath: displaced.appendingPathComponent("sessions/claude/old.json").path))
+        #expect(fm.fileExists(atPath: displaced.appendingPathComponent("statusline.json").path))
+        #expect(
+            fm.fileExists(
+                atPath: dataRoot.appendingPathComponent("sessions/claude/outside.json").path))
+        #expect(fm.fileExists(atPath: dataRoot.appendingPathComponent("statusline.json").path))
     }
 }

@@ -21,6 +21,27 @@ struct AppGroupConfigTests {
         #expect(thresholds.severity(for: 75) == .warning)
     }
 
+    @Test("Threshold repair replaces corrupt settings with safe values")
+    func thresholdRepair() {
+        let suiteName = "com.claudemeter.tests.threshold-repair"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set(Double.nan, forKey: AppGroupConfig.warningThresholdKey)
+        defaults.set(1e308, forKey: AppGroupConfig.criticalThresholdKey)
+        let repaired = AppGroupConfig.repairThresholdSettings(defaults: defaults)
+
+        #expect(repaired == .default)
+        #expect(defaults.double(forKey: AppGroupConfig.warningThresholdKey) == 80)
+        #expect(defaults.double(forKey: AppGroupConfig.criticalThresholdKey) == 95)
+
+        defaults.set(90.0, forKey: AppGroupConfig.warningThresholdKey)
+        defaults.set(60.0, forKey: AppGroupConfig.criticalThresholdKey)
+        let ordered = AppGroupConfig.repairThresholdSettings(defaults: defaults)
+        #expect(ordered.warning == 90)
+        #expect(ordered.critical == 95)
+    }
+
     @Test("isSnapshotStale respects staleAfterSeconds")
     func staleDetection() {
         let defaults = UserDefaults(suiteName: "com.claudemeter.tests.stale")!
@@ -37,6 +58,68 @@ struct AppGroupConfigTests {
         #expect(
             AppGroupConfig.isSnapshotStale(
                 lastPollAt: old, shared: nil, defaults: defaults, now: now))
+        #expect(
+            AppGroupConfig.resolvedStaleAfterSeconds(shared: nil, defaults: defaults) == 120)
+
+        defaults.set(Double.infinity, forKey: AppGroupConfig.staleAfterSecondsKey)
+        #expect(
+            AppGroupConfig.resolvedStaleAfterSeconds(shared: nil, defaults: defaults)
+                == AppGroupConfig.defaultStaleAfterSeconds)
+        defaults.set(1e308, forKey: AppGroupConfig.staleAfterSecondsKey)
+        #expect(
+            AppGroupConfig.resolvedStaleAfterSeconds(shared: nil, defaults: defaults)
+                == AppGroupConfig.defaultStaleAfterSeconds)
+        defaults.set(Double.greatestFiniteMagnitude, forKey: AppGroupConfig.staleAfterSecondsKey)
+        #expect(
+            AppGroupConfig.resolvedStaleAfterSeconds(shared: nil, defaults: defaults)
+                == AppGroupConfig.defaultStaleAfterSeconds)
+    }
+
+    @Test("Staleness rejects invalid and far-future poll dates")
+    func staleDetectionRejectsInvalidDates() {
+        let defaultsName = "com.claudemeter.tests.stale-dates"
+        let defaults = UserDefaults(suiteName: defaultsName)!
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let now = Date(timeIntervalSinceReferenceDate: 1_000)
+
+        #expect(
+            !AppGroupConfig.isSnapshotStale(
+                lastPollAt: now.addingTimeInterval(300),
+                shared: nil,
+                defaults: defaults,
+                now: now))
+        #expect(
+            AppGroupConfig.isSnapshotStale(
+                lastPollAt: now.addingTimeInterval(301),
+                shared: nil,
+                defaults: defaults,
+                now: now))
+        #expect(
+            AppGroupConfig.isSnapshotStale(
+                lastPollAt: .distantFuture,
+                shared: nil,
+                defaults: defaults,
+                now: now))
+        #expect(
+            AppGroupConfig.isSnapshotStale(
+                lastPollAt: Date(timeIntervalSinceReferenceDate: .nan),
+                shared: nil,
+                defaults: defaults,
+                now: now))
+    }
+
+    @Test("Elapsed seconds are bounded and nonnegative")
+    func elapsedSecondsAreBounded() {
+        let now = Date(timeIntervalSinceReferenceDate: 1_000)
+
+        #expect(now.boundedNonnegativeElapsedSeconds(since: now.addingTimeInterval(60)) == 0)
+        #expect(
+            now.boundedNonnegativeElapsedSeconds(
+                since: Date(timeIntervalSinceReferenceDate: .nan)) == 0)
+        #expect(
+            now.boundedNonnegativeElapsedSeconds(
+                since: Date(timeIntervalSinceReferenceDate: -Double.greatestFiniteMagnitude))
+                == Int.max)
     }
 
     @Test("syncDisplaySettings removes values reset in the source suite")

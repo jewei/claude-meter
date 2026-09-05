@@ -43,10 +43,44 @@ public struct CodexLimitWindow: Codable, Equatable, Sendable {
         rawLabel: String?
     ) {
         self.kind = kind
-        self.usedPercent = usedPercent.map(Self.clampPercent)
-        self.resetAt = resetAt
-        self.durationSeconds = durationSeconds
+        self.usedPercent = usedPercent.flatMap { value in
+            value.isFinite ? Self.clampPercent(value) : nil
+        }
+        self.resetAt = resetAt.flatMap {
+            boundedProviderDate(timeIntervalSince1970: $0.timeIntervalSince1970)
+        }
+        self.durationSeconds = durationSeconds.flatMap { value in
+            value > 0 && Self.boundedRoundedInt(value) != nil ? value : nil
+        }
         self.rawLabel = rawLabel
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case usedPercent
+        case resetAt
+        case durationSeconds
+        case rawLabel
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            kind: try container.decode(CodexLimitWindowKind.self, forKey: .kind),
+            usedPercent: try container.decodeIfPresent(Double.self, forKey: .usedPercent),
+            resetAt: try container.decodeIfPresent(Date.self, forKey: .resetAt),
+            durationSeconds: try container.decodeIfPresent(
+                TimeInterval.self, forKey: .durationSeconds),
+            rawLabel: try container.decodeIfPresent(String.self, forKey: .rawLabel))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(kind, forKey: .kind)
+        try container.encodeIfPresent(usedPercent, forKey: .usedPercent)
+        try container.encodeIfPresent(resetAt, forKey: .resetAt)
+        try container.encodeIfPresent(durationSeconds, forKey: .durationSeconds)
+        try container.encodeIfPresent(rawLabel, forKey: .rawLabel)
     }
 
     public var energyLeftPercent: Double? {
@@ -62,17 +96,17 @@ public struct CodexLimitWindow: Codable, Equatable, Sendable {
             return rawLabel
         }
         if let durationSeconds {
-            switch Int(durationSeconds.rounded()) {
+            switch Self.boundedRoundedInt(durationSeconds) {
             case 18_000: return "5h"
             case 86_400: return "24h"
             case 604_800: return "Weekly"
             default:
                 if durationSeconds >= 86_400 {
-                    let days = Int((durationSeconds / 86_400).rounded())
+                    let days = Self.boundedRoundedInt(durationSeconds / 86_400) ?? 0
                     if days > 0 { return "\(days)d" }
                 }
                 if durationSeconds >= 3_600 {
-                    let hours = Int((durationSeconds / 3_600).rounded())
+                    let hours = Self.boundedRoundedInt(durationSeconds / 3_600) ?? 0
                     if hours > 0 { return "\(hours)h" }
                 }
             }
@@ -85,6 +119,11 @@ public struct CodexLimitWindow: Codable, Equatable, Sendable {
 
     private static func clampPercent(_ value: Double) -> Double {
         min(100, max(0, value))
+    }
+
+    private static func boundedRoundedInt(_ value: Double) -> Int? {
+        guard value.isFinite else { return nil }
+        return Int(exactly: value.rounded())
     }
 }
 
@@ -104,7 +143,27 @@ public struct CodexRateLimitResetCredit: Codable, Equatable, Sendable {
 
     public init(title: String?, expiresAt: Date?) {
         self.title = title
-        self.expiresAt = expiresAt
+        self.expiresAt = expiresAt.flatMap {
+            boundedProviderDate(timeIntervalSince1970: $0.timeIntervalSince1970)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case title
+        case expiresAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            title: try container.decodeIfPresent(String.self, forKey: .title),
+            expiresAt: try container.decodeIfPresent(Date.self, forKey: .expiresAt))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(title, forKey: .title)
+        try container.encodeIfPresent(expiresAt, forKey: .expiresAt)
     }
 }
 
@@ -158,7 +217,9 @@ public struct CodexUsage: Codable, Equatable, Sendable {
         self.plan = plan
         self.authMode = authMode
         self.source = source
-        self.updatedAt = updatedAt
+        self.updatedAt =
+            boundedProviderDate(timeIntervalSince1970: updatedAt.timeIntervalSince1970)
+            ?? Date(timeIntervalSince1970: PersistedDateBounds.minimumEpoch)
     }
 
     public var displayPlanName: String? {
@@ -201,6 +262,18 @@ public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
     let rateLimits: AppServerRateLimitSnapshot
     let rateLimitResetCredits: AppServerRateLimitResetCredits?
 
+    enum CodingKeys: String, CodingKey {
+        case rateLimits, rateLimitResetCredits
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        rateLimits = try container.decode(AppServerRateLimitSnapshot.self, forKey: .rateLimits)
+        // Reset metadata is advisory. A format change must not discard quota data.
+        rateLimitResetCredits = try? container.decodeIfPresent(
+            AppServerRateLimitResetCredits.self, forKey: .rateLimitResetCredits)
+    }
+
     public func usage(
         account: CodexAppServerAccount?,
         now: Date,
@@ -230,8 +303,9 @@ public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
                 }
             }
         }
+        let usageCredits = rateLimits.credits?.codexCredits
         guard
-            primary != nil || secondary != nil || rateLimits.credits != nil
+            primary != nil || secondary != nil || usageCredits != nil
                 || rateLimitResetCredits != nil
         else {
             throw CodexUsageError.noUsageData
@@ -239,7 +313,7 @@ public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
         return CodexUsage(
             primaryWindow: primary,
             secondaryWindow: secondary,
-            usageCredits: rateLimits.credits?.codexCredits,
+            usageCredits: usageCredits,
             rateLimitResets: rateLimitResetCredits?.codexRateLimitResets,
             accountEmail: account?.email,
             plan: rateLimits.planType ?? account?.plan,
@@ -257,8 +331,12 @@ public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
         return CodexLimitWindow(
             kind: kind,
             usedPercent: window.usedPercent,
-            resetAt: window.resetsAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
-            durationSeconds: window.windowDurationMins.map { TimeInterval($0 * 60) },
+            resetAt: window.resetsAt.flatMap {
+                boundedProviderDate(timeIntervalSince1970: TimeInterval($0))
+            },
+            // Convert before multiplication. An untrusted `Int.max` minute value
+            // must become an invalid duration, not trap in integer arithmetic.
+            durationSeconds: window.windowDurationMins.map { TimeInterval($0) * 60 },
             rawLabel: rawLabel)
     }
 
@@ -309,7 +387,7 @@ public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
 
         var codexCredits: CodexCredits? {
             if unlimited == true { return CodexCredits(remaining: 0, unlimited: true) }
-            guard let balance, let value = Double(balance) else { return nil }
+            guard let balance, let value = Double(balance), value.isFinite else { return nil }
             return CodexCredits(remaining: value)
         }
     }
@@ -317,6 +395,18 @@ public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
     struct AppServerRateLimitResetCredits: Decodable, Sendable {
         let availableCount: Int
         let credits: [AppServerRateLimitResetCredit]?
+
+        enum CodingKeys: String, CodingKey {
+            case availableCount, credits
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            availableCount = try container.decode(Int.self, forKey: .availableCount)
+            // The count is authoritative even when optional detail rows are unusable.
+            credits = try? container.decodeIfPresent(
+                [AppServerRateLimitResetCredit].self, forKey: .credits)
+        }
 
         var codexRateLimitResets: CodexRateLimitResets {
             CodexRateLimitResets(
@@ -332,7 +422,9 @@ public struct CodexAppServerRateLimitsResponse: Decodable, Sendable {
         var codexRateLimitResetCredit: CodexRateLimitResetCredit {
             CodexRateLimitResetCredit(
                 title: title,
-                expiresAt: expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) })
+                expiresAt: expiresAt.flatMap {
+                    boundedProviderDate(timeIntervalSince1970: TimeInterval($0))
+                })
         }
     }
 }
@@ -348,18 +440,27 @@ public struct CodexOAuthUsageResponse: Decodable, Sendable {
         case credits
     }
 
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Keep quota decoding strict; only unrelated display metadata may fail alone.
+        rateLimit = try container.decodeIfPresent(RateLimit.self, forKey: .rateLimit)
+        planType = try? container.decodeIfPresent(String.self, forKey: .planType)
+        credits = try? container.decodeIfPresent(Credits.self, forKey: .credits)
+    }
+
     public func usage(accountEmail: String?, now: Date, source: CodexUsageSource) throws
         -> CodexUsage
     {
         let primary = rateLimit?.primaryWindow.map { Self.window($0, kind: .primary) }
         let secondary = rateLimit?.secondaryWindow.map { Self.window($0, kind: .secondary) }
-        guard primary != nil || secondary != nil || credits != nil else {
+        let usageCredits = credits?.codexCredits
+        guard primary != nil || secondary != nil || usageCredits != nil else {
             throw CodexUsageError.noUsageData
         }
         return CodexUsage(
             primaryWindow: primary,
             secondaryWindow: secondary,
-            usageCredits: credits?.codexCredits,
+            usageCredits: usageCredits,
             accountEmail: accountEmail,
             plan: planType,
             authMode: .chatGPT,
@@ -371,7 +472,9 @@ public struct CodexOAuthUsageResponse: Decodable, Sendable {
         CodexLimitWindow(
             kind: kind,
             usedPercent: window.usedPercent.map(Double.init),
-            resetAt: window.resetAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+            resetAt: window.resetAt.flatMap {
+                boundedProviderDate(timeIntervalSince1970: TimeInterval($0))
+            },
             durationSeconds: window.limitWindowSeconds.map(TimeInterval.init),
             rawLabel: nil)
     }
@@ -404,7 +507,7 @@ public struct CodexOAuthUsageResponse: Decodable, Sendable {
 
         var codexCredits: CodexCredits? {
             if unlimited == true { return CodexCredits(remaining: 0, unlimited: true) }
-            guard let balance, let value = Double(balance) else { return nil }
+            guard let balance, let value = Double(balance), value.isFinite else { return nil }
             return CodexCredits(remaining: value)
         }
     }

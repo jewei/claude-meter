@@ -1,4 +1,5 @@
 import ClaudeMeterCore
+import Darwin
 import Foundation
 
 /// Shared reader/writer for a Claude Code `settings.json`. Both `StatuslineBridge`
@@ -6,6 +7,8 @@ import Foundation
 /// same physical file, so the parse-with-typed-error and atomic pretty-printed
 /// write live here once instead of being copied into each.
 enum SettingsFile {
+    private static let maximumFileBytes = 4 * 1_024 * 1_024
+
     enum ParseError: Error, LocalizedError {
         case invalidJSON
         case rootNotObject
@@ -22,8 +25,13 @@ enum SettingsFile {
 
     /// Reads + parses the file, returning `[:]` when it doesn't exist.
     static func read(at path: URL) throws -> [String: Any] {
-        guard FileManager.default.fileExists(atPath: path.path) else { return [:] }
-        return try parse(Data(contentsOf: path))
+        do {
+            let data = try BoundedRegularFileReader.read(
+                at: path, maximumByteCount: maximumFileBytes)
+            return try parse(data)
+        } catch  where BoundedRegularFileReader.isMissingFileError(error) {
+            return [:]
+        }
     }
 
     /// Parses settings JSON. `nil`/missing → `[:]`; empty or non-JSON →
@@ -48,8 +56,28 @@ enum SettingsFile {
     static func write(_ settings: [String: Any], at path: URL) throws {
         let data = try JSONSerialization.data(
             withJSONObject: settings, options: [.prettyPrinted, .sortedKeys])
+        let destination = try writeDestination(for: path)
         try FileManager.default.createDirectory(
-            at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: path, options: .atomic)
+            at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: destination, options: .atomic)
+    }
+
+    /// `Data.write(.atomic)` replaces a final symbolic link instead of its target.
+    /// Resolve that link first so a deliberately linked settings file stays linked.
+    private static func writeDestination(for path: URL) throws -> URL {
+        var status = stat()
+        let result = path.path.withCString { Darwin.lstat($0, &status) }
+        guard result == 0 else {
+            if errno == ENOENT || errno == ENOTDIR { return path }
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        guard (status.st_mode & S_IFMT) == S_IFLNK else { return path }
+
+        let rawDestination = try FileManager.default.destinationOfSymbolicLink(atPath: path.path)
+        let destination =
+            rawDestination.hasPrefix("/")
+            ? URL(fileURLWithPath: rawDestination)
+            : path.deletingLastPathComponent().appendingPathComponent(rawDestination)
+        return destination.standardizedFileURL.resolvingSymlinksInPath()
     }
 }

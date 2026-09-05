@@ -180,6 +180,11 @@ struct PollConfiguration: Sendable {
     let cursorEnabled: Bool
     let codexEnabled: Bool
     let grokEnabled: Bool
+    let oauthEnabled: Bool
+    let oauthMode: String
+    let configuredClaudeDirs: [String]
+    let disabledClaudeAccountKeys: Set<String>
+    let thresholds: UsageThresholds
     let codexMode: CodexSourceMode
     let codexAccounts: [CodexAccount]
 
@@ -190,6 +195,11 @@ struct PollConfiguration: Sendable {
         cursorEnabled = AppSettings.cursorSourceEnabled
         codexEnabled = AppSettings.codexSourceEnabled
         grokEnabled = AppSettings.grokSourceEnabled
+        oauthEnabled = AppSettings.oauthSourceEnabled
+        oauthMode = UserDefaults.standard.string(forKey: AppGroupConfig.oauthModeKey) ?? ""
+        configuredClaudeDirs = AppGroupConfig.configuredConfigDirs
+        disabledClaudeAccountKeys = Set(AppGroupConfig.disabledAccountKeys)
+        thresholds = AppGroupConfig.currentThresholds()
         codexMode = AppSettings.codexSourceMode
         codexAccounts = codexEnabled ? AppSettings.codexAccounts() : []
     }

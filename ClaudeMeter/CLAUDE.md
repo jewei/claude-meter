@@ -20,6 +20,15 @@ stay in the root `AGENTS.md`.
 - **Popover disclosure ownership** — `PopoverView` owns desired disclosure state, persistence, and rendering; `PopoverTransitionBody` owns body measurement and content-to-window presentation, including resizing, clipping, interruption, and Reduce Motion.
 - **Pause tests use isolated settings** — `AppState.init(pipeline:)` gives `setActive` an ephemeral defaults suite. The normal initializer uses standard defaults. Do not write `AppSettings.isActive` from test meters or save/restore it around overlapping tests: one test can capture another test's paused value and leave the installed app paused after verification.
 
+The menu-bar accessibility summary lives beside `MenuBarText`. Its children are hidden
+from accessibility so symbols and compact text cannot produce duplicate announcements.
+Keep the spoken percentage's window separate from the severity across all windows.
+Use the existing `RunsOutPhrase.spoken` and omit stale or paused percentages.
+`MenuBarAccessibility` publishes that summary to the app's native status button.
+SwiftUI label modifiers and even the modern AppKit title setter can leave the menu-extra
+accessibility proxy reading only the compact visual text. Keep the public AX title
+override fallback until a native proxy check confirms it is no longer needed.
+
 ## Notifications
 
 - **`NotificationEngine` is an actor**; quota alerts process only fresh `MainMeterReading` observations from the selected provider. Dedup includes provider plus a hashed account identity; switching provider/account starts a new baseline. Thresholds come from `AppGroupConfig.currentThresholds(defaults:)`. Claude attention-hook notifications remain separate.

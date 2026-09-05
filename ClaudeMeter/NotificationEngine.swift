@@ -1,6 +1,105 @@
 import ClaudeMeterCore
 import ClaudeMeterProviders
+import Foundation
 import UserNotifications
+
+enum NotificationAuthorizationState: Equatable, Sendable {
+    case notDetermined
+    case authorized
+    case provisional
+    case unavailable
+}
+
+/// Immutable value passed across the notification-delivery test seam. `userInfo`
+/// contains only property-list values created by `AttentionNotificationRoute`.
+struct NotificationDeliveryRequest: @unchecked Sendable {
+    let identifier: String
+    let title: String
+    let body: String
+    let playsDefaultSound: Bool
+    let userInfo: [AnyHashable: Any]
+}
+
+protocol NotificationDelivery: Sendable {
+    func authorizationState() async -> NotificationAuthorizationState
+    func requestAuthorization() async throws
+    func add(_ request: NotificationDeliveryRequest) async throws
+    func removePendingRequests(withIdentifiers identifiers: [String]) async
+    func removeDeliveredNotifications(withIdentifiers identifiers: [String]) async
+}
+
+private final class SystemNotificationDelivery: NotificationDelivery, @unchecked Sendable {
+    private let center: UNUserNotificationCenter
+
+    init(center: UNUserNotificationCenter = .current()) {
+        self.center = center
+    }
+
+    func authorizationState() async -> NotificationAuthorizationState {
+        switch await center.notificationSettings().authorizationStatus {
+        case .notDetermined: .notDetermined
+        case .authorized: .authorized
+        case .provisional: .provisional
+        case .denied, .ephemeral: .unavailable
+        @unknown default: .unavailable
+        }
+    }
+
+    func requestAuthorization() async throws {
+        // Request sound too, so attention notifications can play the user's sound.
+        _ = try await center.requestAuthorization(options: [.alert, .sound])
+    }
+
+    func add(_ request: NotificationDeliveryRequest) async throws {
+        let content = UNMutableNotificationContent()
+        content.title = request.title
+        content.body = request.body
+        content.sound = request.playsDefaultSound ? .default : nil
+        content.userInfo = request.userInfo
+        try await center.add(
+            UNNotificationRequest(
+                identifier: request.identifier,
+                content: content,
+                trigger: nil))
+    }
+
+    func removePendingRequests(withIdentifiers identifiers: [String]) async {
+        center.removePendingNotificationRequests(withIdentifiers: identifiers)
+    }
+
+    func removeDeliveredNotifications(withIdentifiers identifiers: [String]) async {
+        center.removeDeliveredNotifications(withIdentifiers: identifiers)
+    }
+}
+
+/// A synchronous revision gate lets main-actor setting changes invalidate an
+/// observation before an actor task can resume from `add`. The commit closure runs
+/// under the same lock as invalidation, so revision validation and fired-state
+/// persistence are one operation.
+private final class NotificationObservationRevision: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func current() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func invalidate() {
+        lock.lock()
+        value &+= 1
+        lock.unlock()
+    }
+
+    func performIfCurrent(_ expected: Int, operation: () -> Void) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard value == expected else { return false }
+        operation()
+        return true
+    }
+}
 
 /// Posts local notifications when session or weekly usage crosses severity thresholds.
 ///
@@ -9,42 +108,80 @@ import UserNotifications
 /// epoch seconds, so notifications are not repeated across app relaunches within the
 /// same reset window. Expired keys are pruned when the reset time passes.
 actor NotificationEngine {
-    private let center = UNUserNotificationCenter.current()
+    private struct QuotaDelivery: Hashable {
+        let key: String
+        let revision: Int
+    }
+
+    private let delivery: any NotificationDelivery
     private let defaults: UserDefaults
+    private var quotaDeliveriesInFlight: Set<QuotaDelivery> = []
     private var predictiveTracker = PredictiveNotificationTracker()
+    private var predictiveTrackerRevision = 0
+    /// Changes when a failed poll or meter setting invalidates an observation
+    /// that can be suspended in Notification Center calls.
+    private let observationRevision = NotificationObservationRevision()
+    /// Changes only with the attention lifecycle. Quota poll failures must not
+    /// retract an unrelated "Claude needs you" alert.
+    private let attentionRevision = NotificationObservationRevision()
+    /// Changes only with notification settings. Quota poll failures must not
+    /// retract an unrelated update alert.
+    private let updateRevision = NotificationObservationRevision()
 
     private static let firedKeysStorageKey = "com.claudemeter.notif.firedKeys"
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        delivery: (any NotificationDelivery)? = nil
+    ) {
         self.defaults = defaults
+        self.delivery = delivery ?? SystemNotificationDelivery()
     }
 
     // MARK: - Authorization
 
     func requestAuthorizationIfNeeded() async {
-        let status = await center.notificationSettings().authorizationStatus
-        guard status == .notDetermined else { return }
-        // Request sound too, so attention notifications can play the user's sound.
-        _ = try? await center.requestAuthorization(options: [.alert, .sound])
+        guard await delivery.authorizationState() == .notDetermined else { return }
+        try? await delivery.requestAuthorization()
     }
 
     /// Notifies the user that a new app version is available (gentle Sparkle reminder path).
     func postUpdateAvailable(version: String) async {
-        guard isEnabled(), await isAuthorized() else { return }
-        _ = await post(
-            id: "com.claudemeter.update.\(version)",
+        let revision = updateRevision.current()
+        guard isEnabled(), await isAuthorized(),
+            updateRevision.current() == revision,
+            !Task.isCancelled
+        else { return }
+        let id = "com.claudemeter.update.\(version)"
+        let delivered = await post(
+            id: id,
             title: "Claude Meter update available",
             body: "Version \(version) is ready. Open the menu bar popover to install."
         )
+        if let delivered {
+            await retractIfInvalid(
+                id: delivered, expectedRevision: revision, revisionGate: updateRevision)
+        }
     }
 
     /// Posts a "Claude needs you" notification for an attention event. Caller has
     /// already applied focus-suppression; this only gates on the master toggle +
     /// authorization. Each event is consumed once, so no extra dedup is needed.
-    func postAttention(event: SessionEvent, accountLabel: String) async {
+    nonisolated func attentionLease() -> Int {
+        attentionRevision.current()
+    }
+
+    func postAttention(
+        event: SessionEvent,
+        accountLabel: String,
+        expectedRevision revision: Int
+    ) async {
+        guard attentionRevision.current() == revision, !Task.isCancelled else { return }
         // Gated only by authorization — attention has its own Settings toggles and is
         // independent of the quota-notification master switch (`isEnabled()`).
-        guard await isAuthorized() else { return }
+        guard await isAuthorized(), attentionRevision.current() == revision,
+            !Task.isCancelled
+        else { return }
         let project = event.projectName ?? "a session"
         let title: String
         let body: String
@@ -68,34 +205,54 @@ actor NotificationEngine {
         case .other:
             return
         }
+        let capturedEpoch = event.capturedAt.boundedUnixEpochSecond.map(String.init) ?? "invalid"
         let id =
-            "com.claudemeter.attention.\(event.accountKey).\(event.sessionId ?? "?").\(event.kind.rawValue).\(Int(event.capturedAt.timeIntervalSince1970))"
+            "com.claudemeter.attention.\(event.accountKey).\(event.sessionId ?? "?").\(event.kind.rawValue).\(capturedEpoch)"
         // Default sound → macOS plays the user's chosen per-app notification sound
         // and respects Focus/Do-Not-Disturb. (Quota notifications stay silent.)
         let userInfo =
             event.terminalRoute.map {
                 AttentionNotificationRoute(route: $0, cwd: event.cwd).userInfo
             } ?? [:]
-        _ = await post(
+        let delivered = await post(
             id: id, title: title, body: body, sound: .default, userInfo: userInfo)
+        if let delivered {
+            await retractIfInvalid(
+                id: delivered, expectedRevision: revision, revisionGate: attentionRevision)
+        }
     }
 
     // MARK: - Processing
+
+    /// Captures the quota-observation revision before a caller enqueues actor work.
+    /// A setting or selected-meter change can then invalidate queued work before
+    /// this actor starts it.
+    nonisolated func quotaLease() -> Int {
+        observationRevision.current()
+    }
 
     func process(
         reading: MainMeterReading,
         previous: MainMeterReading?,
         recoveryBaseline: MainMeterReading?,
-        isStale: Bool
+        isStale: Bool,
+        expectedRevision revision: Int
     ) async {
-        guard !isStale, isEnabled(), await isAuthorized() else {
+        guard observationRevision.current() == revision, !Task.isCancelled else { return }
+        if predictiveTrackerRevision != revision {
+            predictiveTracker.reset()
+            predictiveTrackerRevision = revision
+        }
+        guard !isStale, isEnabled(), await isAuthorized()
+        else {
             predictiveTracker.reset()
             return
         }
+        guard observationRevision.current() == revision, !Task.isCancelled else { return }
 
         let now = Date()
         pruneExpiredKeys()
-        let thresholds = AppGroupConfig.currentThresholds(defaults: defaults)
+        let thresholds = AppGroupConfig.currentThresholds(shared: nil, defaults: defaults)
         let pending = NotificationPolicy.triggers(
             reading: reading,
             previous: previous,
@@ -105,9 +262,15 @@ actor NotificationEngine {
         )
 
         for trigger in pending {
-            await deliver(trigger: trigger, reading: reading, now: now)
+            guard observationRevision.current() == revision, !Task.isCancelled else { return }
+            await deliver(
+                trigger: trigger,
+                reading: reading,
+                now: now,
+                expectedRevision: revision)
         }
 
+        guard observationRevision.current() == revision, !Task.isCancelled else { return }
         if defaults.bool(forKey: AppSettings.predictiveNotificationsEnabledKey) {
             let predictive = predictiveTracker.observe(
                 snapshot: predictiveSnapshot(for: reading),
@@ -115,7 +278,11 @@ actor NotificationEngine {
                 now: now
             )
             for trigger in predictive {
-                await deliverPredictive(trigger: trigger, reading: reading)
+                guard observationRevision.current() == revision, !Task.isCancelled else { return }
+                await deliverPredictive(
+                    trigger: trigger,
+                    reading: reading,
+                    expectedRevision: revision)
             }
         } else {
             predictiveTracker.reset()
@@ -124,7 +291,13 @@ actor NotificationEngine {
 
     // MARK: - Delivery
 
-    private func deliver(trigger: NotificationTrigger, reading: MainMeterReading, now: Date) async {
+    private func deliver(
+        trigger: NotificationTrigger,
+        reading: MainMeterReading,
+        now: Date,
+        expectedRevision: Int
+    ) async {
+        guard observationRevision.current() == expectedRevision, !Task.isCancelled else { return }
         guard let scope = trigger.typedScope, let level = trigger.typedLevel else { return }
         let window = reading.limits.window(for: scope) ?? LimitWindow()
         let left = leftText(window, now: now)
@@ -137,12 +310,12 @@ actor NotificationEngine {
 
         if level == .recovered {
             guard !hasFired(key: key, legacyKey: legacyKey) else { return }
-            let delivered = await post(
-                id: key,
+            await postQuota(
+                key: key,
                 title: "You're refueled! 🎉",
-                body: "\(account)'s \(energy) is back to \(left). Go get 'em."
+                body: "\(account)'s \(energy) is back to \(left). Go get 'em.",
+                expectedRevision: expectedRevision
             )
-            if delivered { markFired(key: key) }
             return
         }
 
@@ -151,12 +324,12 @@ actor NotificationEngine {
 
         if level == .critical {
             guard !hasFired(key: key, legacyKey: legacyKey) else { return }
-            let delivered = await post(
-                id: key,
+            await postQuota(
+                key: key,
                 title: "Almost tapped out 🪫",
-                body: "\(account)'s \(energy) is at \(left) — \(refuel). Easy now."
+                body: "\(account)'s \(energy) is at \(left) — \(refuel). Easy now.",
+                expectedRevision: expectedRevision
             )
-            if delivered { markFired(key: key) }
         } else if level == .warning {
             let criticalKey = notificationKey(
                 reading: reading, scope: scope, level: .critical, resetAt: trigger.resetAt)
@@ -165,19 +338,21 @@ actor NotificationEngine {
             guard !hasFired(key: key, legacyKey: legacyKey),
                 !hasFired(key: criticalKey, legacyKey: legacyCriticalKey)
             else { return }
-            let delivered = await post(
-                id: key,
+            await postQuota(
+                key: key,
                 title: "Running low ⚡",
-                body: "\(account)'s \(energy) is at \(left) — \(refuel). Maybe touch grass? 🌱"
+                body: "\(account)'s \(energy) is at \(left) — \(refuel). Maybe touch grass? 🌱",
+                expectedRevision: expectedRevision
             )
-            if delivered { markFired(key: key) }
         }
     }
 
     private func deliverPredictive(
         trigger: PredictiveNotificationTrigger,
-        reading: MainMeterReading
+        reading: MainMeterReading,
+        expectedRevision: Int
     ) async {
+        guard observationRevision.current() == expectedRevision, !Task.isCancelled else { return }
         guard let scope = trigger.typedScope else { return }
         let key = trigger.dedupKey
         let legacyKey: String? =
@@ -194,20 +369,32 @@ actor NotificationEngine {
         let estimate =
             RunsOutPhrase.spoken(.runsOut(seconds: trigger.secondsUntilDepleted))?
             .lowercased() ?? "may run out soon"
-        let delivered = await post(
-            id: key,
+        await postQuota(
+            key: key,
             title: "Running hot ⚡",
             body:
-                "At this pace, \(reading.accountLabel)'s \(energy) \(estimate), before it refills."
+                "At this pace, \(reading.accountLabel)'s \(energy) \(estimate), before it refills.",
+            expectedRevision: expectedRevision
         )
-        if delivered { markFired(key: key) }
     }
 
     /// Breaks the predictive tracker's "consecutive fresh polls" chain when a poll
     /// throws, times out, or comes back fatal — those polls never reach `process`,
     /// and without this the streak would survive arbitrary outage gaps.
-    func pollFailed() {
-        predictiveTracker.reset()
+    nonisolated func pollFailed() {
+        observationRevision.invalidate()
+    }
+
+    /// Invalidates quota and update alerts that are suspended in Notification
+    /// Center calls after a notification setting changes.
+    nonisolated func notificationSettingsChanged() {
+        observationRevision.invalidate()
+        updateRevision.invalidate()
+    }
+
+    /// Invalidates an attention alert that is suspended in authorization or add.
+    nonisolated func attentionSettingsChanged() {
+        attentionRevision.invalidate()
     }
 
     /// Energy-left ("9%") for a window, the inverse of usage.
@@ -260,7 +447,7 @@ actor NotificationEngine {
 
     private func predictiveSnapshot(for reading: MainMeterReading) -> ClaudeUsageSnapshot {
         let identity = notificationNamespace(reading)
-        let thresholds = AppGroupConfig.currentThresholds(defaults: defaults)
+        let thresholds = AppGroupConfig.currentThresholds(shared: nil, defaults: defaults)
         let severity = reading.severity(thresholds: thresholds)
         return ClaudeUsageSnapshot(
             parserVersion: "main-meter-1",
@@ -285,19 +472,59 @@ actor NotificationEngine {
     private func post(
         id: String, title: String, body: String, sound: UNNotificationSound? = nil,
         userInfo: [AnyHashable: Any] = [:]
-    ) async -> Bool {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        content.sound = sound
-        content.userInfo = userInfo
-        let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
+    ) async -> String? {
+        // Retraction belongs to one delivery attempt. Reusing the dedup key here
+        // would let a late invalidated add remove a newer valid notification.
+        let requestID = "\(id).\(UUID().uuidString)"
+        let request = NotificationDeliveryRequest(
+            identifier: requestID,
+            title: title,
+            body: body,
+            playsDefaultSound: sound != nil,
+            userInfo: userInfo)
         do {
-            try await center.add(request)
-            return true
+            try await delivery.add(request)
+            return requestID
         } catch {
-            return false
+            return nil
         }
+    }
+
+    private func postQuota(
+        key: String, title: String, body: String, expectedRevision: Int
+    ) async {
+        let attempt = QuotaDelivery(key: key, revision: expectedRevision)
+        guard quotaDeliveriesInFlight.insert(attempt).inserted else { return }
+        defer { quotaDeliveriesInFlight.remove(attempt) }
+        guard let requestID = await post(id: key, title: title, body: body) else { return }
+        await commitFiredOrRetract(
+            key: key, requestID: requestID, expectedRevision: expectedRevision)
+    }
+
+    private func commitFiredOrRetract(
+        key: String, requestID: String, expectedRevision: Int
+    ) async {
+        let committed =
+            !Task.isCancelled
+            && observationRevision.performIfCurrent(expectedRevision) {
+                markFired(key: key)
+            }
+        guard !committed else { return }
+        await delivery.removePendingRequests(withIdentifiers: [requestID])
+        await delivery.removeDeliveredNotifications(withIdentifiers: [requestID])
+    }
+
+    private func retractIfInvalid(
+        id: String,
+        expectedRevision: Int,
+        revisionGate: NotificationObservationRevision
+    ) async {
+        let remainsValid =
+            !Task.isCancelled
+            && revisionGate.performIfCurrent(expectedRevision) {}
+        guard !remainsValid else { return }
+        await delivery.removePendingRequests(withIdentifiers: [id])
+        await delivery.removeDeliveredNotifications(withIdentifiers: [id])
     }
 
     // MARK: - Deduplication
@@ -339,8 +566,8 @@ actor NotificationEngine {
     // MARK: - Helpers
 
     private func isAuthorized() async -> Bool {
-        let status = await center.notificationSettings().authorizationStatus
-        return status == .authorized || status == .provisional
+        let state = await delivery.authorizationState()
+        return state == .authorized || state == .provisional
     }
 
     private func resetDescription(_ date: Date) -> String {

@@ -5,6 +5,94 @@ import Testing
 
 @Suite("Memory-pressure cache trimming")
 struct MemoryPressureCacheTests {
+    @Test("Cost cache evicts the least-recently-used entry at its fixed cap")
+    func costCacheLRU() {
+        let cache = CostUsageCache()
+        let modDate = Date(timeIntervalSince1970: 100)
+        let scan = CostUsageScanner.FileScan(isPartial: false, records: [])
+        for index in 0..<CostUsageCache.maxEntries {
+            cache.store(
+                file: "/tmp/cost-\(index)",
+                modDate: modDate,
+                fileSize: 0,
+                timeZoneIdentifier: "UTC",
+                scan: scan)
+        }
+        _ = cache.lookup(
+            path: "/tmp/cost-0",
+            modDate: modDate,
+            fileSize: 0,
+            timeZoneIdentifier: "UTC")
+        cache.store(
+            file: "/tmp/cost-new",
+            modDate: modDate,
+            fileSize: 0,
+            timeZoneIdentifier: "UTC",
+            scan: scan)
+
+        #expect(cache.entryCount == CostUsageCache.maxEntries)
+        guard
+            case .exact = cache.lookup(
+                path: "/tmp/cost-0",
+                modDate: modDate,
+                fileSize: 0,
+                timeZoneIdentifier: "UTC")
+        else {
+            Issue.record("A recently touched cost entry was evicted")
+            return
+        }
+        guard
+            case .miss = cache.lookup(
+                path: "/tmp/cost-1",
+                modDate: modDate,
+                fileSize: 0,
+                timeZoneIdentifier: "UTC")
+        else {
+            Issue.record("The least-recently-used cost entry was retained")
+            return
+        }
+    }
+
+    @Test("Activity cache evicts the least-recently-used entry at its fixed cap")
+    func activityCacheLRU() {
+        let cache = ActivityCache()
+        let modDate = Date(timeIntervalSince1970: 100)
+        let scan = ActivityCache.FileScan(buckets: [:], isPartial: false)
+        for index in 0..<ActivityCache.maxEntries {
+            cache.store(
+                path: "/tmp/activity-\(index)",
+                modDate: modDate,
+                fileSize: 0,
+                timeZoneIdentifier: "UTC",
+                scan: scan)
+        }
+        _ = cache.cached(
+            path: "/tmp/activity-0",
+            modDate: modDate,
+            fileSize: 0,
+            timeZoneIdentifier: "UTC")
+        cache.store(
+            path: "/tmp/activity-new",
+            modDate: modDate,
+            fileSize: 0,
+            timeZoneIdentifier: "UTC",
+            scan: scan)
+
+        #expect(cache.entryCount == ActivityCache.maxEntries)
+        #expect(
+            cache.cached(
+                path: "/tmp/activity-0",
+                modDate: modDate,
+                fileSize: 0,
+                timeZoneIdentifier: "UTC") != nil)
+        #expect(
+            cache.cached(
+                path: "/tmp/activity-1",
+                modDate: modDate,
+                fileSize: 0,
+                timeZoneIdentifier: "UTC") == nil)
+    }
+
     @Test("Cost cache drops memory without deleting its persisted checkpoint")
     func costCacheTrim() throws {
         let root = FileManager.default.temporaryDirectory
@@ -19,8 +107,7 @@ struct MemoryPressureCacheTests {
             file: "/tmp/session.jsonl",
             modDate: modDate,
             fileSize: 10,
-            scan: CostUsageScanner.FileScan(
-                committed: [:], pendingStart: 10, isPartial: false, value: [:]))
+            scan: CostUsageScanner.FileScan(isPartial: false, records: []))
         cache.flush()
         guard
             case .exact = cache.lookup(

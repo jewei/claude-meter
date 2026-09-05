@@ -147,8 +147,7 @@ extension LimitWindow {
 
     /// Ring/bar fill fraction for the chosen progression: usage *fills*, energy-left *depletes*.
     func displayFraction(usage: Bool, asOf now: Date) -> Double {
-        guard let used = resolved(asOf: now).percentUsed else { return 0 }
-        let clamped = min(100, max(0, used))
+        guard let clamped = resolved(asOf: now).clampedPercent else { return 0 }
         return (usage ? clamped : 100 - clamped) / 100
     }
 
@@ -223,6 +222,8 @@ struct RaisedTile<Content: View>: View {
 /// Duolingo's signature raised button: solid fill over a solid colored shadow
 /// plate that compresses on press.
 struct RaisedButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var fill: Color = .pfEnergyFull
     var shadow: Color = .pfEnergyFullShadow
     var radius: CGFloat = 14
@@ -247,7 +248,9 @@ struct RaisedButtonStyle: ButtonStyle {
                     .fill(shadow)
                     .offset(y: pressed ? 2 : 4)
             )
-            .animation(.spring(response: 0.2, dampingFraction: 0.6), value: pressed)
+            .animation(
+                reduceMotion ? nil : .spring(response: 0.2, dampingFraction: 0.6),
+                value: pressed)
     }
 }
 

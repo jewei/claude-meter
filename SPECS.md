@@ -58,14 +58,20 @@ The active pipeline is assembled bottom-up from enabled sources:
 2. `OAuthPipeline`
 3. `CachedSnapshotPipeline` terminal fallback
 
+The assembled chain is enclosed by `DisabledClaudeAccountFilteringPipeline`. Thus,
+disabled accounts cannot return from a cached result when the statusline source is off.
+
 The statusline tier wins while it has fresh bridge data. If unavailable or stale, OAuth
 may run. Every failed tier records a sanitized `SourceAttempt`; fallback does not erase
 the reason. Cached data is marked stale and preserves its original successful-fetch time.
+Source tiers return data only. After the full poll is assembled, `AppState` writes the
+snapshot if that poll generation is still current.
 
 Polling normally runs every 60 seconds. It doubles on battery, parks while the display is
 asleep, refreshes immediately after wake or network reconnection, and times out a wedged
 cycle. Opening the popover requests an interactive refresh. Source-setting rebuilds are
-debounced and do not restart an active poll loop.
+debounced and do not restart an active poll loop. Statusline/hook reconciliation permits
+one active operation and one coalesced rerun.
 
 ### 3.1 Statusline bridge
 
@@ -88,7 +94,9 @@ idle open session rewrites once per second.
 
 The API fallback cooldown is 120 seconds. Interactive popover refresh can bypass this
 cooldown, while background polling remains below the 180-second stale threshold. OAuth
-429 backoff is never bypassed.
+429 backoff is never bypassed. An expired fresh statusline window resolves to 0% for
+presentation but retains its raw reset boundary. A same-account OAuth observation fetched
+after that boundary can replace the inferred zero.
 
 ### 3.2 OAuth
 
@@ -98,11 +106,27 @@ OAuth is used only when mode is `auto` or `manual`.
   user explicitly confirms Connect. Settings preflight is attributes-only.
 - Manual mode stores an app-owned Keychain item and reports save/delete failures.
 - Refreshed tokens are cached in memory. Claude Code's Keychain item is never rewritten.
+- Automatic credentials retain the exact Keychain service through refresh and cache reuse.
+  OAuth details supplement a statusline account only when that service maps to the same
+  config account. An unscoped manual token does not establish that match. Direct automatic
+  OAuth uses its mapped config identity; an unmapped login keeps a separate account key.
+- Concurrent refreshes share one request. A bounded handoff retains the result for late
+  callers that selected the same one-use token before it was rotated. Credential-generation
+  keys prevent a replacement login from using an older result.
 - Refresh failure clears the corresponding in-memory credential cache.
+- Disconnect revokes the current credential generation before an in-flight refresh can
+  restore cache or manual Keychain state. A disabled source cancels and rejects an
+  in-flight connection result; verification never turns the source back on.
 - All usage and refresh requests use the shared cookie-less transport with same-origin
   HTTPS redirect enforcement.
-- The process-wide 429 gate is shared by polling, verification, and enrichment and honors
-  positive `Retry-After` delta or HTTP-date values.
+- The process-wide 429 gate is shared by polling, verification, and enrichment. It honors
+  positive `Retry-After` delta or HTTP-date values up to a 24-hour safety maximum. This
+  maximum prevents an invalid server value from disabling OAuth for the life of the app.
+  App startup restores one provider-wide deadline from standard defaults. The record
+  contains no credentials, survives restarts, and is never extended by loading it.
+  Invalid/expired records and clock changes that imply more than 24 hours remaining
+  are rejected. Storage failure preserves the in-memory block. Test app initializers
+  do not install persistence. Interactive refresh and account changes never bypass it.
 
 The usage response maps `five_hour`, `seven_day`, `seven_day_opus`, dynamic scoped weekly
 limits, `extra_usage`, and plan metadata. Flat scoped fields win over equivalent entries
@@ -120,18 +144,28 @@ OAuth details stale in the popover, and records its typed reason in Diagnostics.
 
 Multi-account OAuth runs only in auto mode and never refreshes secondary-account tokens.
 It reads each config directory's namespaced credential plus local account identity, fetches
-at most every five minutes, and merges fill-only-missing account data. Each reading keeps
-its actual fetch timestamp. Failures remain per-account state instead of masquerading as
-fresh absence. The active account keeps the single-slot refresh path.
+at most every five minutes, and normally merges fill-only-missing account data. It can
+replace an expired statusline window only with a same-account observation fetched after
+that reset. Each reading keeps its actual fetch timestamp. Failures remain per-account
+state instead of masquerading as fresh absence. A retained last-good account reading
+clears a rolling window after that window resets because post-reset use is unknown. If an
+accounts-nil default snapshot gains a secondary OAuth account, the merge first materializes
+the default account and keeps it active. The account that matches the selected automatic
+credential keeps the single-slot refresh path. When it is active, the direct/single-slot
+and per-account requests are complete observations of plan, Opus, scoped limits, and extra
+usage. The newest observation replaces that bundle in both the top-level and account
+records, including nil fields; an equal
+timestamp favors the per-account request because it runs later in the poll.
 
 ### 3.3 Snapshot and staleness
 
-The App Group suite is `group.com.jewei.claudemeter`. `SnapshotStore` atomically writes Claude's `current.json`, the selected provider's
-normalized `main-meter.json`, and sanitized last-error data. Provider/account/source
-changes bump a mirrored selection revision; the widget rejects a file from an older
-revision or a mismatched provider/exact pin. App startup migrates a legacy Application
-Support snapshot into the App Group when needed. The widget never falls back outside the
-App Group.
+The App Group suite is `group.com.jewei.claudemeter`. `AppState` is the only poll-time
+writer. It uses `SnapshotStore` to atomically write Claude's `current.json`, the selected
+provider's normalized `main-meter.json`, and sanitized last-error data after optional
+enrichment and a final generation check. Provider/account/source changes bump a mirrored
+selection revision; the widget rejects a file from an older revision or a mismatched
+provider/exact pin. App startup migrates a legacy Application Support snapshot into the App
+Group when needed. The widget never falls back outside the App Group.
 
 `lastSuccessfulPollAt` changes only after a usable successful poll. Data is stale after
 180 seconds unless explicitly marked stale earlier. Claude notices use Claude staleness;
@@ -152,15 +186,26 @@ workflow journals are excluded. One unreadable root or file marks the result par
 does not erase readable data.
 
 Cost scans assistant usage chunks for the last seven days. Within each file, chunks with
-the same message/request identity are combined globally by maximum token fields. Cache
-creation tier breakdown wins over the legacy total; legacy-only writes count as 5-minute
-cache writes. Large files are tail-read and reported partial. Incremental reuse is allowed
-only when file identity/prefix continuity proves an append; incomplete trailing lines are
-revisited after append. Model output is deterministically ordered.
+the same message/request identity are combined globally by maximum token fields. Complete
+message/request pairs are also reconciled across files within each canonical account root,
+so copied history counts once while unique continuations count separately. Missing IDs
+remain separate across files. Accounts remain additive, even with matching request IDs.
+Cache creation tier breakdown wins over the legacy total across both chunks and files;
+legacy-only writes count as 5-minute cache writes. Paths use stable order when duplicate
+metadata differs. Large files are tail-read and reported partial. Every changed file is
+reparsed; growth alone cannot prove an append. Model output is deterministically ordered.
+
+The version-5 cost cache retains request records as compact tuples instead of day/model
+totals. Older versions are rebuilt. Parsing accepts at most 20,000 records and 8 MiB of accounted record
+storage per file. Reconciliation accepts at most 100,000 records and 32 MiB per root.
+Limits produce explicit partial estimates. The LRU cache retains at most 2,048 files and
+32 MiB of accounted record storage, including path/record overhead. These accounting
+bounds do not measure the allocator's total memory use.
 
 Activity is loaded on demand from the cost card. It reports a 7×24 local-time grid over the
 last 30 days, Monday at index zero, deduping message identity within each file. Its total is
-derived from the normalized grid. Cache identity includes timezone.
+derived from the normalized grid. Both scanner caches include the local time zone in file
+identity, so travel cannot reuse buckets from the prior zone.
 
 Both scanners use bounded, constant-time LRU caches. Cost cache is persisted and
 rate-limited; activity cache is in memory only. On macOS memory-pressure warnings, the
@@ -173,12 +218,23 @@ files touched by later scans instead of immediately reloading the whole disk cac
 ### 5.1 Cursor
 
 Cursor is opt-in. Credentials are detected from Cursor's local state database with a
-Keychain fallback through the fail-closed gateway. Detection is memoized by database file
-identity. Access/refresh caches are bound to the detected account credential identity and
-are cleared immediately on account rotation. Refresh stays in memory. Cursor errors and
-staleness appear only on its popover/settings/diagnostics surfaces.
+Keychain fallback through the fail-closed gateway. Detection is memoized by the database,
+write-ahead-log, and shared-memory identities at both alias and resolved paths. The SHM key
+includes both 48-byte WAL-index headers, and the complete identity must stay stable across
+the SQLite read. A short regular SHM permits uncached SQLite recovery; a special sidecar is
+rejected. A result that uses a Keychain fallback is not memoized because Keychain changes
+have no file identity.
+Access/refresh caches are bound to the detected account credential identity and are cleared
+immediately on account rotation. Refresh stays in memory. A bounded,
+source-generation-keyed handoff lets late callers reuse one completed token rotation but
+does not cross a detected credential replacement. Cursor errors and staleness appear only
+on its popover/settings/diagnostics surfaces.
 
 ### 5.2 Codex
+
+Malformed optional credit, reset, or plan metadata does not discard valid quota windows.
+Unusable metadata stays unknown. A valid reset count remains available when optional
+detail rows cannot be decoded. Direct OAuth quota decoding remains strict.
 
 Codex is opt-in and supports one implicit `CODEX_HOME` plus explicitly configured homes.
 Each home has its own subprocess/provider state and display name. Provider subprocesses
@@ -191,7 +247,8 @@ both the app-server and direct-OAuth reasons for diagnostics.
 Last-good readings are persisted per resolved Codex home, without account email, and are
 restored on launch. A failed refresh retains that reading and records the attempt error/time
 separately from the last-success time; observation staleness remains age-based. Healthy
-accounts continue updating when another account fails. Main-meter normalization classifies
+accounts continue updating when another account fails. Accounts run in batches of three,
+but all batches share one 60-second provider deadline. Main-meter normalization classifies
 windows by reported duration (up to 24 hours is short/session; longer is weekly), falling back
 to primary/secondary position only when duration is absent.
 
@@ -240,6 +297,11 @@ and falls back to percentage-only when projection is unavailable. A single-windo
 intentionally differ from the all-window dot. Selecting a provider
 or account with no reading produces an explicit unavailable/error state, never fallback.
 
+The menu-bar item exposes one spoken accessibility summary. It names the selected
+provider, quota window, percentage used/left, and overall severity separately. Paused,
+stale, loading, and unavailable states use explicit words; stale and paused summaries
+omit the percentage. Forecast speech uses `RunsOutPhrase.spoken`.
+
 The popover is 360 points wide with a screen-derived scrolling height. Header controls are
 Settings and Quit; opening performs refresh, so there is no redundant refresh button.
 The selected provider owns the hero and first account section. An exact account pin wins;
@@ -254,9 +316,10 @@ The header timestamp belongs only to the selected reading. The last-seven-days c
 opens the activity heatmap. There is no footer or Add Account button.
 
 First-run onboarding pauses polling and directs the user to Settings. Existing users skip
-onboarding when a snapshot, attributes-only OAuth credential presence, Cursor state, an
-enabled Codex home with `auth.json`/`config.toml`, or the Claude Meter data directory exists.
-Rendering onboarding never reads credential contents or secret Keychain data.
+onboarding when a snapshot exists, an attributes-only OAuth lookup finds a credential, Cursor
+state exists, an enabled Codex home has `auth.json`/`config.toml`, or the Claude Meter data
+directory exists. A temporarily unavailable Keychain is not credential evidence. Rendering
+onboarding never reads credential contents or secret Keychain data.
 
 All rolling-window reset/refill copy uses Core `ResetPhrase`: minutes below one hour, hours
 below 48 hours, and days plus remaining whole hours from 48 hours, such as `6d 7h`. Zero
@@ -298,6 +361,12 @@ for the same account/scope/reset cycle and normal current severity. Small reset-
 is tolerated by the documented five-minute cycle bucket. Failed, stale, timed-out, or
 nonqualifying polls reset the qualification streak.
 
+Notification-setting changes invalidate a delivery that is still suspended in Notification
+Center. If the add completes after invalidation, the app retracts the pending or delivered
+alert. Each delivery attempt has a distinct Notification Center identifier, so cleanup
+cannot remove a newer valid alert. Persisted dedup keeps the stable provider, account,
+scope, level, and reset-cycle key. Attention settings use a separate revision from quota polling.
+
 Attention hooks support main-agent `Stop`, permission `Notification`, and limit/billing
 `StopFailure`. Subagent `Stop` is consumed without notifying. Hook installation is
 idempotent and pass-through. Click routing activates the app first, then best-effort focuses
@@ -316,9 +385,13 @@ color helpers intentionally remain target-local.
 ## 10. Networking, Keychain, and diagnostics
 
 Every provider request uses `ProviderHTTPClient.shared` or an injected `HTTPTransport`.
-The production session is ephemeral, cookie-less, ten-second timeout, and refuses redirects
-that change HTTPS origin. Transient retry applies only to idempotent methods and bounded,
-finite delays; OAuth handles 429 separately.
+The production session is ephemeral and cookie-less. It has a ten-second idle timeout, an
+eight-MiB response cap, and a 30-second hard deadline for the complete send, including retry
+waits. A chunk receiver rejects an oversized declared `Content-Length` before body receipt
+and cancels a streamed response when it crosses the cap. A dedicated timeout-task budget
+bounds cancellation-ignoring work. The session refuses redirects that change HTTPS origin.
+Transient retry applies only to idempotent methods and bounded, finite delays; OAuth handles
+429 separately.
 
 All Security.framework calls pass through `KeychainGateway`, which disables interaction and
 fails closed in test processes unless live Keychain testing is explicitly enabled. Candidate

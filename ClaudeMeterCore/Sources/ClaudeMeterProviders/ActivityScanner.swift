@@ -23,14 +23,29 @@ public struct ActivityHeatmap: Sendable, Equatable {
     /// directly, and this initializer is public — enforcing the shape here means a
     /// malformed grid can't crash the popover.
     public init(counts: [[Int]], total _: Int, isPartial: Bool, daysCovered: Int) {
+        var normalizedPartial = isPartial
         let normalizedCounts = (0..<7).map { day in
             let row = day < counts.count ? counts[day] : []
-            return (0..<24).map { hour in hour < row.count ? row[hour] : 0 }
+            return (0..<24).map { hour in
+                let value = hour < row.count ? row[hour] : 0
+                if value < 0 { normalizedPartial = true }
+                return max(0, value)
+            }
+        }
+        var normalizedTotal = 0
+        for value in normalizedCounts.lazy.flatMap({ $0 }) where normalizedTotal < Int.max {
+            let (sum, overflow) = normalizedTotal.addingReportingOverflow(value)
+            if overflow {
+                normalizedTotal = Int.max
+                normalizedPartial = true
+            } else {
+                normalizedTotal = sum
+            }
         }
         self.counts = normalizedCounts
-        self.total = normalizedCounts.lazy.flatMap { $0 }.reduce(0, +)
-        self.isPartial = isPartial
-        self.daysCovered = daysCovered
+        self.total = normalizedTotal
+        self.isPartial = normalizedPartial
+        self.daysCovered = max(0, daysCovered)
     }
 
     public static let empty = ActivityHeatmap(
@@ -101,18 +116,29 @@ public struct ActivityScanner: Sendable {
         total: inout Int,
         isPartial: inout Bool
     ) {
-        guard
-            let projectDirs = try? fm.contentsOfDirectory(
+        let projectDirs: [URL]
+        do {
+            projectDirs = try fm.contentsOfDirectory(
                 at: projectsPath, includingPropertiesForKeys: nil,
                 options: [.skipsHiddenFiles])
-        else { return }
+        } catch {
+            if !JournalReader.isMissingPath(projectsPath, fm: fm) {
+                isPartial = true
+            }
+            return
+        }
 
         for projectDir in projectDirs {
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: projectDir.path, isDirectory: &isDir), isDir.boolValue
-            else { continue }
+            do {
+                guard try JournalReader.isDirectory(projectDir, fm: fm) else { continue }
+            } catch {
+                isPartial = true
+                continue
+            }
 
-            for file in JournalReader.transcriptFiles(inProjectDir: projectDir, fm: fm) {
+            let discovery = JournalReader.transcriptFiles(inProjectDir: projectDir, fm: fm)
+            if discovery.isPartial { isPartial = true }
+            for file in discovery.files {
                 if Task.isCancelled {
                     isPartial = true
                     return
@@ -120,23 +146,43 @@ public struct ActivityScanner: Sendable {
                 // Drain per-file transients (multi-MB Data/String reads) so peak
                 // memory stays ~one file rather than scaling with the file count.
                 autoreleasepool {
-                    guard let attrs = try? fm.attributesOfItem(atPath: file.path),
-                        let modDate = attrs[.modificationDate] as? Date,
-                        modDate >= cutoff
-                    else { return }
-                    let fileSize = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
+                    let metadata: JournalReader.TranscriptMetadata
+                    do {
+                        guard
+                            let value = try JournalReader.regularTranscriptMetadata(
+                                at: file, fm: fm)
+                        else {
+                            isPartial = true
+                            return
+                        }
+                        metadata = value
+                    } catch {
+                        isPartial = true
+                        return
+                    }
+                    guard metadata.modificationDate >= cutoff else { return }
 
                     let scan: ActivityCache.FileScan
                     if let hit = cache.cached(
-                        path: file.path, modDate: modDate, fileSize: fileSize,
+                        path: file.path,
+                        modDate: metadata.modificationDate,
+                        fileSize: metadata.fileSize,
                         timeZoneIdentifier: cal.timeZone.identifier)
                     {
                         scan = hit
                     } else {
-                        scan = parseFile(file, fileSize: fileSize, cal: cal)
-                        cache.store(
-                            path: file.path, modDate: modDate, fileSize: fileSize,
-                            timeZoneIdentifier: cal.timeZone.identifier, scan: scan)
+                        let parse = parseFile(file, cal: cal)
+                        scan = parse.scan
+                        // A transient open/read failure must be retried even when
+                        // mtime and size do not change. A successful tail read is a
+                        // valid partial estimate and remains cacheable.
+                        if parse.isCacheable {
+                            cache.store(
+                                path: file.path,
+                                modDate: metadata.modificationDate,
+                                fileSize: metadata.fileSize,
+                                timeZoneIdentifier: cal.timeZone.identifier, scan: scan)
+                        }
                     }
                     if scan.isPartial { isPartial = true }
                     for (bucket, count) in scan.buckets where bucket.day >= cutoffDay {
@@ -152,29 +198,32 @@ public struct ActivityScanner: Sendable {
     /// Parses one transcript into per-(day, weekday, hour) message counts,
     /// **unfiltered** by window — filtering happens at read time so one cached
     /// entry serves any `daysBack`.
-    private func parseFile(
-        _ file: URL, fileSize: UInt64, cal: Calendar
-    ) -> ActivityCache.FileScan {
-        guard let handle = try? FileHandle(forReadingFrom: file) else {
-            return ActivityCache.FileScan(buckets: [:], isPartial: true)
-        }
-        defer { try? handle.close() }
+    private struct FileParse: Sendable {
+        let scan: ActivityCache.FileScan
+        let isCacheable: Bool
+    }
 
-        let tailRead = fileSize > Self.maxFullReadBytes
-        let readFrom: UInt64 =
-            tailRead ? (fileSize > Self.tailReadBytes ? fileSize - Self.tailReadBytes : 0) : 0
-        if readFrom > 0 { try? handle.seek(toOffset: readFrom) }
-        guard let data = try? handle.readToEnd() else {
-            return ActivityCache.FileScan(buckets: [:], isPartial: true)
+    private func parseFile(_ file: URL, cal: Calendar) -> FileParse {
+        guard
+            let read = JournalReader.readRegularTranscript(
+                at: file,
+                maxFullReadBytes: Self.maxFullReadBytes,
+                tailReadBytes: Self.tailReadBytes)
+        else {
+            return FileParse(
+                scan: ActivityCache.FileScan(buckets: [:], isPartial: true),
+                isCacheable: false)
         }
-        guard !data.isEmpty else {
-            return ActivityCache.FileScan(buckets: [:], isPartial: tailRead)
+        guard !read.data.isEmpty else {
+            return FileParse(
+                scan: ActivityCache.FileScan(buckets: [:], isPartial: read.isPartial),
+                isCacheable: true)
         }
 
-        let text = String(decoding: data, as: UTF8.self)
+        let text = String(decoding: read.data, as: UTF8.self)
         let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
         // A tail read may start mid-line; drop the first partial line.
-        let body = readFrom > 0 ? lines.dropFirst() : lines.dropFirst(0)
+        let body = read.baseOffset > 0 ? lines.dropFirst() : lines.dropFirst(0)
 
         // Dedup streaming chunks by message id within this file: each distinct
         // message counts once, at its timestamp's local weekday/hour.
@@ -200,7 +249,9 @@ public struct ActivityScanner: Sendable {
                 hour: cal.component(.hour, from: date))
             buckets[bucket, default: 0] += 1
         }
-        return ActivityCache.FileScan(buckets: buckets, isPartial: tailRead)
+        return FileParse(
+            scan: ActivityCache.FileScan(buckets: buckets, isPartial: read.isPartial),
+            isCacheable: true)
     }
 }
 
@@ -231,7 +282,6 @@ public final class ActivityCache: @unchecked Sendable {
         let fileSize: UInt64
         let timeZoneIdentifier: String
         let scan: FileScan
-        var lastAccess: UInt64
     }
 
     /// LRU cap, mirroring `CostUsageCache`. Entries hold a bucket dictionary for
@@ -241,23 +291,25 @@ public final class ActivityCache: @unchecked Sendable {
 
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
-    private var accessCounter: UInt64 = 0
+    private var recency = LRUKeyIndex<String>()
 
     public init() {}
+
+    var entryCount: Int {
+        lock.withLock { entries.count }
+    }
 
     func cached(
         path: String, modDate: Date, fileSize: UInt64, timeZoneIdentifier: String
     ) -> FileScan? {
         lock.lock()
         defer { lock.unlock() }
-        guard var entry = entries[path],
+        guard let entry = entries[path],
             entry.modDate == modDate,
             entry.fileSize == fileSize,
             entry.timeZoneIdentifier == timeZoneIdentifier
         else { return nil }
-        accessCounter &+= 1
-        entry.lastAccess = accessCounter
-        entries[path] = entry
+        recency.touch(path)
         return entry.scan
     }
 
@@ -267,13 +319,11 @@ public final class ActivityCache: @unchecked Sendable {
     ) {
         lock.lock()
         defer { lock.unlock() }
-        accessCounter &+= 1
         entries[path] = Entry(
             modDate: modDate, fileSize: fileSize, timeZoneIdentifier: timeZoneIdentifier,
-            scan: scan, lastAccess: accessCounter)
-        while entries.count > Self.maxEntries,
-            let oldest = entries.min(by: { $0.value.lastAccess < $1.value.lastAccess })?.key
-        {
+            scan: scan)
+        recency.touch(path)
+        while entries.count > Self.maxEntries, let oldest = recency.popLeastRecent() {
             entries.removeValue(forKey: oldest)
         }
     }
@@ -287,7 +337,7 @@ public final class ActivityCache: @unchecked Sendable {
         defer { lock.unlock() }
         let removed = entries.count
         entries.removeAll(keepingCapacity: false)
-        accessCounter = 0
+        recency.removeAll()
         return removed
     }
 }

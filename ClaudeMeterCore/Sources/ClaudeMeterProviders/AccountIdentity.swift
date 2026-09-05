@@ -25,6 +25,7 @@ public struct ClaudeAccountIdentity: Sendable, Equatable {
 }
 
 public enum AccountIdentityReader {
+    private static let maximumIdentityFileBytes = 4 * 1_024 * 1_024
 
     /// Where the identity metadata lives for a config dir (see type doc).
     public static func identityFilePath(configDir: URL, home: URL) -> URL {
@@ -41,7 +42,10 @@ public enum AccountIdentityReader {
         home: URL = FileManager.default.homeDirectoryForCurrentUser
     ) -> ClaudeAccountIdentity? {
         let url = identityFilePath(configDir: configDir, home: home)
-        guard let data = try? Data(contentsOf: url) else { return nil }
+        guard
+            let data = try? BoundedRegularFileReader.read(
+                at: url, maximumByteCount: maximumIdentityFileBytes)
+        else { return nil }
         return parse(data)
     }
 

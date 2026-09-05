@@ -195,7 +195,8 @@ public enum NotificationPolicy {
     }
 
     public static func dedupKey(scope: String, level: String, resetAt: Date) -> String {
-        "\(dedupKeyPrefix)\(scope).\(level).\(Int(resetAt.timeIntervalSince1970))"
+        let epoch = resetAt.boundedUnixEpochSecond.map(String.init) ?? "invalid"
+        return "\(dedupKeyPrefix)\(scope).\(level).\(epoch)"
     }
 
     public static func dedupKey(
@@ -206,7 +207,7 @@ public enum NotificationPolicy {
 
     /// Removes dedup keys whose reset epoch is in the past.
     public static func expiredDedupKeys(in keys: [String], now: Date = Date()) -> [String] {
-        let nowEpoch = Int(now.timeIntervalSince1970)
+        guard let nowEpoch = now.boundedUnixEpochSecond else { return [] }
         return keys.filter { key in
             guard key.hasPrefix(dedupKeyPrefix),
                 let epochToken = key.split(separator: ".").last,
@@ -248,7 +249,7 @@ public enum NotificationPolicy {
         if escalatedToCritical || escalatedToWarning {
             let resetAt: Date
             if let parsed = current.resetsAt {
-                guard parsed > now else { return [] }
+                guard parsed > now, parsed.boundedUnixEpochSecond != nil else { return [] }
                 resetAt = parsed
             } else {
                 resetAt = fallbackResetAnchor(now: now)
@@ -266,8 +267,10 @@ public enum NotificationPolicy {
         if currentSeverity == .normal && isElevated(rawRecoverySeverity) {
             // Anchor the dedup key on the window the user recovered *from* (its raw
             // reset), so distinct cycles don't collapse onto one day-anchor key.
-            let resetAt =
+            let candidate =
                 rawRecoveryPrevious?.resetsAt ?? current.resetsAt ?? fallbackResetAnchor(now: now)
+            let resetAt =
+                candidate.boundedUnixEpochSecond == nil ? fallbackResetAnchor(now: now) : candidate
             return [NotificationTrigger(scope: scope, level: .recovered, resetAt: resetAt)]
         }
 

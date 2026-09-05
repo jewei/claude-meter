@@ -43,6 +43,34 @@ struct ModelPricingCatalogTests {
         ])
         #expect(pricing.rate(forModel: "claude-opus-4-5-20251101").input == 5)
     }
+
+    @Test("Invalid rates and extreme token totals always produce a finite cost")
+    func invalidRateCannotProduceNonfiniteCost() {
+        let invalid = ModelPricing.Rate(
+            input: .infinity,
+            output: .nan,
+            cacheRead: 1e308,
+            cacheWrite: -1,
+            cacheWrite1h: 1e308)
+        let pricing = ModelPricing(
+            opus: invalid, sonnet: invalid, haiku: invalid, catalog: ["bad": invalid])
+        let cost = pricing.cost(
+            forModel: "bad",
+            usage: .init(
+                input: .max,
+                output: .max,
+                cacheRead: .max,
+                cacheWrite5m: .max,
+                cacheWrite1h: .max))
+
+        #expect(invalid.input == 0)
+        #expect(invalid.output == 0)
+        #expect(invalid.cacheRead == 0)
+        #expect(invalid.cacheWrite == 0)
+        #expect(invalid.resolvedCacheWrite1h == 0)
+        #expect(cost == 0)
+        #expect(cost.isFinite)
+    }
 }
 
 @Suite("ModelsDevPricing parsing")
@@ -56,6 +84,8 @@ struct ModelsDevPricingTests {
             "claude-haiku-4-5": {"cost": {"input": 1, "output": 5}},
             "claude-3-5-haiku": {"cost": {"input": 0.8, "output": 4}},
             "claude-3-opus": {"cost": {"input": 15, "output": 75}},
+            "huge-input": {"cost": {"input": 1e308, "output": 10}},
+            "huge-cache": {"cost": {"input": 2, "output": 10, "cache_read": 1e308, "cache_write": 1e308}},
             "free-model": {"cost": {"input": 0, "output": 0}}
           }}
         }
@@ -72,6 +102,9 @@ struct ModelsDevPricingTests {
         // the largest component of Claude Code cost.
         #expect(catalog["claude-haiku-4-5"]?.cacheRead == 0.1)
         #expect(catalog["claude-haiku-4-5"]?.cacheWrite == 1.25)
+        #expect(catalog["huge-input"] == nil)
+        #expect(catalog["huge-cache"]?.cacheRead == 0.2)
+        #expect(catalog["huge-cache"]?.cacheWrite == 2.5)
         // Zero-priced entries are dropped.
         #expect(catalog["free-model"] == nil)
     }
@@ -97,5 +130,34 @@ struct ModelsDevPricingTests {
         let merged = ModelsDevPricing.merge(new: new, old: old)
         #expect(merged["a"]?.input == 2)
         #expect(merged["gone"]?.input == 9)
+    }
+
+    @Test("Cached catalogs reject old extreme rates and future timestamps")
+    func validatesCachedCatalogs() throws {
+        let invalidJSON = """
+            {
+              "fetchedAt": 0,
+              "rates": {
+                "claude-opus-a": {"input": 1e308, "output": 25, "cacheRead": 0.5, "cacheWrite": 6.25},
+                "claude-opus-b": {"input": 5, "output": 25, "cacheRead": 0.5, "cacheWrite": 6.25},
+                "claude-sonnet-a": {"input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75},
+                "claude-sonnet-b": {"input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75},
+                "claude-haiku-a": {"input": 1, "output": 5, "cacheRead": 0.1, "cacheWrite": 1.25}
+              }
+            }
+            """
+        let invalid = try JSONDecoder().decode(
+            ModelsDevPricing.CachedCatalog.self, from: Data(invalidJSON.utf8))
+        let now = Date(timeIntervalSinceReferenceDate: 1_000)
+        #expect(
+            ModelsDevPricing.validatedCache(
+                invalid, now: now, requiresFresh: false) == nil)
+
+        let validRates = try #require(ModelsDevPricing.parseCatalog(from: Data(payload.utf8)))
+        let future = ModelsDevPricing.CachedCatalog(
+            fetchedAt: now.addingTimeInterval(1), rates: validRates)
+        #expect(
+            ModelsDevPricing.validatedCache(
+                future, now: now, requiresFresh: false) == nil)
     }
 }

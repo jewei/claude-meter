@@ -26,6 +26,15 @@ enum OAuthSetupState: Equatable {
     ) -> OAuthSetupState {
         oauthMode == "auto" ? .connectedAuto : .error(message)
     }
+
+    static func canApplyVerificationResult(
+        expectedGeneration: Int,
+        currentGeneration: Int,
+        sourceIsEnabled: Bool,
+        taskIsCancelled: Bool
+    ) -> Bool {
+        expectedGeneration == currentGeneration && sourceIsEnabled && !taskIsCancelled
+    }
 }
 
 struct OAuthConnectionSection: View {
@@ -42,6 +51,8 @@ struct OAuthConnectionSection: View {
     @State private var manualAccess = ""
     @State private var manualRefresh = ""
     @State private var testResult = ""
+    @State private var verificationGeneration = 0
+    @State private var verificationTask: Task<Void, Never>?
     @AppStorage("oauthKeychainConsentAcknowledged")
     private var keychainConsentAcknowledged = false
     @State private var showKeychainConsent = false
@@ -54,7 +65,11 @@ struct OAuthConnectionSection: View {
         }
         .onAppear { loadState() }
         .onChange(of: oauthSourceEnabled) { _, enabled in
-            if enabled { loadState() }
+            if enabled {
+                loadState()
+            } else {
+                cancelVerification()
+            }
         }
         .onChange(of: oauthMode) { _, _ in loadState() }
         .alert("Connect Claude Code?", isPresented: $showKeychainConsent) {
@@ -261,9 +276,14 @@ struct OAuthConnectionSection: View {
     }
 
     private func connectAutoDetected() {
+        let generation = beginVerification()
         state = .verifying
-        Task {
+        verificationTask = Task {
+            defer {
+                if verificationGeneration == generation { verificationTask = nil }
+            }
             let result = await Task.detached { OAuthKeychain.loadResult() }.value
+            guard verificationIsCurrent(generation) else { return }
             let credentials: OAuthCredentials
             switch result {
             case .found(let found):
@@ -281,13 +301,14 @@ struct OAuthConnectionSection: View {
             do {
                 let (session, week) = try await OAuthPipeline.verify(
                     credentials: credentials, oauthMode: "auto")
-                oauthSourceEnabled = true
+                guard verificationIsCurrent(generation) else { return }
                 oauthMode = "auto"
                 testResult = "Session \(Int(session))%  ·  Week \(Int(week))%"
                 state = .connectedAuto
                 appState.rebuildPipeline()
                 appState.refreshNow()
             } catch {
+                guard verificationIsCurrent(generation) else { return }
                 let message = DiagnosticsSanitizer.sanitize(error.localizedDescription)
                 testResult = "Error: \(message)"
                 state = .afterAutomaticVerificationFailure(
@@ -301,22 +322,27 @@ struct OAuthConnectionSection: View {
         let refreshToken = manualRefresh.trimmingCharacters(in: .whitespaces)
         guard !accessToken.isEmpty, !refreshToken.isEmpty else { return }
         do {
-            try OAuthKeychain.saveManual(accessToken: accessToken, refreshToken: refreshToken)
+            try OAuthPipeline.saveManualCredentials(
+                accessToken: accessToken, refreshToken: refreshToken)
         } catch {
             state = .error(
                 "Could not save credentials: \(DiagnosticsSanitizer.sanitize(error.localizedDescription))"
             )
             return
         }
+        let generation = beginVerification()
         state = .verifying
-        Task {
+        verificationTask = Task {
+            defer {
+                if verificationGeneration == generation { verificationTask = nil }
+            }
             do {
                 guard let credentials = OAuthKeychain.loadManual() else {
                     throw URLError(.badServerResponse)
                 }
                 let (session, week) = try await OAuthPipeline.verify(
                     credentials: credentials, oauthMode: "manual")
-                oauthSourceEnabled = true
+                guard verificationIsCurrent(generation) else { return }
                 oauthMode = "manual"
                 testResult = "Session \(Int(session))%  ·  Week \(Int(week))%"
                 manualAccess = ""
@@ -325,7 +351,9 @@ struct OAuthConnectionSection: View {
                 appState.rebuildPipeline()
                 appState.refreshNow()
             } catch {
-                try? OAuthKeychain.deleteManual()
+                guard verificationIsCurrent(generation) else { return }
+                try? OAuthPipeline.discardManualCredentials()
+                oauthMode = ""
                 state = .error(
                     "Verification failed: \(DiagnosticsSanitizer.sanitize(error.localizedDescription))"
                 )
@@ -338,23 +366,41 @@ struct OAuthConnectionSection: View {
     }
 
     private func disconnect() {
-        if oauthMode == "manual" {
-            do {
-                try OAuthKeychain.deleteManual()
-            } catch {
-                state = .error(
-                    "Could not disconnect: \(DiagnosticsSanitizer.sanitize(error.localizedDescription))"
-                )
-                return
-            }
+        cancelVerification()
+        do {
+            try OAuthPipeline.disconnect(oauthMode: oauthMode)
+        } catch {
+            state = .error(
+                "Could not disconnect: \(DiagnosticsSanitizer.sanitize(error.localizedDescription))"
+            )
+            return
         }
-        OAuthPipeline.clearCachedCredentials()
         oauthMode = ""
         testResult = ""
         manualAccess = ""
         manualRefresh = ""
         appState.rebuildPipeline()
         state = disconnectedState()
+    }
+
+    private func beginVerification() -> Int {
+        verificationTask?.cancel()
+        verificationGeneration &+= 1
+        return verificationGeneration
+    }
+
+    private func cancelVerification() {
+        verificationGeneration &+= 1
+        verificationTask?.cancel()
+        verificationTask = nil
+    }
+
+    private func verificationIsCurrent(_ expectedGeneration: Int) -> Bool {
+        OAuthSetupState.canApplyVerificationResult(
+            expectedGeneration: expectedGeneration,
+            currentGeneration: verificationGeneration,
+            sourceIsEnabled: oauthSourceEnabled,
+            taskIsCancelled: Task.isCancelled)
     }
 
     private func disconnectedState() -> OAuthSetupState {

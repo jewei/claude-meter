@@ -31,6 +31,8 @@ public enum GrokAuthError: Error, LocalizedError, Equatable {
 /// we never refresh and never write back; an expired token maps to
 /// `.loginRequired` and is never sent.
 public enum GrokAuthStore {
+    private static let maximumAuthFileBytes = 4 * 1_024 * 1_024
+
     public static func defaultAuthPath() -> URL {
         let env = ProcessInfo.processInfo.environment["GROK_HOME"]
         let root =
@@ -43,11 +45,16 @@ public enum GrokAuthStore {
         authPath: URL = defaultAuthPath(),
         now: Date = Date()
     ) throws -> GrokCredentials {
-        guard FileManager.default.fileExists(atPath: authPath.path) else {
+        let data: Data
+        do {
+            data = try BoundedRegularFileReader.read(
+                at: authPath, maximumByteCount: maximumAuthFileBytes)
+        } catch  where BoundedRegularFileReader.isMissingFileError(error) {
             throw GrokAuthError.missing
+        } catch {
+            throw GrokAuthError.unreadable
         }
-        guard let data = try? Data(contentsOf: authPath),
-            let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else { throw GrokAuthError.unreadable }
 
         guard let entry = preferredEntry(in: object), let key = usableKey(in: entry)

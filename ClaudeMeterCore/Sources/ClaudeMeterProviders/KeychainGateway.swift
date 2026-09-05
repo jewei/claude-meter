@@ -47,7 +47,8 @@ enum KeychainGateway {
         /// the runner was invoked. Both frameworks ship as `…/XCTest.framework/…/XCTest`
         /// and `…/Testing.framework/…/Testing`, so an exact trailing component match
         /// is tight enough not to catch application code.
-        private static func testFrameworkIsLoaded() -> Bool {
+        // Also used by startup persistence to keep hosted app tests out of live defaults.
+        static func testFrameworkIsLoaded() -> Bool {
             for index in 0..<_dyld_image_count() {
                 guard let raw = _dyld_get_image_name(index) else { continue }
                 let name = String(cString: raw)

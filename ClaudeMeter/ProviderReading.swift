@@ -126,6 +126,12 @@ struct CodexReadingStore {
 
     private func readArchive() -> Archive? {
         guard let data = defaults.data(forKey: Self.storageKey) else { return nil }
-        return try? JSONDecoder().decode(Archive.self, from: data)
+        guard let archive = try? JSONDecoder().decode(Archive.self, from: data),
+            archive.entries.values.allSatisfy({ entry in
+                PersistedDateBounds.contains(entry.lastSuccessfulAt)
+                    && PersistedDateBounds.contains(entry.usage.updatedAt)
+            })
+        else { return nil }
+        return archive
     }
 }

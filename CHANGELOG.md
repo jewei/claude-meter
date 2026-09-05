@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.16] - 2026-09-05
+
 ### Added
 
 - The menu-bar item has a spoken summary for VoiceOver, including the provider,
@@ -658,7 +660,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.15...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.16...HEAD
+[2.16]: https://github.com/jewei/claude-meter/compare/v2.15...v2.16
 [2.15]: https://github.com/jewei/claude-meter/compare/v2.14...v2.15
 [2.14]: https://github.com/jewei/claude-meter/compare/v2.13.1...v2.14
 [2.13.1]: https://github.com/jewei/claude-meter/compare/v2.13...v2.13.1

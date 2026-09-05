@@ -118,6 +118,27 @@ extension MultiAccountOAuth {
         totalTimeout: TimeInterval = defaultTotalTimeout,
         perAccountTimeout: TimeInterval = defaultPerAccountTimeout
     ) async -> [AccountFetchResult] {
+        await fetchAllResults(
+            accounts: accounts, home: home, thresholds: thresholds, transport: transport,
+            credentialsLoader: credentialsLoader, now: now,
+            totalTimeout: totalTimeout, perAccountTimeout: perAccountTimeout,
+            uptime: { ProcessInfo.processInfo.systemUptime })
+    }
+
+    /// Keep elapsed-budget tests independent of the test host's scheduling delays.
+    /// The actual account deadline still runs through `Timeout` on a Dispatch timer.
+    static func fetchAllResults(
+        accounts: [AccountConfig],
+        home: URL,
+        thresholds: UsageThresholds,
+        transport: any HTTPTransport,
+        credentialsLoader:
+            @escaping @Sendable (String, Bool) -> KeychainReadResult<OAuthCredentials>,
+        now: Date,
+        totalTimeout: TimeInterval,
+        perAccountTimeout: TimeInterval,
+        uptime: @Sendable () -> TimeInterval
+    ) async -> [AccountFetchResult] {
         guard totalTimeout.isFinite, totalTimeout > 0,
             perAccountTimeout.isFinite, perAccountTimeout > 0
         else {
@@ -128,12 +149,12 @@ extension MultiAccountOAuth {
         }
 
         var results: [AccountFetchResult] = []
-        let deadline = ProcessInfo.processInfo.systemUptime + totalTimeout
+        let deadline = uptime() + totalTimeout
         for account in accounts {
             if Task.isCancelled { break }
             if OAuthPipeline.isRateLimited(now: now) { break }
 
-            let remaining = deadline - ProcessInfo.processInfo.systemUptime
+            let remaining = deadline - uptime()
             guard remaining > 0 else { break }
             let timeout = min(perAccountTimeout, remaining)
 

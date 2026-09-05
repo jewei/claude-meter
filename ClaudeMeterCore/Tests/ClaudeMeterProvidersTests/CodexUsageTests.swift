@@ -29,7 +29,8 @@ struct CodexUsageTests {
         let script = """
             #!/bin/sh
             trap '' TERM
-            printf '%s' "$$" > "$SHUTDOWN_PID_FILE"
+            printf '%s' "$$" > "$SHUTDOWN_PID_FILE.tmp"
+            /bin/mv "$SHUTDOWN_PID_FILE.tmp" "$SHUTDOWN_PID_FILE"
             while :; do :; done
             """
         try script.write(to: executable, atomically: true, encoding: .utf8)

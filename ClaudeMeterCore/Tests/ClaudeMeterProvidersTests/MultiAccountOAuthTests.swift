@@ -63,14 +63,21 @@ private final class StubTransport: HTTPTransport, @unchecked Sendable {
 }
 
 private actor BlockingSecondTransport: HTTPTransport {
+    private let onRequest: @Sendable (Int) -> Void
     private var calls = 0
     private var blockedContinuation: CheckedContinuation<Void, Never>?
+    private var released = false
+
+    init(onRequest: @escaping @Sendable (Int) -> Void = { _ in }) {
+        self.onRequest = onRequest
+    }
 
     func send(_ request: URLRequest, retry _: HTTPRetryPolicy) async throws -> (
         Data, HTTPURLResponse
     ) {
         calls += 1
-        if calls == 2 {
+        onRequest(calls)
+        if calls == 2 && !released {
             await withCheckedContinuation { continuation in
                 blockedContinuation = continuation
             }
@@ -81,11 +88,23 @@ private actor BlockingSecondTransport: HTTPTransport {
     }
 
     func releaseBlockedRequest() {
+        released = true
         blockedContinuation?.resume()
         blockedContinuation = nil
     }
 
     var requestCount: Int { calls }
+}
+
+private final class TestUptime: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: TimeInterval = 100
+
+    func now() -> TimeInterval { lock.withLock { value } }
+
+    func advance(by seconds: TimeInterval) {
+        lock.withLock { value += seconds }
+    }
 }
 
 extension MultiAccountOAuthTests {
@@ -221,21 +240,28 @@ extension MultiAccountOAuthTests {
             accounts: accounts, home: URL(fileURLWithPath: "/tmp/none"),
             thresholds: .default, transport: transport,
             credentialsLoader: { _, _ in .found(Self.creds(token: "token")) },
-            now: Date(), totalTimeout: 2, perAccountTimeout: 0.2)
+            now: Date(), totalTimeout: 30, perAccountTimeout: 1)
         let elapsed = ProcessInfo.processInfo.systemUptime - start
         await transport.releaseBlockedRequest()
 
-        #expect(elapsed < 1)
+        // Allow worker scheduling delay while still distinguishing the 1 s
+        // account timeout from the 30 s total budget.
+        #expect(elapsed < 5)
         #expect(results.count == 2)
-        #expect(results[0].accountKey == "claude")
-        #expect(results[0].reading?.limits.currentSession.percentUsed == 30)
-        #expect(results[1].accountKey == "claude-work")
-        #expect(results[1].failure == .requestFailed)
+        #expect(results.first?.accountKey == "claude")
+        #expect(results.first?.reading?.limits.currentSession.percentUsed == 30)
+        #expect(results.last?.accountKey == "claude-work")
+        #expect(results.last?.failure == .requestFailed)
         #expect(await transport.requestCount == 2)
     }
 
     @Test func totalTimeoutKeepsEarlierSuccessfulResult() async {
-        let transport = BlockingSecondTransport()
+        let uptime = TestUptime()
+        let transport = BlockingSecondTransport { call in
+            // Leave a short total budget only after the first request starts.
+            // A slow CI worker must not exhaust it between the two accounts.
+            if call == 1 { uptime.advance(by: 29.8) }
+        }
         let accounts = Self.twoAccounts()
         let start = ProcessInfo.processInfo.systemUptime
 
@@ -243,15 +269,42 @@ extension MultiAccountOAuthTests {
             accounts: accounts, home: URL(fileURLWithPath: "/tmp/none"),
             thresholds: .default, transport: transport,
             credentialsLoader: { _, _ in .found(Self.creds(token: "token")) },
-            now: Date(), totalTimeout: 0.2, perAccountTimeout: 2)
+            now: Date(), totalTimeout: 30, perAccountTimeout: 10,
+            uptime: { uptime.now() })
         let elapsed = ProcessInfo.processInfo.systemUptime - start
         await transport.releaseBlockedRequest()
 
-        #expect(elapsed < 1)
+        // Distinguish the remaining 0.2 s total budget from the 10 s account
+        // timeout without requiring CI to schedule the assertion within 1 s.
+        #expect(elapsed < 5)
+        #expect(results.count == 2)
         #expect(results.first?.accountKey == "claude")
-        #expect(results.first?.reading != nil)
+        #expect(results.first?.reading?.limits.currentSession.percentUsed == 30)
         #expect(results.last?.accountKey == "claude-work")
         #expect(results.last?.failure == .requestFailed)
+        #expect(await transport.requestCount == 2)
+    }
+
+    @Test(arguments: [30.0, 30.25])
+    func totalTimeoutBetweenAccountsKeepsOnlyTheCompletedResult(elapsed: TimeInterval) async {
+        let uptime = TestUptime()
+        let transport = BlockingSecondTransport { call in
+            if call == 1 { uptime.advance(by: elapsed) }
+        }
+
+        let results = await MultiAccountOAuth.fetchAllResults(
+            accounts: Self.twoAccounts(), home: URL(fileURLWithPath: "/tmp/none"),
+            thresholds: .default, transport: transport,
+            credentialsLoader: { _, _ in .found(Self.creds(token: "token")) },
+            now: Date(), totalTimeout: 30, perAccountTimeout: 10,
+            uptime: { uptime.now() })
+        await transport.releaseBlockedRequest()
+
+        #expect(results.count == 1)
+        #expect(results.first?.accountKey == "claude")
+        #expect(results.first?.reading?.limits.currentSession.percentUsed == 30)
+        #expect(results.first?.failure == nil)
+        #expect(await transport.requestCount == 1)
     }
 
     private static func twoAccounts() -> [AccountConfig] {

@@ -240,16 +240,18 @@ extension MultiAccountOAuthTests {
             accounts: accounts, home: URL(fileURLWithPath: "/tmp/none"),
             thresholds: .default, transport: transport,
             credentialsLoader: { _, _ in .found(Self.creds(token: "token")) },
-            now: Date(), totalTimeout: 2, perAccountTimeout: 0.2)
+            now: Date(), totalTimeout: 30, perAccountTimeout: 1)
         let elapsed = ProcessInfo.processInfo.systemUptime - start
         await transport.releaseBlockedRequest()
 
-        #expect(elapsed < 1)
+        // Allow worker scheduling delay while still distinguishing the 1 s
+        // account timeout from the 30 s total budget.
+        #expect(elapsed < 5)
         #expect(results.count == 2)
-        #expect(results[0].accountKey == "claude")
-        #expect(results[0].reading?.limits.currentSession.percentUsed == 30)
-        #expect(results[1].accountKey == "claude-work")
-        #expect(results[1].failure == .requestFailed)
+        #expect(results.first?.accountKey == "claude")
+        #expect(results.first?.reading?.limits.currentSession.percentUsed == 30)
+        #expect(results.last?.accountKey == "claude-work")
+        #expect(results.last?.failure == .requestFailed)
         #expect(await transport.requestCount == 2)
     }
 

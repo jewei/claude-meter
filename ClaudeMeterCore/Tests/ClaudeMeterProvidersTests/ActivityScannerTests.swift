@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -6,6 +7,20 @@ import Testing
 
 @Suite("ActivityScanner")
 struct ActivityScannerTests {
+    @Test("Public heatmap construction saturates invalid totals")
+    func heatmapConstructionSaturates() {
+        let heatmap = ActivityHeatmap(
+            counts: [[Int.max, 1, -4]],
+            total: 0,
+            isPartial: false,
+            daysCovered: -1)
+
+        #expect(heatmap.total == Int.max)
+        #expect(heatmap.counts[0][2] == 0)
+        #expect(heatmap.isPartial)
+        #expect(heatmap.daysCovered == 0)
+    }
+
     private func makeScanner(lines: [String]) throws -> (ActivityScanner, URL) {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -149,6 +164,54 @@ struct ActivityScannerTests {
         #expect(scanner.scan(daysBack: 60, now: date).total == 3)
     }
 
+    @Test("A transient read failure is retried when mtime and size stay unchanged")
+    func transientReadFailureIsNotCached() throws {
+        let (ts, now) = localTS(
+            DateComponents(year: 2026, month: 6, day: 29, hour: 12))
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let project = root.appendingPathComponent("p")
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        let file = project.appendingPathComponent("session.jsonl")
+        try Data(line(id: "retry", ts: ts).utf8).write(to: file)
+        let pinnedMtime = Date(
+            timeIntervalSince1970: now.addingTimeInterval(-60).timeIntervalSince1970.rounded())
+        try fm.setAttributes([.modificationDate: pinnedMtime], ofItemAtPath: file.path)
+        let canonicalFile = try #require(
+            try fm.contentsOfDirectory(at: project, includingPropertiesForKeys: nil)
+                .first { $0.pathExtension == "jsonl" })
+        defer {
+            try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: canonicalFile.path)
+            try? fm.removeItem(at: root)
+        }
+
+        let before = try #require(
+            try JournalReader.regularTranscriptMetadata(at: canonicalFile, fm: fm))
+        try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: canonicalFile.path)
+
+        let cache = ActivityCache()
+        let scanner = ActivityScanner(projectsPaths: [root], cache: cache)
+        let failed = scanner.scan(daysBack: 60, now: now)
+        #expect(failed.total == 0)
+        #expect(failed.isPartial)
+        #expect(
+            cache.cached(
+                path: canonicalFile.path,
+                modDate: before.modificationDate,
+                fileSize: before.fileSize,
+                timeZoneIdentifier: Calendar.current.timeZone.identifier) == nil)
+
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: canonicalFile.path)
+        let after = try #require(
+            try JournalReader.regularTranscriptMetadata(at: canonicalFile, fm: fm))
+        #expect(after.modificationDate == before.modificationDate)
+        #expect(after.fileSize == before.fileSize)
+
+        let recovered = scanner.scan(daysBack: 60, now: now)
+        #expect(recovered.total == 1)
+        #expect(!recovered.isPartial)
+    }
+
     @Test("A cancelled task stops the heatmap scan early and marks it partial")
     func cancelledTaskStopsScanEarly() async throws {
         let (ts, date) = localTS(
@@ -188,6 +251,50 @@ struct ActivityScannerTests {
         defer { try? fm.removeItem(at: root) }
 
         let map = ActivityScanner(projectsPaths: [root], cache: ActivityCache()).scan()
+        #expect(map.isPartial)
+    }
+
+    @Test("An existing non-directory root marks the union partial and keeps readable data")
+    func nonDirectoryRootMarksPartialAndRetainsData() throws {
+        let (ts, now) = localTS(
+            DateComponents(year: 2026, month: 6, day: 29, hour: 16))
+        let (_, readableRoot) = try makeScanner(lines: [line(id: "valid", ts: ts)])
+        let invalidRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try Data("not a directory".utf8).write(to: invalidRoot)
+        defer {
+            try? FileManager.default.removeItem(at: readableRoot)
+            try? FileManager.default.removeItem(at: invalidRoot)
+        }
+
+        let map = ActivityScanner(
+            projectsPaths: [readableRoot, invalidRoot], cache: ActivityCache()
+        ).scan(daysBack: 60, now: now)
+        #expect(map.total == 1)
+        #expect(map.isPartial)
+    }
+
+    @Test("FIFO and symbolic-link transcripts are not opened or counted")
+    func rejectsSpecialAndSymbolicLinkTranscripts() throws {
+        let (ts, now) = localTS(
+            DateComponents(year: 2026, month: 6, day: 29, hour: 17))
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let project = root.appendingPathComponent("p")
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        let regular = project.appendingPathComponent("regular.jsonl")
+        try Data(line(id: "valid", ts: ts).utf8).write(to: regular)
+        try fm.createSymbolicLink(
+            at: project.appendingPathComponent("linked.jsonl"), withDestinationURL: regular)
+        let fifo = project.appendingPathComponent("blocked.jsonl")
+        let fifoResult = fifo.path.withCString { mkfifo($0, mode_t(0o600)) }
+        #expect(fifoResult == 0)
+
+        let map = ActivityScanner(projectsPaths: [root], cache: ActivityCache())
+            .scan(daysBack: 60, now: now)
+        #expect(map.total == 1)
         #expect(map.isPartial)
     }
 }

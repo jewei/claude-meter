@@ -70,7 +70,7 @@ struct MenuBarLabel: View {
                 .rotationEffect(.degrees(360))
                 .animation(
                     reduceMotion
-                        ? .default : .linear(duration: 1).repeatForever(autoreverses: false),
+                        ? nil : .linear(duration: 1).repeatForever(autoreverses: false),
                     value: appState.mainMeterIsLoading)
         } else if showsErrorIcon {
             Image(systemName: "bolt.trianglebadge.exclamationmark.fill")

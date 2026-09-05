@@ -31,6 +31,10 @@ public struct ModelPricing: Sendable {
 
     /// Rate card for one model family, USD per million tokens.
     public struct Rate: Sendable, Equatable, Codable {
+        /// A defensive ceiling far above any known model price. It prevents a
+        /// corrupt remote/disk catalog from producing non-finite derived values.
+        public static let maximumSupportedValue = 1_000_000.0
+
         public let input: Double
         public let output: Double
         public let cacheRead: Double
@@ -44,15 +48,49 @@ public struct ModelPricing: Sendable {
             input: Double, output: Double, cacheRead: Double, cacheWrite: Double,
             cacheWrite1h: Double? = nil
         ) {
-            self.input = input
-            self.output = output
-            self.cacheRead = cacheRead
-            self.cacheWrite = cacheWrite
-            self.cacheWrite1h = cacheWrite1h
+            self.input = Self.sanitized(input)
+            self.output = Self.sanitized(output)
+            self.cacheRead = Self.sanitized(cacheRead)
+            self.cacheWrite = Self.sanitized(cacheWrite)
+            self.cacheWrite1h = cacheWrite1h.map(Self.sanitized)
         }
 
         /// The 1h cache-write rate, deriving 2× input when not explicitly set.
-        public var resolvedCacheWrite1h: Double { cacheWrite1h ?? input * 2 }
+        public var resolvedCacheWrite1h: Double {
+            cacheWrite1h ?? Self.sanitized(input * 2)
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case input
+            case output
+            case cacheRead
+            case cacheWrite
+            case cacheWrite1h
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.init(
+                input: try container.decode(Double.self, forKey: .input),
+                output: try container.decode(Double.self, forKey: .output),
+                cacheRead: try container.decode(Double.self, forKey: .cacheRead),
+                cacheWrite: try container.decode(Double.self, forKey: .cacheWrite),
+                cacheWrite1h: try container.decodeIfPresent(Double.self, forKey: .cacheWrite1h))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(input, forKey: .input)
+            try container.encode(output, forKey: .output)
+            try container.encode(cacheRead, forKey: .cacheRead)
+            try container.encode(cacheWrite, forKey: .cacheWrite)
+            try container.encodeIfPresent(cacheWrite1h, forKey: .cacheWrite1h)
+        }
+
+        private static func sanitized(_ value: Double) -> Double {
+            guard value.isFinite, value >= 0, value <= maximumSupportedValue else { return 0 }
+            return value
+        }
     }
 
     private let opus: Rate
@@ -130,10 +168,12 @@ public struct ModelPricing: Sendable {
     public func cost(forModel model: String, usage: TokenUsageBreakdown) -> Double {
         let r = rate(forModel: model)
         let perToken = 1_000_000.0
-        return Double(usage.input) / perToken * r.input
-            + Double(usage.output) / perToken * r.output
-            + Double(usage.cacheRead) / perToken * r.cacheRead
-            + Double(usage.cacheWrite5m) / perToken * r.cacheWrite
-            + Double(usage.cacheWrite1h) / perToken * r.resolvedCacheWrite1h
+        let total =
+            Double(max(usage.input, 0)) / perToken * r.input
+            + Double(max(usage.output, 0)) / perToken * r.output
+            + Double(max(usage.cacheRead, 0)) / perToken * r.cacheRead
+            + Double(max(usage.cacheWrite5m, 0)) / perToken * r.cacheWrite
+            + Double(max(usage.cacheWrite1h, 0)) / perToken * r.resolvedCacheWrite1h
+        return total.isFinite ? total : 0
     }
 }

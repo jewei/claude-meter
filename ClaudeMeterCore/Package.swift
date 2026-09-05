@@ -16,7 +16,8 @@ let package = Package(
         .target(
             name: "ClaudeMeterProviders",
             dependencies: ["ClaudeMeterCore"],
-            path: "Sources/ClaudeMeterProviders"
+            path: "Sources/ClaudeMeterProviders",
+            exclude: ["CLAUDE.md"]
         ),
         .testTarget(
             name: "ClaudeMeterCoreTests",

@@ -31,19 +31,34 @@ public final class CodexUsageProvider: @unchecked Sendable {
     public func fetchUsage(mode: CodexSourceMode = .auto, now: Date = Date()) async throws
         -> CodexUsage
     {
+        try Task.checkCancellation()
         switch mode {
         case .appServer:
-            return try await appServerSource.fetchUsage(now: now)
+            let usage = try await appServerSource.fetchUsage(now: now)
+            try Task.checkCancellation()
+            return usage
         case .directOAuth:
-            return try await oauthSource.fetchUsage(now: now)
+            let usage = try await oauthSource.fetchUsage(now: now)
+            try Task.checkCancellation()
+            return usage
         case .auto:
             do {
-                return try await appServerSource.fetchUsage(now: now)
+                let usage = try await appServerSource.fetchUsage(now: now)
+                try Task.checkCancellation()
+                return usage
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 let appServerError = error
+                try Task.checkCancellation()
                 do {
-                    return try await oauthSource.fetchUsage(now: now)
+                    let usage = try await oauthSource.fetchUsage(now: now)
+                    try Task.checkCancellation()
+                    return usage
+                } catch is CancellationError {
+                    throw CancellationError()
                 } catch {
+                    try Task.checkCancellation()
                     throw Self.combinedFailure(
                         appServer: appServerError,
                         directOAuth: error)

@@ -37,7 +37,9 @@ struct AdvancedSettingsTab: View {
                                 get: { appState.isActive },
                                 set: { appState.setActive($0) })
                         )
-                        .toggleStyle(.switch).labelsHidden()
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .accessibilityLabel("Fetch usage")
                     }
                     HStack(spacing: 12) {
                         RaisedTile(fill: Color(hex: "C77DFF"), size: 40, radius: 11) {
@@ -46,7 +48,10 @@ struct AdvancedSettingsTab: View {
                         }
                         cardText("Launch at login", "Start Claude Meter when you log in.")
                         Spacer(minLength: 8)
-                        Toggle("", isOn: $launchAtLogin).toggleStyle(.switch).labelsHidden()
+                        Toggle("", isOn: $launchAtLogin)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                            .accessibilityLabel("Launch at login")
                     }
                     if launchAtLoginNeedsApproval {
                         HStack(spacing: 8) {
@@ -82,6 +87,7 @@ struct AdvancedSettingsTab: View {
                         Spacer(minLength: 8)
                         Toggle("", isOn: $automaticallyCheckForUpdates).toggleStyle(.switch)
                             .labelsHidden()
+                            .accessibilityLabel("Check for updates automatically")
                     }
                     Divider().overlay(Color.pfCardBorder)
                     HStack(spacing: 12) {
@@ -175,7 +181,11 @@ struct AdvancedSettingsTab: View {
     private var lastCheckedText: String? {
         guard let date = UserDefaults.standard.object(forKey: "SULastCheckTime") as? Date
         else { return nil }
-        let elapsed = Int(Date().timeIntervalSince(date))
+        return Self.lastCheckedText(date: date, now: Date())
+    }
+
+    nonisolated static func lastCheckedText(date: Date, now: Date) -> String {
+        let elapsed = now.boundedNonnegativeElapsedSeconds(since: date)
         if elapsed < 60 { return "Last checked just now" }
         if elapsed < 3600 { return "Last checked \(elapsed / 60)m ago" }
         if elapsed < 86400 { return "Last checked \(elapsed / 3600)h ago" }

@@ -22,4 +22,12 @@ struct UsageThresholdsTests {
         #expect(t.severity(for: 75) == .warning)
         #expect(t.severity(for: 92) == .critical)
     }
+
+    @Test("Non-finite values have unknown severity")
+    func nonFinite() {
+        let t = UsageThresholds.default
+        #expect(t.severity(for: .nan) == .unknown)
+        #expect(t.severity(for: .infinity) == .unknown)
+        #expect(t.severity(for: -.infinity) == .unknown)
+    }
 }

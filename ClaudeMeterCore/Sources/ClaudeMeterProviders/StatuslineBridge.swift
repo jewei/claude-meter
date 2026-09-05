@@ -1,4 +1,5 @@
 import ClaudeMeterCore
+import Darwin
 import Foundation
 
 /// Manages the Claude Code statusline bridge.
@@ -8,6 +9,27 @@ import Foundation
 /// captures this data atomically to per-session files under
 /// `~/.claude-meter/sessions/` without disrupting any existing statusline command.
 public enum StatuslineBridge: Sendable {
+    /// Statusline payloads are small. Reject a file that is too large instead of
+    /// allocating memory from an untrusted session entry.
+    private static let maximumPayloadBytes = 1_048_576
+    /// Permit normal clock skew, but reject a payload dated far into the future.
+    private static let maximumFutureClockSkew: TimeInterval = 300
+
+    /// Reports that a best-effort batch uninstall changed at least one valid
+    /// settings file before another settings file failed.
+    public struct UninstallError: Error, LocalizedError, Sendable {
+        public let didChange: Bool
+        private let message: String
+
+        init(didChange: Bool, underlyingError: Error) {
+            self.didChange = didChange
+            self.message =
+                (underlyingError as? LocalizedError)?.errorDescription
+                ?? underlyingError.localizedDescription
+        }
+
+        public var errorDescription: String? { message }
+    }
 
     // MARK: - Paths
 
@@ -145,15 +167,99 @@ public enum StatuslineBridge: Sendable {
                 if firstError == nil { firstError = error }
             }
         }
-        if let firstError { throw firstError }
+        if let firstError {
+            throw UninstallError(didChange: didChange, underlyingError: firstError)
+        }
         return didChange
     }
 
     /// Deletes the captured session payloads. Call only from the app, after
     /// `uninstall` reports that a snippet was actually removed.
     public static func purgeSessionData() {
-        try? FileManager.default.removeItem(at: sessionsDir)
-        try? FileManager.default.removeItem(at: statuslineFilePath)
+        purgeSessionData(dataRoot: dataDir)
+    }
+
+    /// Testable cleanup that never resolves a recursive delete through a linked
+    /// `.claude-meter` directory. Empty directories can remain; the data files are
+    /// the state that must be removed.
+    static func purgeSessionData(
+        dataRoot dataRootURL: URL,
+        beforeUnlink: ((String, String) -> Void)? = nil
+    ) {
+        guard
+            let dataRoot = try? BoundedRegularFileReader.AnchoredDirectory(
+                opening: dataRootURL)
+        else { return }
+        clearManagedSubdirectory(
+            named: "sessions",
+            in: dataRoot,
+            dataRootURL: dataRootURL,
+            beforeUnlink: beforeUnlink)
+        clearManagedFile(
+            named: "statusline.json", in: dataRoot, dataRootURL: dataRootURL)
+    }
+
+    /// Clears direct files in one managed directory and in its direct child
+    /// directories. Every removal uses the descriptor that inspected the entry.
+    /// The full directory chain is rechecked first, so a renamed data tree is left
+    /// intact and a replacement link cannot redirect deletion.
+    static func clearManagedSubdirectory(
+        named childName: String,
+        in dataRootURL: URL,
+        beforeUnlink: ((String, String) -> Void)? = nil
+    ) {
+        guard
+            let dataRoot = try? BoundedRegularFileReader.AnchoredDirectory(
+                opening: dataRootURL)
+        else { return }
+        clearManagedSubdirectory(
+            named: childName,
+            in: dataRoot,
+            dataRootURL: dataRootURL,
+            beforeUnlink: beforeUnlink)
+    }
+
+    private static func clearManagedSubdirectory(
+        named childName: String,
+        in dataRoot: BoundedRegularFileReader.AnchoredDirectory,
+        dataRootURL: URL,
+        beforeUnlink: ((String, String) -> Void)?
+    ) {
+        guard let child = try? dataRoot.directory(named: childName) else { return }
+
+        func baseIsIntact() -> Bool {
+            dataRoot.stillNamesDirectory(at: dataRootURL)
+                && dataRoot.stillContainsDirectory(child, named: childName)
+        }
+
+        for name in (try? child.entryNames()) ?? [] {
+            if let account = try? child.directory(named: name) {
+                for filename in (try? account.entryNames()) ?? [] {
+                    guard let entry = try? account.entry(named: filename) else { continue }
+                    beforeUnlink?(name, filename)
+                    guard baseIsIntact(), child.stillContainsDirectory(account, named: name)
+                    else { continue }
+                    account.unlinkEntry(named: filename, ifUnchangedSince: entry)
+                }
+            } else {
+                guard let entry = try? child.entry(named: name) else { continue }
+                beforeUnlink?("", name)
+                guard baseIsIntact() else { continue }
+                child.unlinkEntry(named: name, ifUnchangedSince: entry)
+            }
+        }
+    }
+
+    private static func clearManagedFile(
+        named name: String,
+        in dataRoot: BoundedRegularFileReader.AnchoredDirectory,
+        dataRootURL: URL
+    ) {
+        guard
+            let entry = try? dataRoot.entry(named: name),
+            dataRoot.stillNamesDirectory(at: dataRootURL)
+        else { return }
+        dataRoot.unlinkEntry(named: name, ifUnchangedSince: entry)
     }
 
     @discardableResult
@@ -178,40 +284,72 @@ public enum StatuslineBridge: Sendable {
     /// modified within `maxAge` seconds — i.e. at least one Claude Code session is
     /// active across any account.
     public static func isDataFresh(maxAge: TimeInterval = 300) -> Bool {
-        let fm = FileManager.default
+        isDataFresh(dataRoot: dataDir, maxAge: maxAge)
+    }
+
+    /// Production-path core with an injectable app-data root. Opening the data
+    /// root first rejects an intermediate `.claude-meter` link.
+    static func isDataFresh(dataRoot dataRootURL: URL, maxAge: TimeInterval) -> Bool {
+        guard
+            let dataRoot = try? BoundedRegularFileReader.AnchoredDirectory(
+                opening: dataRootURL)
+        else { return false }
         let now = Date()
-        // Any legacy flat files directly under sessionsDir.
-        if anyFreshJSON(in: sessionsDir, maxAge: maxAge, now: now) { return true }
-        // Per-account subdirs.
-        if let subdirs = try? fm.contentsOfDirectory(
-            at: sessionsDir, includingPropertiesForKeys: [.isDirectoryKey]
-        ) {
-            for sub in subdirs where isDirectory(sub) {
-                if anyFreshJSON(in: sub, maxAge: maxAge, now: now) { return true }
-            }
+        if let sessions = try? dataRoot.directory(named: "sessions"),
+            containsFreshPayload(in: sessions, maxAge: maxAge, now: now)
+        {
+            return true
+        }
+        return isFreshRegularPayloadFile(
+            named: "statusline.json", in: dataRoot, maxAge: maxAge, now: now)
+    }
+
+    /// Testable core of `isDataFresh` with injectable paths.
+    static func isDataFresh(
+        sessionsRoot: URL,
+        legacyFile: URL?,
+        maxAge: TimeInterval
+    ) -> Bool {
+        let now = Date()
+        if let root = try? BoundedRegularFileReader.AnchoredDirectory(opening: sessionsRoot) {
+            if containsFreshPayload(in: root, maxAge: maxAge, now: now) { return true }
         }
         // Legacy single statusline.json.
-        if let mod =
-            (try? fm.attributesOfItem(atPath: statuslineFilePath.path))?[.modificationDate]
-            as? Date,
-            now.timeIntervalSince(mod) < maxAge
-        {
+        if let legacyFile, isFreshRegularPayloadFile(legacyFile, maxAge: maxAge, now: now) {
             return true
         }
         return false
     }
 
+    private static func containsFreshPayload(
+        in root: BoundedRegularFileReader.AnchoredDirectory,
+        maxAge: TimeInterval,
+        now: Date
+    ) -> Bool {
+        // Any legacy flat files directly under sessionsDir.
+        if anyFreshJSON(in: root, maxAge: maxAge, now: now) { return true }
+        // Per-account subdirs. Open each child relative to the stable root
+        // descriptor so a path replacement cannot redirect the scan.
+        for name in (try? root.entryNames()) ?? [] {
+            guard let account = try? root.directory(named: name) else { continue }
+            if anyFreshJSON(in: account, maxAge: maxAge, now: now) { return true }
+        }
+        return false
+    }
+
     /// True when `dir` directly contains at least one `*.json` modified within `maxAge`.
-    private static func anyFreshJSON(in dir: URL, maxAge: TimeInterval, now: Date) -> Bool {
-        guard
-            let entries = try? FileManager.default.contentsOfDirectory(
-                at: dir, includingPropertiesForKeys: [.contentModificationDateKey]
-            )
-        else { return false }
-        for url in entries where url.pathExtension == "json" {
-            if let mod = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
-                .contentModificationDate,
-                now.timeIntervalSince(mod) < maxAge
+    private static func anyFreshJSON(
+        in directory: BoundedRegularFileReader.AnchoredDirectory,
+        maxAge: TimeInterval,
+        now: Date
+    ) -> Bool {
+        for name in (try? directory.entryNames()) ?? [] where pathExtension(of: name) == "json" {
+            guard let discovered = try? directory.entry(named: name),
+                isPlausiblyFresh(discovered.modificationDate, maxAge: maxAge, now: now)
+            else { continue }
+            if let file = try? directory.readFile(
+                named: name, maximumByteCount: maximumPayloadBytes),
+                isPlausiblyFresh(file.modificationDate, maxAge: maxAge, now: now)
             {
                 return true
             }
@@ -220,30 +358,37 @@ public enum StatuslineBridge: Sendable {
     }
 
     /// Fresh payloads (`*.json` within `maxAge`) directly inside `dir`, parsed.
-    private static func freshPayloads(in dir: URL, maxAge: TimeInterval, now: Date = Date())
-        -> [StatuslinePayload]
-    {
-        guard
-            let entries = try? FileManager.default.contentsOfDirectory(
-                at: dir, includingPropertiesForKeys: [.contentModificationDateKey]
-            )
-        else { return [] }
+    private static func freshPayloads(
+        in directory: BoundedRegularFileReader.AnchoredDirectory,
+        maxAge: TimeInterval,
+        now: Date = Date()
+    ) -> [StatuslinePayload] {
         var out: [StatuslinePayload] = []
-        for url in entries where url.pathExtension == "json" {
-            guard
-                let mod = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
-                    .contentModificationDate,
-                now.timeIntervalSince(mod) < maxAge
+        for name in (try? directory.entryNames()) ?? [] where pathExtension(of: name) == "json" {
+            guard let discovered = try? directory.entry(named: name),
+                isPlausiblyFresh(discovered.modificationDate, maxAge: maxAge, now: now),
+                let file = try? directory.readFile(
+                    named: name, maximumByteCount: maximumPayloadBytes),
+                isPlausiblyFresh(file.modificationDate, maxAge: maxAge, now: now)
             else { continue }
-            if let payload = try? readPayload(from: url) { out.append(payload) }
+            if let payload = try? parsePayload(file.data, capturedAt: file.modificationDate) {
+                out.append(payload)
+            }
         }
         return out
     }
 
-    private static func isDirectory(_ url: URL) -> Bool {
-        var isDir: ObjCBool = false
-        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
-            && isDir.boolValue
+    private static func isPlausiblyFresh(
+        _ modificationDate: Date,
+        maxAge: TimeInterval,
+        now: Date
+    ) -> Bool {
+        let age = now.timeIntervalSince(modificationDate)
+        return age >= -maximumFutureClockSkew && age < maxAge
+    }
+
+    private static func pathExtension(of name: String) -> String {
+        (name as NSString).pathExtension
     }
 
     // MARK: - Data model
@@ -371,36 +516,74 @@ public enum StatuslineBridge: Sendable {
     /// and the legacy single file are bucketed under the default `claude` account.
     /// Returns an empty dictionary when no fresh payload exists.
     public static func readDataGrouped(maxAge: TimeInterval = 300) -> [String: StatuslinePayload] {
-        readDataGrouped(sessionsRoot: sessionsDir, legacyFile: statuslineFilePath, maxAge: maxAge)
+        readDataGrouped(dataRoot: dataDir, maxAge: maxAge)
+    }
+
+    /// Production-path core with an injectable app-data root. All children are
+    /// resolved through the stable root descriptor.
+    static func readDataGrouped(
+        dataRoot dataRootURL: URL, maxAge: TimeInterval
+    ) -> [String: StatuslinePayload] {
+        guard
+            let dataRoot = try? BoundedRegularFileReader.AnchoredDirectory(
+                opening: dataRootURL)
+        else { return [:] }
+        let now = Date()
+        var groups: [String: [StatuslinePayload]] = [:]
+        if let sessions = try? dataRoot.directory(named: "sessions") {
+            appendSessionPayloads(
+                in: sessions, maxAge: maxAge, now: now, to: &groups)
+        }
+        if let legacy = freshPayload(
+            named: "statusline.json", in: dataRoot, maxAge: maxAge, now: now)
+        {
+            groups[defaultAccountKey, default: []].append(legacy)
+        }
+        return mergePayloadGroups(groups)
     }
 
     /// Testable core of `readDataGrouped` with injectable paths.
     static func readDataGrouped(
         sessionsRoot: URL, legacyFile: URL?, maxAge: TimeInterval
     ) -> [String: StatuslinePayload] {
+        let now = Date()
         var groups: [String: [StatuslinePayload]] = [:]
-        let fm = FileManager.default
 
-        // Per-account subdirs (subdir name == account key).
-        if let subdirs = try? fm.contentsOfDirectory(
-            at: sessionsRoot, includingPropertiesForKeys: [.isDirectoryKey]
-        ) {
-            for sub in subdirs where isDirectory(sub) {
-                let payloads = freshPayloads(in: sub, maxAge: maxAge)
-                if !payloads.isEmpty { groups[sub.lastPathComponent, default: []] += payloads }
-            }
+        if let root = try? BoundedRegularFileReader.AnchoredDirectory(opening: sessionsRoot) {
+            appendSessionPayloads(in: root, maxAge: maxAge, now: now, to: &groups)
         }
 
-        // Legacy flat files written by the pre-account snippet → default account.
-        // (`freshPayloads(in:)` only matches `*.json`, so subdirs are skipped.)
-        let legacyFlat = freshPayloads(in: sessionsRoot, maxAge: maxAge)
-        if !legacyFlat.isEmpty { groups[defaultAccountKey, default: []] += legacyFlat }
-
         // Legacy single statusline.json → default account.
-        if let legacyFile, let legacy = freshPayloadFile(legacyFile, maxAge: maxAge) {
+        if let legacyFile, let legacy = freshPayloadFile(legacyFile, maxAge: maxAge, now: now) {
             groups[defaultAccountKey, default: []].append(legacy)
         }
 
+        return mergePayloadGroups(groups)
+    }
+
+    private static func appendSessionPayloads(
+        in root: BoundedRegularFileReader.AnchoredDirectory,
+        maxAge: TimeInterval,
+        now: Date,
+        to groups: inout [String: [StatuslinePayload]]
+    ) {
+        // Per-account subdirs (subdir name == account key).
+        for name in (try? root.entryNames()) ?? [] {
+            guard let account = try? root.directory(named: name) else { continue }
+            let payloads = freshPayloads(in: account, maxAge: maxAge, now: now)
+            if !payloads.isEmpty { groups[name, default: []] += payloads }
+        }
+
+        // Legacy flat files written by the pre-account snippet → default account.
+        // (`freshPayloads(in:)` only accepts regular `*.json` files, so
+        // subdirectories are skipped.)
+        let legacyFlat = freshPayloads(in: root, maxAge: maxAge, now: now)
+        if !legacyFlat.isEmpty { groups[defaultAccountKey, default: []] += legacyFlat }
+    }
+
+    private static func mergePayloadGroups(
+        _ groups: [String: [StatuslinePayload]]
+    ) -> [String: StatuslinePayload] {
         var merged: [String: StatuslinePayload] = [:]
         for (key, payloads) in groups {
             if let m = mergePayloads(payloads) { merged[key] = m }
@@ -425,13 +608,25 @@ public enum StatuslineBridge: Sendable {
     private static func freshPayloadFile(_ url: URL, maxAge: TimeInterval, now: Date = Date())
         -> StatuslinePayload?
     {
-        guard
-            let mod =
-                (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate]
-                as? Date,
-            now.timeIntervalSince(mod) < maxAge
+        guard let contents = readRegularPayloadFile(url, maxAge: maxAge, now: now) else {
+            return nil
+        }
+        return try? parsePayload(contents.data, capturedAt: contents.modificationDate)
+    }
+
+    private static func freshPayload(
+        named name: String,
+        in directory: BoundedRegularFileReader.AnchoredDirectory,
+        maxAge: TimeInterval,
+        now: Date
+    ) -> StatuslinePayload? {
+        guard let discovered = try? directory.entry(named: name),
+            isPlausiblyFresh(discovered.modificationDate, maxAge: maxAge, now: now),
+            let file = try? directory.readFile(
+                named: name, maximumByteCount: maximumPayloadBytes),
+            isPlausiblyFresh(file.modificationDate, maxAge: maxAge, now: now)
         else { return nil }
-        return try? readPayload(from: url)
+        return try? parsePayload(file.data, capturedAt: file.modificationDate)
     }
 
     /// Merges per-session payloads into a single coherent reading. Account-wide
@@ -485,13 +680,114 @@ public enum StatuslineBridge: Sendable {
     }
 
     internal static func readPayload(from statuslineFilePath: URL) throws -> StatuslinePayload? {
-        guard
-            let modDate =
-                (try? FileManager.default.attributesOfItem(
-                    atPath: statuslineFilePath.path))?[.modificationDate] as? Date
-        else { return nil }
+        guard let contents = readRegularPayloadFile(statuslineFilePath) else { return nil }
+        return try parsePayload(contents.data, capturedAt: contents.modificationDate)
+    }
 
-        let raw = try Data(contentsOf: statuslineFilePath)
+    private struct RegularPayloadFile {
+        let data: Data
+        let modificationDate: Date
+    }
+
+    /// Reads one bounded regular file. The first `lstat` rejects links and special
+    /// files without opening them. The open flags and `fstat` close the race between
+    /// discovery and open, and keep a raced FIFO from blocking the poll.
+    private static func readRegularPayloadFile(
+        _ url: URL,
+        maxAge: TimeInterval? = nil,
+        now: Date = Date()
+    ) -> RegularPayloadFile? {
+        withRegularPayloadDescriptor(at: url) { descriptor, status in
+            let modificationDate = modificationDate(from: status)
+            if let maxAge,
+                !isPlausiblyFresh(modificationDate, maxAge: maxAge, now: now)
+            {
+                return nil
+            }
+
+            let byteCount = Int(status.st_size)
+            var data = Data(count: byteCount)
+            var bytesRead = 0
+            let readSucceeded = data.withUnsafeMutableBytes { rawBuffer in
+                guard let baseAddress = rawBuffer.baseAddress else { return byteCount == 0 }
+                while bytesRead < byteCount {
+                    let count = pread(
+                        descriptor,
+                        baseAddress.advanced(by: bytesRead),
+                        byteCount - bytesRead,
+                        off_t(bytesRead))
+                    if count > 0 {
+                        bytesRead += count
+                    } else if count == 0 {
+                        return false
+                    } else if errno != EINTR {
+                        return false
+                    }
+                }
+                return true
+            }
+            guard readSucceeded, bytesRead == byteCount else { return nil }
+            return RegularPayloadFile(data: data, modificationDate: modificationDate)
+        }
+    }
+
+    /// Checks freshness through the same no-follow regular-file boundary as reads.
+    private static func isFreshRegularPayloadFile(
+        named name: String,
+        in directory: BoundedRegularFileReader.AnchoredDirectory,
+        maxAge: TimeInterval,
+        now: Date
+    ) -> Bool {
+        guard let discovered = try? directory.entry(named: name),
+            isPlausiblyFresh(discovered.modificationDate, maxAge: maxAge, now: now),
+            let file = try? directory.readFile(
+                named: name, maximumByteCount: maximumPayloadBytes)
+        else { return false }
+        return isPlausiblyFresh(file.modificationDate, maxAge: maxAge, now: now)
+    }
+
+    private static func isFreshRegularPayloadFile(
+        _ url: URL,
+        maxAge: TimeInterval,
+        now: Date
+    ) -> Bool {
+        withRegularPayloadDescriptor(at: url) { _, status in
+            isPlausiblyFresh(modificationDate(from: status), maxAge: maxAge, now: now)
+        } ?? false
+    }
+
+    private static func withRegularPayloadDescriptor<T>(
+        at url: URL,
+        body: (Int32, stat) -> T?
+    ) -> T? {
+        var discoveredStatus = stat()
+        let lstatResult = url.path.withCString { Darwin.lstat($0, &discoveredStatus) }
+        guard lstatResult == 0, (discoveredStatus.st_mode & S_IFMT) == S_IFREG else {
+            return nil
+        }
+
+        let descriptor = url.path.withCString {
+            Darwin.open($0, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard descriptor >= 0 else { return nil }
+        defer { Darwin.close(descriptor) }
+
+        var openedStatus = stat()
+        guard fstat(descriptor, &openedStatus) == 0,
+            (openedStatus.st_mode & S_IFMT) == S_IFREG,
+            openedStatus.st_size >= 0,
+            openedStatus.st_size <= off_t(maximumPayloadBytes)
+        else { return nil }
+        return body(descriptor, openedStatus)
+    }
+
+    private static func modificationDate(from status: stat) -> Date {
+        let seconds = TimeInterval(status.st_mtimespec.tv_sec)
+        let nanoseconds = TimeInterval(status.st_mtimespec.tv_nsec) / 1_000_000_000
+        return Date(timeIntervalSince1970: seconds + nanoseconds)
+    }
+
+    private static func parsePayload(_ raw: Data, capturedAt: Date) throws -> StatuslinePayload? {
         guard !raw.isEmpty,
             let json = try JSONSerialization.jsonObject(with: raw) as? [String: Any]
         else { return nil }
@@ -502,7 +798,9 @@ public enum StatuslineBridge: Sendable {
             guard let obj = rateLimits?[key] as? [String: Any],
                 let pct = numericValue(obj["used_percentage"])
             else { return nil }
-            let resetsAt = numericValue(obj["resets_at"]).map { Date(timeIntervalSince1970: $0) }
+            let resetsAt = numericValue(obj["resets_at"]).flatMap {
+                boundedProviderDate(timeIntervalSince1970: $0)
+            }
             return RateLimitWindow(usedPercentage: pct, resetsAt: resetsAt)
         }
 
@@ -522,10 +820,10 @@ public enum StatuslineBridge: Sendable {
             modelDisplayName: model?["display_name"] as? String,
             totalCostUsd: numericValue(cost?["total_cost_usd"]),
             totalApiDurationMs: numericValue(cost?["total_api_duration_ms"]),
-            codeLinesAdded: numericValue(cost?["total_lines_added"]).map { Int($0) },
-            codeLinesRemoved: numericValue(cost?["total_lines_removed"]).map { Int($0) },
+            codeLinesAdded: boundedInt(numericValue(cost?["total_lines_added"])),
+            codeLinesRemoved: boundedInt(numericValue(cost?["total_lines_removed"])),
             cliVersion: json["version"] as? String,
-            capturedAt: modDate
+            capturedAt: capturedAt
         )
     }
 
@@ -555,7 +853,7 @@ public enum StatuslineBridge: Sendable {
         else { return false }
         let current =
             (statusLine["refreshInterval"] as? Int)
-            ?? (statusLine["refreshInterval"] as? Double).map { Int($0) }
+            ?? boundedInt(statusLine["refreshInterval"] as? Double)
         guard current != refreshIntervalSeconds else { return false }
         statusLine["refreshInterval"] = refreshIntervalSeconds
         settings["statusLine"] = statusLine
@@ -590,11 +888,20 @@ public enum StatuslineBridge: Sendable {
     }
 
     private static func numericValue(_ value: Any?) -> Double? {
+        let number: Double
         switch value {
-        case let d as Double: d
-        case let i as Int: Double(i)
-        case let n as NSNumber: n.doubleValue
-        default: nil
+        case let d as Double: number = d
+        case let i as Int: number = Double(i)
+        case let n as NSNumber: number = n.doubleValue
+        default: return nil
         }
+        return number.isFinite ? number : nil
+    }
+
+    /// Converts an external floating-point value without trapping. Truncation
+    /// matches Swift's normal `Double`-to-`Int` conversion for valid values.
+    static func boundedInt(_ value: Double?) -> Int? {
+        guard let value else { return nil }
+        return Int(exactly: value.rounded(.towardZero))
     }
 }

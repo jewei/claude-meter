@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public struct LastErrorRecord: Codable, Equatable, Sendable {
@@ -13,6 +14,10 @@ public struct LastErrorRecord: Codable, Equatable, Sendable {
 public enum SnapshotStoreIOError: Error, LocalizedError, Equatable, Sendable {
     case timedOut(operation: String, seconds: TimeInterval)
     case disabledAfterTimeout
+    case invalidStoredFile
+    case storedFileTooLarge(maximumByteCount: Int)
+    case storedFileChanged
+    case storedFileReadFailed(code: Int32)
 
     public var errorDescription: String? {
         switch self {
@@ -20,6 +25,14 @@ public enum SnapshotStoreIOError: Error, LocalizedError, Equatable, Sendable {
             "Snapshot \(operation) timed out after \(seconds.formatted())s"
         case .disabledAfterTimeout:
             "Snapshot I/O is disabled after an earlier timeout"
+        case .invalidStoredFile:
+            "Snapshot data is not a regular file"
+        case .storedFileTooLarge(let maximumByteCount):
+            "Snapshot data exceeds the \(maximumByteCount)-byte limit"
+        case .storedFileChanged:
+            "Snapshot data changed while it was read"
+        case .storedFileReadFailed:
+            "Snapshot data could not be read"
         }
     }
 }
@@ -94,6 +107,32 @@ final class BoundedSnapshotIO: @unchecked Sendable {
     }
 }
 
+/// Retains one I/O gate for each App Group suite in this process. The factory
+/// itself touches the App Group filesystem before a `SnapshotStore` exists, so
+/// it must use the same bounded path as later reads and writes. Retention also
+/// makes a factory or read timeout fail later attempts fast instead of leaking
+/// one blocked thread each time WidgetKit asks for a new store value.
+private final class AppGroupSnapshotIORegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var gates: [String: BoundedSnapshotIO] = [:]
+
+    func gate(for suiteName: String) -> BoundedSnapshotIO {
+        lock.withLock {
+            if let gate = gates[suiteName] { return gate }
+            let gate = BoundedSnapshotIO()
+            gates[suiteName] = gate
+            return gate
+        }
+    }
+}
+
+/// `FileManager` is safe for concurrent use but is not declared `Sendable` on
+/// every supported Foundation version. This wrapper lets a bounded worker keep
+/// an injected manager without weakening the worker's `@Sendable` closure.
+private struct SnapshotFileManager: @unchecked Sendable {
+    let value: FileManager
+}
+
 /// Atomic reader/writer for the latest `ClaudeUsageSnapshot`.
 ///
 /// Files in `<directory>/`:
@@ -110,6 +149,10 @@ final class BoundedSnapshotIO: @unchecked Sendable {
 /// The main app and WidgetKit extension both use the App Group container via
 /// `appGroup(suiteName:)` so they read and write the same `current.json`.
 public struct SnapshotStore: Sendable {
+    static let maximumReadBytes = 4 * 1_024 * 1_024
+    private static let appGroupIORegistry = AppGroupSnapshotIORegistry()
+    private static let applicationSupportIO = BoundedSnapshotIO()
+
     public let directory: URL
     private let boundedIO: BoundedSnapshotIO
 
@@ -121,22 +164,42 @@ public struct SnapshotStore: Sendable {
 
     /// Creates a store backed by `~/Library/Application Support/ClaudeMeter/`.
     public static func applicationSupport() throws -> SnapshotStore {
-        let base = try FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        return try applicationSupport(in: base)
+        let fileManager = SnapshotFileManager(value: FileManager.default)
+        let boundedIO = applicationSupportIO
+        let base = try boundedIO.perform(
+            operation: "prepare-application-support",
+            timeout: BoundedSnapshotIO.writeTimeout
+        ) {
+            try fileManager.value.url(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            )
+        }
+        return try applicationSupport(
+            in: base, fileManager: fileManager.value, boundedIO: boundedIO)
     }
 
     /// Injectable application-support factory for hermetic tests and alternate hosts.
     public static func applicationSupport(
         in base: URL, fileManager: FileManager = .default
     ) throws -> SnapshotStore {
+        try applicationSupport(in: base, fileManager: fileManager, boundedIO: BoundedSnapshotIO())
+    }
+
+    private static func applicationSupport(
+        in base: URL, fileManager: FileManager, boundedIO: BoundedSnapshotIO
+    ) throws -> SnapshotStore {
+        let fileManager = SnapshotFileManager(value: fileManager)
         let dir = base.appending(path: "ClaudeMeter")
-        try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
-        return SnapshotStore(directory: dir)
+        try boundedIO.perform(
+            operation: "prepare-application-support",
+            timeout: BoundedSnapshotIO.writeTimeout
+        ) {
+            try fileManager.value.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        return SnapshotStore(directory: dir, boundedIO: boundedIO)
     }
 
     /// Creates a store backed by the shared App Group container.
@@ -146,19 +209,27 @@ public struct SnapshotStore: Sendable {
     /// container is unavailable — e.g. the app is unsigned or the entitlement
     /// is missing — in which case callers fall back to `applicationSupport()`.
     public static func appGroup(suiteName: String) throws -> SnapshotStore {
-        guard
-            let container = FileManager.default.containerURL(
-                forSecurityApplicationGroupIdentifier: suiteName
+        let fileManager = SnapshotFileManager(value: FileManager.default)
+        let boundedIO = appGroupIORegistry.gate(for: suiteName)
+        let dir = try boundedIO.perform(
+            operation: "prepare-app-group",
+            timeout: BoundedSnapshotIO.writeTimeout
+        ) {
+            guard
+                let container = fileManager.value.containerURL(
+                    forSecurityApplicationGroupIdentifier: suiteName
+                )
+            else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            let dir = container.appendingPathComponent(
+                "Library/Application Support/ClaudeMeter",
+                isDirectory: true
             )
-        else {
-            throw CocoaError(.fileNoSuchFile)
+            try fileManager.value.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir
         }
-        let dir = container.appendingPathComponent(
-            "Library/Application Support/ClaudeMeter",
-            isDirectory: true
-        )
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return SnapshotStore(directory: dir)
+        return SnapshotStore(directory: dir, boundedIO: boundedIO)
     }
 
     /// Copies `current.json` from a legacy store when the destination is empty.
@@ -173,8 +244,12 @@ public struct SnapshotStore: Sendable {
 
     /// Creates a store backed by an arbitrary directory (useful for tests).
     public init(directory: URL) {
+        self.init(directory: directory, boundedIO: BoundedSnapshotIO())
+    }
+
+    private init(directory: URL, boundedIO: BoundedSnapshotIO) {
         self.directory = directory
-        self.boundedIO = BoundedSnapshotIO()
+        self.boundedIO = boundedIO
     }
 
     // MARK: - Snapshot write/read
@@ -191,7 +266,7 @@ public struct SnapshotStore: Sendable {
             let data = try boundedIO.perform(
                 operation: "read", timeout: BoundedSnapshotIO.readTimeout
             ) {
-                try Data(contentsOf: url)
+                try Self.readBoundedData(at: url)
             }
             return try makeDecoder().decode(ClaudeUsageSnapshot.self, from: data)
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
@@ -212,7 +287,7 @@ public struct SnapshotStore: Sendable {
             let data = try boundedIO.perform(
                 operation: "read-main-meter", timeout: BoundedSnapshotIO.readTimeout
             ) {
-                try Data(contentsOf: url)
+                try Self.readBoundedData(at: url)
             }
             let reading = try makeDecoder().decode(MainMeterReading.self, from: data)
             return reading.schemaVersion == 1 ? reading : nil
@@ -249,7 +324,7 @@ public struct SnapshotStore: Sendable {
             let data = try boundedIO.perform(
                 operation: "read", timeout: BoundedSnapshotIO.readTimeout
             ) {
-                try Data(contentsOf: url)
+                try Self.readBoundedData(at: url)
             }
             return try makeDecoder().decode(LastErrorRecord.self, from: data)
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
@@ -276,11 +351,89 @@ public struct SnapshotStore: Sendable {
         }
     }
 
+    /// Reads one app-owned file through a nonblocking, no-follow descriptor. The
+    /// explicit cap prevents a corrupt durable file from allocating without bound
+    /// in a worker that can outlive the caller's timeout.
+    private static func readBoundedData(at url: URL) throws -> Data {
+        let descriptor = url.path.withCString {
+            Darwin.open($0, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard descriptor >= 0 else {
+            let code = errno
+            if code == ENOENT || code == ENOTDIR {
+                throw CocoaError(.fileReadNoSuchFile)
+            }
+            throw SnapshotStoreIOError.storedFileReadFailed(code: code)
+        }
+        defer { Darwin.close(descriptor) }
+
+        var before = stat()
+        guard Darwin.fstat(descriptor, &before) == 0 else {
+            throw SnapshotStoreIOError.storedFileReadFailed(code: errno)
+        }
+        guard (before.st_mode & S_IFMT) == S_IFREG, before.st_size >= 0 else {
+            throw SnapshotStoreIOError.invalidStoredFile
+        }
+        guard before.st_size <= off_t(maximumReadBytes) else {
+            throw SnapshotStoreIOError.storedFileTooLarge(
+                maximumByteCount: maximumReadBytes)
+        }
+
+        let expectedByteCount = Int(before.st_size)
+        var data = Data(count: expectedByteCount)
+        let actualByteCount = try data.withUnsafeMutableBytes { buffer -> Int in
+            guard expectedByteCount > 0, let baseAddress = buffer.baseAddress else { return 0 }
+            var offset = 0
+            while offset < expectedByteCount {
+                let count = Darwin.pread(
+                    descriptor,
+                    baseAddress.advanced(by: offset),
+                    expectedByteCount - offset,
+                    off_t(offset))
+                if count > 0 {
+                    offset += count
+                } else if count == 0 {
+                    break
+                } else if errno != EINTR {
+                    throw SnapshotStoreIOError.storedFileReadFailed(code: errno)
+                }
+            }
+            return offset
+        }
+        guard actualByteCount == expectedByteCount else {
+            throw SnapshotStoreIOError.storedFileChanged
+        }
+
+        var after = stat()
+        guard Darwin.fstat(descriptor, &after) == 0 else {
+            throw SnapshotStoreIOError.storedFileReadFailed(code: errno)
+        }
+        guard before.st_dev == after.st_dev,
+            before.st_ino == after.st_ino,
+            before.st_size == after.st_size,
+            before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
+            before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec
+        else { throw SnapshotStoreIOError.storedFileChanged }
+        return data
+    }
+
     // MARK: - JSON codec (stateless, created per call to remain Sendable)
 
     private func makeEncoder() -> JSONEncoder {
         let enc = JSONEncoder()
-        enc.dateEncodingStrategy = .iso8601
+        enc.dateEncodingStrategy = .custom { date, encoder in
+            guard PersistedDateBounds.contains(date) else {
+                throw EncodingError.invalidValue(
+                    date,
+                    EncodingError.Context(
+                        codingPath: encoder.codingPath,
+                        debugDescription: "Date is outside the supported persistence interval"))
+            }
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime]
+            var container = encoder.singleValueContainer()
+            try container.encode(formatter.string(from: date))
+        }
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         return enc
     }

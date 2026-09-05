@@ -1,4 +1,5 @@
 import ClaudeMeterCore
+import Darwin
 import Foundation
 
 public enum CodexCLILocator {
@@ -87,22 +88,38 @@ public final class CodexAppServerSource: CodexUsageSourceFetching, @unchecked Se
     }
 
     public func fetchUsage(now: Date = Date()) async throws -> CodexUsage {
+        try Task.checkCancellation()
         guard let executable = resolver(env) else { throw CodexUsageError.cliNotFound }
+        try Task.checkCancellation()
         let client = try CodexAppServerClient(
             executable: executable,
             env: env,
             startupTimeout: startupTimeout,
             requestTimeout: requestTimeout)
         defer { client.shutdown() }
+        try Task.checkCancellation()
         try await client.initialize()
-        let account = try? await client.fetchAccount().account
+        try Task.checkCancellation()
+        let account: CodexAppServerAccount?
+        do {
+            account = try await client.fetchAccount().account
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            account = nil
+        }
+        // Account metadata is optional, but cancellation is not. Do not start a
+        // rate-limit request after the caller cancels an account request.
+        try Task.checkCancellation()
         let limits = try await client.fetchRateLimits()
+        try Task.checkCancellation()
         return try limits.usage(account: account, now: now, source: .appServer)
     }
 }
 
 final class CodexAppServerClient: @unchecked Sendable {
     private static let maxBufferedMessages = 16
+    private static let terminationGraceSeconds: TimeInterval = 0.25
     // App Server only reads account and quota data. `never` keeps the subprocess
     // noninteractive and is accepted by current Codex CLIs; `untrusted` was removed.
     static let processArguments = ["-s", "read-only", "-a", "never", "app-server"]
@@ -122,6 +139,8 @@ final class CodexAppServerClient: @unchecked Sendable {
     /// matcher hand one caller the other's payload.
     private let idLock = NSLock()
     private var nextID = 1
+    private let shutdownLock = NSLock()
+    private var shutdownStarted = false
     private let requestGate = CodexRPCRequestGate()
     private let startupTimeout: TimeInterval
     private let requestTimeout: TimeInterval
@@ -161,6 +180,7 @@ final class CodexAppServerClient: @unchecked Sendable {
             method: "initialize",
             params: ["clientInfo": ["name": "claude-meter", "version": "1"]],
             timeout: startupTimeout)
+        try Task.checkCancellation()
         try sendNotification(method: "initialized")
     }
 
@@ -174,10 +194,33 @@ final class CodexAppServerClient: @unchecked Sendable {
     }
 
     func shutdown() {
+        shutdownLock.lock()
+        guard !shutdownStarted else {
+            shutdownLock.unlock()
+            return
+        }
+        shutdownStarted = true
+        try? stdinPipe.fileHandleForWriting.close()
+        shutdownLock.unlock()
+
+        if process.isRunning {
+            process.terminate()
+            let deadline =
+                ProcessInfo.processInfo.systemUptime + Self.terminationGraceSeconds
+            while process.isRunning && ProcessInfo.processInfo.systemUptime < deadline {
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+            if process.isRunning {
+                _ = Darwin.kill(process.processIdentifier, SIGKILL)
+            }
+        }
+
+        // SIGKILL cannot be ignored. Wait here so the terminated child is reaped
+        // instead of remaining as a zombie for the lifetime of the app.
+        process.waitUntilExit()
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
         stderrPipe.fileHandleForReading.readabilityHandler = nil
-        if process.isRunning { process.terminate() }
-        try? stdinPipe.fileHandleForWriting.close()
+        stdoutLineContinuation.finish()
     }
 
     private func installReaders() {
@@ -250,18 +293,33 @@ final class CodexAppServerClient: @unchecked Sendable {
         method: String,
         body: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await body() }
+        let race = CodexTimeoutRace()
+        return try await withThrowingTaskGroup(of: CodexTimeoutOutcome<T>.self) { group in
+            group.addTask {
+                do {
+                    let value = try await body()
+                    try Task.checkCancellation()
+                    guard race.claim() else { return .lost }
+                    return .value(value)
+                } catch {
+                    guard race.claim() else { return .lost }
+                    throw error
+                }
+            }
             group.addTask { [weak self] in
                 try await Task.sleep(for: .seconds(seconds))
+                guard race.claim() else { return .lost }
+                // Claim the result before shutdown. A response that arrives
+                // during the TERM grace period cannot change the winner.
                 self?.shutdown()
                 throw CodexUsageError.rpcTimedOut(method)
             }
-            guard let result = try await group.next() else {
-                throw CodexUsageError.rpcTimedOut(method)
+            while let outcome = try await group.next() {
+                guard case .value(let result) = outcome else { continue }
+                group.cancelAll()
+                return result
             }
-            group.cancelAll()
-            return result
+            throw CodexUsageError.rpcTimedOut(method)
         }
     }
 
@@ -278,9 +336,15 @@ final class CodexAppServerClient: @unchecked Sendable {
     }
 
     private func sendPayload(_ payload: [String: Any]) throws {
-        let data = try JSONSerialization.data(withJSONObject: payload)
-        stdinPipe.fileHandleForWriting.write(data)
-        stdinPipe.fileHandleForWriting.write(Data([0x0A]))
+        var data = try JSONSerialization.data(withJSONObject: payload)
+        data.append(0x0A)
+
+        // Use the shutdown lock for the state check and the write. Shutdown can
+        // close stdin only before or after a complete framed message.
+        shutdownLock.lock()
+        defer { shutdownLock.unlock() }
+        guard !shutdownStarted else { throw CodexUsageError.invalidRPCResponse }
+        try stdinPipe.fileHandleForWriting.write(contentsOf: data)
     }
 
     private func readNextMessage() async throws -> [String: Any] {
@@ -289,6 +353,7 @@ final class CodexAppServerClient: @unchecked Sendable {
                 return json
             }
         }
+        try Task.checkCancellation()
         throw CodexUsageError.invalidRPCResponse
     }
 
@@ -305,6 +370,24 @@ final class CodexAppServerClient: @unchecked Sendable {
         default: nil
         }
     }
+}
+
+private final class CodexTimeoutRace: @unchecked Sendable {
+    private let lock = NSLock()
+    private var hasWinner = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !hasWinner else { return false }
+        hasWinner = true
+        return true
+    }
+}
+
+private enum CodexTimeoutOutcome<Value: Sendable>: Sendable {
+    case value(Value)
+    case lost
 }
 
 private actor CodexRPCRequestGate {

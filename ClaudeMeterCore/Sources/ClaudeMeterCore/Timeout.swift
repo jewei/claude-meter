@@ -4,7 +4,7 @@ import Foundation
 public struct TimeoutError: Error, LocalizedError, CustomStringConvertible, Sendable {
     public let seconds: TimeInterval
     public init(seconds: TimeInterval) { self.seconds = seconds }
-    public var description: String { "Timed out after \(Int(seconds.rounded()))s" }
+    public var description: String { "Timed out after \(seconds.formatted())s" }
     public var errorDescription: String? { description }
 }
 
@@ -29,7 +29,32 @@ public struct TimeoutCapacityError: Error, LocalizedError, Sendable {
 public enum Timeout {
     /// A cancellation-ignoring operation may outlive its deadline. Bound those
     /// abandoned tasks process-wide so repeated polls cannot grow without limit.
-    private static let detachedTaskBudget = DetachedTaskBudget(limit: 64)
+    private static let detachedTaskBudget = TaskBudget(limit: 64)
+
+    /// A separate capacity pool for callers whose abandoned work must not consume
+    /// the default pool. This is useful for advisory work such as filesystem scans.
+    public final class TaskBudget: @unchecked Sendable {
+        private let lock = NSLock()
+        private let limit: Int
+        private var active = 0
+
+        public init(limit: Int) {
+            precondition(limit > 0, "Timeout task budget must be positive")
+            self.limit = limit
+        }
+
+        fileprivate func acquire() -> Bool {
+            lock.withLock {
+                guard active < limit else { return false }
+                active += 1
+                return true
+            }
+        }
+
+        fileprivate func release() {
+            lock.withLock { active -= 1 }
+        }
+    }
 
     /// Runs `operation`, throwing `TimeoutError` if it doesn't finish within `seconds`.
     ///
@@ -46,13 +71,28 @@ public enum Timeout {
         priority: TaskPriority = .utility,
         operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
+        try await run(
+            seconds: seconds,
+            priority: priority,
+            budget: detachedTaskBudget,
+            operation: operation)
+    }
+
+    /// Runs an operation with an isolated capacity pool. A blocked task in this
+    /// pool cannot exhaust the default capacity used by other timeout callers.
+    public static func run<T: Sendable>(
+        seconds: TimeInterval,
+        priority: TaskPriority = .utility,
+        budget: TaskBudget,
+        operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
         guard seconds.isFinite, seconds > 0 else {
             throw InvalidTimeoutDurationError(seconds: seconds)
         }
-        guard detachedTaskBudget.acquire() else { throw TimeoutCapacityError() }
+        guard budget.acquire() else { throw TimeoutCapacityError() }
         let race = RaceBox<T>()
         let work = Task.detached(priority: priority) {
-            defer { detachedTaskBudget.release() }
+            defer { budget.release() }
             do {
                 race.resolve(.success(try await operation()))
             } catch {
@@ -67,7 +107,11 @@ public enum Timeout {
             timer.cancel()
             work.cancel()  // best-effort; the abandoned task finishes harmlessly off-stage.
         }
-        return try await race.value()
+        return try await withTaskCancellationHandler {
+            try await race.value()
+        } onCancel: {
+            race.resolve(.failure(CancellationError()))
+        }
     }
 
     /// First-result-wins box bridging the detached work task and the Dispatch timer onto
@@ -104,25 +148,4 @@ public enum Timeout {
         }
     }
 
-    private final class DetachedTaskBudget: @unchecked Sendable {
-        private let lock = NSLock()
-        private let limit: Int
-        private var active = 0
-
-        init(limit: Int) {
-            self.limit = limit
-        }
-
-        func acquire() -> Bool {
-            lock.withLock {
-                guard active < limit else { return false }
-                active += 1
-                return true
-            }
-        }
-
-        func release() {
-            lock.withLock { active -= 1 }
-        }
-    }
 }

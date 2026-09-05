@@ -82,8 +82,6 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
         )
         if !groups.isEmpty {
             let snapshot = buildSnapshot(from: groups, now: now)
-            try? store.writeLatest(snapshot)
-            try? store.clearLastError()
             let freshest = groups.values.map(\.capturedAt).max() ?? now
             return ParseResult(
                 snapshot: snapshot,
@@ -110,20 +108,19 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
         // instead of leaving the next background poll free to fire immediately.
         if kind == .interactive {
             markFallbackPoll(now: now)
-            return try await fallback.poll(now: now, kind: kind).prependingSourceAttempt(
-                SourceAttempt(source: .statusline, outcome: .skipped, reason: skipReason))
+            return try await pollFallback(now: now, kind: kind, skipReason: skipReason)
         }
 
         // Check if the fallback cooldown has elapsed.
         if markFallbackPollIfCooldownElapsed(now: now) {
-            return try await fallback.poll(now: now, kind: kind).prependingSourceAttempt(
-                SourceAttempt(source: .statusline, outcome: .skipped, reason: skipReason))
+            return try await pollFallback(now: now, kind: kind, skipReason: skipReason)
         }
 
         // Within cooldown window — serve the last cached snapshot as stale.
-        if let cached = try? store.readLatest() {
-            var snap = cached
-            snap.state.isStale = true
+        if let cached = try? store.readLatest(),
+            let snap = Self.cooldownSnapshot(
+                from: cached, now: now, disabledAccountKeys: disabledAccountKeys)
+        {
             return ParseResult(
                 snapshot: snap,
                 warnings: [
@@ -147,8 +144,66 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
 
         // No cache either — call fallback unconditionally.
         markFallbackPoll(now: now)
-        return try await fallback.poll(now: now, kind: kind).prependingSourceAttempt(
-            SourceAttempt(source: .statusline, outcome: .skipped, reason: skipReason))
+        return try await pollFallback(now: now, kind: kind, skipReason: skipReason)
+    }
+
+    /// Applies the same account filter to every fallback result. This includes
+    /// the terminal cached-snapshot path reached through OAuth.
+    private func pollFallback(
+        now: Date,
+        kind: RefreshKind,
+        skipReason: SourceAttempt.Reason
+    ) async throws -> ParseResult {
+        let result = try await fallback.poll(now: now, kind: kind)
+        let snapshot = result.snapshot.flatMap {
+            DisabledClaudeAccountFilteringPipeline.filteringDisabledAccounts(
+                from: $0, disabledAccountKeys: disabledAccountKeys)
+        }
+        return ParseResult(
+            snapshot: snapshot,
+            warnings: result.warnings,
+            errors: result.errors,
+            rawHash: result.rawHash,
+            parserVersion: result.parserVersion,
+            sourceAttempts: [
+                SourceAttempt(source: .statusline, outcome: .skipped, reason: skipReason)
+            ] + result.sourceAttempts
+        )
+    }
+
+    /// Prepares a persisted snapshot for the cooldown path. A stale observation
+    /// cannot describe usage after a rolling-window reset, and disabled accounts
+    /// must not reappear from disk after the live read path filtered them out.
+    static func cooldownSnapshot(
+        from cached: ClaudeUsageSnapshot,
+        now: Date,
+        disabledAccountKeys: Set<String>
+    ) -> ClaudeUsageSnapshot? {
+        guard
+            var snapshot = DisabledClaudeAccountFilteringPipeline.filteringDisabledAccounts(
+                from: cached, disabledAccountKeys: disabledAccountKeys)
+        else { return nil }
+        snapshot.limits = snapshot.limits.hidingExpiredStaleWindows(asOf: now)
+
+        if var accounts = snapshot.accounts {
+            for index in accounts.indices {
+                accounts[index].limits = accounts[index].limits.hidingExpiredStaleWindows(asOf: now)
+            }
+            snapshot.accounts = accounts
+        }
+
+        snapshot.state.isStale = true
+        return snapshot
+    }
+
+    /// Removes disabled accounts and repairs the top-level active-account mirror.
+    /// A lone default account keeps the historical `accounts == nil` shape.
+    static func filteringDisabledAccounts(
+        from source: ClaudeUsageSnapshot,
+        disabledAccountKeys: Set<String>
+    ) -> ClaudeUsageSnapshot? {
+        DisabledClaudeAccountFilteringPipeline.filteringDisabledAccounts(
+            from: source, disabledAccountKeys: disabledAccountKeys)
     }
 
     private func readGroups(maxAge: TimeInterval) -> [String: StatuslineBridge.StatuslinePayload] {
@@ -171,7 +226,7 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     private func secondsUntilNextFallback(now: Date) -> Int {
         guard let last = stateQueue.sync(execute: { lastFallbackPollAt }) else { return 0 }
         let remaining = Self.fallbackCooldown - now.timeIntervalSince(last)
-        return max(0, Int(remaining.rounded()))
+        return max(0, StatuslineBridge.boundedInt(remaining.rounded()) ?? 0)
     }
 
     private func markFallbackPollIfCooldownElapsed(now: Date) -> Bool {
@@ -203,9 +258,19 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     static func displayWindow(for window: StatuslineBridge.RateLimitWindow?, now: Date)
         -> LimitWindow
     {
+        sourceWindow(for: window).resolved(asOf: now)
+    }
+
+    /// Keeps the source reset boundary in a fresh snapshot. Presentation resolves
+    /// an expired window to 0%, while this provenance lets a post-reset OAuth
+    /// observation replace that inferred zero.
+    static func sourceWindow(for window: StatuslineBridge.RateLimitWindow?) -> LimitWindow {
         guard let window else { return LimitWindow() }
         return LimitWindow(percentUsed: window.usedPercentage, resetsAt: window.resetsAt)
-            .resolved(asOf: now)
+    }
+
+    static func durationSeconds(fromMilliseconds value: Double?) -> Int? {
+        StatuslineBridge.boundedInt(value.map { $0 / 1_000 })
     }
 
     /// Keeps only accounts the bridge actually surfaces: those with a window, and
@@ -303,14 +368,17 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
     private func accountFields(from payload: StatuslineBridge.StatuslinePayload, now: Date)
         -> AccountSnapshotFields
     {
-        let sessionWindow = Self.displayWindow(for: payload.fiveHour, now: now)
-        let weekWindow = Self.displayWindow(for: payload.sevenDay, now: now)
-        let opusWindow = payload.sevenDayOpus.map { Self.displayWindow(for: $0, now: now) }
+        let sessionWindow = Self.sourceWindow(for: payload.fiveHour)
+        let weekWindow = Self.sourceWindow(for: payload.sevenDay)
+        let opusWindow = payload.sevenDayOpus.map { Self.sourceWindow(for: $0) }
 
-        let severity = [sessionWindow.percentUsed, weekWindow.percentUsed, opusWindow?.percentUsed]
-            .reduce(UsageSeverity.unknown) {
-                UsageSeverity.highest($0, thresholds.severity(for: $1))
-            }
+        let severity = [
+            sessionWindow.resolved(asOf: now).percentUsed,
+            weekWindow.resolved(asOf: now).percentUsed,
+            opusWindow?.resolved(asOf: now).percentUsed,
+        ].reduce(UsageSeverity.unknown) {
+            UsageSeverity.highest($0, thresholds.severity(for: $1))
+        }
 
         let sessionInfo: SessionInfo? = {
             guard
@@ -321,7 +389,8 @@ public final class StatuslinePipeline: ClaudeMeterPipeline, @unchecked Sendable 
             return SessionInfo(
                 activeModel: payload.modelDisplayName ?? payload.modelId,
                 totalCostUsd: payload.totalCostUsd,
-                totalApiDurationSeconds: payload.totalApiDurationMs.map { Int($0 / 1000) },
+                totalApiDurationSeconds: Self.durationSeconds(
+                    fromMilliseconds: payload.totalApiDurationMs),
                 codeLinesAdded: payload.codeLinesAdded,
                 codeLinesRemoved: payload.codeLinesRemoved
             )

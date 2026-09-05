@@ -81,6 +81,17 @@ struct PredictiveNotificationPolicyTests {
         #expect(key(reset) != key(reset.addingTimeInterval(3600)))
     }
 
+    @Test func invalidResetProducesSafeDedupKey() {
+        let invalid = Date(timeIntervalSinceReferenceDate: .greatestFiniteMagnitude)
+        let key = PredictiveNotificationTrigger(
+            accountID: "claude", scope: "session", resetAt: invalid,
+            secondsUntilDepleted: 60
+        ).dedupKey
+
+        #expect(key.hasSuffix(".invalid"))
+        #expect(PredictiveNotificationTracker.bucketedEpoch(invalid) == nil)
+    }
+
     /// Pins the bucket width itself. `bucketedReset` moved here when the unused
     /// usage-history store was deleted, so this is now the only place it lives —
     /// widening the bucket would start collapsing genuinely distinct reset cycles

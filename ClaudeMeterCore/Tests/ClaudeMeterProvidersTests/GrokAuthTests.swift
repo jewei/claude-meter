@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -104,6 +105,31 @@ struct GrokAuthTests {
 
     @Test func malformedJSONThrowsUnreadable() throws {
         let url = try writeAuth("not json")
+        #expect(throws: GrokAuthError.unreadable) {
+            try GrokAuthStore.load(authPath: url, now: Date(timeIntervalSince1970: 0))
+        }
+    }
+
+    @Test func specialAuthFileThrowsUnreadableWithoutBlocking() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("auth.json")
+        #expect(url.path.withCString { Darwin.mkfifo($0, S_IRUSR | S_IWUSR) } == 0)
+
+        let clock = ContinuousClock()
+        let start = clock.now
+        #expect(throws: GrokAuthError.unreadable) {
+            try GrokAuthStore.load(authPath: url, now: Date(timeIntervalSince1970: 0))
+        }
+        #expect(start.duration(to: clock.now) < .seconds(1))
+    }
+
+    @Test func oversizedAuthFileThrowsUnreadable() throws {
+        let url = try writeAuth("")
+        try Data(repeating: 0x20, count: 4 * 1_024 * 1_024 + 1).write(to: url)
+
         #expect(throws: GrokAuthError.unreadable) {
             try GrokAuthStore.load(authPath: url, now: Date(timeIntervalSince1970: 0))
         }

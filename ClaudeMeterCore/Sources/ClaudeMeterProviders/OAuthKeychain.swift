@@ -195,24 +195,27 @@ public enum OAuthKeychain: Sendable {
             let oauth = obj["claudeAiOauth"] as? [String: Any],
             let accessToken = oauth["accessToken"] as? String, !accessToken.isEmpty,
             let refreshToken = oauth["refreshToken"] as? String, !refreshToken.isEmpty,
-            let expiresAtMs = numericValue(oauth["expiresAt"])
+            let expiresAtMs = numericValue(oauth["expiresAt"]),
+            let expiresAt = boundedProviderDate(timeIntervalSince1970: expiresAtMs / 1000)
         else { return nil }
         return OAuthCredentials(
             accessToken: accessToken,
             refreshToken: refreshToken,
-            expiresAt: Date(timeIntervalSince1970: expiresAtMs / 1000),
+            expiresAt: expiresAt,
             subscriptionType: oauth["subscriptionType"] as? String,
             rateLimitTier: oauth["rateLimitTier"] as? String
         )
     }
 
     private static func numericValue(_ value: Any?) -> Double? {
+        let number: Double
         switch value {
-        case let d as Double: d
-        case let i as Int: Double(i)
-        case let n as NSNumber: n.doubleValue
-        default: nil
+        case let d as Double: number = d
+        case let i as Int: number = Double(i)
+        case let n as NSNumber: number = n.doubleValue
+        default: return nil
         }
+        return number.isFinite ? number : nil
     }
 
     /// Candidate Keychain service names for a config dir's credentials, preferred
@@ -295,16 +298,8 @@ public enum OAuthKeychain: Sendable {
     }
 
     public static func saveManual(accessToken: String, refreshToken: String) throws {
-        let expiry = Date.distantFuture.timeIntervalSince1970 * 1000
-        guard
-            let data = try? JSONSerialization.data(withJSONObject: [
-                "claudeAiOauth": [
-                    "accessToken": accessToken,
-                    "refreshToken": refreshToken,
-                    "expiresAt": expiry,
-                ] as [String: Any]
-            ]), let str = String(data: data, encoding: .utf8)
-        else { throw OAuthKeychainWriteError.encodingFailed }
+        let str = try manualCredentialJSONString(
+            accessToken: accessToken, refreshToken: refreshToken)
         #if canImport(Security)
             try writeKeychainItem(service: manualService, account: manualAccount, value: str)
         #else
@@ -315,6 +310,31 @@ public enum OAuthKeychain: Sendable {
                 ]) != nil
             else { throw OAuthKeychainWriteError.keychain(-1) }
         #endif
+    }
+
+    /// Manual tokens do not publish an expiry. Use a far-future value that stays
+    /// inside the provider-date boundary and Foundation's safe ISO-8601 range.
+    private static let manualExpirationEpochMilliseconds = 32_472_144_000_000.0
+
+    private static func manualCredentialJSONString(
+        accessToken: String, refreshToken: String
+    ) throws -> String {
+        guard
+            let data = try? JSONSerialization.data(withJSONObject: [
+                "claudeAiOauth": [
+                    "accessToken": accessToken,
+                    "refreshToken": refreshToken,
+                    "expiresAt": manualExpirationEpochMilliseconds,
+                ] as [String: Any]
+            ]), let str = String(data: data, encoding: .utf8)
+        else { throw OAuthKeychainWriteError.encodingFailed }
+        return str
+    }
+
+    internal static func manualCredentialJSONStringForTesting(
+        accessToken: String, refreshToken: String
+    ) throws -> String {
+        try manualCredentialJSONString(accessToken: accessToken, refreshToken: refreshToken)
     }
 
     public static func deleteManual() throws {

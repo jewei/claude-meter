@@ -11,6 +11,7 @@ public enum ModelsDevPricing {
     static let apiURL = URL(string: "https://models.dev/api.json")!
     static let cacheTTL: TimeInterval = 24 * 60 * 60
     static let cacheFileName = "models-dev-pricing-v1.json"
+    private static let maximumCacheFileBytes = 32 * 1_024 * 1_024
 
     // Process-wide in-memory memo so repeated scans in one session don't re-read disk.
     private static let lock = NSLock()
@@ -27,8 +28,8 @@ public enum ModelsDevPricing {
     /// uses the static family rates).
     public static func loadCatalog(now: Date = Date()) async -> [String: ModelPricing.Rate]? {
         if let memo = freshMemo(now: now) { return memo.rates }
-        let disk = readDisk()
-        if let disk, now.timeIntervalSince(disk.fetchedAt) < cacheTTL {
+        let disk = readDisk(now: now)
+        if let disk, validatedCache(disk, now: now, requiresFresh: true) != nil {
             setMemo(disk)
             return disk.rates
         }
@@ -54,8 +55,8 @@ public enum ModelsDevPricing {
     private static func freshMemo(now: Date) -> CachedCatalog? {
         lock.lock()
         defer { lock.unlock() }
-        guard let memo, now.timeIntervalSince(memo.fetchedAt) < cacheTTL else { return nil }
-        return memo
+        guard let memo else { return nil }
+        return validatedCache(memo, now: now, requiresFresh: true)
     }
 
     private static func setMemo(_ value: CachedCatalog) {
@@ -92,7 +93,10 @@ public enum ModelsDevPricing {
         var rates: [String: ModelPricing.Rate] = [:]
         for (id, model) in models {
             guard let cost = model.cost, let input = cost.input, let output = cost.output,
-                input > 0, output > 0
+                isSupportedPositive(input), isSupportedPositive(output),
+                isSupportedPositive(input * 2),
+                let cacheRead = positive(cost.cacheRead) ?? positive(input * 0.1),
+                let cacheWrite = positive(cost.cacheWrite) ?? positive(input * 1.25)
             else { continue }
             // Never default a missing cache rate to 0. A catalog hit *replaces* the
             // family rate outright, and cache reads/writes dominate Claude Code
@@ -104,8 +108,8 @@ public enum ModelsDevPricing {
             rates[id.lowercased()] = ModelPricing.Rate(
                 input: input,
                 output: output,
-                cacheRead: positive(cost.cacheRead) ?? input * 0.1,
-                cacheWrite: positive(cost.cacheWrite) ?? input * 1.25
+                cacheRead: cacheRead,
+                cacheWrite: cacheWrite
             )
         }
         return isPlausible(rates) ? rates : nil
@@ -113,13 +117,25 @@ public enum ModelsDevPricing {
 
     /// Treats an absent *or* zero rate as "not published" — upstream uses both.
     private static func positive(_ value: Double?) -> Double? {
-        guard let value, value > 0 else { return nil }
+        guard let value, isSupportedPositive(value) else { return nil }
         return value
+    }
+
+    private static func isSupportedPositive(_ value: Double) -> Bool {
+        value.isFinite && value > 0 && value <= ModelPricing.Rate.maximumSupportedValue
     }
 
     /// Guards against a malformed/partial upstream response replacing good prices.
     static func isPlausible(_ rates: [String: ModelPricing.Rate]) -> Bool {
-        guard rates.count >= 5 else { return false }
+        guard rates.count >= 5,
+            rates.values.allSatisfy({ rate in
+                isSupportedPositive(rate.input)
+                    && isSupportedPositive(rate.output)
+                    && isSupportedPositive(rate.cacheRead)
+                    && isSupportedPositive(rate.cacheWrite)
+                    && isSupportedPositive(rate.resolvedCacheWrite1h)
+            })
+        else { return false }
         let hasOpus = rates.keys.contains { $0.contains("opus") }
         let hasSonnet = rates.keys.contains { $0.contains("sonnet") }
         return hasOpus && hasSonnet
@@ -144,9 +160,26 @@ public enum ModelsDevPricing {
         return appDir.appendingPathComponent(cacheFileName)
     }
 
-    private static func readDisk() -> CachedCatalog? {
-        guard let url = cacheURL(), let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(CachedCatalog.self, from: data)
+    static func validatedCache(
+        _ cached: CachedCatalog,
+        now: Date,
+        requiresFresh: Bool
+    ) -> CachedCatalog? {
+        guard PersistedDateBounds.contains(cached.fetchedAt) else { return nil }
+        let age = now.timeIntervalSince(cached.fetchedAt)
+        guard age.isFinite, age >= 0, !requiresFresh || age < cacheTTL,
+            isPlausible(cached.rates)
+        else { return nil }
+        return cached
+    }
+
+    private static func readDisk(now: Date) -> CachedCatalog? {
+        guard let url = cacheURL(),
+            let data = try? BoundedRegularFileReader.read(
+                at: url, maximumByteCount: maximumCacheFileBytes),
+            let decoded = try? JSONDecoder().decode(CachedCatalog.self, from: data)
+        else { return nil }
+        return validatedCache(decoded, now: now, requiresFresh: false)
     }
 
     private static func writeDisk(_ value: CachedCatalog) {

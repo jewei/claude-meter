@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -148,6 +149,52 @@ struct CostUsageScannerTests {
         #expect(abs(totalCost - 8.0) < 0.001)  // 5 (opus) + 3 (sonnet)
     }
 
+    @Test("Negative transcript counters are clamped and mark the result partial")
+    func negativeCountersDoNotReduceTotals() throws {
+        let now = Date()
+        let ts = iso(now)
+        let invalid = """
+            {"type":"assistant","timestamp":"\(ts)","requestId":"negative","message":{"id":"negative","model":"claude-sonnet-4-6","usage":{"input_tokens":-100,"output_tokens":-200,"cache_read_input_tokens":-300,"cache_creation_input_tokens":-400}}}
+            """
+        let (scanner, root) = try makeScanner(lines: [
+            assistantLine(
+                id: "valid", requestId: "valid", model: "claude-sonnet-4-6",
+                input: 20, output: 10, ts: ts),
+            invalid,
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let result = scanner.scan(now: now)
+        let model = try #require(result.models.first)
+        #expect(model.inputTokens == 20)
+        #expect(model.outputTokens == 10)
+        #expect(model.cacheReadTokens == 0)
+        #expect(model.cacheWriteTokens == 0)
+        #expect(result.isPartialEstimate)
+    }
+
+    @Test("Counter addition saturates instead of overflowing")
+    func counterOverflowSaturatesAndMarksPartial() throws {
+        let now = Date()
+        let ts = iso(now)
+        let model = "claude-sonnet-4-6"
+        let (scanner, root) = try makeScanner(lines: [
+            assistantLine(
+                id: "maximum", requestId: "maximum", model: model,
+                input: .max, output: .max, ts: ts),
+            assistantLine(
+                id: "one-more", requestId: "one-more", model: model,
+                input: 1, output: 1, ts: ts),
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let result = scanner.scan(now: now)
+        let usage = try #require(result.models.first)
+        #expect(usage.inputTokens == .max)
+        #expect(usage.outputTokens == .max)
+        #expect(result.isPartialEstimate)
+    }
+
     @Test func ignoresEntriesOutsideWindow() throws {
         let now = Date()
         let old = iso(now.addingTimeInterval(-30 * 24 * 3600))
@@ -240,6 +287,62 @@ struct CostUsageScannerTests {
         #expect(scanner.scan(now: now).models.first?.inputTokens == 123)
     }
 
+    @Test("A transient read failure is retried when mtime and size stay unchanged")
+    func transientReadFailureIsNotCached() throws {
+        let now = Date()
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let project = root.appendingPathComponent("p")
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        let file = project.appendingPathComponent("session.jsonl")
+        try Data(
+            assistantLine(
+                id: "retry", requestId: "retry", model: "claude-sonnet-4-6",
+                input: 789, output: 0, ts: iso(now)
+            ).utf8
+        ).write(to: file)
+        let pinnedMtime = Date(
+            timeIntervalSince1970: now.addingTimeInterval(-60).timeIntervalSince1970.rounded())
+        try fm.setAttributes([.modificationDate: pinnedMtime], ofItemAtPath: file.path)
+        let canonicalFile = try #require(
+            try fm.contentsOfDirectory(at: project, includingPropertiesForKeys: nil)
+                .first { $0.pathExtension == "jsonl" })
+        defer {
+            try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: canonicalFile.path)
+            try? fm.removeItem(at: root)
+        }
+
+        let before = try #require(
+            try JournalReader.regularTranscriptMetadata(at: canonicalFile, fm: fm))
+        try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: canonicalFile.path)
+
+        let cache = CostUsageCache()
+        let scanner = CostUsageScanner(projectsPath: root, cache: cache)
+        let failed = scanner.scan(now: now)
+        #expect(failed.models.isEmpty)
+        #expect(failed.isPartialEstimate)
+        switch cache.lookup(
+            path: canonicalFile.path,
+            modDate: before.modificationDate,
+            fileSize: before.fileSize)
+        {
+        case .miss:
+            break
+        case .exact:
+            Issue.record("A failed transcript read entered the cost cache")
+        }
+
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: canonicalFile.path)
+        let after = try #require(
+            try JournalReader.regularTranscriptMetadata(at: canonicalFile, fm: fm))
+        #expect(after.modificationDate == before.modificationDate)
+        #expect(after.fileSize == before.fileSize)
+
+        let recovered = scanner.scan(now: now)
+        #expect(recovered.models.first?.inputTokens == 789)
+        #expect(!recovered.isPartialEstimate)
+    }
+
     @Test func largerRewriteDoesNotMergeStaleCachedTotals() throws {
         let now = Date()
         let ts = iso(now)
@@ -267,6 +370,123 @@ struct CostUsageScannerTests {
         defer { try? fm.removeItem(at: root) }
         let result = CostUsageScanner(projectsPath: root, cache: CostUsageCache()).scan()
         #expect(result.isPartialEstimate)
+    }
+
+    @Test("An existing non-directory root marks the union partial and keeps readable data")
+    func nonDirectoryRootMarksPartialAndRetainsData() throws {
+        let now = Date()
+        let (_, readableRoot) = try makeScanner(lines: [
+            assistantLine(
+                id: "valid", requestId: "r", model: "claude-sonnet-4-6",
+                input: 123, output: 4, ts: iso(now))
+        ])
+        let invalidRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try Data("not a directory".utf8).write(to: invalidRoot)
+        defer {
+            try? FileManager.default.removeItem(at: readableRoot)
+            try? FileManager.default.removeItem(at: invalidRoot)
+        }
+
+        let result = CostUsageScanner(
+            projectsPaths: [readableRoot, invalidRoot], cache: CostUsageCache()
+        ).scan(now: now)
+
+        #expect(result.models.first?.inputTokens == 123)
+        #expect(result.isPartialEstimate)
+    }
+
+    @Test("A bad subagents path marks the result partial and keeps top-level data")
+    func badSubagentsPathMarksPartialAndRetainsData() throws {
+        let now = Date()
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let project = root.appendingPathComponent("p")
+        let session = project.appendingPathComponent("session")
+        try fm.createDirectory(at: session, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        try Data(
+            assistantLine(
+                id: "valid", requestId: "r", model: "claude-sonnet-4-6",
+                input: 321, output: 0, ts: iso(now)
+            ).utf8
+        ).write(to: project.appendingPathComponent("session.jsonl"))
+        try Data("not a directory".utf8).write(
+            to: session.appendingPathComponent("subagents"))
+
+        let result = CostUsageScanner(projectsPath: root, cache: CostUsageCache())
+            .scan(now: now)
+        #expect(result.models.first?.inputTokens == 321)
+        #expect(result.isPartialEstimate)
+    }
+
+    @Test("A session directory with no subagents directory is complete")
+    func missingSubagentsDirectoryIsNormal() throws {
+        let now = Date()
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let project = root.appendingPathComponent("p")
+        try fm.createDirectory(
+            at: project.appendingPathComponent("session"), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        try Data(
+            assistantLine(
+                id: "valid", requestId: "r", model: "claude-sonnet-4-6",
+                input: 111, output: 0, ts: iso(now)
+            ).utf8
+        ).write(to: project.appendingPathComponent("session.jsonl"))
+
+        let result = CostUsageScanner(projectsPath: root, cache: CostUsageCache())
+            .scan(now: now)
+        #expect(result.models.first?.inputTokens == 111)
+        #expect(!result.isPartialEstimate)
+    }
+
+    @Test("FIFO and symbolic-link transcripts are not opened or counted")
+    func rejectsSpecialAndSymbolicLinkTranscripts() throws {
+        let now = Date()
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let project = root.appendingPathComponent("p")
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        let regular = project.appendingPathComponent("regular.jsonl")
+        try Data(
+            assistantLine(
+                id: "valid", requestId: "r", model: "claude-sonnet-4-6",
+                input: 456, output: 0, ts: iso(now)
+            ).utf8
+        ).write(to: regular)
+        try fm.createSymbolicLink(
+            at: project.appendingPathComponent("linked.jsonl"), withDestinationURL: regular)
+        let fifo = project.appendingPathComponent("blocked.jsonl")
+        let fifoResult = fifo.path.withCString { mkfifo($0, mode_t(0o600)) }
+        #expect(fifoResult == 0)
+
+        let result = CostUsageScanner(projectsPath: root, cache: CostUsageCache())
+            .scan(now: now)
+        #expect(result.models.first?.inputTokens == 456)
+        #expect(result.isPartialEstimate)
+    }
+
+    @Test("Transcript reads stop at the tail byte limit")
+    func transcriptReadIsBounded() throws {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        let bytes = Data((0..<64).map(UInt8.init))
+        try bytes.write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let read = try #require(
+            JournalReader.readRegularTranscript(
+                at: file, maxFullReadBytes: 32, tailReadBytes: 8))
+        #expect(read.data == Data((56..<64).map(UInt8.init)))
+        #expect(read.baseOffset == 56)
+        #expect(read.fileSize == 64)
+        #expect(read.isPartial)
     }
 
     @Test("Cache persists to disk and a fresh cache serves an unchanged file as an exact hit")
@@ -315,6 +535,98 @@ struct CostUsageScannerTests {
         #expect(first.models.first?.inputTokens == 1_000_000)
     }
 
+    @Test("A time-zone change reparses cached local-day buckets")
+    func timeZoneChangeInvalidatesCache() throws {
+        let event = Date(timeIntervalSince1970: 1_782_779_400)  // 2026-06-30 00:30Z
+        let now = Date(timeIntervalSince1970: 1_783_339_200)  // 2026-07-06 12:00Z
+        let (_, root) = try makeScanner(lines: [
+            assistantLine(
+                id: "boundary",
+                requestId: "boundary",
+                model: "claude-sonnet-4-6",
+                input: 100,
+                output: 0,
+                ts: iso(event))
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("project-a/session.jsonl")
+        try FileManager.default.setAttributes(
+            [.modificationDate: now], ofItemAtPath: file.path)
+
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = try #require(TimeZone(identifier: "UTC"))
+        var losAngeles = Calendar(identifier: .gregorian)
+        losAngeles.timeZone = try #require(TimeZone(identifier: "America/Los_Angeles"))
+        let cache = CostUsageCache()
+
+        let utcResult = CostUsageScanner(
+            projectsPath: root, cache: cache, calendar: utc
+        ).scan(daysBack: 7, now: now)
+        let localResult = CostUsageScanner(
+            projectsPath: root, cache: cache, calendar: losAngeles
+        ).scan(daysBack: 7, now: now)
+
+        #expect(utcResult.models.first?.inputTokens == 100)
+        #expect(localResult.models.isEmpty)
+    }
+
+    @Test("Persisted cost-cache import keeps only the 2048 newest entries")
+    func diskImportIsCapped() throws {
+        struct Disk: Encodable {
+            let version: Int
+            let entries: [Entry]
+        }
+        struct Entry: Encodable {
+            let path: String
+            let modDate: Double = 0
+            let fileSize: UInt64 = 0
+            let timeZoneIdentifier = "UTC"
+            let parsedBytes: UInt64 = 0
+            let isPartial = false
+            let committed: [Int] = []
+            let value: [Int] = []
+        }
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var paths: [String] = []
+        for index in 0...CostUsageCache.maxEntries {
+            let file = root.appendingPathComponent("\(index)")
+            #expect(FileManager.default.createFile(atPath: file.path, contents: Data()))
+            paths.append(file.path)
+        }
+        let diskURL = root.appendingPathComponent("cache.json")
+        try JSONEncoder().encode(
+            Disk(version: 3, entries: paths.map { Entry(path: $0) })
+        ).write(to: diskURL)
+
+        let cache = CostUsageCache(persistenceURL: diskURL)
+
+        #expect(cache.entryCount == CostUsageCache.maxEntries)
+        guard
+            case .miss = cache.lookup(
+                path: paths[0],
+                modDate: Date(timeIntervalSinceReferenceDate: 0),
+                fileSize: 0,
+                timeZoneIdentifier: "UTC")
+        else {
+            Issue.record("The oldest persisted cache entry was imported above the cap")
+            return
+        }
+        guard
+            case .exact = cache.lookup(
+                path: paths.last!,
+                modDate: Date(timeIntervalSinceReferenceDate: 0),
+                fileSize: 0,
+                timeZoneIdentifier: "UTC")
+        else {
+            Issue.record("The newest persisted cache entry was not retained")
+            return
+        }
+    }
+
     /// Assistant line with an explicit `cache_creation` breakdown alongside the
     /// legacy total, as Claude Code emits both today.
     private func cacheLine(
@@ -328,8 +640,46 @@ struct CostUsageScannerTests {
             breakdown = ""
         }
         return """
-            {"type":"assistant","timestamp":"\(ts)","requestId":"r-\(id)","message":{"id":"\(id)","model":"\(model)","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":\(legacyTotal)\(breakdown)}}}
+                {"type":"assistant","timestamp":"\(ts)","requestId":"r-\(id)","message":{"id":"\(id)","model":"\(model)","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":\(legacyTotal)\(breakdown)}}}
             """
+    }
+
+    @Test("Negative split cache counters are clamped and mark the result partial")
+    func negativeSplitCacheCounterDoesNotReduceTotal() throws {
+        let now = Date()
+        let (scanner, root) = try makeScanner(lines: [
+            cacheLine(
+                id: "negative", model: "claude-opus-4-8", legacyTotal: 999,
+                fiveMinute: -50, oneHour: 25, ts: iso(now))
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let result = scanner.scan(now: now)
+        let usage = try #require(result.models.first)
+        #expect(usage.cacheWriteTokens == 25)
+        #expect(result.isPartialEstimate)
+    }
+
+    @Test("Split cache counter sums saturate instead of overflowing")
+    func splitCacheCounterOverflowSaturatesAndMarksPartial() throws {
+        let now = Date()
+        let ts = iso(now)
+        let model = "claude-opus-4-8"
+        let (scanner, root) = try makeScanner(lines: [
+            cacheLine(
+                id: "maximum", model: model, legacyTotal: 0,
+                fiveMinute: .max, oneHour: 0, ts: ts),
+            cacheLine(
+                id: "one-more", model: model, legacyTotal: 0,
+                fiveMinute: 1, oneHour: .max, ts: ts),
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let result = scanner.scan(now: now)
+        let usage = try #require(result.models.first)
+        #expect(usage.cacheWriteTokens == .max)
+        #expect(usage.costUsd?.isFinite == true)
+        #expect(result.isPartialEstimate)
     }
 
     @Test("1h cache writes are priced at 2× input, not the 5m rate")
@@ -471,7 +821,7 @@ struct CostUsageScannerTests {
         #expect(result.isPartialEstimate)  // honest: totals were cut short
     }
 
-    @Test func unionsMultipleProjectRootsAndIgnoresUnreadableRoot() throws {
+    @Test func unionsMultipleProjectRootsAndIgnoresMissingRoot() throws {
         let now = Date()
         let ts = iso(now)
         let fm = FileManager.default
@@ -503,5 +853,6 @@ struct CostUsageScannerTests {
         let result = scanner.scan(daysBack: 7, now: now)
         let opus = try #require(result.models.first { $0.name == "claude-opus-4-8" })
         #expect(opus.inputTokens == 2_000_000)  // summed across both readable roots
+        #expect(!result.isPartialEstimate)  // a config dir can be absent normally
     }
 }

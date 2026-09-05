@@ -1,4 +1,5 @@
 import ClaudeMeterCore
+import Darwin
 import Foundation
 
 /// Shared transcript-walking and timestamp helpers for the `~/.claude/projects`
@@ -8,6 +9,23 @@ import Foundation
 /// its own unbounded cache) had no callers in the app, the providers, or the
 /// tests, so it was removed rather than left looking like live infrastructure.
 public enum JournalReader {
+
+    struct TranscriptDiscovery {
+        var files: [URL] = []
+        var isPartial = false
+    }
+
+    struct TranscriptMetadata {
+        let modificationDate: Date
+        let fileSize: UInt64
+    }
+
+    struct TranscriptRead {
+        let data: Data
+        let baseOffset: UInt64
+        let fileSize: UInt64
+        let isPartial: Bool
+    }
 
     public static var defaultProjectsPath: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -22,32 +40,191 @@ public enum JournalReader {
     /// verbatim, usage blocks included, and are excluded to avoid double-counting.
     /// Non-recursive below `subagents/` (so `subagents/workflows/` journals, which
     /// carry no usage, are never walked).
-    static func transcriptFiles(inProjectDir projectDir: URL, fm: FileManager) -> [URL] {
-        guard
-            let entries = try? fm.contentsOfDirectory(
+    static func transcriptFiles(
+        inProjectDir projectDir: URL, fm: FileManager
+    ) -> TranscriptDiscovery {
+        var discovery = TranscriptDiscovery()
+        let entries: [URL]
+        do {
+            entries = try fm.contentsOfDirectory(
                 at: projectDir,
-                includingPropertiesForKeys: [.isDirectoryKey],
+                includingPropertiesForKeys: nil,
                 options: [.skipsHiddenFiles])
-        else { return [] }
-        var files: [URL] = []
+        } catch {
+            discovery.isPartial = true
+            return discovery
+        }
+
         for entry in entries {
             if entry.pathExtension == "jsonl" {
-                files.append(entry)
-            } else if (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
-                let subagentsDir = entry.appendingPathComponent("subagents", isDirectory: true)
-                guard
-                    let subFiles = try? fm.contentsOfDirectory(
-                        at: subagentsDir,
-                        includingPropertiesForKeys: nil,
-                        options: [.skipsHiddenFiles])
-                else { continue }
-                for file in subFiles
-                where file.pathExtension == "jsonl" && !isContextForkTranscript(file) {
-                    files.append(file)
+                do {
+                    if try regularTranscriptMetadata(at: entry, fm: fm) != nil {
+                        discovery.files.append(entry)
+                    } else {
+                        // A transcript-shaped directory, link, FIFO, or device is
+                        // not safe input. Its omission makes the estimate partial.
+                        discovery.isPartial = true
+                    }
+                } catch {
+                    discovery.isPartial = true
+                }
+                continue
+            }
+
+            let entryType: FileAttributeType
+            do {
+                entryType = try fileType(at: entry, fm: fm)
+            } catch {
+                discovery.isPartial = true
+                continue
+            }
+            guard entryType == .typeDirectory else { continue }
+
+            let subagentsDir = entry.appendingPathComponent("subagents", isDirectory: true)
+            let subagentsType: FileAttributeType
+            do {
+                subagentsType = try fileType(at: subagentsDir, fm: fm)
+            } catch  where isMissingFileError(error) {
+                continue
+            } catch {
+                discovery.isPartial = true
+                continue
+            }
+            guard subagentsType == .typeDirectory else {
+                discovery.isPartial = true
+                continue
+            }
+
+            let subFiles: [URL]
+            do {
+                subFiles = try fm.contentsOfDirectory(
+                    at: subagentsDir,
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles])
+            } catch {
+                discovery.isPartial = true
+                continue
+            }
+            for file in subFiles
+            where file.pathExtension == "jsonl" && !isContextForkTranscript(file) {
+                do {
+                    if try regularTranscriptMetadata(at: file, fm: fm) != nil {
+                        discovery.files.append(file)
+                    } else {
+                        discovery.isPartial = true
+                    }
+                } catch {
+                    discovery.isPartial = true
                 }
             }
         }
-        return files
+        return discovery
+    }
+
+    /// Returns metadata only for a regular file. FileManager reports a symbolic
+    /// link as `.typeSymbolicLink`, so links are never accepted as transcripts.
+    static func regularTranscriptMetadata(
+        at url: URL, fm: FileManager
+    ) throws -> TranscriptMetadata? {
+        let attributes = try fm.attributesOfItem(atPath: url.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular else { return nil }
+        guard let modificationDate = attributes[.modificationDate] as? Date,
+            let size = attributes[.size] as? NSNumber
+        else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        return TranscriptMetadata(
+            modificationDate: modificationDate,
+            fileSize: size.uint64Value)
+    }
+
+    /// Opens one transcript without following links and reads at most the existing
+    /// full-file or tail limit. `O_NONBLOCK` prevents a raced FIFO from blocking;
+    /// `fstat` then rejects everything except a regular file.
+    static func readRegularTranscript(
+        at url: URL,
+        maxFullReadBytes: UInt64,
+        tailReadBytes: UInt64
+    ) -> TranscriptRead? {
+        let descriptor = url.path.withCString {
+            Darwin.open($0, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard descriptor >= 0 else { return nil }
+        defer { Darwin.close(descriptor) }
+
+        var status = stat()
+        guard fstat(descriptor, &status) == 0,
+            (status.st_mode & S_IFMT) == S_IFREG,
+            status.st_size >= 0
+        else { return nil }
+
+        let fileSize = UInt64(status.st_size)
+        let tailRead = fileSize > maxFullReadBytes
+        let requestedBytes = tailRead ? min(fileSize, tailReadBytes) : fileSize
+        let baseOffset = tailRead ? fileSize - requestedBytes : 0
+        guard requestedBytes <= UInt64(Int.max) else { return nil }
+
+        var data = Data(count: Int(requestedBytes))
+        var bytesRead = 0
+        var readFailed = false
+        data.withUnsafeMutableBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return }
+            while bytesRead < rawBuffer.count {
+                let count = pread(
+                    descriptor,
+                    baseAddress.advanced(by: bytesRead),
+                    rawBuffer.count - bytesRead,
+                    off_t(baseOffset) + off_t(bytesRead))
+                if count > 0 {
+                    bytesRead += count
+                } else if count == 0 {
+                    break
+                } else if errno != EINTR {
+                    readFailed = true
+                    break
+                }
+            }
+        }
+        guard !readFailed else { return nil }
+        if bytesRead < data.count {
+            data.removeSubrange(bytesRead..<data.count)
+        }
+        return TranscriptRead(
+            data: data,
+            baseOffset: baseOffset,
+            fileSize: fileSize,
+            isPartial: tailRead || UInt64(bytesRead) != requestedBytes)
+    }
+
+    static func isMissingPath(_ url: URL, fm: FileManager) -> Bool {
+        do {
+            _ = try fileType(at: url, fm: fm)
+            return false
+        } catch {
+            return isMissingFileError(error)
+        }
+    }
+
+    static func isDirectory(_ url: URL, fm: FileManager) throws -> Bool {
+        try fileType(at: url, fm: fm) == .typeDirectory
+    }
+
+    private static func fileType(at url: URL, fm: FileManager) throws -> FileAttributeType {
+        let attributes = try fm.attributesOfItem(atPath: url.path)
+        guard let type = attributes[.type] as? FileAttributeType else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        return type
+    }
+
+    private static func isMissingFileError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain {
+            return nsError.code == CocoaError.fileNoSuchFile.rawValue
+                || nsError.code == CocoaError.fileReadNoSuchFile.rawValue
+        }
+        return nsError.domain == NSPOSIXErrorDomain
+            && (nsError.code == Int(ENOENT) || nsError.code == Int(ENOTDIR))
     }
 
     static func isContextForkTranscript(_ url: URL) -> Bool {
@@ -69,27 +246,33 @@ public enum JournalReader {
         f.formatOptions = [.withInternetDateTime]
         return f
     }()
-    private static let legacyTimestampFormatters: [DateFormatter] = {
-        [
-            "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
-            "yyyy-MM-dd'T'HH:mm:ssZ",
-            "yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX",
-            "yyyy-MM-dd'T'HH:mm:ssXXXXX",
-        ].map { format in
-            let f = DateFormatter()
-            f.dateFormat = format
-            f.locale = Locale(identifier: "en_US_POSIX")
-            f.timeZone = TimeZone(secondsFromGMT: 0)
-            return f
+    private final class ReadOnlyDateFormatters {
+        let values: [DateFormatter]
+
+        init(_ formats: [String]) {
+            values = formats.map { format in
+                let formatter = DateFormatter()
+                formatter.dateFormat = format
+                formatter.locale = Locale(identifier: "en_US_POSIX")
+                formatter.timeZone = TimeZone(secondsFromGMT: 0)
+                return formatter
+            }
         }
-    }()
+    }
+
+    private nonisolated(unsafe) static let legacyTimestampFormatters = ReadOnlyDateFormatters([
+        "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
+        "yyyy-MM-dd'T'HH:mm:ssZ",
+        "yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX",
+        "yyyy-MM-dd'T'HH:mm:ssXXXXX",
+    ])
     static func parseTimestamp(_ str: String) -> Date? {
         // Fast path: Claude Code emits ISO 8601 with exactly three fraction digits
         // and `Z` (what `.withFractionalSeconds` requires). The legacy chain stays
         // as the fallback for variants ISO8601DateFormatter rejects (e.g. `+0000`).
         if let date = isoFractional.date(from: str) { return date }
         if let date = isoPlain.date(from: str) { return date }
-        for f in legacyTimestampFormatters {
+        for f in legacyTimestampFormatters.values {
             if let date = f.date(from: str) { return date }
         }
         return nil
@@ -109,12 +292,20 @@ public enum JournalReader {
 /// (with or without fractional seconds). Returns nil for empty/unparseable input.
 func parseEpochOrISODate(_ string: String?) -> Date? {
     guard let string, !string.isEmpty else { return nil }
-    if let number = Double(string) {
+    if let number = Double(string), number.isFinite {
         // Heuristic: 13-digit values are milliseconds.
-        let seconds = number > 1_000_000_000_000 ? number / 1000 : number
-        return Date(timeIntervalSince1970: seconds)
+        let seconds = abs(number) > 1_000_000_000_000 ? number / 1000 : number
+        return boundedProviderDate(timeIntervalSince1970: seconds)
     }
-    return JournalReader.parseTimestamp(string)
+    guard let date = JournalReader.parseTimestamp(string) else { return nil }
+    return boundedProviderDate(timeIntervalSince1970: date.timeIntervalSince1970)
+}
+
+/// Converts an external provider epoch without creating dates that Foundation's
+/// ISO-8601 encoder cannot safely represent. These services did not exist before
+/// 1970, and no usage or credential timestamp near year 3000 is plausible.
+func boundedProviderDate(timeIntervalSince1970 seconds: TimeInterval) -> Date? {
+    PersistedDateBounds.date(timeIntervalSince1970: seconds)
 }
 
 extension Array where Element == URL {

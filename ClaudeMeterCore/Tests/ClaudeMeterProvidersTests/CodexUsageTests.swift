@@ -1,16 +1,176 @@
+import Darwin
 import Foundation
 import Testing
 
 @testable import ClaudeMeterCore
 @testable import ClaudeMeterProviders
 
-@Suite("Codex usage")
+@Suite("Codex usage", .serialized)
 struct CodexUsageTests {
 
     @Test func appServerUsesSupportedNonInteractiveArguments() {
         #expect(
             CodexAppServerClient.processArguments
                 == ["-s", "read-only", "-a", "never", "app-server"])
+    }
+
+    @Test func appServerTimeoutKillsAndReapsAChildThatIgnoresTerm() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("codex-shutdown-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let executable = directory.appendingPathComponent("ignore-term.sh")
+        let pidFile = directory.appendingPathComponent("pid")
+        let script = """
+            #!/bin/sh
+            trap '' TERM
+            printf '%s' "$$" > "$SHUTDOWN_PID_FILE"
+            while :; do :; done
+            """
+        try script.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: executable.path)
+
+        let client = try CodexAppServerClient(
+            executable: executable.path,
+            env: ["SHUTDOWN_PID_FILE": pidFile.path],
+            startupTimeout: 0.01,
+            requestTimeout: 1)
+        defer { client.shutdown() }
+
+        let markerDeadline = ProcessInfo.processInfo.systemUptime + 5
+        while !FileManager.default.fileExists(atPath: pidFile.path),
+            ProcessInfo.processInfo.systemUptime < markerDeadline
+        {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(FileManager.default.fileExists(atPath: pidFile.path))
+        let pidText = try String(contentsOf: pidFile, encoding: .utf8)
+        let pid = try #require(pid_t(pidText))
+
+        let start = ProcessInfo.processInfo.systemUptime
+        do {
+            try await client.initialize()
+            Issue.record("Expected the unresponsive child to time out")
+        } catch {
+            #expect(error as? CodexUsageError == .rpcTimedOut("initialize"))
+        }
+        let elapsed = ProcessInfo.processInfo.systemUptime - start
+
+        #expect(elapsed < 2)
+        errno = 0
+        #expect(Darwin.kill(pid, 0) == -1)
+        #expect(errno == ESRCH)
+    }
+
+    @Test func appServerTimeoutRejectsAResponseDuringTerminationGrace() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("codex-timeout-race-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let executable = directory.appendingPathComponent("late-response.sh")
+        let readyMarker = directory.appendingPathComponent("ready")
+        let responseMarker = directory.appendingPathComponent("response")
+        let script = """
+            #!/bin/sh
+            on_term() {
+              printf '{"id":1,"result":{}}\n'
+              : > "$RESPONSE_MARKER"
+              trap '' TERM
+              while :; do :; done
+            }
+            trap on_term TERM
+            : > "$READY_MARKER"
+            while :; do
+              if IFS= read -r request; then
+                :
+              else
+                while :; do :; done
+              fi
+            done
+            """
+        try script.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: executable.path)
+
+        let client = try CodexAppServerClient(
+            executable: executable.path,
+            env: ["READY_MARKER": readyMarker.path, "RESPONSE_MARKER": responseMarker.path],
+            startupTimeout: 0.02,
+            requestTimeout: 1)
+        defer { client.shutdown() }
+
+        // Other process tests run in parallel and can briefly saturate the test
+        // host. Wait for the trap to be installed before testing the timeout race.
+        let readyDeadline = ProcessInfo.processInfo.systemUptime + 5
+        while !FileManager.default.fileExists(atPath: readyMarker.path),
+            ProcessInfo.processInfo.systemUptime < readyDeadline
+        {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(FileManager.default.fileExists(atPath: readyMarker.path))
+
+        await #expect(throws: CodexUsageError.rpcTimedOut("initialize")) {
+            try await client.initialize()
+        }
+        #expect(FileManager.default.fileExists(atPath: responseMarker.path))
+    }
+
+    @Test func appServerCancellationDuringAccountReadDoesNotRequestRateLimits() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("codex-cancel-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let executable = directory.appendingPathComponent("cancel-account.sh")
+        let accountMarker = directory.appendingPathComponent("account")
+        let limitsMarker = directory.appendingPathComponent("limits")
+        let script = """
+            #!/bin/sh
+            while IFS= read -r request; do
+              case "$request" in
+                *'"method":"initialize"'*)
+                  printf '{"id":1,"result":{}}\n'
+                  ;;
+                *rateLimits*)
+                  : > "$LIMITS_MARKER"
+                  ;;
+                *account*read*)
+                  : > "$ACCOUNT_MARKER"
+                  while :; do :; done
+                  ;;
+              esac
+            done
+            """
+        try script.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: executable.path)
+
+        let source = CodexAppServerSource(
+            env: ["ACCOUNT_MARKER": accountMarker.path, "LIMITS_MARKER": limitsMarker.path],
+            startupTimeout: 1,
+            requestTimeout: 2,
+            resolver: { _ in executable.path })
+        let task = Task { try await source.fetchUsage(now: Date()) }
+
+        let markerDeadline = ProcessInfo.processInfo.systemUptime + 5
+        while !FileManager.default.fileExists(atPath: accountMarker.path),
+            ProcessInfo.processInfo.systemUptime < markerDeadline
+        {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(FileManager.default.fileExists(atPath: accountMarker.path))
+        task.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+        #expect(!FileManager.default.fileExists(atPath: limitsMarker.path))
     }
 
     @Test func boundedProcessCaptureRejectsOverflowInsteadOfReturningATruncatedPrefix() {
@@ -189,6 +349,101 @@ struct CodexUsageTests {
         #expect(window.displayLabel == "24h")
     }
 
+    @Test func invalidExternalNumbersDoNotTrapOrBecomeUsage() {
+        let window = CodexLimitWindow(
+            kind: .primary,
+            usedPercent: .nan,
+            resetAt: nil,
+            durationSeconds: .greatestFiniteMagnitude,
+            rawLabel: nil)
+
+        #expect(window.usedPercent == nil)
+        #expect(window.durationSeconds == nil)
+        #expect(window.displayLabel == "Session")
+    }
+
+    @Test func extremeAppServerDurationDoesNotOverflow() throws {
+        let json = """
+            {"rateLimits":{"primary":{
+              "usedPercent":25,
+              "windowDurationMins":9223372036854775807
+            }}}
+            """
+        let response = try JSONDecoder().decode(
+            CodexAppServerRateLimitsResponse.self, from: Data(json.utf8))
+        let usage = try response.usage(account: nil, now: Date(), source: .appServer)
+
+        #expect(usage.primaryWindow?.usedPercent == 25)
+        #expect(usage.primaryWindow?.durationSeconds == nil)
+        #expect(usage.primaryWindow?.displayLabel == "Session")
+    }
+
+    @Test func restoredLimitWindowUsesTheValidatedInitializer() throws {
+        let json = #"{"kind":"primary","usedPercent":1e308,"durationSeconds":1e308}"#
+
+        let window = try JSONDecoder().decode(CodexLimitWindow.self, from: Data(json.utf8))
+
+        #expect(window.usedPercent == 100)
+        #expect(window.durationSeconds == nil)
+    }
+
+    @Test func restoredCodexDatesStayInsideThePersistenceInterval() throws {
+        let windowJSON = #"{"kind":"primary","resetAt":1e308}"#
+        let window = try JSONDecoder().decode(CodexLimitWindow.self, from: Data(windowJSON.utf8))
+        #expect(window.resetAt == nil)
+
+        let creditJSON = #"{"title":"Reset","expiresAt":1e308}"#
+        let credit = try JSONDecoder().decode(
+            CodexRateLimitResetCredit.self, from: Data(creditJSON.utf8))
+        #expect(credit.expiresAt == nil)
+    }
+
+    @Test func extremeCodexEpochsDoNotReachPersistedModels() throws {
+        let json = """
+            {
+              "rateLimits": {
+                "primary": {
+                  "usedPercent": 25,
+                  "resetsAt": 9223372036854775807
+                }
+              },
+              "rateLimitResetCredits": {
+                "availableCount": 1,
+                "credits": [{
+                  "title": "Reset",
+                  "expiresAt": 9223372036854775807
+                }]
+              }
+            }
+            """
+        let response = try JSONDecoder().decode(
+            CodexAppServerRateLimitsResponse.self, from: Data(json.utf8))
+        let usage = try response.usage(account: nil, now: Date(), source: .appServer)
+
+        #expect(usage.primaryWindow?.resetAt == nil)
+        #expect(usage.rateLimitResets?.credits?.first?.expiresAt == nil)
+        #expect(try JSONEncoder().encode(usage).isEmpty == false)
+    }
+
+    @Test func appServerRejectsNonFiniteCreditBalance() throws {
+        let json = #"{"rateLimits":{"credits":{"unlimited":false,"balance":"inf"}}}"#
+        let response = try JSONDecoder().decode(
+            CodexAppServerRateLimitsResponse.self, from: Data(json.utf8))
+
+        #expect(throws: CodexUsageError.noUsageData) {
+            try response.usage(account: nil, now: Date(), source: .appServer)
+        }
+    }
+
+    @Test func directOAuthRejectsNonFiniteCreditBalance() throws {
+        let json = #"{"credits":{"unlimited":false,"balance":"nan"}}"#
+        let response = try JSONDecoder().decode(CodexOAuthUsageResponse.self, from: Data(json.utf8))
+
+        #expect(throws: CodexUsageError.noUsageData) {
+            try response.usage(accountEmail: nil, now: Date(), source: .directOAuth)
+        }
+    }
+
     @Test func displayPercentRespectsProgressionMode() {
         let window = CodexLimitWindow(
             kind: .primary,
@@ -262,6 +517,21 @@ struct CodexUsageTests {
         }
     }
 
+    @Test func specialOAuthCredentialPathDoesNotBlock() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let authFile = home.appendingPathComponent("auth.json")
+        #expect(authFile.path.withCString { Darwin.mkfifo($0, S_IRUSR | S_IWUSR) } == 0)
+
+        let clock = ContinuousClock()
+        let start = clock.now
+        #expect(throws: CodexOAuthCredentialsError.unreadable) {
+            try CodexOAuthCredentialsStore.load(env: ["CODEX_HOME": home.path])
+        }
+        #expect(start.duration(to: clock.now) < .seconds(1))
+    }
+
     @Test func sourceModeDefaultsToAutoForUnknownStoredValue() {
         #expect(CodexSourceMode(rawValue: "appServer") == .appServer)
         #expect(CodexSourceMode(rawValue: "directOAuth") == .directOAuth)
@@ -333,6 +603,41 @@ struct CodexUsageTests {
         let usage = try await provider.fetchUsage(mode: .auto)
 
         #expect(usage.source == .directOAuth)
+        #expect(appServer.fetchCount == 1)
+        #expect(oauth.fetchCount == 1)
+    }
+
+    @Test func providerAutoDoesNotFallbackAfterAppServerCancellation() async {
+        let appServer = StubCodexSource(
+            usage: Self.usage(source: .appServer),
+            availability: true,
+            fetchError: CancellationError())
+        let oauth = StubCodexSource(
+            usage: Self.usage(source: .directOAuth),
+            availability: true)
+        let provider = CodexUsageProvider(appServerSource: appServer, oauthSource: oauth)
+
+        await #expect(throws: CancellationError.self) {
+            try await provider.fetchUsage(mode: .auto)
+        }
+        #expect(appServer.fetchCount == 1)
+        #expect(oauth.fetchCount == 0)
+    }
+
+    @Test func providerAutoPreservesOAuthCancellation() async {
+        let appServer = StubCodexSource(
+            usage: Self.usage(source: .appServer),
+            availability: true,
+            fetchError: CodexUsageError.rpcFailed("boom"))
+        let oauth = StubCodexSource(
+            usage: Self.usage(source: .directOAuth),
+            availability: true,
+            fetchError: CancellationError())
+        let provider = CodexUsageProvider(appServerSource: appServer, oauthSource: oauth)
+
+        await #expect(throws: CancellationError.self) {
+            try await provider.fetchUsage(mode: .auto)
+        }
         #expect(appServer.fetchCount == 1)
         #expect(oauth.fetchCount == 1)
     }

@@ -34,6 +34,8 @@ struct ActivityRingsView: View {
 }
 
 private struct DepletingRing: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var fraction: Double
     var color: Color
     var diameter: CGFloat
@@ -46,7 +48,7 @@ private struct DepletingRing: View {
                 .trim(from: 0, to: min(1, max(0, fraction)))
                 .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-                .animation(.easeOut(duration: 0.5), value: fraction)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.5), value: fraction)
         }
         .frame(width: diameter, height: diameter)
     }
@@ -72,6 +74,8 @@ func energyBarMarkerOffset(width: CGFloat, expectedFraction: Double) -> CGFloat 
 }
 
 struct EnergyBar: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var fraction: Double
     var color: Color
     var height: CGFloat = 14
@@ -104,8 +108,8 @@ struct EnergyBar: View {
             }
         }
         .frame(height: height)
-        .animation(.easeOut(duration: 0.5), value: fraction)
-        .animation(.easeOut(duration: 0.5), value: expectedFraction)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.5), value: fraction)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.5), value: expectedFraction)
     }
 }
 
@@ -116,6 +120,8 @@ struct ColorSlider: View {
     var range: ClosedRange<Double>
     var step: Double = 1
     var color: Color
+    var accessibilityName: String
+    var accessibilityValueText: String
 
     private let thumb: CGFloat = 26
     private let track: CGFloat = 6
@@ -123,7 +129,11 @@ struct ColorSlider: View {
     var body: some View {
         GeometryReader { geo in
             let span = max(1, geo.size.width - thumb)
-            let frac = (value - range.lowerBound) / (range.upperBound - range.lowerBound)
+            let safeValue =
+                value.isFinite
+                ? min(range.upperBound, max(range.lowerBound, value))
+                : range.lowerBound
+            let frac = Self.fraction(for: safeValue, range: range)
             let x = CGFloat(min(1, max(0, frac))) * span
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.pfTrack).frame(height: track)
@@ -143,12 +153,72 @@ struct ColorSlider: View {
                         let f = min(1, max(0, (g.location.x - thumb / 2) / span))
                         let raw =
                             range.lowerBound + Double(f) * (range.upperBound - range.lowerBound)
-                        let stepped = (raw / step).rounded() * step
-                        value = min(range.upperBound, max(range.lowerBound, stepped))
+                        value = Self.snappedValue(raw, range: range, step: step)
                     }
             )
         }
         .frame(height: thumb)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityName)
+        .accessibilityValue(accessibilityValueText)
+        .accessibilityAdjustableAction { direction in
+            value = Self.adjustedValue(
+                value,
+                direction: direction,
+                range: range,
+                step: step)
+        }
+    }
+
+    nonisolated static func adjustedValue(
+        _ value: Double,
+        direction: AccessibilityAdjustmentDirection,
+        range: ClosedRange<Double>,
+        step: Double
+    ) -> Double {
+        let safeValue = boundedValue(value, range: range)
+        guard step.isFinite, step > 0 else { return safeValue }
+        let adjusted: Double
+        switch direction {
+        case .increment:
+            adjusted = safeValue + step
+        case .decrement:
+            adjusted = safeValue - step
+        @unknown default:
+            adjusted = safeValue
+        }
+        return min(range.upperBound, max(range.lowerBound, adjusted))
+    }
+
+    nonisolated static func fraction(
+        for value: Double,
+        range: ClosedRange<Double>
+    ) -> Double {
+        let width = range.upperBound - range.lowerBound
+        guard width.isFinite, width > 0 else { return 0 }
+        return min(1, max(0, (boundedValue(value, range: range) - range.lowerBound) / width))
+    }
+
+    nonisolated static func snappedValue(
+        _ value: Double,
+        range: ClosedRange<Double>,
+        step: Double
+    ) -> Double {
+        let safeValue = boundedValue(value, range: range)
+        guard step.isFinite, step > 0 else { return safeValue }
+        let snapped =
+            range.lowerBound + ((safeValue - range.lowerBound) / step).rounded() * step
+        guard snapped.isFinite else { return safeValue }
+        return min(range.upperBound, max(range.lowerBound, snapped))
+    }
+
+    private nonisolated static func boundedValue(
+        _ value: Double,
+        range: ClosedRange<Double>
+    ) -> Double {
+        value.isFinite
+            ? min(range.upperBound, max(range.lowerBound, value))
+            : range.lowerBound
     }
 }
 
@@ -209,9 +279,9 @@ struct AccountCardModel: Identifiable {
         return b
     }
 
-    func minLeft(_ now: Date) -> Double {
+    func bindingLeft(_ now: Date) -> Double? {
         [session.percentLeft(asOf: now), week.percentLeft(asOf: now), opus?.percentLeft(asOf: now)]
-            .compactMap { $0 }.min() ?? 100
+            .compactMap { $0 }.min()
     }
 
     /// Soonest upcoming refill/reset across this account's windows.
@@ -432,11 +502,37 @@ struct AccountRingCard: View {
     }
 
     private var accessibilityText: String {
-        let s = model.session.leftPercentText(asOf: now) ?? "unknown"
-        let w = model.week.leftPercentText(asOf: now) ?? "unknown"
-        let sessionPace = accessibilityPace(model.session, kind: .session)
-        let weeklyPace = accessibilityPace(model.week, kind: .weekly)
-        return "\(model.label): 5-hour \(s) left\(sessionPace), weekly \(w) left\(weeklyPace)"
+        var windows = [
+            accessibilityWindow(
+                "5-hour", window: model.session, kind: .session),
+            accessibilityWindow(
+                "weekly", window: model.week, kind: .weekly),
+        ]
+        if let opus = model.opus {
+            windows.append(accessibilityWindow("weekly Opus", window: opus))
+        }
+        windows += model.scoped.map {
+            accessibilityWindow("weekly \($0.displayName)", window: $0.window)
+        }
+        return "\(model.label). \(windows.joined(separator: ". "))"
+    }
+
+    private func accessibilityWindow(
+        _ scope: String, window: LimitWindow, kind: LimitWindowKind? = nil
+    ) -> String {
+        let resolved = window.resolved(asOf: now)
+        let percentText: String
+        if let percentUsed = resolved.percentUsed, percentUsed.isFinite {
+            let clamped = min(100, max(0, percentUsed))
+            let displayed = usage ? clamped : 100 - clamped
+            percentText = "\(Int(displayed.rounded())) percent \(usage ? "used" : "left")"
+        } else {
+            percentText = "percentage unknown"
+        }
+        let usablePercent = resolved.percentUsed.flatMap { $0.isFinite ? $0 : nil }
+        let band = EnergyBand(severity: thresholds.severity(for: usablePercent))
+        let pace = kind.map { accessibilityPace(window, kind: $0) } ?? ""
+        return "\(scope): \(percentText), \(accessibilityEnergyBand(band))\(pace)"
     }
 
     private func accessibilityPace(_ window: LimitWindow, kind: LimitWindowKind) -> String {
@@ -704,27 +800,35 @@ struct HeroSummary {
 
         // Multi account → count fresh + flag the lowest non-full account.
         let fresh = models.filter { $0.band(thresholds, now) == .full }.count
+        let unknown = models.filter { $0.band(thresholds, now) == .unknown }.count
         let lowest =
             models
             .filter { $0.band(thresholds, now) != .full && $0.band(thresholds, now) != .unknown }
-            .min(by: { $0.minLeft(now) < $1.minLeft(now) })
-        // No account has a reading yet. Unknown accounts are excluded from both
-        // `fresh` and `lowest`, so without this the all-unknown case fell through
-        // to "All N accounts fresh" — asserting full quota on the exact evidence
-        // that says we know nothing, under a "Warming up" headline.
+            .compactMap { model in
+                model.bindingLeft(now).map { (model: model, left: $0) }
+            }
+            .min(by: { $0.left < $1.left })?.model
         if fresh == 0 && lowest == nil { return "Warming up…" }
         if let low = lowest {
             let word = low.band(thresholds, now) == .low ? "low" : "nearly dry"
             let refill =
                 low.soonestReset(now)
                 .map { " (\(ResetPhrase.duration(until: $0, asOf: now) ?? "soon"))" } ?? ""
-            if fresh == 0 { return "\(low.label) is \(word)\(refill)" }
+            let unknownSuffix = unknownDescription(unknown).map { " · \($0)" } ?? ""
+            if fresh == 0 { return "\(low.label) is \(word)\(refill)\(unknownSuffix)" }
             let freshWord = fresh == 1 ? "1 fresh" : "\(fresh) fresh"
-            return "\(freshWord) · \(low.label) \(word)\(refill)"
+            return "\(freshWord) · \(low.label) \(word)\(refill)\(unknownSuffix)"
         }
-        // Reached only when every account read `.full`; anything unknown was
-        // caught above, so this can't overstate what we know.
+        if let unknownWord = unknownDescription(unknown) {
+            let freshWord = fresh == 1 ? "1 fresh" : "\(fresh) fresh"
+            return "\(freshWord) · \(unknownWord)"
+        }
         return "All \(models.count) accounts fresh 🎉"
+    }
+
+    private static func unknownDescription(_ count: Int) -> String? {
+        guard count > 0 else { return nil }
+        return count == 1 ? "1 warming up" : "\(count) warming up"
     }
 
     private struct Palette {
@@ -752,6 +856,8 @@ struct HeroSummary {
 }
 
 struct HeroView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let summary: HeroSummary
 
     var body: some View {
@@ -785,9 +891,19 @@ struct HeroView: View {
                     .strokeBorder(summary.border, lineWidth: 2)
             }
         )
-        .animation(.easeInOut(duration: 0.3), value: summary.bg)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: summary.bg)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(summary.title). \(summary.subtitle)")
+    }
+}
+
+private func accessibilityEnergyBand(_ band: EnergyBand) -> String {
+    switch band {
+    case .full: "full energy"
+    case .low: "low energy"
+    case .empty: "almost empty"
+    case .tappedOut: "tapped out"
+    case .unknown: "energy status unknown"
     }
 }
 

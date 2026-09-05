@@ -43,8 +43,10 @@ public enum ResetPhrase {
 
     private static func parts(until reset: Date, asOf now: Date) -> Parts {
         let interval = reset.timeIntervalSince(now)
-        guard interval > 0 else { return .none }
-        let totalMinutes = max(1, Int((interval / 60).rounded()))
+        guard interval.isFinite, interval > 0,
+            let roundedMinutes = Int(exactly: (interval / 60).rounded())
+        else { return .none }
+        let totalMinutes = max(1, roundedMinutes)
         if totalMinutes < 60 { return .minutes(totalMinutes) }
         if totalMinutes < 48 * 60 {
             let hours = totalMinutes / 60

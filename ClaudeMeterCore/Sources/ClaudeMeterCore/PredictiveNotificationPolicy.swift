@@ -37,7 +37,9 @@ public struct PredictiveNotificationTrigger: Equatable, Sendable {
     /// differently — can't re-fire the same forecast under a fresh key.
     public var dedupKey: String {
         let encodedAccount = Base64URL.encode(Data(accountID.utf8))
-        let epoch = PredictiveNotificationTracker.bucketedEpoch(resetAt)
+        let epoch =
+            PredictiveNotificationTracker.bucketedEpoch(resetAt).map(String.init)
+            ?? "invalid"
         return "\(NotificationPolicy.dedupKeyPrefix)predictive.\(encodedAccount).\(scope).\(epoch)"
     }
 }
@@ -82,12 +84,15 @@ public struct PredictiveNotificationTracker: Sendable {
     /// the same cycle compare equal.
     static func bucketedReset(_ date: Date?) -> Date? {
         guard let date else { return nil }
-        let secs = (date.timeIntervalSinceReferenceDate / resetBucket).rounded() * resetBucket
+        let rawSeconds = date.timeIntervalSinceReferenceDate
+        guard rawSeconds.isFinite else { return nil }
+        let secs = (rawSeconds / resetBucket).rounded() * resetBucket
+        guard secs.isFinite else { return nil }
         return Date(timeIntervalSinceReferenceDate: secs)
     }
 
-    static func bucketedEpoch(_ date: Date) -> Int {
-        Int((bucketedReset(date) ?? date).timeIntervalSince1970)
+    static func bucketedEpoch(_ date: Date) -> Int? {
+        bucketedReset(date)?.boundedUnixEpochSecond
     }
 
     public mutating func observe(
@@ -118,17 +123,20 @@ public struct PredictiveNotificationTracker: Sendable {
                 seconds > 0
             else { continue }
 
+            guard let resetEpoch = Self.bucketedEpoch(resetAt) else { continue }
+
             let proposedKey = ObservationKey(
                 accountID: accountID,
                 scope: candidate.scope,
-                resetEpoch: Self.bucketedEpoch(resetAt)
+                resetEpoch: resetEpoch
             )
             // Carry forward the first observation's canonical cycle identity when
             // two sources put the same reset on opposite sides of a rounding boundary.
             let key =
                 previousQualifiers.first(where: {
                     $0.accountID == proposedKey.accountID && $0.scope == proposedKey.scope
-                        && abs($0.resetEpoch - proposedKey.resetEpoch) <= Int(Self.resetBucket)
+                        && abs(Double($0.resetEpoch) - Double(proposedKey.resetEpoch))
+                            <= Self.resetBucket
                 }) ?? proposedKey
             let canonicalReset = Date(timeIntervalSince1970: TimeInterval(key.resetEpoch))
             qualifying.append(

@@ -295,6 +295,14 @@ struct NotificationPolicyTests {
             key == "com.claudemeter.notif.session.warning.\(Int(resetAt.timeIntervalSince1970))")
     }
 
+    @Test("dedupKey does not trap on an out-of-range reset")
+    func invalidDedupReset() {
+        let invalid = Date(timeIntervalSinceReferenceDate: .greatestFiniteMagnitude)
+        let key = NotificationPolicy.dedupKey(
+            scope: "session", level: "warning", resetAt: invalid)
+        #expect(key == "com.claudemeter.notif.session.warning.invalid")
+    }
+
     @Test("expiredDedupKeys removes keys for past reset windows")
     func pruneExpired() {
         let pastEpoch = Int(fixedNow.addingTimeInterval(-3600).timeIntervalSince1970)

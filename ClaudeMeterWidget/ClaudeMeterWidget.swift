@@ -48,8 +48,7 @@ private func energyColor(percentUsed: Double?, thresholds: UsageThresholds) -> C
 }
 
 private func percentLeft(_ window: LimitWindow, asOf now: Date) -> Double? {
-    guard let used = window.resolved(asOf: now).percentUsed else { return nil }
-    return 100 - min(100, max(0, used))
+    window.percentLeft(asOf: now)
 }
 
 private func leftText(_ window: LimitWindow, asOf now: Date) -> String {
@@ -58,8 +57,7 @@ private func leftText(_ window: LimitWindow, asOf now: Date) -> String {
 }
 
 private func displayFraction(_ window: LimitWindow, usage: Bool, asOf now: Date) -> Double {
-    guard let used = window.resolved(asOf: now).percentUsed else { return 0 }
-    let clamped = min(100, max(0, used))
+    guard let clamped = window.resolved(asOf: now).clampedPercent else { return 0 }
     return (usage ? clamped : 100 - clamped) / 100
 }
 
@@ -138,8 +136,9 @@ struct ClaudeMeterProvider: TimelineProvider {
         .filter { $0 > now }
         .min()
 
+        let staleAfterSeconds = AppGroupConfig.resolvedStaleAfterSeconds()
         let staleAt = entry.reading?.observedAt.addingTimeInterval(
-            AppGroupConfig.defaultStaleAfterSeconds)
+            staleAfterSeconds)
         let refreshAt =
             [nextReset, staleAt, now.addingTimeInterval(900)]
             .compactMap { $0 }
@@ -210,6 +209,8 @@ private struct WidgetRings: View {
     var sessionColor: Color
     var centerText: String
     var size: CGFloat
+    var accessibilityLabelText: String
+    var accessibilityValueText: String
 
     var body: some View {
         ZStack {
@@ -222,6 +223,9 @@ private struct WidgetRings: View {
                 .minimumScaleFactor(0.6)
         }
         .frame(width: size, height: size)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: accessibilityLabelText))
+        .accessibilityValue(Text(verbatim: accessibilityValueText))
     }
 
     private func ring(_ fraction: Double, _ color: Color, diameter: CGFloat) -> some View {
@@ -261,6 +265,32 @@ private func ringsBlock(_ reading: MainMeterReading, _ entry: ClaudeMeterEntry, 
     } else {
         center = "—"
     }
+    var accessibilityValues = [
+        widgetRingAccessibilityValue(
+            label: reading.sessionLabel,
+            window: session,
+            usage: usage,
+            thresholds: entry.thresholds,
+            now: now
+        ),
+        widgetRingAccessibilityValue(
+            label: reading.weeklyLabel,
+            window: week,
+            usage: usage,
+            thresholds: entry.thresholds,
+            now: now
+        ),
+    ]
+    if let opus = reading.limits.currentWeekOpus {
+        accessibilityValues.append(
+            widgetRingAccessibilityValue(
+                label: "Opus",
+                window: opus,
+                usage: usage,
+                thresholds: entry.thresholds,
+                now: now
+            ))
+    }
     return WidgetRings(
         weekFraction: displayFraction(week, usage: usage, asOf: now),
         weekColor: energyColor(
@@ -269,7 +299,43 @@ private func ringsBlock(_ reading: MainMeterReading, _ entry: ClaudeMeterEntry, 
         sessionColor: energyColor(
             percentUsed: session.resolved(asOf: now).percentUsed, thresholds: entry.thresholds),
         centerText: center,
-        size: size)
+        size: size,
+        accessibilityLabelText:
+            "\(reading.provider.displayName), \(reading.accountLabel), energy rings",
+        accessibilityValueText: accessibilityValues.joined(separator: ". "))
+}
+
+private func widgetRingAccessibilityValue(
+    label: String,
+    window: LimitWindow,
+    usage: Bool,
+    thresholds: UsageThresholds,
+    now: Date
+) -> String {
+    let percentUsed = window.resolved(asOf: now).percentUsed.flatMap {
+        $0.isFinite ? $0 : nil
+    }
+    let percentText: String
+    if let percentUsed {
+        let clamped = min(100, max(0, percentUsed))
+        let displayed = usage ? clamped : 100 - clamped
+        percentText = "\(Int(displayed.rounded())) percent \(usage ? "used" : "left")"
+    } else {
+        percentText = "percentage unknown"
+    }
+    return "\(label): \(percentText), \(widgetEnergyBandText(percentUsed, thresholds: thresholds))"
+}
+
+private func widgetEnergyBandText(
+    _ percentUsed: Double?, thresholds: UsageThresholds
+) -> String {
+    switch thresholds.severity(for: percentUsed) {
+    case .normal: "full energy"
+    case .warning: "low energy"
+    case .critical: "almost empty"
+    case .overLimit: "tapped out"
+    case .unknown: "energy status unknown"
+    }
 }
 
 // MARK: - Energy rows
@@ -335,6 +401,7 @@ private struct WidgetHeader: View {
                 Image(systemName: "clock.badge.exclamationmark")
                     .font(.system(size: 11))
                     .foregroundStyle(Color.wLow)
+                    .accessibilityLabel("Usage data is stale")
             } else if showUpdated, let pollAt = entry.reading?.observedAt {
                 // `.relative` ticks on its own. Computing the delta against
                 // `entry.date` froze it at render time, so a widget drawn as
@@ -361,15 +428,25 @@ private struct SmallWidgetView: View {
 
     var body: some View {
         if let reading = entry.reading {
-            VStack(spacing: 8) {
-                ringsBlock(reading, entry, size: 78)
-                VStack(spacing: 3) {
-                    EnergyRow(
-                        label: reading.sessionLabel, window: reading.limits.currentSession,
-                        thresholds: entry.thresholds, referenceDate: entry.date, showReset: false)
-                    EnergyRow(
-                        label: reading.weeklyLabel, window: reading.limits.currentWeekAllModels,
-                        thresholds: entry.thresholds, referenceDate: entry.date, showReset: false)
+            ZStack(alignment: .topTrailing) {
+                VStack(spacing: 8) {
+                    ringsBlock(reading, entry, size: 78)
+                    VStack(spacing: 3) {
+                        EnergyRow(
+                            label: reading.sessionLabel, window: reading.limits.currentSession,
+                            thresholds: entry.thresholds, referenceDate: entry.date,
+                            showReset: false)
+                        EnergyRow(
+                            label: reading.weeklyLabel, window: reading.limits.currentWeekAllModels,
+                            thresholds: entry.thresholds, referenceDate: entry.date,
+                            showReset: false)
+                    }
+                }
+                if entry.isStale {
+                    Image(systemName: "clock.badge.exclamationmark")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.wLow)
+                        .accessibilityLabel("Usage data is stale")
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -140,6 +140,7 @@ public struct SessionEvent: Sendable, Equatable {
 /// marker is a one-shot event, so draining deletes the files; the live "needs
 /// attention" state lives in the app, not on disk.
 public enum SessionEventStore {
+    private static let maximumEventFileBytes = 256 * 1_024
 
     /// Reads every fresh marker under the events dir and consumes parseable and
     /// stale markers. A fresh unparseable marker is retained briefly because it may
@@ -148,8 +149,35 @@ public enum SessionEventStore {
         disabledAccountKeys: Set<String> = [], now: Date = Date(), maxAge: TimeInterval = 120
     ) -> [SessionEvent] {
         drain(
-            eventsRoot: HookBridge.eventsDir, disabledAccountKeys: disabledAccountKeys, now: now,
+            dataRoot: StatuslineBridge.dataDir, disabledAccountKeys: disabledAccountKeys, now: now,
             maxAge: maxAge)
+    }
+
+    /// Production-path core with an injectable app-data root. Opening the data
+    /// root first prevents a linked `.claude-meter` parent from redirecting reads
+    /// or marker removal into an external events tree.
+    static func drain(
+        dataRoot dataRootURL: URL,
+        disabledAccountKeys: Set<String>,
+        now: Date,
+        maxAge: TimeInterval,
+        beforeConsume: ((String, String) -> Void)? = nil
+    ) -> [SessionEvent] {
+        guard
+            let dataRoot = try? BoundedRegularFileReader.AnchoredDirectory(
+                opening: dataRootURL),
+            let events = try? dataRoot.directory(named: "events")
+        else { return [] }
+        return drain(
+            root: events,
+            disabledAccountKeys: disabledAccountKeys,
+            now: now,
+            maxAge: maxAge,
+            rootIsIntact: {
+                dataRoot.stillNamesDirectory(at: dataRootURL)
+                    && dataRoot.stillContainsDirectory(events, named: "events")
+            },
+            beforeConsume: beforeConsume)
     }
 
     /// Testable core with an injectable root.
@@ -158,38 +186,70 @@ public enum SessionEventStore {
     /// still be writing markers until it's reconciled away, and (per AGENTS.md) the
     /// read path must filter disabled accounts too, not just discovery.
     static func drain(
-        eventsRoot: URL, disabledAccountKeys: Set<String>, now: Date, maxAge: TimeInterval
+        eventsRoot: URL,
+        disabledAccountKeys: Set<String>,
+        now: Date,
+        maxAge: TimeInterval,
+        beforeConsume: ((String, String) -> Void)? = nil
     ) -> [SessionEvent] {
-        let fm = FileManager.default
-        guard
-            let subdirs = try? fm.contentsOfDirectory(
-                at: eventsRoot, includingPropertiesForKeys: [.isDirectoryKey])
-        else { return [] }
+        guard let root = try? BoundedRegularFileReader.AnchoredDirectory(opening: eventsRoot) else {
+            return []
+        }
+        return drain(
+            root: root,
+            disabledAccountKeys: disabledAccountKeys,
+            now: now,
+            maxAge: maxAge,
+            rootIsIntact: { root.stillNamesDirectory(at: eventsRoot) },
+            beforeConsume: beforeConsume)
+    }
 
+    private static func drain(
+        root: BoundedRegularFileReader.AnchoredDirectory,
+        disabledAccountKeys: Set<String>,
+        now: Date,
+        maxAge: TimeInterval,
+        rootIsIntact: () -> Bool,
+        beforeConsume: ((String, String) -> Void)?
+    ) -> [SessionEvent] {
         var events: [SessionEvent] = []
-        for sub in subdirs {
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: sub.path, isDirectory: &isDir), isDir.boolValue else {
-                continue
-            }
-            let accountKey = sub.lastPathComponent
+        for accountKey in (try? root.entryNames()) ?? [] {
+            guard let account = try? root.directory(named: accountKey) else { continue }
             let isDisabled = disabledAccountKeys.contains(accountKey)
-            guard
-                let files = try? fm.contentsOfDirectory(
-                    at: sub, includingPropertiesForKeys: [.contentModificationDateKey])
-            else { continue }
-            for file in files where file.pathExtension == "json" {
-                let mod =
-                    (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
-                    .contentModificationDate
-                let age = mod.map { now.timeIntervalSince($0) }
-                // Unknown mtime → treat as fresh for *emitting* (don't drop a real
-                // event to a stat blip). capturedAt uses the file mtime when known so
-                // the notification id is stable across drains.
+            for filename in (try? account.entryNames()) ?? []
+            where (filename as NSString).pathExtension == "json" {
+                guard let discoveredEntry = try? account.entry(named: filename) else { continue }
+                let discoveredAge = now.timeIntervalSince(discoveredEntry.modificationDate)
+                let discoveredEntryIsFresh = discoveredAge >= -300 && discoveredAge < maxAge
+                guard
+                    let file = try? account.readFile(
+                        named: filename, maximumByteCount: maximumEventFileBytes)
+                else {
+                    // A link, FIFO, or oversized file is never read. Retain it
+                    // briefly in case a hook is completing an atomic replacement,
+                    // then remove only the exact stale entry that was inspected.
+                    if !discoveredEntryIsFresh {
+                        consume(
+                            discoveredEntry,
+                            named: filename,
+                            accountKey: accountKey,
+                            account: account,
+                            root: root,
+                            rootIsIntact: rootIsIntact,
+                            beforeConsume: beforeConsume)
+                    }
+                    continue
+                }
+                let age = now.timeIntervalSince(file.modificationDate)
                 // Permit modest filesystem/clock skew, but do not let a marker with
                 // an implausibly future mtime remain fresh indefinitely.
-                let isFresh = age.map { $0 >= -300 && $0 < maxAge } ?? true
-                if let event = parse(file: file, accountKey: accountKey, capturedAt: mod ?? now) {
+                let isFresh = age >= -300 && age < maxAge
+                if let event = parse(
+                    data: file.data,
+                    markerFilename: filename,
+                    accountKey: accountKey,
+                    capturedAt: file.modificationDate)
+                {
                     // A subagent finishing is not the end of the user's turn. Consume
                     // its marker without emitting a pointless "your turn" alert. Keep
                     // other subagent events: permission prompts and limit blocks still
@@ -198,13 +258,27 @@ public enum SessionEventStore {
                     // Disabled accounts and noisy subagent stops are consumed but NOT
                     // emitted, so their markers cannot pile up.
                     if isFresh, !isDisabled, !isNoisySubagentStop { events.append(event) }
-                    try? fm.removeItem(at: file)  // consume on success
+                    consume(
+                        file.entry,
+                        named: filename,
+                        accountKey: accountKey,
+                        account: account,
+                        root: root,
+                        rootIsIntact: rootIsIntact,
+                        beforeConsume: beforeConsume)
                 } else {
-                    // Parse failed: retry only a genuinely-fresh, known-mtime marker
-                    // (a transient mid-write read). A stale OR unknown-mtime failure is
-                    // cleaned up so a permanently-corrupt marker can't loop forever.
-                    let retain = (age.map { $0 >= -300 && $0 < maxAge }) == true
-                    if !retain { try? fm.removeItem(at: file) }
+                    // Parse failed: retry a fresh marker because it can have been
+                    // observed during a write. Clean up stale corrupt markers.
+                    if !isFresh {
+                        consume(
+                            file.entry,
+                            named: filename,
+                            accountKey: accountKey,
+                            account: account,
+                            root: root,
+                            rootIsIntact: rootIsIntact,
+                            beforeConsume: beforeConsume)
+                    }
                 }
             }
         }
@@ -214,13 +288,42 @@ public enum SessionEventStore {
     /// Removes all attention markers — used when the feature is disabled (the hook's
     /// `mkdir -p` created the dir and nothing drains it once the watcher stops).
     public static func clearAll() {
-        try? FileManager.default.removeItem(at: HookBridge.eventsDir)
+        clearAll(dataRoot: StatuslineBridge.dataDir)
+    }
+
+    /// Testable cleanup. The shared helper rejects a linked data root and removes
+    /// only entries inspected through anchored descriptors.
+    static func clearAll(
+        dataRoot: URL,
+        beforeUnlink: ((String, String) -> Void)? = nil
+    ) {
+        StatuslineBridge.clearManagedSubdirectory(
+            named: "events",
+            in: dataRoot,
+            beforeUnlink: beforeUnlink)
     }
 
     static func parse(file: URL, accountKey: String, capturedAt: Date) -> SessionEvent? {
-        guard let data = try? Data(contentsOf: file), !data.isEmpty,
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard
+            let data = try? BoundedRegularFileReader.read(
+                at: file,
+                maximumByteCount: maximumEventFileBytes,
+                symlinkPolicy: .reject),
+            !data.isEmpty
         else { return nil }
+        return parse(
+            data: data,
+            markerFilename: file.lastPathComponent,
+            accountKey: accountKey,
+            capturedAt: capturedAt)
+    }
+
+    private static func parse(
+        data: Data, markerFilename: String, accountKey: String, capturedAt: Date
+    ) -> SessionEvent? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
         let kind = SessionEvent.Kind(from: json["hook_event_name"] as? String)
         let cwd =
             (json["cwd"] as? String)
@@ -234,9 +337,25 @@ public enum SessionEventStore {
             cwd: cwd,
             message: json["message"] as? String,
             errorType: json["error_type"] as? String,
-            terminalRoute: TerminalRoute(markerFilename: file.lastPathComponent),
+            terminalRoute: TerminalRoute(markerFilename: markerFilename),
             capturedAt: capturedAt
         )
+    }
+
+    private static func consume(
+        _ entry: BoundedRegularFileReader.AnchoredDirectory.Entry,
+        named filename: String,
+        accountKey: String,
+        account: BoundedRegularFileReader.AnchoredDirectory,
+        root: BoundedRegularFileReader.AnchoredDirectory,
+        rootIsIntact: () -> Bool,
+        beforeConsume: ((String, String) -> Void)?
+    ) {
+        beforeConsume?(accountKey, filename)
+        guard rootIsIntact(),
+            root.stillContainsDirectory(account, named: accountKey)
+        else { return }
+        account.unlinkEntry(named: filename, ifUnchangedSince: entry)
     }
 }
 

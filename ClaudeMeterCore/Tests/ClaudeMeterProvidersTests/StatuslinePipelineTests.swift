@@ -29,6 +29,18 @@ struct StatuslinePipelineDisplayWindowTests {
         #expect(display.resetsAt == nil)
     }
 
+    @Test func expiredSourceWindowKeepsResetProvenance() {
+        let resetAt = now.addingTimeInterval(-60)
+        let source = StatuslinePipeline.sourceWindow(
+            for: StatuslineBridge.RateLimitWindow(
+                usedPercentage: 25,
+                resetsAt: resetAt))
+
+        #expect(source.percentUsed == 25)
+        #expect(source.resetsAt == resetAt)
+        #expect(source.resolved(asOf: now) == LimitWindow(percentUsed: 0, resetsAt: nil))
+    }
+
     @Test func missingWindowProducesEmptyWindow() {
         let display = StatuslinePipeline.displayWindow(for: nil, now: now)
         #expect(display.percentUsed == nil)
@@ -41,6 +53,13 @@ struct StatuslinePipelineDisplayWindowTests {
         let display = StatuslinePipeline.displayWindow(for: window, now: now)
         #expect(display.percentUsed == 30)
         #expect(display.resetsAt == nil)
+    }
+
+    @Test func durationConversionRejectsExtremeExternalValues() {
+        #expect(StatuslinePipeline.durationSeconds(fromMilliseconds: .infinity) == nil)
+        #expect(
+            StatuslinePipeline.durationSeconds(fromMilliseconds: .greatestFiniteMagnitude) == nil)
+        #expect(StatuslinePipeline.durationSeconds(fromMilliseconds: 12_999) == 12)
     }
 }
 
@@ -225,6 +244,85 @@ struct StatuslineFallbackCooldownTests {
     @Test func exceedsThePollCadence() {
         #expect(StatuslinePipeline.fallbackCooldown > 60)
     }
+
+    @Test func cachedExpiredWindowsBecomeUnknown() throws {
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        let expired = LimitWindow(
+            percentUsed: 88, resetsAt: now.addingTimeInterval(-1))
+        let future = LimitWindow(
+            percentUsed: 22, resetsAt: now.addingTimeInterval(3_600))
+        var cached = stubSnapshot()
+        cached.limits = LimitInfo(
+            currentSession: expired,
+            currentWeekAllModels: future,
+            currentWeekOpus: expired,
+            scopedWeekly: [ScopedLimitWindow(id: "seven_day_sonnet", window: expired)])
+
+        let result = try #require(
+            StatuslinePipeline.cooldownSnapshot(
+                from: cached, now: now, disabledAccountKeys: []))
+
+        #expect(result.limits.currentSession.percentUsed == nil)
+        #expect(result.limits.currentSession.resetsAt == nil)
+        #expect(result.limits.currentWeekAllModels == future)
+        #expect(result.limits.currentWeekOpus?.percentUsed == nil)
+        #expect(result.limits.scopedWeekly?.first?.window.percentUsed == nil)
+        #expect(result.state.isStale)
+    }
+
+    @Test func cachedDisabledActiveAccountIsRemovedAndMirrorIsRepaired() throws {
+        let defaultTime = Date(timeIntervalSince1970: 1_800_000_000)
+        let workTime = defaultTime.addingTimeInterval(60)
+        let defaultLimits = LimitInfo(
+            currentSession: LimitWindow(percentUsed: 10),
+            currentWeekAllModels: LimitWindow(percentUsed: 20))
+        let workLimits = LimitInfo(
+            currentSession: LimitWindow(percentUsed: 90),
+            currentWeekAllModels: LimitWindow(percentUsed: 80))
+        let defaultAccount = AccountUsage(
+            id: "claude", label: "default",
+            account: AccountInfo(plan: "Pro"),
+            session: SessionInfo(activeModel: "default-model"),
+            limits: defaultLimits, lastSuccessfulPollAt: defaultTime,
+            severity: .normal, isActive: false)
+        let workAccount = AccountUsage(
+            id: "claude-work", label: "work",
+            account: AccountInfo(plan: "Max"),
+            session: SessionInfo(activeModel: "work-model"),
+            limits: workLimits, lastSuccessfulPollAt: workTime,
+            severity: .critical, isActive: true)
+        var cached = stubSnapshot()
+        cached.account = workAccount.account
+        cached.session = workAccount.session
+        cached.limits = workLimits
+        cached.lastSuccessfulPollAt = workTime
+        cached.state.severity = .critical
+        cached.accounts = [workAccount, defaultAccount]
+
+        let result = try #require(
+            StatuslinePipeline.cooldownSnapshot(
+                from: cached, now: defaultTime, disabledAccountKeys: ["claude-work"]))
+
+        #expect(result.accounts == nil)
+        #expect(result.account == defaultAccount.account)
+        #expect(result.session == defaultAccount.session)
+        #expect(result.limits == defaultLimits)
+        #expect(result.lastSuccessfulPollAt == defaultTime)
+        #expect(result.state.severity == .normal)
+    }
+
+    @Test func cacheIsRejectedWhenEveryNamedAccountIsDisabled() {
+        var cached = stubSnapshot()
+        cached.accounts = [
+            AccountUsage(
+                id: "claude-work", label: "work", limits: LimitInfo(),
+                severity: .normal, isActive: true)
+        ]
+
+        #expect(
+            StatuslinePipeline.cooldownSnapshot(
+                from: cached, now: Date(), disabledAccountKeys: ["claude-work"]) == nil)
+    }
 }
 
 private func stubSnapshot() -> ClaudeUsageSnapshot {
@@ -240,8 +338,13 @@ private func stubSnapshot() -> ClaudeUsageSnapshot {
 /// Counts how often the next tier was actually reached.
 private final class CountingPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     private let lock = NSLock()
+    private let snapshot: ClaudeUsageSnapshot
     private var _calls = 0
     private var _kinds: [RefreshKind] = []
+
+    init(snapshot: ClaudeUsageSnapshot = stubSnapshot()) {
+        self.snapshot = snapshot
+    }
 
     var calls: Int { lock.withLock { _calls } }
     var kinds: [RefreshKind] { lock.withLock { _kinds } }
@@ -252,7 +355,7 @@ private final class CountingPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             _kinds.append(kind)
         }
         return ParseResult(
-            snapshot: stubSnapshot(),
+            snapshot: snapshot,
             warnings: [], errors: [], rawHash: "", parserVersion: "stub-1.0",
             sourceAttempts: [SourceAttempt(source: .oauth, outcome: .selected, reason: .freshData)]
         )
@@ -334,5 +437,41 @@ struct InteractiveRefreshTests {
         _ = try await pipeline.poll(now: now.addingTimeInterval(5))
         #expect(next.calls == 1)
         #expect(next.kinds == [.background])
+    }
+
+    @Test func directFallbackCannotRestoreADisabledAccount() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cm-disabled-fallback-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let defaultAccount = AccountUsage(
+            id: "claude", label: "default",
+            limits: LimitInfo(currentSession: LimitWindow(percentUsed: 10)),
+            lastSuccessfulPollAt: Date(timeIntervalSince1970: 100),
+            severity: .normal, isActive: false)
+        let disabledAccount = AccountUsage(
+            id: "claude-work", label: "work",
+            limits: LimitInfo(currentSession: LimitWindow(percentUsed: 90)),
+            lastSuccessfulPollAt: Date(timeIntervalSince1970: 200),
+            severity: .critical, isActive: true)
+        var fallbackSnapshot = stubSnapshot()
+        fallbackSnapshot.limits = disabledAccount.limits
+        fallbackSnapshot.lastSuccessfulPollAt = disabledAccount.lastSuccessfulPollAt
+        fallbackSnapshot.state.severity = disabledAccount.severity
+        fallbackSnapshot.accounts = [disabledAccount, defaultAccount]
+
+        let pipeline = StatuslinePipeline(
+            fallback: CountingPipeline(snapshot: fallbackSnapshot),
+            store: SnapshotStore(directory: root),
+            disabledAccountKeys: ["claude-work"],
+            sessionsRootOverride: root.appendingPathComponent("sessions"))
+
+        let result = try await pipeline.poll(now: Date(), kind: .interactive)
+
+        #expect(result.snapshot?.accounts == nil)
+        #expect(result.snapshot?.limits == defaultAccount.limits)
+        #expect(result.snapshot?.lastSuccessfulPollAt == defaultAccount.lastSuccessfulPollAt)
+        #expect(result.snapshot?.state.severity == .normal)
     }
 }

@@ -2,9 +2,14 @@ import ClaudeMeterCore
 import ClaudeMeterProviders
 import SwiftUI
 
+func sanitizeDiagnosticsForClipboard(_ text: String) -> String {
+    DiagnosticsSanitizer.sanitize(text)
+}
+
 struct DiagnosticsView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var copied = false
 
     var body: some View {
@@ -23,7 +28,8 @@ struct DiagnosticsView: View {
             HStack {
                 Button("Copy Sanitized Diagnostics") {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(diagnosticsText, forType: .string)
+                    NSPasteboard.general.setString(
+                        sanitizeDiagnosticsForClipboard(diagnosticsText), forType: .string)
                     copied = true
                     Task {
                         try? await Task.sleep(for: .seconds(2))
@@ -35,7 +41,7 @@ struct DiagnosticsView: View {
                 Text(copied ? "Copied!" : "")
                     .font(.caption)
                     .foregroundStyle(Color.cmNormal)
-                    .animation(.easeOut, value: copied)
+                    .animation(reduceMotion ? nil : .easeOut, value: copied)
 
                 Spacer()
 

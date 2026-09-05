@@ -39,18 +39,24 @@ public enum CodexOAuthCredentialsError: Error, LocalizedError, Equatable {
 }
 
 public enum CodexOAuthCredentialsStore {
+    private static let maximumAuthFileBytes = 4 * 1_024 * 1_024
+
     public static func load(
         env: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default
     ) throws -> CodexOAuthCredentials {
         let url = authFileURL(env: env, fileManager: fileManager)
-        guard fileManager.fileExists(atPath: url.path) else {
+        do {
+            let data = try BoundedRegularFileReader.read(
+                at: url, maximumByteCount: maximumAuthFileBytes)
+            return try parse(data: data)
+        } catch  where BoundedRegularFileReader.isMissingFileError(error) {
             throw CodexOAuthCredentialsError.notFound
-        }
-        guard let data = try? Data(contentsOf: url) else {
+        } catch let error as CodexOAuthCredentialsError {
+            throw error
+        } catch {
             throw CodexOAuthCredentialsError.unreadable
         }
-        return try parse(data: data)
     }
 
     static func authFileURL(

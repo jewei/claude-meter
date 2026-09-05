@@ -52,6 +52,17 @@ struct OAuthPipelineTests {
         #expect(percentages.weekPct == 61.0)
     }
 
+    @Test func verificationPercentagesClampExtremeServerValues() throws {
+        let json = """
+            {"five_hour":{"utilization":1e308},"seven_day":{"utilization":-1e308}}
+            """
+        let usage = try JSONDecoder().decode(UsageResponse.self, from: Data(json.utf8))
+        let percentages = OAuthPipeline.verificationPercentages(from: usage)
+
+        #expect(percentages.sessionPct == 100)
+        #expect(percentages.weekPct == 0)
+    }
+
     @Test func decodesOpusWeeklyAndExtraUsage() throws {
         let json = """
             {"five_hour":{"utilization":40.0,"resets_at":"2026-06-24T15:00:00+00:00"},
@@ -115,6 +126,21 @@ struct OAuthPipelineTests {
             ))
         let date = OAuthPipeline.retryAfterDate(from: response, now: now)
         #expect(date == now.addingTimeInterval(120))
+    }
+
+    @Test func retryAfterCapsImplausibleDelay() throws {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let response = try #require(
+            HTTPURLResponse(
+                url: URL(string: "https://api.anthropic.com")!,
+                statusCode: 429,
+                httpVersion: nil,
+                headerFields: ["Retry-After": "999999999"]
+            ))
+
+        #expect(
+            OAuthPipeline.retryAfterDate(from: response, now: now)
+                == now.addingTimeInterval(OAuthPipeline.maximumRateLimitBackoff))
     }
 
     @Test func retryAfterAbsentReturnsNil() throws {
@@ -205,7 +231,10 @@ struct OAuthPipelineTests {
         let expiredCache = OAuthCredentials(
             accessToken: "newer", refreshToken: "R_live",
             expiresAt: now.addingTimeInterval(-60))
-        OAuthPipeline.setCachedCredentialsForTesting(expiredCache, oauthMode: "auto")
+        OAuthPipeline.setCachedCredentialsForTesting(
+            expiredCache,
+            oauthMode: "auto",
+            sourceRefreshToken: staleKeychain.refreshToken)
 
         #expect(
             OAuthPipeline.credentials(from: .found(staleKeychain), oauthMode: "auto")?
@@ -325,7 +354,10 @@ struct OAuthPipelineTests {
             accessToken: "old", refreshToken: "R_A", expiresAt: .distantPast)
         let freshCache = OAuthCredentials(
             accessToken: "new", refreshToken: "R_B", expiresAt: .distantFuture)
-        OAuthPipeline.setCachedCredentialsForTesting(freshCache, oauthMode: "auto")
+        OAuthPipeline.setCachedCredentialsForTesting(
+            freshCache,
+            oauthMode: "auto",
+            sourceRefreshToken: expiredKeychain.refreshToken)
 
         // Expired Keychain + fresh cache → use the cache (carries the live token).
         #expect(
@@ -340,9 +372,210 @@ struct OAuthPipelineTests {
                 .refreshToken == "R_C")
     }
 
-    @Test func verification429ArmsTheSharedBackoff() async {
+    @Test func rotatedCacheBeatsSourceWhenServerReturnsZeroLifetime() async throws {
+        OAuthPipeline.clearCachedCredentials()
         OAuthPipeline.clearRateLimitForTesting()
-        OAuthPipeline.setTransportForTesting(FailingTransport(status: 429, body: "{}"))
+        OAuthRefreshGate.resetForTesting()
+        OAuthRefreshCoordinator.resetForTesting()
+        let transport = QueuedOAuthTransport([
+            .init(
+                status: 200,
+                body:
+                    #"{"access_token":"rotated-access","refresh_token":"rotated-refresh","expires_in":0}"#
+            ),
+            .init(
+                status: 200,
+                body: #"{"five_hour":{"utilization":10},"seven_day":{"utilization":20}}"#),
+            .init(
+                status: 200,
+                body: #"{"five_hour":{"utilization":11},"seven_day":{"utilization":21}}"#),
+        ])
+        OAuthPipeline.setTransportForTesting(transport)
+        defer {
+            OAuthPipeline.setTransportForTesting(nil)
+            OAuthPipeline.clearCachedCredentials()
+            OAuthPipeline.clearRateLimitForTesting()
+            OAuthRefreshGate.resetForTesting()
+            OAuthRefreshCoordinator.resetForTesting()
+        }
+
+        let source = OAuthCredentials(
+            accessToken: "source-access",
+            refreshToken: "source-refresh-\(UUID().uuidString)",
+            expiresAt: Date().addingTimeInterval(30))
+        _ = try await OAuthPipeline.verify(credentials: source, oauthMode: "auto")
+
+        let selected = OAuthPipeline.credentials(from: .found(source), oauthMode: "auto")
+        #expect(selected?.refreshToken == "rotated-refresh")
+        _ = try await OAuthPipeline.verify(credentials: source, oauthMode: "auto")
+        #expect(await transport.requestCount == 3)
+        #expect(await transport.tokenRequestCount == 1)
+    }
+
+    @Test func preselectedCallerReusesAnAdoptedRotation() async throws {
+        OAuthPipeline.clearCachedCredentials()
+        OAuthPipeline.clearRateLimitForTesting()
+        OAuthRefreshGate.resetForTesting()
+        OAuthRefreshCoordinator.resetForTesting()
+        let usageBody = #"{"five_hour":{"utilization":10},"seven_day":{"utilization":20}}"#
+        let transport = QueuedOAuthTransport([
+            .init(
+                status: 200,
+                body:
+                    #"{"access_token":"rotated-access","refresh_token":"rotated-refresh","expires_in":3600}"#
+            ),
+            .init(status: 200, body: usageBody),
+            .init(status: 200, body: usageBody),
+            .init(status: 200, body: usageBody),
+        ])
+        let gate = OAuthRefreshPreselectionGate()
+        OAuthPipeline.setTransportForTesting(transport)
+        defer {
+            OAuthPipeline.setTransportForTesting(nil)
+            OAuthPipeline.clearCachedCredentials()
+            OAuthPipeline.clearRateLimitForTesting()
+            OAuthRefreshGate.resetForTesting()
+            OAuthRefreshCoordinator.resetForTesting()
+        }
+
+        let source = OAuthCredentials(
+            accessToken: "expired-access",
+            refreshToken: "preselected-refresh-\(UUID().uuidString)",
+            expiresAt: .distantPast)
+        let oldVerification = Task {
+            try await OAuthPipeline.verifyAfterCredentialSelectionForTesting(
+                credentials: source,
+                oauthMode: "auto",
+                beforeRefreshCoordinator: { await gate.pause() })
+        }
+        await gate.waitUntilPaused()
+
+        // This caller adopts the rotation before the first caller reaches the
+        // coordinator with its already-selected one-use token.
+        let current = try await OAuthPipeline.verify(credentials: source, oauthMode: "auto")
+        #expect(current.sessionPct == 10)
+        #expect(await transport.tokenRequestCount == 1)
+
+        await gate.release()
+        let old = try await oldVerification.value
+        #expect(old.weekPct == 20)
+
+        // The late caller must reuse the retained result. Its success must not
+        // clear the good cache, and a later verification must use that cache.
+        let cached = OAuthPipeline.credentials(
+            from: .temporarilyUnavailable,
+            oauthMode: "auto")
+        #expect(cached?.accessToken == "rotated-access")
+        let next = try await OAuthPipeline.verify(credentials: source, oauthMode: "auto")
+        #expect(next.sessionPct == 10)
+        #expect(await transport.tokenRequestCount == 1)
+        #expect(await transport.requestCount == 4)
+    }
+
+    @Test func rejectedDescendantCannotRestoreAnAncestorHandoff() async throws {
+        let defaults = UserDefaults.standard
+        let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)
+        defaults.set("auto", forKey: AppGroupConfig.oauthModeKey)
+        OAuthPipeline.clearCachedCredentials()
+        OAuthPipeline.clearRateLimitForTesting()
+        OAuthRefreshGate.resetForTesting()
+        OAuthRefreshCoordinator.resetForTesting()
+        let usageBody = #"{"five_hour":{"utilization":10},"seven_day":{"utilization":20}}"#
+        let transport = QueuedOAuthTransport([
+            .init(
+                status: 200,
+                body:
+                    #"{"access_token":"rotated-access","refresh_token":"rotated-refresh","expires_in":3600}"#
+            ),
+            .init(status: 200, body: usageBody),
+            .init(status: 400, body: #"{"error":"invalid_grant"}"#),
+        ])
+        let source = OAuthCredentials(
+            accessToken: "expired-source-access",
+            refreshToken: "ancestor-refresh-\(UUID().uuidString)",
+            expiresAt: .distantPast)
+        OAuthPipeline.setTransportForTesting(transport)
+        OAuthPipeline.setAutomaticCredentialLoaderForTesting { .found(source) }
+        defer {
+            OAuthPipeline.setAutomaticCredentialLoaderForTesting(nil)
+            OAuthPipeline.setTransportForTesting(nil)
+            OAuthPipeline.clearCachedCredentials()
+            OAuthPipeline.clearRateLimitForTesting()
+            OAuthRefreshGate.resetForTesting()
+            OAuthRefreshCoordinator.resetForTesting()
+            if let previousMode {
+                defaults.set(previousMode, forKey: AppGroupConfig.oauthModeKey)
+            } else {
+                defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
+            }
+        }
+
+        // Establish O -> R and retain O's completed coordinator handoff.
+        _ = try await OAuthPipeline.verify(credentials: source, oauthMode: "auto")
+        OAuthPipeline.setCachedCredentialsForTesting(
+            OAuthCredentials(
+                accessToken: "expired-rotated-access",
+                refreshToken: "rotated-refresh",
+                expiresAt: .distantPast),
+            oauthMode: "auto",
+            sourceRefreshToken: source.refreshToken)
+
+        let store = SnapshotStore(
+            directory: FileManager.default.temporaryDirectory.appendingPathComponent(
+                UUID().uuidString, isDirectory: true))
+        let pipeline = OAuthPipeline(fallback: OAuthFallbackPipeline(), store: store)
+        let rejected = try await pipeline.poll(now: Date())
+        #expect(
+            rejected.sourceAttempts.first
+                == SourceAttempt(
+                    source: .oauth,
+                    outcome: .failed,
+                    reason: .refreshRejected))
+        #expect(
+            OAuthPipeline.credentials(from: .temporarilyUnavailable, oauthMode: "auto") == nil)
+
+        // The source still contains consumed O. The rejection gate must block O,
+        // and the new credential revision must make O's retained handoff unusable.
+        let next = try await pipeline.poll(now: Date())
+        #expect(
+            next.sourceAttempts.first
+                == SourceAttempt(
+                    source: .oauth,
+                    outcome: .skipped,
+                    reason: .refreshRejected))
+        #expect(await transport.tokenRequestCount == 2)
+        #expect(await transport.requestCount == 3)
+        #expect(
+            OAuthPipeline.credentials(from: .temporarilyUnavailable, oauthMode: "auto") == nil)
+    }
+
+    @Test func refreshRejectsEmptyTokenStrings() async {
+        let invalidBodies = [
+            #"{"access_token":"","refresh_token":"rotated","expires_in":3600}"#,
+            #"{"access_token":"access","refresh_token":"","expires_in":3600}"#,
+        ]
+        for body in invalidBodies {
+            OAuthPipeline.clearCachedCredentials()
+            OAuthRefreshCoordinator.resetForTesting()
+            OAuthPipeline.setTransportForTesting(FailingTransport(status: 200, body: body))
+            let credentials = OAuthCredentials(
+                accessToken: "expired",
+                refreshToken: "source-\(UUID().uuidString)",
+                expiresAt: .distantPast)
+
+            await #expect(throws: OAuthError.self) {
+                try await OAuthPipeline.verify(credentials: credentials, oauthMode: "auto")
+            }
+        }
+        OAuthPipeline.setTransportForTesting(nil)
+        OAuthPipeline.clearCachedCredentials()
+        OAuthRefreshCoordinator.resetForTesting()
+    }
+
+    @Test func verification429ArmsAndObeysTheSharedBackoff() async {
+        OAuthPipeline.clearRateLimitForTesting()
+        let transport = CountingFailingTransport(status: 429, body: "{}")
+        OAuthPipeline.setTransportForTesting(transport)
         defer {
             OAuthPipeline.setTransportForTesting(nil)
             OAuthPipeline.clearRateLimitForTesting()
@@ -354,6 +587,352 @@ struct OAuthPipelineTests {
             Issue.record("Expected verification to reject the 429")
         } catch {}
         #expect(OAuthPipeline.isRateLimited(now: Date()))
+
+        do {
+            _ = try await OAuthPipeline.verify(credentials: credentials)
+            Issue.record("Expected the shared backoff to reject verification")
+        } catch {}
+        #expect(transport.calls == 1)
+    }
+
+    @Test func revocationDuringRefreshPreventsCredentialCommit() async {
+        let defaults = UserDefaults.standard
+        let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)
+        defaults.set("manual", forKey: AppGroupConfig.oauthModeKey)
+        OAuthPipeline.clearCachedCredentials()
+        OAuthPipeline.clearRateLimitForTesting()
+        OAuthRefreshGate.resetForTesting()
+        OAuthRefreshCoordinator.resetForTesting()
+        let transport = SuspendedRefreshTransport()
+        let persistence = ManualCredentialPersistenceRecorder()
+        OAuthPipeline.setTransportForTesting(transport)
+        OAuthPipeline.setManualCredentialPersistenceForTesting(
+            save: { accessToken, refreshToken in
+                persistence.recordSave(accessToken: accessToken, refreshToken: refreshToken)
+            },
+            delete: { persistence.recordDelete() })
+        defer {
+            OAuthPipeline.setTransportForTesting(nil)
+            OAuthPipeline.setManualCredentialPersistenceForTesting(save: nil, delete: nil)
+            OAuthPipeline.clearCachedCredentials()
+            OAuthPipeline.clearRateLimitForTesting()
+            OAuthRefreshGate.resetForTesting()
+            OAuthRefreshCoordinator.resetForTesting()
+            if let previousMode {
+                defaults.set(previousMode, forKey: AppGroupConfig.oauthModeKey)
+            } else {
+                defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
+            }
+        }
+
+        let credentials = OAuthCredentials(
+            accessToken: "expired-access",
+            refreshToken: "refresh-\(UUID().uuidString)",
+            expiresAt: .distantPast)
+        let verification = Task {
+            try await OAuthPipeline.verify(credentials: credentials, oauthMode: "manual")
+        }
+        await transport.waitUntilRequestStarts()
+
+        // This models Disconnect while the token request is suspended.
+        do {
+            try OAuthPipeline.disconnect(oauthMode: "manual")
+        } catch {
+            Issue.record("Disconnect failed: \(error)")
+        }
+        await transport.releaseRequest()
+
+        await #expect(throws: CancellationError.self) {
+            try await verification.value
+        }
+        #expect(
+            OAuthPipeline.credentials(from: .temporarilyUnavailable, oauthMode: "manual") == nil)
+        #expect(defaults.string(forKey: AppGroupConfig.oauthModeKey) == "")
+        #expect(persistence.saveCount == 0)
+        #expect(persistence.deleteCount == 1)
+        #expect(await transport.requestCount == 1)
+    }
+
+    @Test func manualReplacementInvalidatesAnOlderRefresh() async throws {
+        let defaults = UserDefaults.standard
+        let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)
+        defaults.set("manual", forKey: AppGroupConfig.oauthModeKey)
+        OAuthPipeline.clearCachedCredentials()
+        OAuthPipeline.clearRateLimitForTesting()
+        OAuthRefreshGate.resetForTesting()
+        OAuthRefreshCoordinator.resetForTesting()
+        let transport = SuspendedRefreshTransport()
+        let persistence = ManualCredentialPersistenceRecorder()
+        OAuthPipeline.setTransportForTesting(transport)
+        OAuthPipeline.setManualCredentialPersistenceForTesting(
+            save: { accessToken, refreshToken in
+                persistence.recordSave(accessToken: accessToken, refreshToken: refreshToken)
+            },
+            delete: { persistence.recordDelete() })
+        defer {
+            OAuthPipeline.setTransportForTesting(nil)
+            OAuthPipeline.setManualCredentialPersistenceForTesting(save: nil, delete: nil)
+            OAuthPipeline.clearCachedCredentials()
+            OAuthPipeline.clearRateLimitForTesting()
+            OAuthRefreshGate.resetForTesting()
+            OAuthRefreshCoordinator.resetForTesting()
+            if let previousMode {
+                defaults.set(previousMode, forKey: AppGroupConfig.oauthModeKey)
+            } else {
+                defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
+            }
+        }
+
+        let oldCredentials = OAuthCredentials(
+            accessToken: "old-access",
+            refreshToken: "old-refresh-\(UUID().uuidString)",
+            expiresAt: .distantPast)
+        let oldVerification = Task {
+            try await OAuthPipeline.verify(credentials: oldCredentials, oauthMode: "manual")
+        }
+        await transport.waitUntilRequestStarts()
+
+        try OAuthPipeline.saveManualCredentials(
+            accessToken: "replacement-access", refreshToken: "replacement-refresh")
+        await transport.releaseRequest()
+
+        await #expect(throws: CancellationError.self) {
+            try await oldVerification.value
+        }
+        #expect(persistence.savedAccessTokens == ["replacement-access"])
+        #expect(persistence.savedRefreshTokens == ["replacement-refresh"])
+        #expect(
+            OAuthPipeline.credentials(from: .temporarilyUnavailable, oauthMode: "manual") == nil)
+        #expect(await transport.requestCount == 1)
+    }
+
+    @Test func failedManualCandidateCleanupInvalidatesAnOlderRefresh() async throws {
+        let defaults = UserDefaults.standard
+        let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)
+        defaults.set("manual", forKey: AppGroupConfig.oauthModeKey)
+        OAuthPipeline.clearCachedCredentials()
+        OAuthPipeline.clearRateLimitForTesting()
+        OAuthRefreshGate.resetForTesting()
+        OAuthRefreshCoordinator.resetForTesting()
+        let transport = SuspendedRefreshTransport()
+        let persistence = ManualCredentialPersistenceRecorder()
+        OAuthPipeline.setTransportForTesting(transport)
+        OAuthPipeline.setManualCredentialPersistenceForTesting(
+            save: { accessToken, refreshToken in
+                persistence.recordSave(accessToken: accessToken, refreshToken: refreshToken)
+            },
+            delete: { persistence.recordDelete() })
+        defer {
+            OAuthPipeline.setTransportForTesting(nil)
+            OAuthPipeline.setManualCredentialPersistenceForTesting(save: nil, delete: nil)
+            OAuthPipeline.clearCachedCredentials()
+            OAuthPipeline.clearRateLimitForTesting()
+            OAuthRefreshGate.resetForTesting()
+            OAuthRefreshCoordinator.resetForTesting()
+            if let previousMode {
+                defaults.set(previousMode, forKey: AppGroupConfig.oauthModeKey)
+            } else {
+                defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
+            }
+        }
+
+        let credentials = OAuthCredentials(
+            accessToken: "old-access",
+            refreshToken: "old-candidate-\(UUID().uuidString)",
+            expiresAt: .distantPast)
+        let oldVerification = Task {
+            try await OAuthPipeline.verify(credentials: credentials, oauthMode: "manual")
+        }
+        await transport.waitUntilRequestStarts()
+
+        try OAuthPipeline.discardManualCredentials()
+        await transport.releaseRequest()
+
+        await #expect(throws: CancellationError.self) {
+            try await oldVerification.value
+        }
+        #expect(
+            OAuthPipeline.credentials(from: .temporarilyUnavailable, oauthMode: "manual") == nil)
+        #expect(defaults.string(forKey: AppGroupConfig.oauthModeKey) == "")
+        #expect(persistence.saveCount == 0)
+        #expect(persistence.deleteCount == 1)
+        #expect(await transport.requestCount == 1)
+    }
+
+    @Test func newAutoKeychainChainInvalidatesAnOlderRefresh() async {
+        OAuthPipeline.clearCachedCredentials()
+        OAuthPipeline.clearRateLimitForTesting()
+        OAuthRefreshGate.resetForTesting()
+        OAuthRefreshCoordinator.resetForTesting()
+        let transport = SuspendedRefreshTransport()
+        OAuthPipeline.setTransportForTesting(transport)
+        defer {
+            OAuthPipeline.setTransportForTesting(nil)
+            OAuthPipeline.clearCachedCredentials()
+            OAuthPipeline.clearRateLimitForTesting()
+            OAuthRefreshGate.resetForTesting()
+            OAuthRefreshCoordinator.resetForTesting()
+        }
+
+        let oldCredentials = OAuthCredentials(
+            accessToken: "old-access",
+            refreshToken: "old-auto-refresh-\(UUID().uuidString)",
+            expiresAt: .distantPast)
+        let oldVerification = Task {
+            try await OAuthPipeline.verify(credentials: oldCredentials, oauthMode: "auto")
+        }
+        await transport.waitUntilRequestStarts()
+
+        // This models Claude Code replacing its Keychain entry while our refresh
+        // still uses the old chain. Observing the new source invalidates the old
+        // operation before it can cache its later-expiring result.
+        let newCredentials = OAuthCredentials(
+            accessToken: "new-access",
+            refreshToken: "new-auto-refresh-\(UUID().uuidString)",
+            expiresAt: .distantFuture)
+        #expect(
+            OAuthPipeline.credentials(from: .found(newCredentials), oauthMode: "auto")?
+                .accessToken == "new-access")
+        await transport.releaseRequest()
+
+        await #expect(throws: CancellationError.self) {
+            try await oldVerification.value
+        }
+        #expect(
+            OAuthPipeline.credentials(from: .found(newCredentials), oauthMode: "auto")?
+                .accessToken == "new-access")
+        #expect(await transport.requestCount == 1)
+    }
+
+    @Test func automaticKeychainReplacementDuringPollRejectsOldRefresh() async throws {
+        let defaults = UserDefaults.standard
+        let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)
+        defaults.set("auto", forKey: AppGroupConfig.oauthModeKey)
+        OAuthPipeline.clearCachedCredentials()
+        OAuthPipeline.clearRateLimitForTesting()
+        OAuthRefreshGate.resetForTesting()
+        OAuthRefreshCoordinator.resetForTesting()
+        let transport = SuspendedRefreshTransport()
+        let oldCredentials = OAuthCredentials(
+            accessToken: "old-access",
+            refreshToken: "old-poll-refresh-\(UUID().uuidString)",
+            expiresAt: .distantPast)
+        let credentialLoader = MutableOAuthCredentialLoader(.found(oldCredentials))
+        OAuthPipeline.setTransportForTesting(transport)
+        OAuthPipeline.setAutomaticCredentialLoaderForTesting { credentialLoader.load() }
+        defer {
+            OAuthPipeline.setAutomaticCredentialLoaderForTesting(nil)
+            OAuthPipeline.setTransportForTesting(nil)
+            OAuthPipeline.clearCachedCredentials()
+            OAuthPipeline.clearRateLimitForTesting()
+            OAuthRefreshGate.resetForTesting()
+            OAuthRefreshCoordinator.resetForTesting()
+            if let previousMode {
+                defaults.set(previousMode, forKey: AppGroupConfig.oauthModeKey)
+            } else {
+                defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
+            }
+        }
+
+        let store = SnapshotStore(
+            directory: FileManager.default.temporaryDirectory.appendingPathComponent(
+                UUID().uuidString, isDirectory: true))
+        let pipeline = OAuthPipeline(fallback: OAuthFallbackPipeline(), store: store)
+        let poll = Task { try await pipeline.poll(now: Date()) }
+        await transport.waitUntilRequestStarts()
+
+        let newCredentials = OAuthCredentials(
+            accessToken: "new-access",
+            refreshToken: "new-poll-refresh-\(UUID().uuidString)",
+            expiresAt: .distantFuture)
+        credentialLoader.store(.found(newCredentials))
+        await transport.releaseRequest()
+
+        let result = try await poll.value
+        #expect(result.snapshot?.parserVersion == "fallback-test")
+        #expect(
+            result.sourceAttempts.first
+                == SourceAttempt(source: .oauth, outcome: .skipped, reason: .notConnected))
+        #expect(
+            OAuthPipeline.credentials(from: .found(newCredentials), oauthMode: "auto")?
+                .accessToken == "new-access")
+        #expect(await transport.requestCount == 1)
+    }
+
+    @Test func automaticKeychainReplacementDuringUsageRejectsOldResponse() async throws {
+        let defaults = UserDefaults.standard
+        let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)
+        defaults.set("auto", forKey: AppGroupConfig.oauthModeKey)
+        OAuthPipeline.clearCachedCredentials()
+        OAuthPipeline.clearRateLimitForTesting()
+        let transport = SuspendedUsageTransport()
+        let oldCredentials = OAuthCredentials(
+            accessToken: "old-valid-access",
+            refreshToken: "old-valid-refresh-\(UUID().uuidString)",
+            expiresAt: .distantFuture)
+        let credentialLoader = MutableOAuthCredentialLoader(.found(oldCredentials))
+        OAuthPipeline.setTransportForTesting(transport)
+        OAuthPipeline.setAutomaticCredentialLoaderForTesting { credentialLoader.load() }
+        defer {
+            OAuthPipeline.setAutomaticCredentialLoaderForTesting(nil)
+            OAuthPipeline.setTransportForTesting(nil)
+            OAuthPipeline.clearCachedCredentials()
+            OAuthPipeline.clearRateLimitForTesting()
+            if let previousMode {
+                defaults.set(previousMode, forKey: AppGroupConfig.oauthModeKey)
+            } else {
+                defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
+            }
+        }
+
+        let store = SnapshotStore(
+            directory: FileManager.default.temporaryDirectory.appendingPathComponent(
+                UUID().uuidString, isDirectory: true))
+        let pipeline = OAuthPipeline(fallback: OAuthFallbackPipeline(), store: store)
+        let poll = Task { try await pipeline.poll(now: Date()) }
+        await transport.waitUntilUsageStarts()
+
+        let newCredentials = OAuthCredentials(
+            accessToken: "new-valid-access",
+            refreshToken: "new-valid-refresh-\(UUID().uuidString)",
+            expiresAt: .distantFuture)
+        credentialLoader.store(.found(newCredentials))
+        await transport.releaseUsage()
+
+        let result = try await poll.value
+        #expect(result.snapshot?.parserVersion == "fallback-test")
+        #expect(
+            result.sourceAttempts.first
+                == SourceAttempt(source: .oauth, outcome: .skipped, reason: .notConnected))
+        #expect(await transport.authorizationHeaders == ["Bearer old-valid-access"])
+        #expect(
+            OAuthPipeline.credentials(from: .found(newCredentials), oauthMode: "auto")?
+                .accessToken == "new-valid-access")
+    }
+}
+
+private actor OAuthRefreshPreselectionGate {
+    private var paused = false
+    private var pauseWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    func pause() async {
+        paused = true
+        let waiters = pauseWaiters
+        pauseWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+        await withCheckedContinuation { releaseContinuation = $0 }
+    }
+
+    func waitUntilPaused() async {
+        guard !paused else { return }
+        await withCheckedContinuation { pauseWaiters.append($0) }
+    }
+
+    func release() {
+        let continuation = releaseContinuation
+        releaseContinuation = nil
+        continuation?.resume()
     }
 }
 
@@ -369,6 +948,189 @@ private struct FailingTransport: HTTPTransport {
         let http = HTTPURLResponse(
             url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
         return (Data(body.utf8), http)
+    }
+}
+
+private final class CountingFailingTransport: HTTPTransport, @unchecked Sendable {
+    let status: Int
+    let body: String
+    private let lock = NSLock()
+    private var _calls = 0
+
+    var calls: Int { lock.withLock { _calls } }
+
+    init(status: Int, body: String) {
+        self.status = status
+        self.body = body
+    }
+
+    func send(_ request: URLRequest, retry _: HTTPRetryPolicy) async throws -> (
+        Data, HTTPURLResponse
+    ) {
+        lock.withLock { _calls += 1 }
+        let http = HTTPURLResponse(
+            url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+        return (Data(body.utf8), http)
+    }
+}
+
+private actor QueuedOAuthTransport: HTTPTransport {
+    struct Response: Sendable {
+        let status: Int
+        let body: String
+    }
+
+    private var responses: [Response]
+    private var requestedURLs: [URL] = []
+    private(set) var requestCount = 0
+
+    init(_ responses: [Response]) {
+        self.responses = responses
+    }
+
+    func send(_ request: URLRequest, retry _: HTTPRetryPolicy) async throws -> (
+        Data, HTTPURLResponse
+    ) {
+        guard !responses.isEmpty else { throw URLError(.badServerResponse) }
+        requestCount += 1
+        if let url = request.url { requestedURLs.append(url) }
+        let next = responses.removeFirst()
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: next.status, httpVersion: nil, headerFields: nil)!
+        return (Data(next.body.utf8), response)
+    }
+
+    var tokenRequestCount: Int {
+        requestedURLs.filter { $0.path == "/v1/oauth/token" }.count
+    }
+}
+
+private actor SuspendedRefreshTransport: HTTPTransport {
+    private var calls = 0
+    private var requestContinuation: CheckedContinuation<Void, Never>?
+    private var startContinuations: [CheckedContinuation<Void, Never>] = []
+
+    func send(_ request: URLRequest, retry _: HTTPRetryPolicy) async throws -> (
+        Data, HTTPURLResponse
+    ) {
+        calls += 1
+        let waiters = startContinuations
+        startContinuations.removeAll()
+        for waiter in waiters { waiter.resume() }
+        await withCheckedContinuation { continuation in
+            requestContinuation = continuation
+        }
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        let data = Data(
+            #"{"access_token":"rotated-access","refresh_token":"rotated-refresh","expires_in":3600}"#
+                .utf8)
+        return (data, response)
+    }
+
+    func waitUntilRequestStarts() async {
+        if calls > 0 { return }
+        await withCheckedContinuation { continuation in
+            startContinuations.append(continuation)
+        }
+    }
+
+    func releaseRequest() {
+        requestContinuation?.resume()
+        requestContinuation = nil
+    }
+
+    var requestCount: Int { calls }
+}
+
+private actor SuspendedUsageTransport: HTTPTransport {
+    private var usageContinuation: CheckedContinuation<Void, Never>?
+    private var usageStarted = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var authorizationHeaders: [String] = []
+
+    func send(_ request: URLRequest, retry _: HTTPRetryPolicy) async throws -> (
+        Data, HTTPURLResponse
+    ) {
+        if let header = request.value(forHTTPHeaderField: "Authorization") {
+            authorizationHeaders.append(header)
+        }
+        usageStarted = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+        await withCheckedContinuation { usageContinuation = $0 }
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        let data = Data(
+            #"{"five_hour":{"utilization":40},"seven_day":{"utilization":50}}"#.utf8)
+        return (data, response)
+    }
+
+    func waitUntilUsageStarts() async {
+        guard !usageStarted else { return }
+        await withCheckedContinuation { startWaiters.append($0) }
+    }
+
+    func releaseUsage() {
+        let continuation = usageContinuation
+        usageContinuation = nil
+        continuation?.resume()
+    }
+}
+
+private final class ManualCredentialPersistenceRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var savedCredentials: [(String, String)] = []
+    private var deletes = 0
+
+    var saveCount: Int { lock.withLock { savedCredentials.count } }
+    var deleteCount: Int { lock.withLock { deletes } }
+    var savedAccessTokens: [String] { lock.withLock { savedCredentials.map(\.0) } }
+    var savedRefreshTokens: [String] { lock.withLock { savedCredentials.map(\.1) } }
+
+    func recordSave(accessToken: String, refreshToken: String) {
+        lock.withLock { savedCredentials.append((accessToken, refreshToken)) }
+    }
+
+    func recordDelete() {
+        lock.withLock { deletes += 1 }
+    }
+}
+
+private final class MutableOAuthCredentialLoader: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: KeychainReadResult<OAuthCredentials>
+
+    init(_ result: KeychainReadResult<OAuthCredentials>) {
+        self.result = result
+    }
+
+    func load() -> KeychainReadResult<OAuthCredentials> {
+        lock.withLock { result }
+    }
+
+    func store(_ result: KeychainReadResult<OAuthCredentials>) {
+        lock.withLock { self.result = result }
+    }
+}
+
+private struct OAuthFallbackPipeline: ClaudeMeterPipeline {
+    func poll(now: Date, kind _: RefreshKind) async throws -> ParseResult {
+        ParseResult(
+            snapshot: ClaudeUsageSnapshot(
+                parserVersion: "fallback-test",
+                createdAt: now,
+                source: SourceInfo(cliPath: "/fallback", command: "fallback"),
+                limits: LimitInfo(),
+                state: SnapshotState(status: .stale, severity: .normal)),
+            warnings: [],
+            errors: [],
+            rawHash: "",
+            parserVersion: "fallback-test",
+            sourceAttempts: [
+                SourceAttempt(source: .cache, outcome: .selected, reason: .cachedSnapshot)
+            ])
     }
 }
 

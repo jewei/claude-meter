@@ -37,6 +37,7 @@ struct DataSourceCard<Content: View>: View {
                 Toggle("", isOn: $isEnabled)
                     .toggleStyle(.switch)
                     .labelsHidden()
+                    .accessibilityLabel(title)
             }
 
             content()
@@ -480,6 +481,7 @@ private struct ConfigDirAccountsSection: View {
             Toggle("", isOn: enabledBinding(for: account.id))
                 .toggleStyle(.switch)
                 .labelsHidden()
+                .accessibilityLabel("Track \(display)")
                 .controlSize(.mini)
                 .disabled(isDefault)
                 .help(isDefault ? "The default account is always tracked" : "Track this account")

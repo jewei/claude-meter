@@ -6,6 +6,18 @@ import Testing
 
 @Suite("OAuthKeychain")
 struct OAuthKeychainTests {
+    @Test("Manual credential serialization stays readable across the date bound")
+    func manualCredentialSerializationRoundTrip() throws {
+        let json = try OAuthKeychain.manualCredentialJSONStringForTesting(
+            accessToken: "access", refreshToken: "refresh")
+        let credentials = try #require(OAuthKeychain.parseForTesting(json))
+
+        #expect(credentials.accessToken == "access")
+        #expect(credentials.refreshToken == "refresh")
+        #expect(credentials.expiresAt > Date(timeIntervalSince1970: 32_000_000_000))
+        #expect(credentials.expiresAt < Date(timeIntervalSince1970: 32_503_680_000))
+    }
+
     @Test func parsesClaudeCodeKeychainJSON() {
         // Expiry computed relative to now so the test never goes stale with wall-clock time.
         let futureMs = Int((Date().timeIntervalSince1970 + 3600) * 1000)

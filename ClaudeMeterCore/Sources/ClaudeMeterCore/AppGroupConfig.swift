@@ -11,6 +11,9 @@ public enum AppGroupConfig {
     /// override. Named because it is also a *ceiling* on how long any tier may
     /// serve a cached snapshot — see `StatuslinePipeline.fallbackCooldown`.
     public static let defaultStaleAfterSeconds: Double = 180
+    public static let maximumStaleAfterSeconds: Double = 24 * 60 * 60
+    /// Small forward clock changes must not invalidate a recent observation.
+    private static let futurePollClockSkewAllowance: TimeInterval = 300
     public static let oauthModeKey = "oauthMode"
 
     /// Extra Claude config dirs (`CLAUDE_CONFIG_DIR` accounts) the user added by
@@ -252,22 +255,38 @@ public enum AppGroupConfig {
     public static func currentThresholds(
         shared: UserDefaults? = sharedDefaults, defaults: UserDefaults = .standard
     ) -> UsageThresholds {
-        let warning = readPositiveDouble(
+        let warning = readBoundedDouble(
             forKey: warningThresholdKey,
             shared: shared,
             defaults: defaults,
+            range: 50...90,
             fallback: 80
         )
-        let critical = readPositiveDouble(
+        let configuredCritical = readBoundedDouble(
             forKey: criticalThresholdKey,
             shared: shared,
             defaults: defaults,
+            range: 60...100,
             fallback: 95
         )
         return UsageThresholds(
             warning: warning,
-            critical: max(critical, warning + 1)
+            critical: configuredCritical > warning
+                ? configuredCritical : min(100, warning + 5)
         )
+    }
+
+    /// Repairs values that the settings UI reads through `@AppStorage`. This is
+    /// also a persistence boundary: malformed defaults must not reach `Int` or
+    /// `CGFloat` conversions while SwiftUI builds the first frame.
+    @discardableResult
+    public static func repairThresholdSettings(
+        defaults: UserDefaults = .standard
+    ) -> UsageThresholds {
+        let thresholds = currentThresholds(shared: nil, defaults: defaults)
+        defaults.set(thresholds.warning, forKey: warningThresholdKey)
+        defaults.set(thresholds.critical, forKey: criticalThresholdKey)
+        return thresholds
     }
 
     public static func isSnapshotStale(
@@ -277,13 +296,25 @@ public enum AppGroupConfig {
         now: Date = Date()
     ) -> Bool {
         guard let polledAt = lastPollAt else { return false }
-        let threshold = readPositiveDouble(
+        let threshold = resolvedStaleAfterSeconds(shared: shared, defaults: defaults)
+        let age = now.timeIntervalSince(polledAt)
+        guard age.isFinite, age >= -futurePollClockSkewAllowance else { return true }
+        return max(0, age) > threshold
+    }
+
+    /// The staleness interval used by both evaluation and timeline scheduling.
+    /// Exposing the resolved value prevents callers such as WidgetKit from using
+    /// a different deadline than `isSnapshotStale`.
+    public static func resolvedStaleAfterSeconds(
+        shared: UserDefaults? = sharedDefaults,
+        defaults: UserDefaults = .standard
+    ) -> TimeInterval {
+        readPositiveDouble(
             forKey: staleAfterSecondsKey,
             shared: shared,
             defaults: defaults,
             fallback: defaultStaleAfterSeconds
         )
-        return now.timeIntervalSince(polledAt) > threshold
     }
 
     private static func readPositiveDouble(
@@ -293,10 +324,33 @@ public enum AppGroupConfig {
         fallback: Double
     ) -> Double {
         let sharedValue = shared?.double(forKey: key) ?? 0
-        if sharedValue > 0 { return sharedValue }
+        if sharedValue.isFinite, sharedValue > 0, sharedValue <= maximumStaleAfterSeconds {
+            return sharedValue
+        }
         let standardValue = defaults.double(forKey: key)
-        if standardValue > 0 { return standardValue }
+        if standardValue.isFinite, standardValue > 0,
+            standardValue <= maximumStaleAfterSeconds
+        {
+            return standardValue
+        }
         return fallback
+    }
+
+    private static func readBoundedDouble(
+        forKey key: String,
+        shared: UserDefaults?,
+        defaults: UserDefaults,
+        range: ClosedRange<Double>,
+        fallback: Double
+    ) -> Double {
+        func validValue(in suite: UserDefaults?) -> Double? {
+            guard let suite, suite.object(forKey: key) != nil else { return nil }
+            let value = suite.double(forKey: key)
+            guard value.isFinite, range.contains(value) else { return nil }
+            return value
+        }
+
+        return validValue(in: shared) ?? validValue(in: defaults) ?? fallback
     }
 
     private static func standardStringArray(forKey key: String) -> [String] {

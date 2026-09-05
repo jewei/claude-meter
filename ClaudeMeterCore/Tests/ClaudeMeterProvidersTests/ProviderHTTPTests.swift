@@ -80,6 +80,8 @@ struct HTTPRetryPolicyTests {
         #expect(HTTPRetryPolicy.retryAfterSeconds("0") == nil)
         #expect(HTTPRetryPolicy.retryAfterSeconds("-5") == nil)
         #expect(HTTPRetryPolicy.retryAfterSeconds(" 0 ") == nil)
+        #expect(HTTPRetryPolicy.retryAfterSeconds("inf") == nil)
+        #expect(HTTPRetryPolicy.retryAfterSeconds("nan") == nil)
         #expect(HTTPRetryPolicy.retryAfterSeconds("5") == 5)
     }
 
@@ -107,6 +109,156 @@ struct HTTPRetryPolicyTests {
 
         let nan = HTTPRetryPolicy(maxRetries: 1, baseDelay: .nan, maxDelay: 8)
         #expect(nan.baseDelay == 0)
+    }
+}
+
+@Suite("ProviderHTTPClient bounds")
+struct ProviderHTTPClientBoundsTests {
+    @Test func rejectsOversizedDeclaredContentLengthBeforeBodyReceipt() {
+        let response = HTTPURLResponse(
+            url: URL(string: "https://provider-http.test/declared")!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: ["Content-Length": "9"]
+        )!
+
+        #expect(
+            ProviderHTTPClient.declaredLengthExceedsLimit(response, maximumByteCount: 8)
+        )
+    }
+
+    @Test func rejectsStreamedBodyWhenItCrossesLimit() async {
+        let fixture = makeHTTPFixture(
+            plan: ProviderHTTPTestPlan(
+                chunks: [Data(repeating: 1, count: 5), Data(repeating: 2, count: 4)]
+            ),
+            maximumResponseByteCount: 8
+        )
+        defer { fixture.close() }
+
+        await expectURLError(.dataLengthExceedsMaximum) {
+            _ = try await fixture.client.send(URLRequest(url: fixture.url))
+        }
+    }
+
+    @Test func totalDeadlineEndsAnOpenBodyAfterDataArrives() async {
+        let bodyDelivered = LockedFlag()
+        let fixture = makeHTTPFixture(
+            plan: ProviderHTTPTestPlan(
+                chunks: [Data([1]), Data([2]), Data([3])],
+                finishes: false,
+                afterChunks: {
+                    bodyDelivered.set()
+                }
+            ),
+            maximumResponseByteCount: 8,
+            resourceTimeoutSeconds: 1
+        )
+        defer { fixture.close() }
+
+        await expectURLError(.timedOut) {
+            _ = try await fixture.client.send(URLRequest(url: fixture.url))
+        }
+        #expect(bodyDelivered.value)
+    }
+
+    @Test func totalDeadlineDoesNotAwaitCancellationIgnoringReceiver() async {
+        let started = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let receiverFinished = LockedFlag()
+        let url = URL(string: "https://provider-http.test/cancellation-ignoring")!
+        let session = URLSession(configuration: .ephemeral)
+        let client = ProviderHTTPClient(
+            session: session,
+            maximumResponseByteCount: 8,
+            resourceTimeoutSeconds: 0.05,
+            responseLoader: { request, _, _ in
+                started.signal()
+                waitIgnoringCancellation(release)
+                receiverFinished.set()
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return (Data(), response)
+            }
+        )
+        let requestTask = Task {
+            try await client.send(URLRequest(url: url))
+        }
+        let watchdog = Task.detached {
+            try? await Task.sleep(for: .seconds(2))
+            if !Task.isCancelled { release.signal() }
+        }
+        defer {
+            watchdog.cancel()
+            release.signal()
+            requestTask.cancel()
+            session.invalidateAndCancel()
+        }
+
+        #expect(waitForSignal(started, timeout: .now() + 1))
+        await expectURLError(.timedOut) {
+            _ = try await requestTask.value
+        }
+        #expect(!receiverFinished.value)
+    }
+
+    @Test func callerCancellationStopsAnOpenResponse() async {
+        let bodyDelivered = LockedFlag()
+        let fixture = makeHTTPFixture(
+            plan: ProviderHTTPTestPlan(
+                chunks: [Data([1])],
+                finishes: false,
+                afterChunks: { bodyDelivered.set() }
+            ),
+            maximumResponseByteCount: 8,
+            resourceTimeoutSeconds: 5
+        )
+        defer { fixture.close() }
+        let requestTask = Task {
+            try await fixture.client.send(URLRequest(url: fixture.url))
+        }
+        defer { requestTask.cancel() }
+
+        let didReceiveBody = await waitForFlag(bodyDelivered)
+        #expect(didReceiveBody)
+        requestTask.cancel()
+        await #expect(throws: CancellationError.self) {
+            _ = try await requestTask.value
+        }
+    }
+
+    @Test func preservesBoundedResponseStatusHeadersAndBody() async throws {
+        let fixture = makeHTTPFixture(
+            plan: ProviderHTTPTestPlan(
+                status: 418,
+                headers: ["X-Test": "kept"],
+                chunks: [Data("hello".utf8)]
+            ),
+            maximumResponseByteCount: 5
+        )
+        defer { fixture.close() }
+
+        let (data, response) = try await fixture.client.send(URLRequest(url: fixture.url))
+        #expect(data == Data("hello".utf8))
+        #expect(response.statusCode == 418)
+        #expect(response.value(forHTTPHeaderField: "X-Test") == "kept")
+    }
+
+    @Test func recognizesDeclaredLengthThatExceedsIntegerRange() {
+        let response = HTTPURLResponse(
+            url: URL(string: "https://provider-http.test/large")!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: ["Content-Length": "99999999999999999999999999999999999999"]
+        )!
+
+        #expect(
+            ProviderHTTPClient.declaredLengthExceedsLimit(response, maximumByteCount: 8)
+        )
     }
 }
 
@@ -178,4 +330,142 @@ struct KeychainStatusMappingTests {
             Issue.record("expected .invalid for errSecAuthFailed")
         }
     }
+}
+
+private struct ProviderHTTPTestPlan: Sendable {
+    var status = 200
+    var headers: [String: String] = [:]
+    var chunks: [Data]
+    var finishes = true
+    var afterChunks: (@Sendable () -> Void)?
+}
+
+private final class ProviderHTTPTestPlanStore: @unchecked Sendable {
+    static let shared = ProviderHTTPTestPlanStore()
+
+    private let lock = NSLock()
+    private var plans: [URL: ProviderHTTPTestPlan] = [:]
+
+    func set(_ plan: ProviderHTTPTestPlan, for url: URL) {
+        lock.withLock { plans[url] = plan }
+    }
+
+    func get(for url: URL?) -> ProviderHTTPTestPlan? {
+        lock.withLock { url.flatMap { plans[$0] } }
+    }
+
+    func remove(for url: URL) {
+        lock.withLock { plans[url] = nil }
+    }
+}
+
+private final class ProviderHTTPTestURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool {
+        ProviderHTTPTestPlanStore.shared.get(for: request.url) != nil
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let plan = ProviderHTTPTestPlanStore.shared.get(for: request.url),
+            let url = request.url,
+            let response = HTTPURLResponse(
+                url: url,
+                statusCode: plan.status,
+                httpVersion: "HTTP/1.1",
+                headerFields: plan.headers
+            )
+        else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        for chunk in plan.chunks {
+            client?.urlProtocol(self, didLoad: chunk)
+        }
+        plan.afterChunks?()
+        if plan.finishes {
+            client?.urlProtocolDidFinishLoading(self)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+private struct ProviderHTTPTestFixture: Sendable {
+    let client: ProviderHTTPClient
+    let session: URLSession
+    let url: URL
+
+    func close() {
+        ProviderHTTPTestPlanStore.shared.remove(for: url)
+        session.invalidateAndCancel()
+    }
+}
+
+private func makeHTTPFixture(
+    plan: ProviderHTTPTestPlan,
+    maximumResponseByteCount: Int,
+    resourceTimeoutSeconds: TimeInterval = ProviderHTTPClient.resourceTimeoutSeconds
+) -> ProviderHTTPTestFixture {
+    let url = URL(string: "https://provider-http.test/\(UUID().uuidString)")!
+    ProviderHTTPTestPlanStore.shared.set(plan, for: url)
+
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ProviderHTTPTestURLProtocol.self]
+    let session = URLSession(
+        configuration: configuration,
+        delegate: ProviderHTTPSessionDelegate(),
+        delegateQueue: nil
+    )
+    let client = ProviderHTTPClient(
+        session: session,
+        maximumResponseByteCount: maximumResponseByteCount,
+        resourceTimeoutSeconds: resourceTimeoutSeconds
+    )
+    return ProviderHTTPTestFixture(client: client, session: session, url: url)
+}
+
+private final class LockedFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = false
+
+    var value: Bool { lock.withLock { stored } }
+
+    func set() {
+        lock.withLock { stored = true }
+    }
+}
+
+private func expectURLError(
+    _ expected: URLError.Code,
+    operation: () async throws -> Void
+) async {
+    do {
+        try await operation()
+        Issue.record("Expected URL error \(expected.rawValue)")
+    } catch let error as URLError {
+        #expect(error.code == expected)
+    } catch {
+        Issue.record("Expected URL error, got \(error)")
+    }
+}
+
+private func waitIgnoringCancellation(_ semaphore: DispatchSemaphore) {
+    semaphore.wait()
+}
+
+private func waitForSignal(_ semaphore: DispatchSemaphore, timeout: DispatchTime) -> Bool {
+    semaphore.wait(timeout: timeout) == .success
+}
+
+private func waitForFlag(_ flag: LockedFlag) async -> Bool {
+    for _ in 0..<1_000 {
+        if flag.value { return true }
+        try? await Task.sleep(for: .milliseconds(1))
+    }
+    return false
 }

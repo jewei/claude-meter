@@ -273,6 +273,7 @@ public struct CostUsageScanner: Sendable {
             var day: String
             var model: String
             var totals: TokenTotals
+            var hasCacheWriteBreakdown: Bool
         }
         var messages: [String: MessageAggregate] = [:]
 
@@ -294,7 +295,7 @@ public struct CostUsageScanner: Sendable {
                 messageId: message.id, requestId: entry.requestId, lineIndex: lineIndex)
             if usage.hasInvalidCounter { isPartial = true }
             let cacheWrite = usage.cacheWriteSplit
-            let totals = TokenTotals(
+            var totals = TokenTotals(
                 input: max(usage.inputTokens ?? 0, 0),
                 output: max(usage.outputTokens ?? 0, 0),
                 cacheRead: max(usage.cacheReadInputTokens ?? 0, 0),
@@ -303,13 +304,24 @@ public struct CostUsageScanner: Sendable {
             )
 
             if var existing = messages[key] {
+                // Legacy totals are provisional 5m values. An explicit breakdown
+                // on any chunk replaces that fallback for the complete message.
+                if cacheWrite.hasBreakdown {
+                    if !existing.hasCacheWriteBreakdown {
+                        existing.totals.cacheWrite5m = 0
+                    }
+                    existing.hasCacheWriteBreakdown = true
+                } else if existing.hasCacheWriteBreakdown {
+                    totals.cacheWrite5m = 0
+                }
                 if existing.totals.takeMax(totals) { isPartial = true }
                 messages[key] = existing
             } else {
                 messages[key] = MessageAggregate(
                     day: JournalReader.dayString(from: date, calendar: calendar),
                     model: model,
-                    totals: totals)
+                    totals: totals,
+                    hasCacheWriteBreakdown: cacheWrite.hasBreakdown)
             }
         }
 
@@ -530,11 +542,11 @@ private struct TranscriptUsage: Decodable {
     /// when at least one sub-field is present (the legacy total duplicates its sum);
     /// older transcripts without one attribute the whole legacy total to the 5m
     /// tier. Never sum breakdown + legacy — that double-counts.
-    var cacheWriteSplit: (fiveMinute: Int, oneHour: Int) {
+    var cacheWriteSplit: (fiveMinute: Int, oneHour: Int, hasBreakdown: Bool) {
         if let b = cacheCreation, b.ephemeral5m != nil || b.ephemeral1h != nil {
-            return (max(b.ephemeral5m ?? 0, 0), max(b.ephemeral1h ?? 0, 0))
+            return (max(b.ephemeral5m ?? 0, 0), max(b.ephemeral1h ?? 0, 0), true)
         }
-        return (max(cacheCreationInputTokens ?? 0, 0), 0)
+        return (max(cacheCreationInputTokens ?? 0, 0), 0, false)
     }
 
     var hasInvalidCounter: Bool {
@@ -591,10 +603,10 @@ public final class CostUsageCache: @unchecked Sendable {
     // so the cap is sized to keep a heavy month fully resident.
     static let maxEntries = 2048
     private static let maximumPersistenceFileBytes = 64 * 1_024 * 1_024
-    // v3: cache identity includes the time zone used for local-day buckets. Older
-    // versions are discarded: v1 cannot split cache-write tiers, and v2 can serve
-    // a wrong boundary day after travel.
-    private static let diskVersion = 3
+    // v4: explicit cache-write tiers also replace legacy totals across streaming
+    // chunks. Discard v3's potentially double-counted aggregates, as well as v1
+    // without cache-write tiers and v2 without time-zone identity.
+    private static let diskVersion = 4
 
     private let persistenceURL: URL?
     private let lock = NSLock()

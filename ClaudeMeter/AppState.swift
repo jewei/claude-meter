@@ -71,6 +71,7 @@ final class AppState: ObservableObject {
     /// statusline snapshot short-circuits the main OAuth fallback tier.
     private let oauthEnrichmentFetcher:
         @Sendable (Date) async -> OAuthPipeline.OAuthEnrichmentFetchResult
+    private let costUsageScanner: @Sendable (Date, PollConfiguration) async -> CostUsageResult
     /// Test seam that can hold a completed provider group before its cycle releases
     /// the shared loading state. Production polling does not install a barrier.
     private let pollCompletionBarrier: (@Sendable () async -> Void)?
@@ -104,6 +105,7 @@ final class AppState: ObservableObject {
     private var memoryPressureMonitor: MemoryPressureMonitor?
     private var lastOAuthEnrichmentAttemptAt: Date?
     @Published private var oauthEnrichmentReading: ReadingState<OAuthPipeline.OAuthEnrichment>?
+    private var oauthEnrichmentAccountKey: String?
     private var lastAccountsFetchAt: Date?
     private var cachedAccountReadings: [OAuthAccountReading] = []
     @Published private(set) var accountOAuthFailures:
@@ -163,6 +165,7 @@ final class AppState: ObservableObject {
     var grokLastPolledAt: Date? { grokReading?.lastPolledAt }
     var oauthEnrichmentIsStale: Bool {
         snapshot?.source.cliPath != "api.anthropic.com"
+            && oauthEnrichmentAccountKey == (snapshot?.activeAccountID ?? "claude")
             && oauthEnrichmentReading?.isStale == true
     }
     var oauthEnrichmentError: String? {
@@ -567,6 +570,9 @@ final class AppState: ObservableObject {
         self.oauthEnrichmentFetcher = { now in
             await OAuthPipeline.fetchEnrichmentResult(now: now)
         }
+        self.costUsageScanner = { now, configuration in
+            await AppState.scanCostModels(now: now, configuration: configuration)
+        }
         self.pollCompletionBarrier = nil
         self.configBridgeRefreshOperation = { request in
             AppState.performConfigBridgeRefresh(request)
@@ -642,14 +648,13 @@ final class AppState: ObservableObject {
     init(
         pipeline: any ClaudeMeterPipeline,
         initialSnapshot: ClaudeUsageSnapshot? = nil,
-        serviceStatusFetcher: @escaping @Sendable () async -> ServiceStatus? = {
-            await AnthropicStatusClient().fetch()
-        },
+        serviceStatusFetcher: @escaping @Sendable () async -> ServiceStatus? = { nil },
         oauthEnrichmentFetcher:
             @escaping @Sendable (Date) async ->
-            OAuthPipeline.OAuthEnrichmentFetchResult = { now in
-                await OAuthPipeline.fetchEnrichmentResult(now: now)
-            },
+            OAuthPipeline.OAuthEnrichmentFetchResult = { _ in .unavailable(.notConnected) },
+        costUsageScanner: @escaping @Sendable (Date, PollConfiguration) async -> CostUsageResult = {
+            _, _ in .empty
+        },
         codexReadingStore: CodexReadingStore? = nil,
         notificationEngine: NotificationEngine = NotificationEngine(),
         pollCompletionBarrier: (@Sendable () async -> Void)? = nil,
@@ -680,6 +685,7 @@ final class AppState: ObservableObject {
         self.appUpdater = appUpdater
         self.serviceStatusFetcher = serviceStatusFetcher
         self.oauthEnrichmentFetcher = oauthEnrichmentFetcher
+        self.costUsageScanner = costUsageScanner
         self.pollCompletionBarrier = pollCompletionBarrier
         self.configBridgeRefreshOperation =
             configBridgeRefreshOperation
@@ -720,8 +726,8 @@ final class AppState: ObservableObject {
 
     func startPolling() {
         let replacedExistingCycle = pollTask != nil || activePollCycleID != nil
+        if replacedExistingCycle { invalidatePollGeneration() }
         pollTask?.cancel()
-        if replacedExistingCycle { pipelineGeneration += 1 }
         invalidateActivePollCycle()
         guard onboardingIsComplete else {
             pollTask = nil
@@ -764,10 +770,18 @@ final class AppState: ObservableObject {
         // Only the meter poll — the attention watcher has its own lifecycle (it's
         // not tied to having a usage data source).
         let invalidatedExistingCycle = pollTask != nil || activePollCycleID != nil
+        if invalidatedExistingCycle { invalidatePollGeneration() }
         pollTask?.cancel()
         pollTask = nil
-        if invalidatedExistingCycle { pipelineGeneration += 1 }
         invalidateActivePollCycle()
+    }
+
+    /// A task can be suspended in Notification Center after its poll generation
+    /// changes. Revoke that delivery before abandoning the observation, including
+    /// interactive polls whose task is not stored in `pollTask`.
+    private func invalidatePollGeneration() {
+        notificationEngine.pollFailed()
+        pipelineGeneration += 1
     }
 
     private func invalidateActivePollCycle() {
@@ -879,12 +893,13 @@ final class AppState: ObservableObject {
 
     func refreshCodexAccountsFromSettings(configurationChanged: Bool = false) {
         let codexOwnsMainMeter = mainMeterProvider == .codex
-        if codexOwnsMainMeter {
+        if configurationChanged {
+            invalidatePollGeneration()
+        } else if codexOwnsMainMeter {
             // Account restoration and publication can do synchronous work. Revoke
             // the old observation before either operation can expose new state.
             notificationEngine.pollFailed()
         }
-        if configurationChanged { pipelineGeneration += 1 }
         let previousPublishedReading = publishedMainMeterReading
         let previousNotificationReading = lastNotificationReading
         let existing = Dictionary(uniqueKeysWithValues: codexAccounts.map { ($0.id, $0) })
@@ -935,7 +950,7 @@ final class AppState: ObservableObject {
     ) {
         // Invalidates every task in the old poll cycle. `startPolling()` cancels
         // its parent task, but detached timeout work can finish later.
-        pipelineGeneration += 1
+        invalidatePollGeneration()
         hasEnabledDataSource = AppSettings.hasEnabledDataSource
         if enabled {
             if isActive { startPolling() }
@@ -954,8 +969,7 @@ final class AppState: ObservableObject {
 
     /// Debounced rebuild for source toggles — avoids restarting the poll loop on every flip.
     func scheduleRebuildPipeline() {
-        let notificationAlreadyInvalidated = mainMeterProvider == .claude
-        if notificationAlreadyInvalidated {
+        if mainMeterProvider == .claude {
             // The setting changed before the debounce starts. Revoke its old
             // observation now instead of leaving it live during the delay.
             notificationEngine.pollFailed()
@@ -965,24 +979,17 @@ final class AppState: ObservableObject {
             try? await Task.sleep(for: .milliseconds(Self.rebuildDebounceMilliseconds))
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                self?.rebuildPipeline(
-                    notificationAlreadyInvalidated: notificationAlreadyInvalidated)
+                self?.rebuildPipeline()
             }
         }
     }
 
     func rebuildPipeline() {
-        rebuildPipeline(notificationAlreadyInvalidated: false)
-    }
-
-    private func rebuildPipeline(notificationAlreadyInvalidated: Bool) {
         let claudeOwnsMainMeter = mainMeterProvider == .claude
-        if claudeOwnsMainMeter, !notificationAlreadyInvalidated {
-            notificationEngine.pollFailed()
-        }
-        pipelineGeneration += 1
+        invalidatePollGeneration()
         lastOAuthEnrichmentAttemptAt = nil
         oauthEnrichmentReading = nil
+        oauthEnrichmentAccountKey = nil
         lastAccountsFetchAt = nil
         cachedAccountReadings = []
         accountOAuthFailures = [:]
@@ -1168,11 +1175,12 @@ final class AppState: ObservableObject {
                 // Independent of which tier produced the rate-limit snapshot.
                 let costResult: CostUsageResult
                 do {
+                    let scan = costUsageScanner
                     costResult = try await Timeout.run(
                         seconds: Self.transcriptScanTimeoutSeconds,
                         budget: Self.transcriptScanTimeoutBudget
                     ) {
-                        await Self.scanCostModels(now: now, configuration: configuration)
+                        await scan(now, configuration)
                     }
                 } catch {
                     costResult = CostUsageResult(models: [], isPartialEstimate: true)
@@ -1185,7 +1193,10 @@ final class AppState: ObservableObject {
                 let enrichment = await oauthEnrichment(
                     for: snap, now: now, configuration: configuration)
                 guard configuration.generation == pipelineGeneration, canPoll else { return }
-                if let enrichment { Self.apply(enrichment, to: &snap) }
+                if let enrichment {
+                    Self.apply(
+                        enrichment, to: &snap, sourceAccountKey: oauthEnrichmentAccountKey)
+                }
                 let topLevelOAuthDetailsObservedAt = Self.topLevelOAuthDetailsObservedAt(
                     for: snap,
                     enrichmentObservedAt: enrichment.flatMap { _ in
@@ -1523,10 +1534,12 @@ final class AppState: ObservableObject {
         configuration: PollConfiguration
     ) async -> OAuthPipeline.OAuthEnrichment? {
         guard configuration.oauthEnabled,
+            configuration.oauthMode == "auto",
             snap.source.cliPath != "api.anthropic.com"
         else {
             lastOAuthEnrichmentAttemptAt = nil
             oauthEnrichmentReading = nil
+            oauthEnrichmentAccountKey = nil
             return nil
         }
         if let lastOAuthEnrichmentAttemptAt,
@@ -1537,7 +1550,7 @@ final class AppState: ObservableObject {
                 self.oauthEnrichmentReading = Self.resolvedOAuthEnrichmentReading(
                     oauthEnrichmentReading, asOf: now)
             }
-            return oauthEnrichmentReading?.value
+            return await matchingOAuthEnrichment(for: snap, configuration: configuration)
         }
         let result = await oauthEnrichmentFetcher(now)
         guard configuration.generation == pipelineGeneration, canPoll else { return nil }
@@ -1547,7 +1560,35 @@ final class AppState: ObservableObject {
             result: result,
             now: now
         )
-        return oauthEnrichmentReading?.value
+        return await matchingOAuthEnrichment(for: snap, configuration: configuration)
+    }
+
+    /// Single-slot credentials need an exact account match before their cached or
+    /// fresh details can supplement statusline data. Active-account changes do not
+    /// rebuild the pipeline, and the newest Keychain login can be a different one.
+    private func matchingOAuthEnrichment(
+        for snapshot: ClaudeUsageSnapshot,
+        configuration: PollConfiguration
+    ) async -> OAuthPipeline.OAuthEnrichment? {
+        guard let enrichment = oauthEnrichmentReading?.value,
+            let service = enrichment.credentialService
+        else {
+            oauthEnrichmentAccountKey = nil
+            return nil
+        }
+        var accountKey = OAuthKeychain.accountKey(forCredentialService: service, accounts: [])
+        if accountKey == nil {
+            let configuredDirs = configuration.configuredClaudeDirs
+            accountKey = try? await Timeout.run(seconds: 5) {
+                OAuthKeychain.accountKey(
+                    forCredentialService: service,
+                    accounts: ConfigDirDiscovery.discover(configuredDirs: configuredDirs))
+            }
+            guard configuration.generation == pipelineGeneration, canPoll else { return nil }
+        }
+        oauthEnrichmentAccountKey = accountKey
+        guard accountKey == (snapshot.activeAccountID ?? "claude") else { return nil }
+        return enrichment
     }
 
     static func updatedOAuthEnrichmentReading(
@@ -1613,7 +1654,8 @@ final class AppState: ObservableObject {
                 }
             },
             extraUsage: enrichment.extraUsage,
-            plan: enrichment.plan)
+            plan: enrichment.plan,
+            credentialService: enrichment.credentialService)
     }
 
     /// Per-account OAuth readings for every discovered config dir (multi-account
@@ -1742,9 +1784,12 @@ final class AppState: ObservableObject {
         return true
     }
 
+    @discardableResult
     static func apply(
-        _ e: OAuthPipeline.OAuthEnrichment, to snap: inout ClaudeUsageSnapshot
-    ) {
+        _ e: OAuthPipeline.OAuthEnrichment, to snap: inout ClaudeUsageSnapshot,
+        sourceAccountKey: String?
+    ) -> Bool {
+        guard sourceAccountKey == (snap.activeAccountID ?? "claude") else { return false }
         // Enrichment is a complete successful observation, not a sparse patch.
         // Replacing optionals lets the API explicitly remove a limit that existed
         // in an earlier response; a failed fetch never reaches this method.
@@ -1758,6 +1803,7 @@ final class AppState: ObservableObject {
         } else if let plan = e.plan {
             snap.account = AccountInfo(plan: plan)
         }
+        return true
     }
 
     nonisolated static func topLevelOAuthDetailsObservedAt(
@@ -1856,7 +1902,10 @@ final class AppState: ObservableObject {
         var pipeline: any ClaudeMeterPipeline = CachedSnapshotPipeline(store: store)
 
         if AppSettings.oauthSourceEnabled {
-            pipeline = OAuthPipeline(fallback: pipeline, store: store, thresholds: thresholds)
+            let configuredDirs = AppGroupConfig.configuredConfigDirs
+            pipeline = OAuthPipeline(
+                fallback: pipeline, store: store, thresholds: thresholds,
+                accountConfigs: { ConfigDirDiscovery.discover(configuredDirs: configuredDirs) })
         }
 
         if AppSettings.statuslineSourceEnabled {

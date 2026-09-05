@@ -106,6 +106,10 @@ OAuth is used only when mode is `auto` or `manual`.
   user explicitly confirms Connect. Settings preflight is attributes-only.
 - Manual mode stores an app-owned Keychain item and reports save/delete failures.
 - Refreshed tokens are cached in memory. Claude Code's Keychain item is never rewritten.
+- Automatic credentials retain the exact Keychain service through refresh and cache reuse.
+  OAuth details supplement a statusline account only when that service maps to the same
+  config account. An unscoped manual token does not establish that match. Direct automatic
+  OAuth uses its mapped config identity; an unmapped login keeps a separate account key.
 - Concurrent refreshes share one request. A bounded handoff retains the result for late
   callers that selected the same one-use token before it was rotated. Credential-generation
   keys prevent a replacement login from using an older result.
@@ -141,10 +145,11 @@ that reset. Each reading keeps its actual fetch timestamp. Failures remain per-a
 state instead of masquerading as fresh absence. A retained last-good account reading
 clears a rolling window after that window resets because post-reset use is unknown. If an
 accounts-nil default snapshot gains a secondary OAuth account, the merge first materializes
-the default account and keeps it active. The active account keeps the single-slot refresh
-path. For that active account, the direct/single-slot and per-account requests are complete
-observations of plan, Opus, scoped limits, and extra usage. The newest observation replaces
-that bundle in both the top-level and account records, including nil fields; an equal
+the default account and keeps it active. The account that matches the selected automatic
+credential keeps the single-slot refresh path. When it is active, the direct/single-slot
+and per-account requests are complete observations of plan, Opus, scoped limits, and extra
+usage. The newest observation replaces that bundle in both the top-level and account
+records, including nil fields; an equal
 timestamp favors the per-account request because it runs later in the poll.
 
 ### 3.3 Snapshot and staleness
@@ -334,7 +339,9 @@ nonqualifying polls reset the qualification streak.
 
 Notification-setting changes invalidate a delivery that is still suspended in Notification
 Center. If the add completes after invalidation, the app retracts the pending or delivered
-alert. Attention settings use a separate revision from quota polling.
+alert. Each delivery attempt has a distinct Notification Center identifier, so cleanup
+cannot remove a newer valid alert. Persisted dedup keeps the stable provider, account,
+scope, level, and reset-cycle key. Attention settings use a separate revision from quota polling.
 
 Attention hooks support main-agent `Stop`, permission `Notification`, and limit/billing
 `StopFailure`. Subagent `Stop` is consumed without notifying. Hook installation is

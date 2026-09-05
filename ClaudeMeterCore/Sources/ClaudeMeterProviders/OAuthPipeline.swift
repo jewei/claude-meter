@@ -21,6 +21,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     private let fallback: any ClaudeMeterPipeline
     private let thresholds: UsageThresholds
+    private let accountConfigs: @Sendable () -> [AccountConfig]
 
     /// Default backoff when a 429 carries no usable `Retry-After`. Matches the
     /// app's 60 s poll cadence so we retry on the next cycle.
@@ -48,10 +49,14 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     public init(
         fallback: any ClaudeMeterPipeline,
         store _: SnapshotStore,
-        thresholds: UsageThresholds = .default
+        thresholds: UsageThresholds = .default,
+        accountConfigs: @escaping @Sendable () -> [AccountConfig] = {
+            ConfigDirDiscovery.discover(configuredDirs: AppGroupConfig.configuredConfigDirs)
+        }
     ) {
         self.fallback = fallback
         self.thresholds = thresholds
+        self.accountConfigs = accountConfigs
     }
 
     /// `kind` changes nothing here — it is forwarded to the fallback only. The 429
@@ -109,6 +114,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             return try await fetchAndBuild(
                 token: creds.accessToken,
                 plan: plan,
+                credentialService: creds.credentialService,
                 now: now,
                 mode: mode,
                 lease: credentialSelection.lease,
@@ -147,6 +153,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 return try await fetchAndBuild(
                     token: refreshed.accessToken,
                     plan: refreshedPlan,
+                    credentialService: refreshed.credentialService,
                     now: now,
                     mode: mode,
                     lease: credentialSelection.lease,
@@ -215,6 +222,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             guard
                 (try? OAuthSharedState.completeRefreshSuccess(
                     refreshed,
+                    refreshingToken: credentials.refreshToken,
                     for: mode.rawValue,
                     lease: lease,
                     sourceRefreshToken: sourceRefreshToken,
@@ -396,13 +404,32 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         var creds = credentialSelection.credentials
         if creds.isExpired(asOf: now) {
             let refreshToken = creds.refreshToken
-            creds = try await coalescedRefresh(
-                creds,
-                lease: credentialSelection.lease,
-                beforeCoordinator: beforeRefreshCoordinator)
+            do {
+                creds = try await coalescedRefresh(
+                    creds,
+                    lease: credentialSelection.lease,
+                    beforeCoordinator: beforeRefreshCoordinator)
+            } catch {
+                let failure: OAuthSharedState.RefreshFailure
+                switch error {
+                case OAuthError.refreshRejected:
+                    failure = .terminal(refreshToken: credentialSelection.sourceRefreshToken)
+                default:
+                    failure = .transient(now: Date())
+                }
+                guard
+                    OAuthSharedState.completeRefreshFailure(
+                        for: oauthMode,
+                        lease: credentialSelection.lease,
+                        sourceRefreshToken: credentialSelection.sourceRefreshToken,
+                        failure: failure)
+                else { throw CancellationError() }
+                throw error
+            }
             guard
                 try OAuthSharedState.completeRefreshSuccess(
                     creds,
+                    refreshingToken: refreshToken,
                     for: oauthMode,
                     lease: credentialSelection.lease,
                     sourceRefreshToken: credentialSelection.sourceRefreshToken,
@@ -438,17 +465,22 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         public let scopedWeekly: [ScopedLimitWindow]?
         public let extraUsage: ExtraUsage?
         public let plan: String?
+        /// The service that supplied this observation. An absent identity must
+        /// never be inferred from the currently active statusline account.
+        public let credentialService: String?
 
         public init(
             opus: LimitWindow?,
             scopedWeekly: [ScopedLimitWindow]?,
             extraUsage: ExtraUsage?,
-            plan: String?
+            plan: String?,
+            credentialService: String? = nil
         ) {
             self.opus = opus
             self.scopedWeekly = scopedWeekly
             self.extraUsage = extraUsage
             self.plan = plan
+            self.credentialService = credentialService
         }
     }
 
@@ -507,7 +539,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                     refreshToken: refreshed.refreshToken,
                     expiresAt: refreshed.expiresAt,
                     subscriptionType: creds.subscriptionType,
-                    rateLimitTier: creds.rateLimitTier
+                    rateLimitTier: creds.rateLimitTier,
+                    credentialService: refreshed.credentialService
                 )
             case .deferred(let reason), .failed(let reason):
                 return .unavailable(reason)
@@ -538,7 +571,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 plan: ClaudePlan.displayName(
                     subscriptionType: creds.subscriptionType,
                     rateLimitTier: creds.rateLimitTier
-                )
+                ),
+                credentialService: creds.credentialService
             )
         )
     }
@@ -658,7 +692,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             refreshToken: resp.refreshToken ?? credentials.refreshToken,
             expiresAt: expiresAt,
             subscriptionType: credentials.subscriptionType,
-            rateLimitTier: credentials.rateLimitTier
+            rateLimitTier: credentials.rateLimitTier,
+            credentialService: credentials.credentialService
         )
     }
 
@@ -677,6 +712,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     private func fetchAndBuild(
         token: String,
         plan: String?,
+        credentialService: String?,
         now: Date,
         mode: ClaudeOAuthMode,
         lease: OAuthSharedState.CredentialLease,
@@ -689,7 +725,14 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 lease: lease,
                 sourceRefreshToken: sourceRefreshToken)
         else { throw OAuthError.credentialSourceChanged }
-        let snapshot = buildSnapshot(usage: usage, plan: plan, now: now)
+        let needsAccountDiscovery =
+            credentialService != nil
+            && OAuthKeychain.accountKey(forCredentialService: credentialService, accounts: [])
+                == nil
+        let accounts = needsAccountDiscovery ? accountConfigs() : []
+        let accountKey = Self.sourceAccountKey(
+            credentialService: credentialService, isManual: mode == .manual, accounts: accounts)
+        let snapshot = buildSnapshot(usage: usage, plan: plan, accountKey: accountKey, now: now)
         return ParseResult(
             snapshot: snapshot,
             warnings: [],
@@ -719,7 +762,25 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     // MARK: - Snapshot builder
 
-    private func buildSnapshot(usage: UsageResponse, plan: String?, now: Date)
+    /// An unmapped automatic login retains its own identity instead of becoming
+    /// the default Claude config account. Manual OAuth owns the legacy single slot.
+    static func sourceAccountKey(
+        credentialService: String?, isManual: Bool, accounts: [AccountConfig]
+    ) -> String {
+        if isManual { return "claude" }
+        if let key = OAuthKeychain.accountKey(
+            forCredentialService: credentialService, accounts: accounts)
+        {
+            return key
+        }
+        return credentialService.map {
+            "oauth-" + MultiAccountOAuth.hashedServiceSuffix(forPath: $0)
+        } ?? "oauth"
+    }
+
+    private func buildSnapshot(
+        usage: UsageResponse, plan: String?, accountKey: String, now: Date
+    )
         -> ClaudeUsageSnapshot
     {
         let sessionWindow = Self.window(from: usage.fiveHour)
@@ -736,7 +797,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             usage.sevenDayOpus?.utilization,
         ].reduce(UsageSeverity.unknown) { UsageSeverity.highest($0, thresholds.severity(for: $1)) }
 
-        return ClaudeUsageSnapshot(
+        var snapshot = ClaudeUsageSnapshot(
             parserVersion: "oauth-api-1.0",
             createdAt: now,
             lastSuccessfulPollAt: now,
@@ -751,6 +812,19 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             ),
             state: SnapshotState(status: .ok, severity: severity)
         )
+        if accountKey != "claude" {
+            snapshot.accounts = [
+                AccountUsage(
+                    id: accountKey,
+                    label: ConfigDirDiscovery.label(forKey: accountKey),
+                    account: snapshot.account,
+                    limits: snapshot.limits,
+                    lastSuccessfulPollAt: now,
+                    severity: severity,
+                    isActive: true)
+            ]
+        }
+        return snapshot
     }
 
     /// Builds a `LimitWindow` from a quota entry, dropping `nil` utilization to an
@@ -1151,6 +1225,7 @@ private enum OAuthSharedState {
     /// delete the Keychain item between the lease check and the save.
     static func completeRefreshSuccess(
         _ credentials: OAuthCredentials,
+        refreshingToken: String,
         for oauthMode: String,
         lease: CredentialLease,
         sourceRefreshToken: String,
@@ -1161,6 +1236,17 @@ private enum OAuthSharedState {
         guard credentialRevision == lease.revision,
             observedSourceTokensByMode[oauthMode].map({ $0 == sourceRefreshToken }) ?? true
         else { return false }
+
+        // A retained handoff can arrive after a later rotation from the same
+        // source. Accept a successor or the current result, but never restore a
+        // consumed ancestor token over the latest chain.
+        if let cached = cachedCredsByMode[oauthMode],
+            cached.sourceRefreshToken == sourceRefreshToken,
+            cached.credentials.refreshToken != refreshingToken,
+            cached.credentials.refreshToken != credentials.refreshToken
+        {
+            return false
+        }
 
         var storedLineage = sourceRefreshToken
         if oauthMode == ClaudeOAuthMode.manual.rawValue {

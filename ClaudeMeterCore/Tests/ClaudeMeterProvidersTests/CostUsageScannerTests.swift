@@ -599,7 +599,7 @@ struct CostUsageScannerTests {
         }
         let diskURL = root.appendingPathComponent("cache.json")
         try JSONEncoder().encode(
-            Disk(version: 3, entries: paths.map { Entry(path: $0) })
+            Disk(version: 4, entries: paths.map { Entry(path: $0) })
         ).write(to: diskURL)
 
         let cache = CostUsageCache(persistenceURL: diskURL)
@@ -642,6 +642,88 @@ struct CostUsageScannerTests {
         return """
                 {"type":"assistant","timestamp":"\(ts)","requestId":"r-\(id)","message":{"id":"\(id)","model":"\(model)","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":\(legacyTotal)\(breakdown)}}}
             """
+    }
+
+    @Test(arguments: [false, true])
+    func cacheBreakdownOverridesLegacyAcrossStreamingChunks(legacyFirst: Bool) throws {
+        let now = Date()
+        let ts = iso(now)
+        let model = "claude-sonnet-4-6"
+        let legacy = cacheLine(
+            id: "m1", model: model, legacyTotal: 1_000_000,
+            fiveMinute: nil, oneHour: nil, ts: ts)
+        let split = cacheLine(
+            id: "m1", model: model, legacyTotal: 1_000_000,
+            fiveMinute: 0, oneHour: 1_000_000, ts: ts)
+        let (scanner, root) = try makeScanner(lines: [legacyFirst ? legacy : split])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let first = try #require(scanner.scan(now: now).models.first)
+        #expect(first.cacheWriteTokens == 1_000_000)
+        #expect(abs((first.costUsd ?? 0) - (legacyFirst ? 3.75 : 6.0)) < 0.001)
+
+        try append(
+            [legacyFirst ? split : legacy],
+            to: root.appendingPathComponent("project-a/session.jsonl"))
+        let result = scanner.scan(now: now)
+        let usage = try #require(result.models.first)
+        #expect(usage.cacheWriteTokens == 1_000_000)
+        #expect(abs((usage.costUsd ?? 0) - 6.0) < 0.001)
+        #expect(!result.isPartialEstimate)
+        #expect(scanner.scan(now: now) == result)
+    }
+
+    @Test func cacheBreakdownKeepsEachTierMaximumAcrossStreamingChunks() throws {
+        let now = Date()
+        let ts = iso(now)
+        let model = "claude-sonnet-4-6"
+        let (scanner, root) = try makeScanner(lines: [
+            cacheLine(
+                id: "m1", model: model, legacyTotal: 9_000_000,
+                fiveMinute: nil, oneHour: nil, ts: ts),
+            cacheLine(
+                id: "m1", model: model, legacyTotal: 1_250_000,
+                fiveMinute: 250_000, oneHour: 1_000_000, ts: ts),
+            cacheLine(
+                id: "m1", model: model, legacyTotal: 1_250_000,
+                fiveMinute: 500_000, oneHour: 750_000, ts: ts),
+            cacheLine(
+                id: "m1", model: model, legacyTotal: 9_000_000,
+                fiveMinute: nil, oneHour: nil, ts: ts),
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let result = scanner.scan(now: now)
+        let usage = try #require(result.models.first)
+        #expect(usage.cacheWriteTokens == 1_500_000)
+        #expect(abs((usage.costUsd ?? 0) - 7.875) < 0.001)
+        #expect(!result.isPartialEstimate)
+    }
+
+    @Test("Version 3 cache entries are reparsed because they can double-count cache writes")
+    func oldCacheWriteAggregatesAreDiscarded() throws {
+        let now = Date()
+        let (_, root) = try makeScanner(lines: [
+            cacheLine(
+                id: "m1", model: "claude-sonnet-4-6", legacyTotal: 1_000_000,
+                fiveMinute: 0, oneHour: 1_000_000, ts: iso(now))
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let diskURL = root.appendingPathComponent("cache.json")
+        _ = CostUsageScanner(
+            projectsPath: root, cache: CostUsageCache(persistenceURL: diskURL)
+        ).scan(now: now)
+        let data = try Data(contentsOf: diskURL)
+        var disk = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        disk["version"] = 3
+        try JSONSerialization.data(withJSONObject: disk).write(to: diskURL)
+
+        let reloaded = CostUsageCache(persistenceURL: diskURL)
+        #expect(reloaded.entryCount == 0)
+        let result = CostUsageScanner(projectsPath: root, cache: reloaded).scan(now: now)
+        let usage = try #require(result.models.first)
+        #expect(usage.cacheWriteTokens == 1_000_000)
+        #expect(abs((usage.costUsd ?? 0) - 6.0) < 0.001)
     }
 
     @Test("Negative split cache counters are clamped and mark the result partial")

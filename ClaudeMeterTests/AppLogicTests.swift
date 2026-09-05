@@ -153,6 +153,56 @@ private actor SuspendedNotificationDelivery: NotificationDelivery {
     }
 }
 
+private actor ControlledNotificationDelivery: NotificationDelivery {
+    private let suspendsAdds: Bool
+    private var requests: [NotificationDeliveryRequest] = []
+    private var continuations: [Int: CheckedContinuation<Void, Never>] = [:]
+    private var pendingIdentifiers: Set<String> = []
+    private var deliveredIdentifiers: Set<String> = []
+
+    init(suspendsAdds: Bool = true) {
+        self.suspendsAdds = suspendsAdds
+    }
+
+    func authorizationState() async -> NotificationAuthorizationState { .authorized }
+    func requestAuthorization() async throws {}
+
+    func add(_ request: NotificationDeliveryRequest) async throws {
+        let index = requests.count
+        requests.append(request)
+        if suspendsAdds {
+            await withCheckedContinuation { continuations[index] = $0 }
+        }
+        pendingIdentifiers.insert(request.identifier)
+        deliveredIdentifiers.insert(request.identifier)
+    }
+
+    func removePendingRequests(withIdentifiers identifiers: [String]) async {
+        pendingIdentifiers.subtract(identifiers)
+    }
+
+    func removeDeliveredNotifications(withIdentifiers identifiers: [String]) async {
+        deliveredIdentifiers.subtract(identifiers)
+    }
+
+    func waitForAdds(_ count: Int) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while requests.count < count, clock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return requests.count >= count
+    }
+
+    func finishAdd(_ index: Int) {
+        continuations.removeValue(forKey: index)?.resume()
+    }
+
+    func state() -> (requests: [String], pending: Set<String>, delivered: Set<String>) {
+        (requests.map(\.identifier), pendingIdentifiers, deliveredIdentifiers)
+    }
+}
+
 private final class BlockingMainMeterPublication: @unchecked Sendable {
     private let entered = DispatchSemaphore(value: 0)
     private let release = DispatchSemaphore(value: 0)
@@ -829,6 +879,63 @@ struct AppLogicTests {
 
         #expect(state.snapshot?.parserVersion == "new")
         #expect(state.persistedSnapshotForTesting()?.parserVersion == "new")
+    }
+
+    @MainActor
+    @Test("Test polls use an explicit cost scanner or an empty default", arguments: [true, false])
+    func testPollCostScannerIsExplicit(usesInjectedScan: Bool) async throws {
+        let defaults = UserDefaults.standard
+        let sourceKeys = [
+            AppSettings.statuslineSourceEnabledKey,
+            AppSettings.oauthSourceEnabledKey,
+            AppSettings.cursorSourceEnabledKey,
+            AppSettings.codexSourceEnabledKey,
+            AppSettings.grokSourceEnabledKey,
+        ]
+        let previousValues = sourceKeys.map { defaults.object(forKey: $0) }
+        defer {
+            for (key, value) in zip(sourceKeys, previousValues) {
+                if let value {
+                    defaults.set(value, forKey: key)
+                } else {
+                    defaults.removeObject(forKey: key)
+                }
+            }
+        }
+        AppSettings.statuslineSourceEnabled = true
+        AppSettings.oauthSourceEnabled = false
+        AppSettings.cursorSourceEnabled = false
+        AppSettings.codexSourceEnabled = false
+        AppSettings.grokSourceEnabled = false
+        let now = Date()
+        let snapshot = ClaudeUsageSnapshot(
+            parserVersion: "test-scanner", createdAt: now, lastSuccessfulPollAt: now,
+            source: SourceInfo(cliPath: "/test", command: "test"),
+            limits: LimitInfo(currentSession: LimitWindow(percentUsed: 42)),
+            models: [ModelUsage(name: "old-model")],
+            state: SnapshotState(status: .ok, severity: .normal))
+        let expectedModels = usesInjectedScan ? [ModelUsage(name: "test-model")] : []
+        let completion = PollRecorder()
+        let state: AppState
+        if usesInjectedScan {
+            state = AppState(
+                pipeline: FixedSnapshotPipeline(snapshot: snapshot),
+                costUsageScanner: { _, _ in
+                    CostUsageResult(models: expectedModels, isPartialEstimate: true)
+                },
+                pollCompletionBarrier: { await completion.record() })
+        } else {
+            state = AppState(
+                pipeline: FixedSnapshotPipeline(snapshot: snapshot),
+                pollCompletionBarrier: { await completion.record() })
+        }
+        defer { state.stopPolling() }
+        state.startPolling()
+        try await Timeout.run(seconds: 2) { await completion.waitForPoll() }
+        #expect(state.snapshot?.models == expectedModels)
+        #expect(state.persistedSnapshotForTesting()?.models == expectedModels)
+        #expect(state.snapshot?.limits.currentSession.percentUsed == 42)
+        #expect(state.costScanPartial == usesInjectedScan)
     }
 
     @MainActor
@@ -1631,7 +1738,7 @@ struct AppLogicTests {
             plan: nil
         )
 
-        AppState.apply(enrichment, to: &snapshot)
+        AppState.apply(enrichment, to: &snapshot, sourceAccountKey: "claude")
 
         #expect(snapshot.limits.currentWeekOpus == nil)
         #expect(snapshot.limits.scopedWeekly == nil)
@@ -1772,6 +1879,40 @@ struct AppLogicTests {
         #expect(resolved.isStale == true)
     }
 
+    @MainActor
+    @Test(
+        "OAuth details require the same source account",
+        arguments: [nil, "claude", "claude-work"] as [String?])
+    func oauthEnrichmentRequiresMatchingAccount(sourceAccountKey: String?) {
+        let now = Date(timeIntervalSince1970: 200)
+        let limits = LimitInfo(
+            currentSession: LimitWindow(percentUsed: 30),
+            currentWeekOpus: LimitWindow(percentUsed: 20))
+        let account = AccountInfo(plan: "Pro")
+        var snapshot = ClaudeUsageSnapshot(
+            parserVersion: "statusline", createdAt: now, lastSuccessfulPollAt: now,
+            source: SourceInfo(cliPath: "statusline", command: "statusline"),
+            account: account, limits: limits,
+            state: SnapshotState(status: .ok, severity: .normal),
+            accounts: [
+                AccountUsage(
+                    id: "claude-work", label: "Work", account: account, limits: limits,
+                    lastSuccessfulPollAt: now, severity: .normal, isActive: true)
+            ])
+        let original = snapshot
+        let enrichment = OAuthPipeline.OAuthEnrichment(
+            opus: LimitWindow(percentUsed: 99), scopedWeekly: nil, extraUsage: nil, plan: "Max")
+        let applied = AppState.apply(
+            enrichment, to: &snapshot, sourceAccountKey: sourceAccountKey)
+        #expect(applied == (sourceAccountKey == "claude-work"))
+        if applied {
+            #expect(snapshot.limits.currentWeekOpus?.percentUsed == 99)
+            #expect(snapshot.account?.plan == "Max")
+        } else {
+            #expect(snapshot == original)
+        }
+    }
+
     @Test("Energy bar pace marker stays centered and inside the track")
     func energyBarPaceMarker() {
         #expect(energyBarMarkerOffset(width: 100, expectedFraction: -1) == 0)
@@ -1871,6 +2012,173 @@ struct AppLogicTests {
         #expect(
             (persistedDefaults.stringArray(forKey: "com.claudemeter.notif.firedKeys") ?? []).isEmpty
         )
+    }
+
+    @Test("Old notification cleanup cannot remove a newer alert for the same quota cycle")
+    func oldNotificationCleanupKeepsNewerAlert() async {
+        let suiteName = "OverlappingNotifications-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+        let delivery = ControlledNotificationDelivery()
+        let engine = NotificationEngine(defaults: defaults, delivery: delivery)
+        let now = Date()
+        let resetAt = now.addingTimeInterval(3_600)
+
+        func reading(percentUsed: Double) -> MainMeterReading {
+            MainMeterReading(
+                provider: .codex,
+                accountID: "work",
+                accountLabel: "Work",
+                limits: LimitInfo(
+                    currentSession: LimitWindow(percentUsed: percentUsed, resetsAt: resetAt)),
+                observedAt: now)
+        }
+
+        let oldLease = engine.quotaLease()
+        let oldTask = Task {
+            await engine.process(
+                reading: reading(percentUsed: 85), previous: reading(percentUsed: 70),
+                recoveryBaseline: nil, isStale: false, expectedRevision: oldLease)
+        }
+        let oldStarted = await delivery.waitForAdds(1)
+        #expect(oldStarted)
+        guard oldStarted else {
+            oldTask.cancel()
+            return
+        }
+        engine.notificationSettingsChanged()
+        let newLease = engine.quotaLease()
+        let newTask = Task {
+            await engine.process(
+                reading: reading(percentUsed: 85), previous: reading(percentUsed: 70),
+                recoveryBaseline: nil, isStale: false, expectedRevision: newLease)
+        }
+        let newStarted = await delivery.waitForAdds(2)
+        #expect(newStarted)
+        guard newStarted else {
+            newTask.cancel()
+            await delivery.finishAdd(0)
+            await oldTask.value
+            return
+        }
+        await delivery.finishAdd(1)
+        await newTask.value
+        await delivery.finishAdd(0)
+        await oldTask.value
+
+        let state = await delivery.state()
+        #expect(state.pending == [state.requests[1]])
+        #expect(state.delivered == [state.requests[1]])
+        let persistedDefaults = UserDefaults(suiteName: suiteName)!
+        #expect(
+            persistedDefaults.stringArray(forKey: "com.claudemeter.notif.firedKeys")?.count == 1)
+    }
+
+    @MainActor
+    @Test("Optional source changes revoke a suspended quota observation")
+    func optionalSourceChangeRevokesSuspendedQuotaObservation() async {
+        let suiteName = "OptionalSourceNotification-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+        let delivery = ControlledNotificationDelivery()
+        let engine = NotificationEngine(defaults: defaults, delivery: delivery)
+        let state = AppState(
+            pipeline: UnusedPipeline(), notificationEngine: engine,
+            onboardingIsComplete: false)
+        let now = Date()
+        let resetAt = now.addingTimeInterval(3_600)
+        func reading(_ percentUsed: Double) -> MainMeterReading {
+            MainMeterReading(
+                provider: .claude, accountID: "claude", accountLabel: "Claude",
+                limits: LimitInfo(
+                    currentSession: LimitWindow(percentUsed: percentUsed, resetsAt: resetAt)),
+                observedAt: now)
+        }
+        let lease = engine.quotaLease()
+        let task = Task {
+            await engine.process(
+                reading: reading(85), previous: reading(70), recoveryBaseline: nil,
+                isStale: false, expectedRevision: lease)
+        }
+        let started = await delivery.waitForAdds(1)
+        #expect(started)
+        guard started else {
+            task.cancel()
+            return
+        }
+        state.setCursorSourceEnabled(false)
+        await delivery.finishAdd(0)
+        await task.value
+        let delivered = await delivery.state()
+        #expect(delivered.pending.isEmpty)
+        #expect(delivered.delivered.isEmpty)
+        let persistedDefaults = UserDefaults(suiteName: suiteName)!
+        #expect(
+            (persistedDefaults.stringArray(forKey: "com.claudemeter.notif.firedKeys") ?? [])
+                .isEmpty)
+    }
+
+    @Test("Notification thresholds come from the injected settings", arguments: [true, false])
+    func notificationThresholdsUseInjectedDefaults(shouldAlert: Bool) async {
+        let suiteName = "InjectedNotificationThresholds-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+        defaults.set(shouldAlert ? 60.0 : 80.0, forKey: "warningThresholdPercent")
+        defaults.set(shouldAlert ? 70.0 : 95.0, forKey: "criticalThresholdPercent")
+        let delivery = ControlledNotificationDelivery(suspendsAdds: false)
+        let engine = NotificationEngine(defaults: defaults, delivery: delivery)
+        let now = Date()
+        let resetAt = now.addingTimeInterval(3_600)
+        func reading(_ percentUsed: Double) -> MainMeterReading {
+            MainMeterReading(
+                provider: .codex, accountID: "test", accountLabel: "Test",
+                limits: LimitInfo(
+                    currentSession: LimitWindow(percentUsed: percentUsed, resetsAt: resetAt)),
+                observedAt: now)
+        }
+        await engine.process(
+            reading: reading(75), previous: reading(55), recoveryBaseline: nil,
+            isStale: false, expectedRevision: engine.quotaLease())
+        let state = await delivery.state()
+        #expect(state.delivered.count == (shouldAlert ? 1 : 0))
+    }
+
+    @Test("Concurrent notification observations submit one alert per quota cycle")
+    func concurrentNotificationsSharePendingDelivery() async {
+        let suiteName = "ConcurrentNotifications-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+        let delivery = ControlledNotificationDelivery()
+        let engine = NotificationEngine(defaults: defaults, delivery: delivery)
+        let now = Date()
+        let resetAt = now.addingTimeInterval(3_600)
+        func reading(_ percentUsed: Double) -> MainMeterReading {
+            MainMeterReading(
+                provider: .codex, accountID: "test", accountLabel: "Test",
+                limits: LimitInfo(
+                    currentSession: LimitWindow(percentUsed: percentUsed, resetsAt: resetAt)),
+                observedAt: now)
+        }
+        let lease = engine.quotaLease()
+        let first = Task {
+            await engine.process(
+                reading: reading(85), previous: reading(70), recoveryBaseline: nil,
+                isStale: false, expectedRevision: lease)
+        }
+        let started = await delivery.waitForAdds(1)
+        #expect(started)
+        guard started else {
+            first.cancel()
+            return
+        }
+        await engine.process(
+            reading: reading(85), previous: reading(70), recoveryBaseline: nil,
+            isStale: false, expectedRevision: lease)
+        await delivery.finishAdd(0)
+        await first.value
+        let state = await delivery.state()
+        #expect(state.requests.count == 1)
+        #expect(state.delivered.count == 1)
     }
 
     @MainActor
@@ -2126,8 +2434,9 @@ struct AppLogicTests {
         await task.value
 
         let state = await delivery.state()
-        #expect(state.pending == ["com.claudemeter.update.99.1"])
-        #expect(state.delivered == ["com.claudemeter.update.99.1"])
+        #expect(state.pending.count == 1)
+        #expect(state.pending.first?.hasPrefix("com.claudemeter.update.99.1.") == true)
+        #expect(state.delivered == state.pending)
         #expect(state.pendingRemovals == 0)
         #expect(state.deliveredRemovals == 0)
     }

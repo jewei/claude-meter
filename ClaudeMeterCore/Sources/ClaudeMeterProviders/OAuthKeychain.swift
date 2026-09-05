@@ -15,19 +15,24 @@ public struct OAuthCredentials: Sendable {
     public var subscriptionType: String?
     /// Finer plan hint when present, e.g. "default_claude_max_5x" (→ "Max 5x").
     public var rateLimitTier: String?
+    /// The exact Keychain item used for this credential. It is account provenance,
+    /// not a secret, and stays in memory through token rotation.
+    public var credentialService: String?
 
     public init(
         accessToken: String,
         refreshToken: String,
         expiresAt: Date,
         subscriptionType: String? = nil,
-        rateLimitTier: String? = nil
+        rateLimitTier: String? = nil,
+        credentialService: String? = nil
     ) {
         self.accessToken = accessToken
         self.refreshToken = refreshToken
         self.expiresAt = expiresAt
         self.subscriptionType = subscriptionType
         self.rateLimitTier = rateLimitTier
+        self.credentialService = credentialService
     }
 
     /// True when the access token is expired or within 60 s of expiry.
@@ -101,7 +106,8 @@ public enum OAuthKeychain: Sendable {
     /// Like `load()` but distinguishes missing / locked / corrupt. Callers that
     /// must not drop a source on a transient Keychain lock should branch on this.
     public static func loadResult() -> KeychainReadResult<OAuthCredentials> {
-        parseResult(readClaudeCodeCredentials())
+        let (result, service) = readClaudeCodeCredentials()
+        return parseResult(result, credentialService: service)
     }
 
     /// Checks for a Claude Code credentials item without reading its secret value.
@@ -148,13 +154,13 @@ public enum OAuthKeychain: Sendable {
         #endif
     }
 
-    private static func readClaudeCodeCredentials() -> KeychainReadResult<String> {
+    private static func readClaudeCodeCredentials() -> (KeychainReadResult<String>, String?) {
         let account = claudeCodeAccount
-        guard !account.isEmpty else { return .missing }
+        guard !account.isEmpty else { return (.missing, nil) }
         #if canImport(Security)
             switch readKeychainItemResult(service: service, account: account) {
             case .missing: return readNewestHashedCredential(account: account)
-            case let result: return result
+            case let result: return (result, service)
             }
         #else
             guard
@@ -162,19 +168,23 @@ public enum OAuthKeychain: Sendable {
                     "find-generic-password", "-s", service, "-a", account, "-w",
                 ])
             else {
-                return .missing
+                return (.missing, nil)
             }
-            return .found(json)
+            return (.found(json), service)
         #endif
     }
 
     /// Maps a raw credentials-JSON read into a typed credentials result.
-    private static func parseResult(_ result: KeychainReadResult<String>) -> KeychainReadResult<
+    private static func parseResult(
+        _ result: KeychainReadResult<String>, credentialService: String? = nil
+    ) -> KeychainReadResult<
         OAuthCredentials
     > {
         switch result {
         case .found(let json):
-            return parse(json).map(KeychainReadResult.found) ?? .invalid
+            guard var credentials = parse(json) else { return .invalid }
+            credentials.credentialService = credentialService
+            return .found(credentials)
         case .missing: return .missing
         case .temporarilyUnavailable: return .temporarilyUnavailable
         case .invalid: return .invalid
@@ -229,6 +239,21 @@ public enum OAuthKeychain: Sendable {
         return isDefault ? [service, hashed] : [hashed]
     }
 
+    /// Resolves only an exact credential-service match. A newest hashed item can
+    /// belong to a different config directory from the active statusline account.
+    public static func accountKey(
+        forCredentialService credentialService: String?, accounts: [AccountConfig]
+    ) -> String? {
+        guard let credentialService else { return nil }
+        if credentialService == service { return "claude" }
+        return accounts.first { account in
+            credentialServices(
+                forConfigDirPath: standardizedConfigDirPath(account.configDir.path),
+                isDefault: account.id == "claude"
+            ).contains(credentialService)
+        }?.id
+    }
+
     /// Reads the credentials bound to one config dir (multi-account read path).
     /// Same attributes-only enumeration + persistent-ref read as the single-slot
     /// path, but filtered to the dir's candidate services instead of "newest wins".
@@ -240,7 +265,8 @@ public enum OAuthKeychain: Sendable {
         #if canImport(Security)
             let services = credentialServices(
                 forConfigDirPath: standardizedConfigDirPath(configDirPath), isDefault: isDefault)
-            return parseResult(readCredential(services: services, account: account))
+            let (result, service) = readCredential(services: services, account: account)
+            return parseResult(result, credentialService: service)
         #else
             return .missing
         #endif
@@ -406,23 +432,28 @@ public enum OAuthKeychain: Sendable {
         /// fetches its secret by persistent ref. The caller invokes this only after
         /// the legacy unsuffixed item is genuinely missing.
         private static func readNewestHashedCredential(account: String)
-            -> KeychainReadResult<String>
+            -> (KeychainReadResult<String>, String?)
         {
             switch newestHashedCredentialRef(account: account) {
-            case .found(let persistentRef):
-                return readCredentialData(persistentRef: persistentRef)
+            case .found(let reference):
+                return (readCredentialData(persistentRef: reference.data), reference.service)
             case .missing:
-                return .missing
+                return (.missing, nil)
             case .temporarilyUnavailable:
-                return .temporarilyUnavailable
+                return (.temporarilyUnavailable, nil)
             case .invalid:
-                return .invalid
+                return (.invalid, nil)
             }
+        }
+
+        private struct CredentialReference: Sendable {
+            let service: String
+            let data: Data
         }
 
         /// Finds the newest hashed Claude Code credential using attributes only.
         private static func newestHashedCredentialRef(account: String)
-            -> KeychainReadResult<Data>
+            -> KeychainReadResult<CredentialReference>
         {
             var query: [CFString: Any] = [
                 kSecClass: kSecClassGenericPassword,
@@ -455,12 +486,12 @@ public enum OAuthKeychain: Sendable {
             else {
                 return .missing
             }
-            return .found(ref)
+            return .found(CredentialReference(service: winner, data: ref))
         }
 
         /// Locates the first preferred service without reading its secret.
         private static func credentialReference(services: [String], account: String)
-            -> KeychainReadResult<Data>
+            -> KeychainReadResult<CredentialReference>
         {
             var query: [CFString: Any] = [
                 kSecClass: kSecClassGenericPassword,
@@ -482,7 +513,7 @@ public enum OAuthKeychain: Sendable {
                 if let ref = items.first(where: {
                     ($0[kSecAttrService as String] as? String) == candidate
                 })?[kSecValuePersistentRef as String] as? Data {
-                    return .found(ref)
+                    return .found(CredentialReference(service: candidate, data: ref))
                 }
             }
             return .missing
@@ -492,13 +523,14 @@ public enum OAuthKeychain: Sendable {
         /// attributes-only enumeration + persistent-ref data read. `.missing` only
         /// when none of the candidates exist.
         private static func readCredential(services: [String], account: String)
-            -> KeychainReadResult<String>
+            -> (KeychainReadResult<String>, String?)
         {
             switch credentialReference(services: services, account: account) {
-            case .found(let ref): return readCredentialData(persistentRef: ref)
-            case .missing: return .missing
-            case .temporarilyUnavailable: return .temporarilyUnavailable
-            case .invalid: return .invalid
+            case .found(let reference):
+                return (readCredentialData(persistentRef: reference.data), reference.service)
+            case .missing: return (.missing, nil)
+            case .temporarilyUnavailable: return (.temporarilyUnavailable, nil)
+            case .invalid: return (.invalid, nil)
             }
         }
 

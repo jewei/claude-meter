@@ -108,8 +108,14 @@ private final class NotificationObservationRevision: @unchecked Sendable {
 /// epoch seconds, so notifications are not repeated across app relaunches within the
 /// same reset window. Expired keys are pruned when the reset time passes.
 actor NotificationEngine {
+    private struct QuotaDelivery: Hashable {
+        let key: String
+        let revision: Int
+    }
+
     private let delivery: any NotificationDelivery
     private let defaults: UserDefaults
+    private var quotaDeliveriesInFlight: Set<QuotaDelivery> = []
     private var predictiveTracker = PredictiveNotificationTracker()
     private var predictiveTrackerRevision = 0
     /// Changes when a failed poll or meter setting invalidates an observation
@@ -152,9 +158,9 @@ actor NotificationEngine {
             title: "Claude Meter update available",
             body: "Version \(version) is ready. Open the menu bar popover to install."
         )
-        if delivered {
+        if let delivered {
             await retractIfInvalid(
-                id: id, expectedRevision: revision, revisionGate: updateRevision)
+                id: delivered, expectedRevision: revision, revisionGate: updateRevision)
         }
     }
 
@@ -210,9 +216,9 @@ actor NotificationEngine {
             } ?? [:]
         let delivered = await post(
             id: id, title: title, body: body, sound: .default, userInfo: userInfo)
-        if delivered {
+        if let delivered {
             await retractIfInvalid(
-                id: id, expectedRevision: revision, revisionGate: attentionRevision)
+                id: delivered, expectedRevision: revision, revisionGate: attentionRevision)
         }
     }
 
@@ -246,7 +252,7 @@ actor NotificationEngine {
 
         let now = Date()
         pruneExpiredKeys()
-        let thresholds = AppGroupConfig.currentThresholds(defaults: defaults)
+        let thresholds = AppGroupConfig.currentThresholds(shared: nil, defaults: defaults)
         let pending = NotificationPolicy.triggers(
             reading: reading,
             previous: previous,
@@ -304,14 +310,12 @@ actor NotificationEngine {
 
         if level == .recovered {
             guard !hasFired(key: key, legacyKey: legacyKey) else { return }
-            let delivered = await post(
-                id: key,
+            await postQuota(
+                key: key,
                 title: "You're refueled! 🎉",
-                body: "\(account)'s \(energy) is back to \(left). Go get 'em."
+                body: "\(account)'s \(energy) is back to \(left). Go get 'em.",
+                expectedRevision: expectedRevision
             )
-            if delivered {
-                await commitFiredOrRetract(key: key, expectedRevision: expectedRevision)
-            }
             return
         }
 
@@ -320,14 +324,12 @@ actor NotificationEngine {
 
         if level == .critical {
             guard !hasFired(key: key, legacyKey: legacyKey) else { return }
-            let delivered = await post(
-                id: key,
+            await postQuota(
+                key: key,
                 title: "Almost tapped out 🪫",
-                body: "\(account)'s \(energy) is at \(left) — \(refuel). Easy now."
+                body: "\(account)'s \(energy) is at \(left) — \(refuel). Easy now.",
+                expectedRevision: expectedRevision
             )
-            if delivered {
-                await commitFiredOrRetract(key: key, expectedRevision: expectedRevision)
-            }
         } else if level == .warning {
             let criticalKey = notificationKey(
                 reading: reading, scope: scope, level: .critical, resetAt: trigger.resetAt)
@@ -336,14 +338,12 @@ actor NotificationEngine {
             guard !hasFired(key: key, legacyKey: legacyKey),
                 !hasFired(key: criticalKey, legacyKey: legacyCriticalKey)
             else { return }
-            let delivered = await post(
-                id: key,
+            await postQuota(
+                key: key,
                 title: "Running low ⚡",
-                body: "\(account)'s \(energy) is at \(left) — \(refuel). Maybe touch grass? 🌱"
+                body: "\(account)'s \(energy) is at \(left) — \(refuel). Maybe touch grass? 🌱",
+                expectedRevision: expectedRevision
             )
-            if delivered {
-                await commitFiredOrRetract(key: key, expectedRevision: expectedRevision)
-            }
         }
     }
 
@@ -369,15 +369,13 @@ actor NotificationEngine {
         let estimate =
             RunsOutPhrase.spoken(.runsOut(seconds: trigger.secondsUntilDepleted))?
             .lowercased() ?? "may run out soon"
-        let delivered = await post(
-            id: key,
+        await postQuota(
+            key: key,
             title: "Running hot ⚡",
             body:
-                "At this pace, \(reading.accountLabel)'s \(energy) \(estimate), before it refills."
+                "At this pace, \(reading.accountLabel)'s \(energy) \(estimate), before it refills.",
+            expectedRevision: expectedRevision
         )
-        if delivered {
-            await commitFiredOrRetract(key: key, expectedRevision: expectedRevision)
-        }
     }
 
     /// Breaks the predictive tracker's "consecutive fresh polls" chain when a poll
@@ -449,7 +447,7 @@ actor NotificationEngine {
 
     private func predictiveSnapshot(for reading: MainMeterReading) -> ClaudeUsageSnapshot {
         let identity = notificationNamespace(reading)
-        let thresholds = AppGroupConfig.currentThresholds(defaults: defaults)
+        let thresholds = AppGroupConfig.currentThresholds(shared: nil, defaults: defaults)
         let severity = reading.severity(thresholds: thresholds)
         return ClaudeUsageSnapshot(
             parserVersion: "main-meter-1",
@@ -474,30 +472,46 @@ actor NotificationEngine {
     private func post(
         id: String, title: String, body: String, sound: UNNotificationSound? = nil,
         userInfo: [AnyHashable: Any] = [:]
-    ) async -> Bool {
+    ) async -> String? {
+        // Retraction belongs to one delivery attempt. Reusing the dedup key here
+        // would let a late invalidated add remove a newer valid notification.
+        let requestID = "\(id).\(UUID().uuidString)"
         let request = NotificationDeliveryRequest(
-            identifier: id,
+            identifier: requestID,
             title: title,
             body: body,
             playsDefaultSound: sound != nil,
             userInfo: userInfo)
         do {
             try await delivery.add(request)
-            return true
+            return requestID
         } catch {
-            return false
+            return nil
         }
     }
 
-    private func commitFiredOrRetract(key: String, expectedRevision: Int) async {
+    private func postQuota(
+        key: String, title: String, body: String, expectedRevision: Int
+    ) async {
+        let attempt = QuotaDelivery(key: key, revision: expectedRevision)
+        guard quotaDeliveriesInFlight.insert(attempt).inserted else { return }
+        defer { quotaDeliveriesInFlight.remove(attempt) }
+        guard let requestID = await post(id: key, title: title, body: body) else { return }
+        await commitFiredOrRetract(
+            key: key, requestID: requestID, expectedRevision: expectedRevision)
+    }
+
+    private func commitFiredOrRetract(
+        key: String, requestID: String, expectedRevision: Int
+    ) async {
         let committed =
             !Task.isCancelled
             && observationRevision.performIfCurrent(expectedRevision) {
                 markFired(key: key)
             }
         guard !committed else { return }
-        await delivery.removePendingRequests(withIdentifiers: [key])
-        await delivery.removeDeliveredNotifications(withIdentifiers: [key])
+        await delivery.removePendingRequests(withIdentifiers: [requestID])
+        await delivery.removeDeliveredNotifications(withIdentifiers: [requestID])
     }
 
     private func retractIfInvalid(

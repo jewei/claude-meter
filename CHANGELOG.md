@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Remove the extra Claude heading when Codex is the main meter. Each provider
+  card already shows its name.
+
 ## [2.15] - 2026-09-05
 
 ### Added

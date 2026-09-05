@@ -317,7 +317,6 @@ struct PopoverView: View {
                     activityEntryCard
                 }
             } else {
-                sectionLabel("CLAUDE")
                 claudeSecondaryCard(models)
             }
         } else if isPrimary {

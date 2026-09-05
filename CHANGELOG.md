@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.15] - 2026-09-05
+
+### Added
+
+- **Codex cards show usage limit resets.** View the available count, reset type,
+  and expiry time, including when Codex is the secondary provider.
+
+### Changed
+
+- **Long reset countdowns include hours.** Weekly limits and other countdowns
+  now show `6d 7h` instead of rounding down to whole days.
+
+### Fixed
+
+- **Local tests preserve the installed app's polling setting.** Running tests
+  can no longer pause the app and remove the menu-bar percentage.
+
 ## [2.14] - 2026-08-28
 
 ### Added
@@ -621,7 +638,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.14...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.15...HEAD
+[2.15]: https://github.com/jewei/claude-meter/compare/v2.14...v2.15
 [2.14]: https://github.com/jewei/claude-meter/compare/v2.13.1...v2.14
 [2.13.1]: https://github.com/jewei/claude-meter/compare/v2.13...v2.13.1
 [2.13]: https://github.com/jewei/claude-meter/compare/v2.12.1...v2.13

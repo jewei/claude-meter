@@ -60,6 +60,7 @@ diagnostics sanitizer, known gaps) stay in the root `AGENTS.md`.
 
 ## Codex usage (opt-in)
 
+- **App Server shutdown is async** — the TERM grace period and `Process.waitUntilExit()` run on a dedicated queue, never on Swift's cooperative executor. All shutdown callers await the same completion, including cancelled callers, so timeout/cancellation cannot return before the child is reaped. Claim a timeout before starting shutdown so a response during the TERM grace period cannot win.
 - **Multiple accounts** use one explicit `CODEX_HOME` per account. The ambient
   `CODEX_HOME` (or `~/.codex`) is implicit; Settings stores additional homes by
   canonical resolved path and never scans `~/.codex*` because Codex defines no

@@ -38,31 +38,35 @@ struct CodexUsageTests {
             env: ["SHUTDOWN_PID_FILE": pidFile.path],
             startupTimeout: 0.01,
             requestTimeout: 1)
-        defer { client.shutdown() }
-
-        let markerDeadline = ProcessInfo.processInfo.systemUptime + 5
-        while !FileManager.default.fileExists(atPath: pidFile.path),
-            ProcessInfo.processInfo.systemUptime < markerDeadline
-        {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        try #require(FileManager.default.fileExists(atPath: pidFile.path))
-        let pidText = try String(contentsOf: pidFile, encoding: .utf8)
-        let pid = try #require(pid_t(pidText))
-
-        let start = ProcessInfo.processInfo.systemUptime
         do {
-            try await client.initialize()
-            Issue.record("Expected the unresponsive child to time out")
-        } catch {
-            #expect(error as? CodexUsageError == .rpcTimedOut("initialize"))
-        }
-        let elapsed = ProcessInfo.processInfo.systemUptime - start
+            let markerDeadline = ProcessInfo.processInfo.systemUptime + 5
+            while !FileManager.default.fileExists(atPath: pidFile.path),
+                ProcessInfo.processInfo.systemUptime < markerDeadline
+            {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            try #require(FileManager.default.fileExists(atPath: pidFile.path))
+            let pidText = try String(contentsOf: pidFile, encoding: .utf8)
+            let pid = try #require(pid_t(pidText))
 
-        #expect(elapsed < 2)
-        errno = 0
-        #expect(Darwin.kill(pid, 0) == -1)
-        #expect(errno == ESRCH)
+            let start = ProcessInfo.processInfo.systemUptime
+            do {
+                try await client.initialize()
+                Issue.record("Expected the unresponsive child to time out")
+            } catch {
+                #expect(error as? CodexUsageError == .rpcTimedOut("initialize"))
+            }
+            let elapsed = ProcessInfo.processInfo.systemUptime - start
+
+            #expect(elapsed < 2)
+            errno = 0
+            #expect(Darwin.kill(pid, 0) == -1)
+            #expect(errno == ESRCH)
+        } catch {
+            await client.shutdown()
+            throw error
+        }
+        await client.shutdown()
     }
 
     @Test func appServerTimeoutRejectsAResponseDuringTerminationGrace() async throws {
@@ -102,22 +106,26 @@ struct CodexUsageTests {
             env: ["READY_MARKER": readyMarker.path, "RESPONSE_MARKER": responseMarker.path],
             startupTimeout: 0.02,
             requestTimeout: 1)
-        defer { client.shutdown() }
+        do {
+            // Other process tests run in parallel and can briefly saturate the test
+            // host. Wait for the trap to be installed before testing the timeout race.
+            let readyDeadline = ProcessInfo.processInfo.systemUptime + 5
+            while !FileManager.default.fileExists(atPath: readyMarker.path),
+                ProcessInfo.processInfo.systemUptime < readyDeadline
+            {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            try #require(FileManager.default.fileExists(atPath: readyMarker.path))
 
-        // Other process tests run in parallel and can briefly saturate the test
-        // host. Wait for the trap to be installed before testing the timeout race.
-        let readyDeadline = ProcessInfo.processInfo.systemUptime + 5
-        while !FileManager.default.fileExists(atPath: readyMarker.path),
-            ProcessInfo.processInfo.systemUptime < readyDeadline
-        {
-            try await Task.sleep(for: .milliseconds(10))
+            await #expect(throws: CodexUsageError.rpcTimedOut("initialize")) {
+                try await client.initialize()
+            }
+            #expect(FileManager.default.fileExists(atPath: responseMarker.path))
+        } catch {
+            await client.shutdown()
+            throw error
         }
-        try #require(FileManager.default.fileExists(atPath: readyMarker.path))
-
-        await #expect(throws: CodexUsageError.rpcTimedOut("initialize")) {
-            try await client.initialize()
-        }
-        #expect(FileManager.default.fileExists(atPath: responseMarker.path))
+        await client.shutdown()
     }
 
     @Test func appServerCancellationDuringAccountReadDoesNotRequestRateLimits() async throws {
@@ -130,8 +138,10 @@ struct CodexUsageTests {
         let executable = directory.appendingPathComponent("cancel-account.sh")
         let accountMarker = directory.appendingPathComponent("account")
         let limitsMarker = directory.appendingPathComponent("limits")
+        let pidFile = directory.appendingPathComponent("pid")
         let script = """
             #!/bin/sh
+            printf '%s' "$$" > "$SHUTDOWN_PID_FILE"
             while IFS= read -r request; do
               case "$request" in
                 *'"method":"initialize"'*)
@@ -152,7 +162,10 @@ struct CodexUsageTests {
             [.posixPermissions: 0o700], ofItemAtPath: executable.path)
 
         let source = CodexAppServerSource(
-            env: ["ACCOUNT_MARKER": accountMarker.path, "LIMITS_MARKER": limitsMarker.path],
+            env: [
+                "ACCOUNT_MARKER": accountMarker.path, "LIMITS_MARKER": limitsMarker.path,
+                "SHUTDOWN_PID_FILE": pidFile.path,
+            ],
             // This test cancels on the account marker. Process startup under CI
             // load must not turn it into a startup- or request-timeout test.
             startupTimeout: 10,
@@ -168,12 +181,17 @@ struct CodexUsageTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         try #require(FileManager.default.fileExists(atPath: accountMarker.path))
+        let pidText = try String(contentsOf: pidFile, encoding: .utf8)
+        let pid = try #require(pid_t(pidText))
         task.cancel()
 
         await #expect(throws: CancellationError.self) {
             try await task.value
         }
         #expect(!FileManager.default.fileExists(atPath: limitsMarker.path))
+        errno = 0
+        #expect(Darwin.kill(pid, 0) == -1)
+        #expect(errno == ESRCH)
     }
 
     @Test func boundedProcessCaptureRejectsOverflowInsteadOfReturningATruncatedPrefix() {

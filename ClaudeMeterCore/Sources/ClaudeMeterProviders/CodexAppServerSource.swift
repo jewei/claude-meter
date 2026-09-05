@@ -96,7 +96,17 @@ public final class CodexAppServerSource: CodexUsageSourceFetching, @unchecked Se
             env: env,
             startupTimeout: startupTimeout,
             requestTimeout: requestTimeout)
-        defer { client.shutdown() }
+        do {
+            let usage = try await fetchUsage(client: client, now: now)
+            await client.shutdown()
+            return usage
+        } catch {
+            await client.shutdown()
+            throw error
+        }
+    }
+
+    private func fetchUsage(client: CodexAppServerClient, now: Date) async throws -> CodexUsage {
         try Task.checkCancellation()
         try await client.initialize()
         try Task.checkCancellation()
@@ -141,6 +151,10 @@ final class CodexAppServerClient: @unchecked Sendable {
     private var nextID = 1
     private let shutdownLock = NSLock()
     private var shutdownStarted = false
+    private var shutdownFinished = false
+    private var shutdownWaiters: [CheckedContinuation<Void, Never>] = []
+    private let shutdownQueue = DispatchQueue(
+        label: "com.jewei.claudemeter.codex-shutdown", qos: .utility)
     private let requestGate = CodexRPCRequestGate()
     private let startupTimeout: TimeInterval
     private let requestTimeout: TimeInterval
@@ -193,15 +207,39 @@ final class CodexAppServerClient: @unchecked Sendable {
             from: request(method: "account/rateLimits/read", timeout: requestTimeout))
     }
 
-    func shutdown() {
-        shutdownLock.lock()
-        guard !shutdownStarted else {
+    func shutdown() async {
+        await withCheckedContinuation { continuation in
+            shutdownLock.lock()
+            if shutdownFinished {
+                shutdownLock.unlock()
+                continuation.resume()
+                return
+            }
+            shutdownWaiters.append(continuation)
+            guard !shutdownStarted else {
+                shutdownLock.unlock()
+                return
+            }
+            shutdownStarted = true
             shutdownLock.unlock()
-            return
+
+            // Foundation's process wait and TERM grace period must not block
+            // Swift's cooperative executor. Every caller awaits the same cleanup,
+            // including callers that are already cancelled.
+            shutdownQueue.async {
+                self.stopProcess()
+                self.shutdownLock.lock()
+                self.shutdownFinished = true
+                let waiters = self.shutdownWaiters
+                self.shutdownWaiters.removeAll()
+                self.shutdownLock.unlock()
+                for waiter in waiters { waiter.resume() }
+            }
         }
-        shutdownStarted = true
+    }
+
+    private func stopProcess() {
         try? stdinPipe.fileHandleForWriting.close()
-        shutdownLock.unlock()
 
         if process.isRunning {
             process.terminate()
@@ -311,7 +349,7 @@ final class CodexAppServerClient: @unchecked Sendable {
                 guard race.claim() else { return .lost }
                 // Claim the result before shutdown. A response that arrives
                 // during the TERM grace period cannot change the winner.
-                self?.shutdown()
+                await self?.shutdown()
                 throw CodexUsageError.rpcTimedOut(method)
             }
             while let outcome = try await group.next() {

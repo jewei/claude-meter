@@ -933,10 +933,180 @@ struct AppLogicTests {
         defer { state.stopPolling() }
         state.startPolling()
         try await Timeout.run(seconds: 2) { await completion.waitForPoll() }
+        for _ in 0..<200 where state.costIsLoading {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(!state.costIsLoading)
         #expect(state.snapshot?.models == expectedModels)
         #expect(state.persistedSnapshotForTesting()?.models == expectedModels)
         #expect(state.snapshot?.limits.currentSession.percentUsed == 42)
         #expect(state.costScanPartial == usesInjectedScan)
+    }
+
+    private actor SuspendedCostScanner {
+        private(set) var callCount = 0
+        private var running: [CheckedContinuation<CostUsageResult, Never>] = []
+        func scan() async -> CostUsageResult {
+            callCount += 1
+            return await withCheckedContinuation { running.append($0) }
+        }
+        func release(_ result: CostUsageResult) {
+            guard !running.isEmpty else { return }
+            running.removeFirst().resume(returning: result)
+        }
+    }
+
+    @MainActor
+    private func onlyClaudeSourcesForCostTest() -> () -> Void {
+        let defaults = UserDefaults.standard
+        let keys = [
+            AppSettings.statuslineSourceEnabledKey, AppSettings.oauthSourceEnabledKey,
+            AppSettings.cursorSourceEnabledKey, AppSettings.codexSourceEnabledKey,
+            AppSettings.grokSourceEnabledKey,
+        ]
+        let previous = keys.map { defaults.object(forKey: $0) }
+        for key in keys { defaults.set(key == AppSettings.statuslineSourceEnabledKey, forKey: key) }
+        return {
+            for (key, value) in zip(keys, previous) {
+                if let value {
+                    defaults.set(value, forKey: key)
+                } else {
+                    defaults.removeObject(forKey: key)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    @Test("Slow cost scans do not delay quota and merge into the latest snapshot")
+    func independentCostPublication() async throws {
+        let restore = onlyClaudeSourcesForCostTest()
+        defer { restore() }
+        let scan = SuspendedCostScanner()
+        let completion = PollRecorder()
+        let now = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
+        func snapshot(_ percent: Double) -> ClaudeUsageSnapshot {
+            ClaudeUsageSnapshot(
+                parserVersion: "cost-test", createdAt: now,
+                lastSuccessfulPollAt: now, source: SourceInfo(cliPath: "/test", command: "test"),
+                limits: LimitInfo(currentSession: LimitWindow(percentUsed: percent)),
+                models: [ModelUsage(name: "unverified-old-root")],
+                state: SnapshotState(status: .ok, severity: .normal))
+        }
+        let state = AppState(
+            pipeline: FixedSnapshotPipeline(snapshot: snapshot(42)),
+            costUsageScanner: { _, _ in await scan.scan() },
+            pollCompletionBarrier: { await completion.record() })
+        defer { state.stopPolling() }
+        state.startPolling()
+        try await Timeout.run(seconds: 2) { await completion.waitForPoll() }
+        for _ in 0..<200 where state.isLoading { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(!state.isLoading)
+        #expect(state.costIsLoading)
+        #expect(state.snapshot?.limits.currentSession.percentUsed == 42)
+        #expect(state.persistedSnapshotForTesting()?.models == [])
+
+        state.pipeline = FixedSnapshotPipeline(snapshot: snapshot(80))
+        for count in 2...5 {
+            state.refreshNow()
+            try await Timeout.run(seconds: 2) { await completion.waitForPoll(count) }
+            for _ in 0..<200 where state.isLoading { try await Task.sleep(for: .milliseconds(5)) }
+        }
+        #expect(await scan.callCount == 1)
+        let before = state.mainMeterReading
+        await scan.release(CostUsageResult(models: [ModelUsage(name: "fresh-cost")]))
+        for _ in 0..<200 where await scan.callCount < 2 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await scan.callCount == 2)
+        #expect(state.costModels.first?.name == "fresh-cost")
+        #expect(state.snapshot?.limits.currentSession.percentUsed == 80)
+        #expect(state.persistedSnapshotForTesting()?.limits.currentSession.percentUsed == 80)
+        #expect(state.lastPolledAt == now)
+        #expect(state.mainMeterReading == before)
+        #expect(state.persistedSnapshotForTesting()?.costObservation?.scannedAt != nil)
+        await scan.release(.empty)
+        for _ in 0..<200 where state.costIsLoading { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(state.costModels.isEmpty)
+        #expect(state.persistedSnapshotForTesting()?.models == [])
+    }
+
+    @MainActor
+    @Test("A revoked cost scan cannot republish data from the old account scope")
+    func revokedCostScanIsDiscarded() async throws {
+        let restore = onlyClaudeSourcesForCostTest()
+        defer { restore() }
+        let scan = SuspendedCostScanner()
+        let completion = PollRecorder()
+        let now = Date()
+        let snapshot = ClaudeUsageSnapshot(
+            parserVersion: "scope-test", createdAt: now,
+            lastSuccessfulPollAt: now, source: SourceInfo(cliPath: "/test", command: "test"),
+            limits: LimitInfo(currentSession: LimitWindow(percentUsed: 10)),
+            state: SnapshotState(status: .ok, severity: .normal))
+        let state = AppState(
+            pipeline: FixedSnapshotPipeline(snapshot: snapshot),
+            costUsageScanner: { _, _ in await scan.scan() },
+            pollCompletionBarrier: { await completion.record() })
+        defer { state.stopPolling() }
+        state.startPolling()
+        try await Timeout.run(seconds: 2) { await completion.waitForPoll() }
+        for _ in 0..<200 where await scan.callCount < 1 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let defaults = UserDefaults.standard
+        let oldDisabled = defaults.object(forKey: AppGroupConfig.disabledAccountKeysKey)
+        defer {
+            if let oldDisabled {
+                defaults.set(oldDisabled, forKey: AppGroupConfig.disabledAccountKeysKey)
+            } else {
+                defaults.removeObject(forKey: AppGroupConfig.disabledAccountKeysKey)
+            }
+        }
+        // The setting changes before the debounce advances the poll generation.
+        defaults.set(["revoked-root"], forKey: AppGroupConfig.disabledAccountKeysKey)
+        await scan.release(CostUsageResult(models: [ModelUsage(name: "revoked-root")]))
+        for _ in 0..<200 where state.costIsLoading {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(state.costModels.isEmpty)
+        #expect(state.persistedSnapshotForTesting()?.models == [])
+        state.stopPolling()
+        state.startPolling()
+        try await Timeout.run(seconds: 2) { await completion.waitForPoll(2) }
+        for _ in 0..<200 where await scan.callCount < 2 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        await scan.release(CostUsageResult(models: [ModelUsage(name: "current-root")]))
+        for _ in 0..<200 where state.costIsLoading { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(state.costModels.first?.name == "current-root")
+    }
+
+    @MainActor
+    @Test("Repeated cost timeouts cannot accumulate cancellation-ignoring scans")
+    func costTimeoutBoundsWorkers() async throws {
+        let restore = onlyClaudeSourcesForCostTest()
+        defer { restore() }
+        let scan = SuspendedCostScanner()
+        let completion = PollRecorder()
+        let state = AppState(
+            pipeline: UnusedPipeline(),
+            costUsageScanner: { _, _ in await scan.scan() }, costScanTimeoutSeconds: 0.05,
+            pollCompletionBarrier: { await completion.record() })
+        defer { state.stopPolling() }
+        state.startPolling()
+        for count in 1...4 {
+            try await Timeout.run(seconds: 2) { await completion.waitForPoll(count) }
+            for _ in 0..<200 where state.costIsLoading {
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            #expect(state.costRefreshFailed)
+            #expect(await scan.callCount == 1)
+            if count < 4 { state.refreshNow() }
+        }
+        await scan.release(CostUsageResult(models: [ModelUsage(name: "too-late")]))
+        for _ in 0..<20 { await Task.yield() }
+        #expect(state.costModels.isEmpty)
     }
 
     @MainActor
@@ -1107,28 +1277,30 @@ struct AppLogicTests {
         #expect(state.persistedLastErrorForTesting()?.message == persistedMessage)
     }
 
-    @Test("A complete empty cost scan clears prior account usage")
-    func completeEmptyCostScanClearsPriorUsage() {
-        var snapshot = ClaudeUsageSnapshot(
-            parserVersion: "test-1.0",
-            createdAt: Date(timeIntervalSince1970: 100),
-            source: SourceInfo(cliPath: "/test", command: "test"),
-            limits: LimitInfo(),
-            models: [ModelUsage(name: "claude-sonnet")],
-            state: SnapshotState(status: .ok, severity: .normal))
-
-        #expect(
-            AppState.applyCostModels(
-                CostUsageResult(models: [], isPartialEstimate: false),
-                to: &snapshot))
-        #expect(snapshot.models.isEmpty)
-
-        snapshot.models = [ModelUsage(name: "claude-sonnet")]
-        #expect(
-            !AppState.applyCostModels(
-                CostUsageResult(models: [], isPartialEstimate: true),
-                to: &snapshot))
-        #expect(snapshot.models.map(\.name) == ["claude-sonnet"])
+    @Test("Cost failures retain only same-scope data and preserve its scan time")
+    func costFailureRetainsOnlySameScope() {
+        let date = Date(timeIntervalSince1970: 100)
+        let value = CostUsageResult(models: [ModelUsage(name: "old")], sourcePaths: ["/a"])
+        let previous = ReadingState.current(value: value, polledAt: date)
+        let partial = AppState.updatedCostReading(
+            CostUsageResult(models: [], isPartialEstimate: true, sourcePaths: ["/a"]),
+            previous: previous, scannedAt: Date())
+        #expect(partial.value == value)
+        #expect(partial.lastPolledAt == date)
+        #expect(partial.isStale)
+        // Settings can be unchanged while a symlink or discovered root changes.
+        // A timeout cannot prove that the previous root scope is still current.
+        let timeout = AppState.updatedCostReading(nil, previous: previous, scannedAt: Date())
+        #expect(timeout.value == nil)
+        #expect(timeout.lastPolledAt == nil)
+        let changed = AppState.updatedCostReading(
+            CostUsageResult(models: [], isPartialEstimate: true, sourcePaths: ["/b"]),
+            previous: previous, scannedAt: Date())
+        #expect(changed.value == nil)
+        #expect(changed.lastPolledAt == nil)
+        let empty = AppState.updatedCostReading(.empty, previous: previous, scannedAt: date)
+        #expect(empty.value?.models == [])
+        #expect(!empty.isStale)
     }
 
     @Test("Friendly account labels normalize separators")

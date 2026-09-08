@@ -31,6 +31,13 @@ diagnostics sanitizer, known gaps) stay in the root `AGENTS.md`.
   This detects atomic replacements; it does not detect every in-place edit that restores
   the same metadata.
 
+## Cost scan results
+
+`CostUsageResult.sourcePaths` identifies the canonical roots actually scanned. Preserve
+this scope when returning partial results. The app can retain old totals after an empty
+partial scan only when those roots match. Cost scan and catalog work run independently
+of quota publication; source providers still do not write snapshots.
+
 ## Statusline bridge
 
 `StatuslineBridge.install(configDirs:)` runs on launch and each poll while statusline is enabled (idempotent + self-healing). `refreshConfigBridges` removes the snippet from disabled accounts. When the source is **off**, it removes the snippet from all discovered accounts and calls `purgeSessionData()` if any valid file changed, including when another account has invalid JSON. The purge is separate so `uninstall` never touches `~/.claude-meter` from tests, matching `HookBridge`. The bridge prepends a bash snippet to each enabled config dir's `settings.json` `statusLine.command`. It derives the **account key** from `$CLAUDE_CONFIG_DIR` (basename, one leading dot stripped, sanitized to `[alnum._-]`, fallback `claude`), extracts `session_id` (same sanitization), atomically writes stdin to `sessions/<accountKey>/<session_id>.json`, and sets `refreshInterval: 1`. The no-arg `install()`/`uninstall()` are `~/.claude`-only shims. A dir with invalid JSON is skipped, its error is surfaced after all other dirs are processed.

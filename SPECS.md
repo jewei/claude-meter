@@ -65,7 +65,10 @@ The statusline tier wins while it has fresh bridge data. If unavailable or stale
 may run. Every failed tier records a sanitized `SourceAttempt`; fallback does not erase
 the reason. Cached data is marked stale and preserves its original successful-fetch time.
 Source tiers return data only. After the full poll is assembled, `AppState` writes the
-snapshot if that poll generation is still current.
+snapshot if that poll generation is still current. Cost scanning runs independently of
+this quota commit. Each quota snapshot uses the latest completed cost reading from the
+current account configuration. A later cost completion updates only the cost fields in
+the latest snapshot. It preserves quota timestamps, errors, and notification observations.
 
 Polling normally runs every 60 seconds. It doubles on battery, parks while the display is
 asleep, refreshes immediately after wake or network reconnection, and times out a wedged
@@ -179,6 +182,18 @@ Expired rolling windows resolve to 0% used and no reset date. Consumers must cal
 `LimitWindow.resolved(asOf:)` before display or policy evaluation.
 
 ## 4. Local cost and activity
+
+Cost refreshes have one active scan and one pending request for the latest configuration.
+A separate one-worker timeout budget bounds scans that ignore cancellation. Repeated
+refresh requests do not delay quota publication or create a chain of waiting scans.
+Cost readings have their own scan time and partial/error state. An empty failed scan can
+retain an earlier result only within the same verified root scope and configuration. A
+timeout has no verified scope and clears old totals. A complete
+empty scan clears old totals. Account setting changes revoke old cost results immediately;
+old completions cannot restore them, including during the rebuild debounce. Persisted
+costs are not restored on launch until a scan verifies the current scope. `models` remains
+the compatibility list in `current.json`; `costObservation` records its scan time and
+partial state. Cost completion never advances quota freshness or sends quota alerts.
 
 Cost and activity scan every enabled discovered config directory's `projects/`, including
 top-level session journals and direct `subagents/*.jsonl`; context-fork replays and deeper
@@ -325,7 +340,8 @@ The secondary Codex summary also expands to show each account's limits and usage
 Primary Claude and Codex ring cards are always expanded. Codex bar cards, secondary summaries,
 Cursor, and Grok cards remember their expanded state.
 The header timestamp belongs only to the selected reading. The last-seven-days cost card
-opens the activity heatmap. There is no footer or Add Account button.
+shows its own scan age and partial or failed-update state, and opens the activity heatmap.
+When no cost totals exist, the Activity entry shows scan loading or failure instead. There is no footer or Add Account button.
 
 First-run onboarding pauses polling and directs the user to Settings. Existing users skip
 onboarding when a snapshot exists, an attributes-only OAuth lookup finds a credential, Cursor

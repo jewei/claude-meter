@@ -36,7 +36,9 @@ public struct CostUsageScanner: Sendable {
         calendar: Calendar = .current
     ) {
         let roots = projectsPaths.isEmpty ? [JournalReader.defaultProjectsPath] : projectsPaths
-        self.projectsPaths = roots.dedupedByResolvedPath()
+        self.projectsPaths = roots.dedupedByResolvedPath().map {
+            $0.resolvingSymlinksInPath().standardizedFileURL
+        }
         self.pricing = pricing
         self.cache = cache
         self.calendar = calendar
@@ -93,7 +95,10 @@ public struct CostUsageScanner: Sendable {
         // resident entry — at the 2048-entry cap that was megabytes of atomic write
         // per minute for a cache whose only job is to avoid a cold-start re-parse.
         cache.flushIfDue(now: now)
-        return aggregate(byDayModel, isPartial: isPartial)
+        let result = aggregate(byDayModel, isPartial: isPartial)
+        return CostUsageResult(
+            models: result.models, isPartialEstimate: result.isPartialEstimate,
+            sourcePaths: projectsPaths.map(\.path).sorted())
     }
 
     /// Accumulates one `projects/` root into the running totals. A missing root is
@@ -449,14 +454,18 @@ public struct CostUsageScanner: Sendable {
 
 public struct CostUsageResult: Sendable, Equatable {
     public let models: [ModelUsage]
+    /// Canonical roots used by this scan, for safe reuse after an incomplete scan.
+    public let sourcePaths: [String]
     /// `true` when totals can be incomplete or an invalid counter was clamped.
     public let isPartialEstimate: Bool
 
     public init(
         models: [ModelUsage],
-        isPartialEstimate: Bool = false
+        isPartialEstimate: Bool = false,
+        sourcePaths: [String] = []
     ) {
         self.models = models
+        self.sourcePaths = sourcePaths
         self.isPartialEstimate = isPartialEstimate
     }
 

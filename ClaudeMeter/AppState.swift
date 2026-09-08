@@ -16,10 +16,27 @@ typealias ConfigBridgeRefreshOperation =
     @Sendable (ConfigBridgeRefreshRequest) async -> Void
 typealias CodexUsageFetchOperation =
     @Sendable (CodexAccount, CodexSourceMode, Date) async throws -> CodexUsage
+typealias CodexIdentityLoadOperation = @Sendable (CodexAccount) -> CodexCredentialIdentity
 typealias AttentionEventDrainOperation =
     @Sendable (Set<String>, Date) async -> [SessionEvent]
 typealias MainMeterPublicationOperation =
     @Sendable (MainMeterReading?, SnapshotStore) throws -> Void
+
+/// At most one blocked read per home, with a separate process-work limit.
+final class CodexIdentityReadGate: @unchecked Sendable {
+    let budget = Timeout.TaskBudget(limit: 64)
+    private let lock = NSLock()
+    private var active: Set<String> = []
+
+    func read(_ account: CodexAccount, loader: CodexIdentityLoadOperation) throws
+        -> CodexCredentialIdentity
+    {
+        let inserted = lock.withLock { active.insert(account.id).inserted }
+        guard inserted else { throw TimeoutCapacityError() }
+        defer { _ = lock.withLock { active.remove(account.id) } }
+        return loader(account)
+    }
+}
 
 @MainActor
 final class AppState: ObservableObject {
@@ -65,6 +82,8 @@ final class AppState: ObservableObject {
     let notificationEngine: NotificationEngine
     private let store: SnapshotStore
     private let codexReadingStore: CodexReadingStore
+    private let codexIdentityLoader: CodexIdentityLoadOperation
+    private let codexIdentityReadGate = CodexIdentityReadGate()
     /// Test meters keep pause/resume writes out of the installed app's settings.
     private let activationDefaults: UserDefaults
     private let ephemeralDefaultsSuiteName: String?
@@ -438,7 +457,8 @@ final class AppState: ObservableObject {
             sessionLabel: windows.session?.displayLabel ?? "5h",
             weeklyLabel: windows.weekly?.displayLabel ?? "7d",
             observedAt: observedAt,
-            selectionRevision: AppGroupConfig.mainMeterRevision(shared: nil))
+            selectionRevision: AppGroupConfig.mainMeterRevision(shared: nil),
+            observationOwnerID: reading.ownerID)
     }
 
     private nonisolated static func classifiedCodexWindows(_ usage: CodexUsage) -> (
@@ -569,6 +589,7 @@ final class AppState: ObservableObject {
         self.store = store
         let codexReadingStore = CodexReadingStore()
         self.codexReadingStore = codexReadingStore
+        self.codexIdentityLoader = { CodexOAuthCredentialsStore.identity(codexHome: $0.home) }
         self.activationDefaults = .standard
         self.ephemeralDefaultsSuiteName = nil
         self.ephemeralStoreDirectory = nil
@@ -606,9 +627,8 @@ final class AppState: ObservableObject {
         self.snapshot?.models = []
         self.snapshot?.costObservation = nil
         self.lastPolledAt = snapshot?.lastSuccessfulPollAt
-        if AppSettings.codexSourceEnabled {
-            self.codexAccounts = codexReadingStore.restore(accounts: AppSettings.codexAccounts())
-        }
+        // Persisted Codex readings are restored only after the first poll checks
+        // their owner off-main. A home path alone is not a signed-in account.
         if snapshot == nil, let record = try? store.readLastError() {
             self.lastError = record.message
         }
@@ -673,6 +693,7 @@ final class AppState: ObservableObject {
         },
         costScanTimeoutSeconds: TimeInterval = 30,
         codexReadingStore: CodexReadingStore? = nil,
+        codexIdentityLoader: @escaping CodexIdentityLoadOperation = { _ in .unavailable },
         notificationEngine: NotificationEngine = NotificationEngine(),
         pollCompletionBarrier: (@Sendable () async -> Void)? = nil,
         systemIntegrationEnabled: Bool = false,
@@ -691,6 +712,7 @@ final class AppState: ObservableObject {
         let suiteName = "ClaudeMeter-AppState-\(id)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
         self.codexReadingStore = codexReadingStore ?? CodexReadingStore(defaults: testDefaults)
+        self.codexIdentityLoader = codexIdentityLoader
         self.activationDefaults = testDefaults
         self.ephemeralDefaultsSuiteName = suiteName
         self.ephemeralStoreDirectory = directory
@@ -916,9 +938,6 @@ final class AppState: ObservableObject {
             // the old observation before that work can let delivery complete.
             notificationEngine.pollFailed()
         }
-        if enabled {
-            codexAccounts = codexReadingStore.restore(accounts: AppSettings.codexAccounts())
-        }
         optionalSourceSettingDidChange(enabled: enabled, clearState: clearCodexState)
         if codexOwnsMainMeter { finishMainMeterSelectionChange() }
     }
@@ -939,16 +958,13 @@ final class AppState: ObservableObject {
         let previousPublishedReading = publishedMainMeterReading
         let previousNotificationReading = lastNotificationReading
         let existing = Dictionary(uniqueKeysWithValues: codexAccounts.map { ($0.id, $0) })
-        let restored = Dictionary(
-            uniqueKeysWithValues: codexReadingStore.restore(
-                accounts: AppSettings.codexAccounts()
-            ).map { ($0.id, $0) })
         codexAccounts = AppSettings.codexAccounts().compactMap { account in
-            guard let reading = existing[account.id] ?? restored[account.id] else { return nil }
+            guard let reading = existing[account.id] else { return nil }
             return CodexAccountReading(
                 account: account,
                 state: reading.state,
-                lastAttemptAt: reading.lastAttemptAt)
+                lastAttemptAt: reading.lastAttemptAt,
+                ownerID: reading.ownerID)
         }
         guard codexOwnsMainMeter else { return }
         var currentReading = mainMeterReading
@@ -1348,22 +1364,52 @@ final class AppState: ObservableObject {
             if activePollCycleID == cycleID { codexIsLoading = false }
         }
         let now = Date()
-        let previous = Dictionary(uniqueKeysWithValues: codexAccounts.map { ($0.id, $0) })
+        let accounts = configuration.codexAccounts
+        var previous = Dictionary(
+            uniqueKeysWithValues: codexReadingStore.candidates(accounts: accounts).map {
+                ($0.id, $0)
+            })
+        for reading in codexAccounts { previous[reading.id] = reading }
         let previousPublishedReading = publishedMainMeterReading
         let previousNotificationReading = lastNotificationReading
-        let accounts = configuration.codexAccounts
-        let readings = await Self.fetchCodexAccountReadings(
+        let readings = await Self.fetchOwnedCodexAccountReadings(
             accounts: accounts,
             previous: previous,
             mode: configuration.codexMode,
             now: now,
             perAccountTimeoutSeconds: Self.pollTimeoutSeconds,
             totalTimeoutSeconds: Self.pollTimeoutSeconds,
-            budget: Self.codexPollTimeoutBudget
-        ) { account, mode, now in
-            try await CodexUsageProvider(codexHome: account.home).fetchUsage(
-                mode: mode, now: now)
-        }
+            budget: Self.codexPollTimeoutBudget,
+            identityLoader: codexIdentityLoader,
+            identityGate: codexIdentityReadGate,
+            validatedPrevious: { [weak self] validated in
+                guard let self,
+                    configuration.generation == self.pipelineGeneration,
+                    self.activePollCycleID == cycleID, self.canPoll
+                else { return }
+                let previousReading = self.mainMeterReading
+                self.codexAccounts = validated
+                guard self.mainMeterProvider == .codex else { return }
+                if MainMeterPolicy.shouldBumpSelectionRevision(
+                    previous: previousReading, current: self.mainMeterReading,
+                    configurationChanged: false)
+                {
+                    AppGroupConfig.bumpMainMeterRevision()
+                    self.notificationIdentity = nil
+                    self.allowsPersistedNotificationRecovery = false
+                    self.notificationEngine.pollFailed()
+                }
+                self.publishMainMeterReading()
+                if MainMeterPolicy.shouldReloadWidget(
+                    previous: previousReading, current: self.mainMeterReading)
+                {
+                    WidgetCenter.shared.reloadAllTimelines()
+                }
+            },
+            fetch: { account, mode, now in
+                try await CodexUsageProvider(codexHome: account.home).fetchUsage(
+                    mode: mode, now: now)
+            })
         guard configuration.generation == pipelineGeneration,
             canPoll,
             AppSettings.codexSourceEnabled
@@ -1388,7 +1434,7 @@ final class AppState: ObservableObject {
         if let currentSelected,
             let lifecycle = codexAccounts.first(where: { $0.id == currentSelected.accountID })
         {
-            if case .current = lifecycle.state {
+            if case .current = lifecycle.state, lifecycle.ownerID != nil {
                 await processMainMeterObservation(
                     currentSelected,
                     previous: previousNotificationReading,
@@ -1406,6 +1452,83 @@ final class AppState: ObservableObject {
             current: currentSelected)
         {
             WidgetCenter.shared.reloadAllTimelines()
+        }
+    }
+
+    /// Ownership reads share the provider deadline and run on bounded detached
+    /// workers. Reserve the final read before fetching so even a timed-out source
+    /// cannot reuse another login's previous value. Unknown owners can supply a
+    /// current reading only when their source stayed unchanged; they are never
+    /// restored from cache or used for notification baselines.
+    nonisolated static func fetchOwnedCodexAccountReadings(
+        accounts: [CodexAccount],
+        previous: [String: CodexAccountReading],
+        mode: CodexSourceMode,
+        now: Date,
+        perAccountTimeoutSeconds: TimeInterval,
+        totalTimeoutSeconds: TimeInterval,
+        budget: Timeout.TaskBudget,
+        identityLoader: @escaping CodexIdentityLoadOperation,
+        identityGate: CodexIdentityReadGate = .init(),
+        validatedPrevious: @escaping @MainActor @Sendable ([CodexAccountReading]) -> Void = { _ in
+        },
+        fetch: @escaping CodexUsageFetchOperation
+    ) async -> [CodexAccountReading] {
+        let timeout = totalTimeoutSeconds.isFinite ? max(0, totalTimeoutSeconds) : 0
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        let identityAllowance = min(2, timeout / 4)
+        let before = await loadCodexIdentities(
+            accounts: accounts, timeout: identityAllowance, gate: identityGate,
+            loader: identityLoader)
+        let validPrevious = previous.filter { key, reading in
+            reading.ownerID != nil && reading.ownerID == before[key]?.ownerID
+        }
+        await validatedPrevious(accounts.compactMap { validPrevious[$0.id] })
+        let readings = await fetchCodexAccountReadings(
+            accounts: accounts, previous: validPrevious, mode: mode, now: now,
+            perAccountTimeoutSeconds: perAccountTimeoutSeconds,
+            totalTimeoutSeconds: max(
+                0, deadline - ProcessInfo.processInfo.systemUptime - identityAllowance),
+            budget: budget, fetch: fetch)
+        let after = await loadCodexIdentities(
+            accounts: accounts,
+            timeout: min(
+                identityAllowance, max(0, deadline - ProcessInfo.processInfo.systemUptime)),
+            gate: identityGate, loader: identityLoader)
+        return readings.map { reading in
+            guard let original = before[reading.id], let current = after[reading.id],
+                original.acceptsResult(after: current)
+            else {
+                return CodexAccountReading(
+                    account: reading.account,
+                    state: .failed(
+                        error: "Codex sign-in changed or could not be verified. Refresh again.",
+                        lastPolledAt: nil),
+                    lastAttemptAt: reading.lastAttemptAt)
+            }
+            return CodexAccountReading(
+                account: reading.account, state: reading.state,
+                lastAttemptAt: reading.lastAttemptAt, ownerID: current.ownerID)
+        }
+    }
+
+    nonisolated private static func loadCodexIdentities(
+        accounts: [CodexAccount], timeout: TimeInterval, gate: CodexIdentityReadGate,
+        loader: @escaping CodexIdentityLoadOperation
+    ) async -> [String: CodexCredentialIdentity] {
+        guard timeout > 0, !Task.isCancelled else { return [:] }
+        return await withTaskGroup(of: (String, CodexCredentialIdentity?).self) { group in
+            for account in accounts {
+                group.addTask {
+                    let identity = try? await Timeout.run(seconds: timeout, budget: gate.budget) {
+                        try gate.read(account, loader: loader)
+                    }
+                    return (account.id, identity)
+                }
+            }
+            var identities: [String: CodexCredentialIdentity] = [:]
+            for await (id, identity) in group { identities[id] = identity }
+            return identities
         }
     }
 
@@ -1491,7 +1614,7 @@ final class AppState: ObservableObject {
             return CodexAccountReading(
                 account: account,
                 state: .stale(value: usage, polledAt: polledAt, error: message),
-                lastAttemptAt: attemptedAt)
+                lastAttemptAt: attemptedAt, ownerID: prior?.ownerID)
         }
         return CodexAccountReading(
             account: account,

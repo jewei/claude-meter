@@ -210,7 +210,7 @@ legacy-only writes count as 5-minute cache writes. Paths use stable order when d
 metadata differs. Large files are tail-read and reported partial. Every changed file is
 reparsed; growth alone cannot prove an append. Model output is deterministically ordered.
 
-The version-5 cost cache retains request records as compact tuples instead of day/model
+The version-6 cost cache retains request records as compact tuples instead of day/model
 totals. Older versions are rebuilt. Parsing accepts at most 20,000 records and 8 MiB of accounted record
 storage per file. Reconciliation accepts at most 100,000 records and 32 MiB per root.
 Limits produce explicit partial estimates. The LRU cache retains at most 2,048 files and
@@ -220,7 +220,10 @@ bounds do not measure the allocator's total memory use.
 Activity is loaded on demand from the cost card. It reports a 7×24 local-time grid over the
 last 30 days, Monday at index zero, deduping message identity within each file. Its total is
 derived from the normalized grid. Both scanner caches include the local time zone in file
-identity, so travel cannot reuse buckets from the prior zone.
+identity, so travel cannot reuse buckets from the prior zone. They also require matching
+device, inode, modification time, and size. An atomic replacement invalidates the cache
+even when size and modification time are unchanged. A read enters either cache only when
+the descriptor stamp remains unchanged and matches discovery. Unstable reads are partial.
 
 Both scanners use bounded, constant-time LRU caches. Cost cache is persisted and
 rate-limited; activity cache is in memory only. On macOS memory-pressure warnings, the
@@ -273,6 +276,15 @@ show the count and each returned reset's title and time to expiry. Bar cards sho
 when collapsed and reveal the rows when expanded. Expiry rows are sorted by date; a tooltip
 shows the exact local date and time. Missing expiry details remain explicit. Reset credits
 are display-only; the app never consumes them.
+
+Codex home paths remain the stable settings and pin identifiers. Each observation
+also carries an opaque member-and-workspace owner when the local sign-in claims
+identify both. Ownership is checked before restoring cached usage and again before
+publishing a fetch result. A changed or unreadable sign-in clears the old reading.
+Normal token rotation for the same owner preserves offline usage. Missing claims
+permit current usage only while the source stays unchanged; such readings are not
+persisted and cannot establish quota notification baselines. Version-1 Codex reading
+archives have no owner and are rebuilt. All credential reads remain bounded and off-main.
 
 ### 5.3 Grok
 

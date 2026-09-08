@@ -22,6 +22,15 @@ diagnostics sanitizer, known gaps) stay in the root `AGENTS.md`.
 
 - **Reads must reject blocking special files and unbounded sizes** — use `BoundedRegularFileReader` for auth, settings, identity, event, and advisory-cache JSON. It opens with `O_NONBLOCK`, accepts only a regular file after `fstat`, caps allocation, and reads through the descriptor. Auth/settings/identity/cache paths may follow a symlink because users can deliberately link those files; app-owned statusline payloads and event markers reject links, including linked account directories. Open the app-owned `.claude-meter` root first, then traverse with `openat`; final-component `O_NOFOLLOW` does not reject a linked parent. Destructive cleanup must unlink only an unchanged entry through the descriptor that inspected it, and it can leave empty managed directories. Do not replace this boundary with `Data(contentsOf:)`: a FIFO can retain a timeout worker forever because task cancellation cannot stop a blocking filesystem call.
 
+## Transcript caches
+
+- Both scanner caches require device/inode identity, mtime, size, and local time zone.
+  `JournalReader` uses one stat conversion for discovery and descriptor reads. Cache a
+  parse only when the descriptor stamp is stable and matches discovery. Keep nonblocking
+  opens, link rejection, and byte bounds. Cost disk format v6 rebuilds older entries.
+  This detects atomic replacements; it does not detect every in-place edit that restores
+  the same metadata.
+
 ## Cost scan results
 
 `CostUsageResult.sourcePaths` identifies the canonical roots actually scanned. Preserve
@@ -66,6 +75,8 @@ of quota publication; source providers still do not write snapshots.
 > **Removed (2026-06-29):** the claude.ai web source (`ClaudeAIPipeline`/`ClaudeAIUsageClient`/`ClaudeAIKeychain`/`BrowserCookieImporter`/`CredentialValidator`) was dropped. It set only session / weekly-all-models / weekly-Opus; its sole unique value over the statusline was covering web-only users (who never run the CLI), at the cost of the app's most fragile, privacy-invasive surface (browser-cookie AES decryption). It **never** sourced plan or extra-usage — plan is primarily the **manual per-account picker** (`AppGroupConfig.accountPlans`, Settings) with OAuth's Keychain `subscriptionType` only as an active-account hint; extra-usage is OAuth-only. Statusline + OAuth remain. `DiagnosticsSanitizer` keeps redacting `sessionKey=` defensively.
 
 ## Codex usage (opt-in)
+
+- **Observation owner** — `CodexOAuthCredentialsStore.identity` returns an opaque member/workspace hash plus an in-memory source fingerprint. Never persist the source fingerprint or use JWT claims as authentication proof. A token rotation can keep the owner; a member/workspace change cannot.
 
 - **App Server shutdown is async** — the TERM grace period and exit wait run on a dedicated queue, never on Swift's cooperative executor. Install `terminationHandler` before launch and wait for that callback; `waitUntilExit()` can stall its run loop after repeated terminations. All shutdown callers await the same completion, including cancelled callers, so timeout/cancellation cannot return before the child is reaped. Claim a timeout before starting shutdown so a response during the TERM grace period cannot win.
 - **Multiple accounts** use one explicit `CODEX_HOME` per account. The ambient

@@ -3,12 +3,13 @@
 Measured on 2026-09-08 with Apple M2, macOS 15.7.9, and Apple Swift 6.2.4.
 The test uses Release optimization, generated JSONL files, an in-memory file cache,
 and built-in pricing. It reads no user transcripts and makes no network requests.
+This run includes the device/inode cache-key fix and its shared stat-based metadata reader.
 The two sizes run sequentially. Each size has one cold scan and seven unchanged warm scans.
 
 | Files | Requests | Cold scan | Warm median | Warm maximum | Accounted cache bytes |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 50 | 5,000 | 358.2 ms | 6.64 ms | 6.81 ms | 1,493,890 |
-| 500 | 50,000 | 3,579.9 ms | 75.91 ms | 76.43 ms | 15,037,390 |
+| 50 | 5,000 | 366.1 ms | 3.00 ms | 3.87 ms | 1,493,890 |
+| 500 | 50,000 | 3,564.5 ms | 39.16 ms | 39.97 ms | 15,037,390 |
 
 Run the opt-in measurement with:
 

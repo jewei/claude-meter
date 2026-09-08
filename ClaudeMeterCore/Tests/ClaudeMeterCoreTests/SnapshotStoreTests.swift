@@ -143,7 +143,7 @@ final class SnapshotStoreTests {
             accountLabel: "Work",
             limits: LimitInfo(currentSession: LimitWindow(percentUsed: 42)),
             observedAt: fixedDate,
-            selectionRevision: 7)
+            selectionRevision: 7, observationOwnerID: "owner")
 
         try MainMeterPublication.replace(reading, in: store)
         #expect(
@@ -156,6 +156,15 @@ final class SnapshotStoreTests {
         #expect(MainMeterPublication.load(from: store, defaults: defaults, shared: shared) == nil)
         shared.set("codex-work", forKey: AppGroupConfig.codexMainMeterAccountKey)
         shared.set(8, forKey: AppGroupConfig.mainMeterRevisionKey)
+        #expect(MainMeterPublication.load(from: store, defaults: defaults, shared: shared) == nil)
+
+        var unowned = reading
+        unowned.observationOwnerID = nil
+        try MainMeterPublication.replace(unowned, in: store)
+        #expect(try store.readMainMeter() == nil)
+        // Older app versions could write these files. The widget must reject them.
+        shared.set(7, forKey: AppGroupConfig.mainMeterRevisionKey)
+        try store.writeMainMeter(unowned)
         #expect(MainMeterPublication.load(from: store, defaults: defaults, shared: shared) == nil)
 
         try MainMeterPublication.replace(nil, in: store)

@@ -1553,10 +1553,12 @@ struct AppLogicTests {
             state: .current(
                 value: usage,
                 polledAt: success),
-            lastAttemptAt: success)
+            lastAttemptAt: success, ownerID: "test-owner")
 
         store.save([reading])
-        let restored = store.restore(accounts: [account])
+        let restored = store.restore(
+            accounts: [account],
+            identities: [account.id: .init(ownerID: "test-owner", sourceFingerprint: "test")])
 
         #expect(restored.count == 1)
         #expect(restored.first?.lastSuccessfulAt == success)
@@ -1597,7 +1599,7 @@ struct AppLogicTests {
         store.save([
             CodexAccountReading(
                 account: account,
-                state: .current(value: usage, polledAt: observedAt))
+                state: .current(value: usage, polledAt: observedAt), ownerID: "test-owner")
         ])
 
         let key = "codexLastGoodReadings.v1"
@@ -1615,7 +1617,11 @@ struct AppLogicTests {
         archive["entries"] = entries
         defaults.set(try JSONSerialization.data(withJSONObject: archive), forKey: key)
 
-        let restored = try #require(store.restore(accounts: [account]).first)
+        let restored = try #require(
+            store.restore(
+                accounts: [account],
+                identities: [account.id: .init(ownerID: "test-owner", sourceFingerprint: "test")]
+            ).first)
         #expect(restored.usage?.primaryWindow?.resetAt == nil)
         let mainMeter = try #require(AppState.codexMainMeterReading(restored))
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -3530,6 +3536,193 @@ struct AppLogicTests {
         await refresher.waitForCalls(3)
         #expect(state.configRefreshOperationCount == 3)
         await refresher.releaseNext()
+    }
+
+    private final class CodexIdentityFixture: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: CodexCredentialIdentity
+        init(_ value: CodexCredentialIdentity) { self.value = value }
+        func read() -> CodexCredentialIdentity { lock.withLock { value } }
+        func replace(_ value: CodexCredentialIdentity) { lock.withLock { self.value = value } }
+    }
+
+    private final class BlockedCodexIdentity: @unchecked Sendable {
+        private let lock = NSLock()
+        private let release = DispatchSemaphore(value: 0)
+        private var calls = 0
+        var callCount: Int { lock.withLock { calls } }
+        func read() -> CodexCredentialIdentity {
+            lock.withLock { calls += 1 }
+            release.wait()
+            return .unavailable
+        }
+        func finish() { release.signal() }
+    }
+
+    @Test("A blocked Codex identity cannot discard healthy homes or accumulate workers")
+    func codexBlockedIdentityIsIsolated() async {
+        let accounts = ["blocked", "healthy"].map {
+            CodexAccount(
+                home: URL(fileURLWithPath: "/test/\($0)"), isImplicit: false, customName: nil)
+        }
+        let blocked = BlockedCodexIdentity()
+        defer { blocked.finish() }
+        let gate = CodexIdentityReadGate()
+        let usage = codexUsage(accountEmail: nil)
+        var previous: [String: CodexAccountReading] = [:]
+        for attempt in 0..<4 {
+            let result = await AppState.fetchOwnedCodexAccountReadings(
+                accounts: accounts, previous: previous, mode: .auto, now: Date(),
+                perAccountTimeoutSeconds: 0.1, totalTimeoutSeconds: 0.4, budget: .init(limit: 3),
+                identityLoader: { account in
+                    if account.id == accounts[0].id { return blocked.read() }
+                    return .init(ownerID: "healthy-owner", sourceFingerprint: "stable")
+                },
+                identityGate: gate,
+                fetch: { _, _, _ in
+                    if attempt > 0 { throw URLError(.notConnectedToInternet) }
+                    return usage
+                })
+            let healthy = result.first { $0.id == accounts[1].id }
+            #expect(healthy?.usage == usage)
+            #expect(healthy?.ownerID == "healthy-owner")
+            #expect(healthy?.state.isStale == (attempt > 0))
+            #expect(result.first { $0.id == accounts[0].id }?.usage == nil)
+            #expect(blocked.callCount == 1)
+            previous = Dictionary(uniqueKeysWithValues: result.map { ($0.id, $0) })
+        }
+    }
+
+    @Test("An unchanged unknown Codex owner can display current usage")
+    func codexUnknownOwnerCanDisplayCurrentUsage() async {
+        let account = CodexAccount(
+            home: URL(fileURLWithPath: "/test/unknown"), isImplicit: true, customName: nil)
+        let usage = codexUsage(accountEmail: nil)
+        let result = await AppState.fetchOwnedCodexAccountReadings(
+            accounts: [account], previous: [:], mode: .auto, now: Date(),
+            perAccountTimeoutSeconds: 1, totalTimeoutSeconds: 2, budget: .init(limit: 1),
+            identityLoader: { _ in .init(ownerID: nil, sourceFingerprint: "unchanged") },
+            fetch: { _, _, _ in usage })
+        #expect(result.first?.usage == usage)
+        #expect(result.first?.ownerID == nil)
+    }
+
+    @MainActor
+    @Test("A late Codex success or failure cannot cross a login change", arguments: [false, true])
+    func codexLateCompletionRejectsChangedOwner(fails: Bool) async {
+        let account = CodexAccount(
+            home: URL(fileURLWithPath: "/test/codex"), isImplicit: true, customName: nil)
+        let usage = codexUsage(accountEmail: nil)
+        let prior = CodexAccountReading(
+            account: account, state: .current(value: usage, polledAt: Date()), ownerID: "owner-a")
+        let identity = CodexIdentityFixture(.init(ownerID: "owner-a", sourceFingerprint: "before"))
+        let gate = SuspendedCodexFetcher()
+        var validatedOwners: [String?] = []
+        let task = Task {
+            await AppState.fetchOwnedCodexAccountReadings(
+                accounts: [account], previous: [account.id: prior], mode: .auto, now: Date(),
+                perAccountTimeoutSeconds: 2, totalTimeoutSeconds: 3, budget: .init(limit: 1),
+                identityLoader: { _ in identity.read() },
+                validatedPrevious: { validatedOwners = $0.map(\.ownerID) }
+            ) { _, _, _ in
+                await gate.suspend()
+                if fails { throw URLError(.notConnectedToInternet) }
+                return usage
+            }
+        }
+        await gate.waitForCalls(1)
+        #expect(validatedOwners == ["owner-a"])
+        identity.replace(.init(ownerID: "owner-b", sourceFingerprint: "after"))
+        await gate.releaseAll()
+        let result = await task.value
+        #expect(result.first?.usage == nil)
+        #expect(result.first?.ownerID == nil)
+        #expect(result.first?.error?.contains("sign-in changed") == true)
+    }
+
+    @MainActor
+    @Test("A known new Codex login clears the old reading before the fetch completes")
+    func codexChangedOwnerClearsBeforeFetch() async {
+        let account = CodexAccount(
+            home: URL(fileURLWithPath: "/test/codex"), isImplicit: true, customName: nil)
+        let usage = codexUsage(accountEmail: nil)
+        let prior = CodexAccountReading(
+            account: account, state: .current(value: usage, polledAt: Date()), ownerID: "owner-a")
+        var validatedCount: Int?
+        let gate = SuspendedCodexFetcher()
+        let task = Task {
+            await AppState.fetchOwnedCodexAccountReadings(
+                accounts: [account], previous: [account.id: prior], mode: .auto, now: Date(),
+                perAccountTimeoutSeconds: 2, totalTimeoutSeconds: 3, budget: .init(limit: 1),
+                identityLoader: { _ in .init(ownerID: "owner-b", sourceFingerprint: "new") },
+                validatedPrevious: { validatedCount = $0.count }
+            ) { _, _, _ in
+                await gate.suspend()
+                throw URLError(.notConnectedToInternet)
+            }
+        }
+        await gate.waitForCalls(1)
+        #expect(validatedCount == 0)
+        await gate.releaseAll()
+        #expect(await task.value.first?.usage == nil)
+    }
+
+    @Test("Codex token rotation preserves a same-owner offline reading")
+    func codexRotationRetainsOfflineReading() async {
+        let account = CodexAccount(
+            home: URL(fileURLWithPath: "/test/codex"), isImplicit: true, customName: nil)
+        let prior = CodexAccountReading(
+            account: account,
+            state: .current(value: codexUsage(accountEmail: nil), polledAt: Date()),
+            ownerID: "owner-a")
+        let identity = CodexIdentityFixture(.init(ownerID: "owner-a", sourceFingerprint: "before"))
+        let result = await AppState.fetchOwnedCodexAccountReadings(
+            accounts: [account], previous: [account.id: prior], mode: .auto, now: Date(),
+            perAccountTimeoutSeconds: 1, totalTimeoutSeconds: 2, budget: .init(limit: 1),
+            identityLoader: { _ in identity.read() },
+            fetch: { _, _, _ in
+                identity.replace(.init(ownerID: "owner-a", sourceFingerprint: "rotated"))
+                throw URLError(.notConnectedToInternet)
+            })
+        #expect(result.first?.state.isStale == true)
+        #expect(result.first?.ownerID == "owner-a")
+        #expect(result.first?.lastSuccessfulAt == prior.lastSuccessfulAt)
+    }
+
+    @MainActor
+    @Test("Codex cache restoration rejects another owner and legacy archives")
+    func codexCacheOwnerValidation() throws {
+        let suite = "CodexOwnerStore-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = CodexReadingStore(defaults: defaults)
+        let account = CodexAccount(
+            home: URL(fileURLWithPath: "/test/codex"), isImplicit: true, customName: nil)
+        let reading = CodexAccountReading(
+            account: account,
+            state: .current(value: codexUsage(accountEmail: "test@example.com"), polledAt: Date()),
+            ownerID: "owner-a")
+        store.save([reading])
+        #expect(
+            store.restore(
+                accounts: [account],
+                identities: [account.id: .init(ownerID: "owner-b", sourceFingerprint: "new")]
+            ).isEmpty)
+        #expect(store.restore(accounts: [account], identities: [:]).isEmpty)
+        #expect(
+            store.restore(
+                accounts: [account],
+                identities: [account.id: .init(ownerID: "owner-a", sourceFingerprint: "rotated")]
+            ).count == 1)
+        let data = try #require(defaults.data(forKey: "codexLastGoodReadings.v1"))
+        #expect(!String(decoding: data, as: UTF8.self).contains("test@example.com"))
+        var legacy = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        legacy["schemaVersion"] = 1
+        defaults.set(
+            try JSONSerialization.data(withJSONObject: legacy), forKey: "codexLastGoodReadings.v1")
+        #expect(store.candidates(accounts: [account]).isEmpty)
+        store.save([CodexAccountReading(account: account, state: reading.state)])
+        #expect(store.candidates(accounts: [account]).isEmpty)
     }
 
     @Test("Codex account polling has one total deadline")

@@ -324,7 +324,7 @@ struct CostUsageScannerTests {
         switch cache.lookup(
             path: canonicalFile.path,
             modDate: before.modificationDate,
-            fileSize: before.fileSize)
+            fileSize: before.fileSize, identity: before.identity)
         {
         case .miss:
             break
@@ -519,13 +519,13 @@ struct CostUsageScannerTests {
         let canonical = try #require(
             FileManager.default.contentsOfDirectory(at: project, includingPropertiesForKeys: nil)
                 .first { $0.pathExtension == "jsonl" })
-        let attrs = try FileManager.default.attributesOfItem(atPath: canonical.path)
-        let modDate = try #require(attrs[.modificationDate] as? Date)
-        let size = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
+        let metadata = try #require(
+            try JournalReader.regularTranscriptMetadata(at: canonical, fm: .default))
         let reloaded = CostUsageCache(persistenceURL: diskURL)
         guard
             case .exact(let value, _) = reloaded.lookup(
-                path: canonical.path, modDate: modDate, fileSize: size)
+                path: canonical.path, modDate: metadata.modificationDate,
+                fileSize: metadata.fileSize, identity: metadata.identity)
         else {
             Issue.record("expected an exact cache hit after reload")
             return
@@ -580,6 +580,7 @@ struct CostUsageScannerTests {
             let path: String
             let modDate: Double = 0
             let fileSize: UInt64 = 0
+            let identity = JournalReader.TranscriptIdentity(device: 1, inode: 1)
             let timeZoneIdentifier = "UTC"
             let isPartial = false
             let records: [Int] = []
@@ -597,7 +598,7 @@ struct CostUsageScannerTests {
         }
         let diskURL = root.appendingPathComponent("cache.json")
         try JSONEncoder().encode(
-            Disk(version: 5, entries: paths.map { Entry(path: $0) })
+            Disk(version: 6, entries: paths.map { Entry(path: $0) })
         ).write(to: diskURL)
 
         let cache = CostUsageCache(persistenceURL: diskURL)
@@ -607,7 +608,7 @@ struct CostUsageScannerTests {
             case .miss = cache.lookup(
                 path: paths[0],
                 modDate: Date(timeIntervalSinceReferenceDate: 0),
-                fileSize: 0,
+                fileSize: 0, identity: .init(device: 1, inode: 1),
                 timeZoneIdentifier: "UTC")
         else {
             Issue.record("The oldest persisted cache entry was imported above the cap")
@@ -617,7 +618,7 @@ struct CostUsageScannerTests {
             case .exact = cache.lookup(
                 path: paths.last!,
                 modDate: Date(timeIntervalSinceReferenceDate: 0),
-                fileSize: 0,
+                fileSize: 0, identity: .init(device: 1, inode: 1),
                 timeZoneIdentifier: "UTC")
         else {
             Issue.record("The newest persisted cache entry was not retained")

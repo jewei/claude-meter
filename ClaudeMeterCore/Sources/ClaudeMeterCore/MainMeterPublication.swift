@@ -39,7 +39,7 @@ public enum MainMeterPublication {
         _ reading: MainMeterReading?,
         in store: SnapshotStore
     ) throws {
-        if let reading {
+        if let reading, reading.provider != .codex || reading.observationOwnerID != nil {
             try store.writeMainMeter(reading)
         } else {
             try store.clearMainMeter()

@@ -259,6 +259,15 @@ when collapsed and reveal the rows when expanded. Expiry rows are sorted by date
 shows the exact local date and time. Missing expiry details remain explicit. Reset credits
 are display-only; the app never consumes them.
 
+Codex home paths remain the stable settings and pin identifiers. Each observation
+also carries an opaque member-and-workspace owner when the local sign-in claims
+identify both. Ownership is checked before restoring cached usage and again before
+publishing a fetch result. A changed or unreadable sign-in clears the old reading.
+Normal token rotation for the same owner preserves offline usage. Missing claims
+permit current usage only while the source stays unchanged; such readings are not
+persisted and cannot establish quota notification baselines. Version-1 Codex reading
+archives have no owner and are rebuilt. All credential reads remain bounded and off-main.
+
 ### 5.3 Grok
 
 Grok is opt-in and reads the Grok CLI auth file without writing or refreshing it. Candidate

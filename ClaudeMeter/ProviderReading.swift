@@ -39,6 +39,8 @@ enum ReadingState<Value: Sendable>: Sendable {
 struct CodexAccountReading: Identifiable, Sendable {
     let account: CodexAccount
     let state: ReadingState<CodexUsage>
+    /// Opaque member + workspace identity. The home remains the settings/pin ID.
+    let ownerID: String?
     /// Time of the latest fetch attempt. This differs from `lastSuccessfulAt`
     /// when a refresh fails after a usable observation.
     let lastAttemptAt: Date?
@@ -46,11 +48,13 @@ struct CodexAccountReading: Identifiable, Sendable {
     init(
         account: CodexAccount,
         state: ReadingState<CodexUsage>,
-        lastAttemptAt: Date? = nil
+        lastAttemptAt: Date? = nil,
+        ownerID: String? = nil
     ) {
         self.account = account
         self.state = state
         self.lastAttemptAt = lastAttemptAt
+        self.ownerID = ownerID
     }
 
     var id: String { account.id }
@@ -82,13 +86,14 @@ struct CodexReadingStore {
     private static let storageKey = "codexLastGoodReadings.v1"
 
     private struct Archive: Codable {
-        var schemaVersion = 1
+        var schemaVersion = 2
         var entries: [String: Entry]
     }
 
     private struct Entry: Codable {
         var usage: CodexUsage
         var lastSuccessfulAt: Date
+        var ownerID: String?
     }
 
     private let defaults: UserDefaults
@@ -97,13 +102,26 @@ struct CodexReadingStore {
         self.defaults = defaults
     }
 
-    func restore(accounts: [CodexAccount]) -> [CodexAccountReading] {
-        guard let archive = readArchive(), archive.schemaVersion == 1 else { return [] }
+    func restore(
+        accounts: [CodexAccount], identities: [String: CodexCredentialIdentity]
+    ) -> [CodexAccountReading] {
+        candidates(accounts: accounts).filter {
+            $0.ownerID != nil && $0.ownerID == identities[$0.id]?.ownerID
+        }
+    }
+
+    /// Internal candidates only. The poll must validate ownership off-main before
+    /// any candidate reaches published state. Version 1 has no trustworthy owner.
+    func candidates(accounts: [CodexAccount]) -> [CodexAccountReading] {
+        guard let archive = readArchive(), archive.schemaVersion == 2 else { return [] }
         return accounts.compactMap { account in
-            guard let entry = archive.entries[account.id] else { return nil }
+            guard let entry = archive.entries[account.id], let ownerID = entry.ownerID else {
+                return nil
+            }
             return CodexAccountReading(
                 account: account,
-                state: .current(value: entry.usage, polledAt: entry.lastSuccessfulAt))
+                state: .current(value: entry.usage, polledAt: entry.lastSuccessfulAt),
+                ownerID: ownerID)
         }
     }
 
@@ -112,11 +130,15 @@ struct CodexReadingStore {
             uniqueKeysWithValues: readings.compactMap { reading in
                 guard
                     var usage = reading.usage,
-                    let lastSuccessfulAt = reading.lastSuccessfulAt
+                    let lastSuccessfulAt = reading.lastSuccessfulAt,
+                    let ownerID = reading.ownerID
                 else { return nil }
                 usage.accountEmail = nil
                 usage.maskedAccountEmail = nil
-                return (reading.id, Entry(usage: usage, lastSuccessfulAt: lastSuccessfulAt))
+                return (
+                    reading.id,
+                    Entry(usage: usage, lastSuccessfulAt: lastSuccessfulAt, ownerID: ownerID)
+                )
             })
         guard
             let data = try? JSONEncoder().encode(Archive(entries: entries))

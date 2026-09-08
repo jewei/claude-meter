@@ -592,6 +592,9 @@ public struct MainMeterReading: Codable, Equatable, Sendable {
     public var provider: MainMeterProvider
     public var accountID: String
     public var accountLabel: String
+    /// Optional opaque owner within a configured account location. Account pins
+    /// still use accountID; notification baselines also include this owner.
+    public var observationOwnerID: String?
     public var plan: String?
     public var limits: LimitInfo
     public var sessionLabel: String
@@ -615,7 +618,8 @@ public struct MainMeterReading: Codable, Equatable, Sendable {
         weeklyLabel: String = "week",
         observedAt: Date,
         selectionRevision: Int = 0,
-        sourceMarkedStale: Bool = false
+        sourceMarkedStale: Bool = false,
+        observationOwnerID: String? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.provider = provider
@@ -628,9 +632,13 @@ public struct MainMeterReading: Codable, Equatable, Sendable {
         self.observedAt = observedAt
         self.selectionRevision = selectionRevision
         self.sourceMarkedStale = sourceMarkedStale
+        self.observationOwnerID = observationOwnerID
     }
 
-    public var stableIdentity: String { "\(provider.rawValue):\(accountID)" }
+    public var stableIdentity: String {
+        let account = "\(provider.rawValue):\(accountID)"
+        return observationOwnerID.map { "\(account):owner:\($0)" } ?? account
+    }
 
     public func severity(
         thresholds: UsageThresholds = .default,
@@ -684,7 +692,8 @@ public enum MainMeterPolicy {
         pinnedAccountID: String?,
         selectionRevision: Int
     ) -> Bool {
-        guard reading.provider == provider,
+        guard reading.provider != .codex || reading.observationOwnerID != nil,
+            reading.provider == provider,
             reading.selectionRevision == selectionRevision
         else { return false }
         return pinnedAccountID == nil || reading.accountID == pinnedAccountID

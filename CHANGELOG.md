@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Codex readings and quota alerts no longer carry over to another login in the same home directory.
+
 ## [2.16] - 2026-09-05
 
 ### Added

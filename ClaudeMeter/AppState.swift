@@ -16,10 +16,27 @@ typealias ConfigBridgeRefreshOperation =
     @Sendable (ConfigBridgeRefreshRequest) async -> Void
 typealias CodexUsageFetchOperation =
     @Sendable (CodexAccount, CodexSourceMode, Date) async throws -> CodexUsage
+typealias CodexIdentityLoadOperation = @Sendable (CodexAccount) -> CodexCredentialIdentity
 typealias AttentionEventDrainOperation =
     @Sendable (Set<String>, Date) async -> [SessionEvent]
 typealias MainMeterPublicationOperation =
     @Sendable (MainMeterReading?, SnapshotStore) throws -> Void
+
+/// At most one blocked read per home, with a separate process-work limit.
+final class CodexIdentityReadGate: @unchecked Sendable {
+    let budget = Timeout.TaskBudget(limit: 64)
+    private let lock = NSLock()
+    private var active: Set<String> = []
+
+    func read(_ account: CodexAccount, loader: CodexIdentityLoadOperation) throws
+        -> CodexCredentialIdentity
+    {
+        let inserted = lock.withLock { active.insert(account.id).inserted }
+        guard inserted else { throw TimeoutCapacityError() }
+        defer { _ = lock.withLock { active.remove(account.id) } }
+        return loader(account)
+    }
+}
 
 @MainActor
 final class AppState: ObservableObject {
@@ -42,7 +59,18 @@ final class AppState: ObservableObject {
     @Published private var cursorReading: ReadingState<CursorUsage>?
     @Published private(set) var codexAccounts: [CodexAccountReading] = []
     @Published private var grokReading: ReadingState<GrokUsage>?
-    @Published var costScanPartial = false
+    @Published private var costReading: ReadingState<CostUsageResult>?
+    @Published private(set) var costIsLoading = false
+    var costModels: [ModelUsage] { costReading?.value?.models ?? [] }
+    var costScanPartial: Bool {
+        costReading?.value?.isPartialEstimate == true || costReading?.error != nil
+    }
+    var costScannedAt: Date? { costReading?.lastPolledAt }
+    var costRefreshFailed: Bool { costReading?.error != nil }
+    private var costRefreshTask: Task<Void, Never>?
+    private var pendingCostConfiguration: PollConfiguration?
+    private let costScanBudget = Timeout.TaskBudget(limit: 1)
+    private let costScanTimeoutSeconds: TimeInterval
     /// Activity heatmap (7×24 message counts), scanned on demand when the user
     /// opens it from the cost card. `nil` until first requested.
     @Published var activityHeatmap: ActivityHeatmap? = nil
@@ -54,6 +82,8 @@ final class AppState: ObservableObject {
     let notificationEngine: NotificationEngine
     private let store: SnapshotStore
     private let codexReadingStore: CodexReadingStore
+    private let codexIdentityLoader: CodexIdentityLoadOperation
+    private let codexIdentityReadGate = CodexIdentityReadGate()
     /// Test meters keep pause/resume writes out of the installed app's settings.
     private let activationDefaults: UserDefaults
     private let ephemeralDefaultsSuiteName: String?
@@ -132,12 +162,12 @@ final class AppState: ObservableObject {
     /// trip throws so `isLoading` resets and the loop recovers on the next interval
     /// instead of freezing every later refresh.
     private static let pollTimeoutSeconds: TimeInterval = 60
-    /// Transcript reads are advisory. Keep them below the main poll deadline so a
-    /// wedged filesystem cannot stop fresh quota data from being published.
+    /// Transcript deadlines release loading state. Cost scans run independently
+    /// of quota publication, so even a blocked read cannot hold fresh quota data.
     private static let transcriptScanTimeoutSeconds: TimeInterval = 30
     /// A stuck transcript read must not consume the capacity used by provider
-    /// requests. Two slots allow the cost and activity scans to overlap once.
-    private static let transcriptScanTimeoutBudget = Timeout.TaskBudget(limit: 2)
+    /// requests. Cost has a separate per-app budget; activity uses this slot.
+    private static let transcriptScanTimeoutBudget = Timeout.TaskBudget(limit: 1)
     /// Isolate cancellation-ignoring Codex processes from other providers. Two
     /// batches can remain abandoned; later cycles then fail fast until they exit.
     private static let codexPollTimeoutBudget = Timeout.TaskBudget(limit: 6)
@@ -427,7 +457,8 @@ final class AppState: ObservableObject {
             sessionLabel: windows.session?.displayLabel ?? "5h",
             weeklyLabel: windows.weekly?.displayLabel ?? "7d",
             observedAt: observedAt,
-            selectionRevision: AppGroupConfig.mainMeterRevision(shared: nil))
+            selectionRevision: AppGroupConfig.mainMeterRevision(shared: nil),
+            observationOwnerID: reading.ownerID)
     }
 
     private nonisolated static func classifiedCodexWindows(_ usage: CodexUsage) -> (
@@ -558,6 +589,7 @@ final class AppState: ObservableObject {
         self.store = store
         let codexReadingStore = CodexReadingStore()
         self.codexReadingStore = codexReadingStore
+        self.codexIdentityLoader = { CodexOAuthCredentialsStore.identity(codexHome: $0.home) }
         self.activationDefaults = .standard
         self.ephemeralDefaultsSuiteName = nil
         self.ephemeralStoreDirectory = nil
@@ -574,6 +606,7 @@ final class AppState: ObservableObject {
         self.costUsageScanner = { now, configuration in
             await AppState.scanCostModels(now: now, configuration: configuration)
         }
+        self.costScanTimeoutSeconds = Self.transcriptScanTimeoutSeconds
         self.pollCompletionBarrier = nil
         self.configBridgeRefreshOperation = { request in
             AppState.performConfigBridgeRefresh(request)
@@ -590,10 +623,12 @@ final class AppState: ObservableObject {
         self.pipeline = AppState.makePipeline(store: store)
         // Self is fully initialized from here on.
         self.snapshot = try? store.readLatest()
+        // Persisted totals have no verified current root scope on launch.
+        self.snapshot?.models = []
+        self.snapshot?.costObservation = nil
         self.lastPolledAt = snapshot?.lastSuccessfulPollAt
-        if AppSettings.codexSourceEnabled {
-            self.codexAccounts = codexReadingStore.restore(accounts: AppSettings.codexAccounts())
-        }
+        // Persisted Codex readings are restored only after the first poll checks
+        // their owner off-main. A home path alone is not a signed-in account.
         if snapshot == nil, let record = try? store.readLastError() {
             self.lastError = record.message
         }
@@ -656,7 +691,9 @@ final class AppState: ObservableObject {
         costUsageScanner: @escaping @Sendable (Date, PollConfiguration) async -> CostUsageResult = {
             _, _ in .empty
         },
+        costScanTimeoutSeconds: TimeInterval = 30,
         codexReadingStore: CodexReadingStore? = nil,
+        codexIdentityLoader: @escaping CodexIdentityLoadOperation = { _ in .unavailable },
         notificationEngine: NotificationEngine = NotificationEngine(),
         pollCompletionBarrier: (@Sendable () async -> Void)? = nil,
         systemIntegrationEnabled: Bool = false,
@@ -675,6 +712,7 @@ final class AppState: ObservableObject {
         let suiteName = "ClaudeMeter-AppState-\(id)"
         let testDefaults = UserDefaults(suiteName: suiteName)!
         self.codexReadingStore = codexReadingStore ?? CodexReadingStore(defaults: testDefaults)
+        self.codexIdentityLoader = codexIdentityLoader
         self.activationDefaults = testDefaults
         self.ephemeralDefaultsSuiteName = suiteName
         self.ephemeralStoreDirectory = directory
@@ -687,6 +725,7 @@ final class AppState: ObservableObject {
         self.serviceStatusFetcher = serviceStatusFetcher
         self.oauthEnrichmentFetcher = oauthEnrichmentFetcher
         self.costUsageScanner = costUsageScanner
+        self.costScanTimeoutSeconds = costScanTimeoutSeconds
         self.pollCompletionBarrier = pollCompletionBarrier
         self.configBridgeRefreshOperation =
             configBridgeRefreshOperation
@@ -706,6 +745,8 @@ final class AppState: ObservableObject {
             }
         self.pipeline = pipeline
         self.snapshot = initialSnapshot
+        self.snapshot?.models = []
+        self.snapshot?.costObservation = nil
         self.lastPolledAt = initialSnapshot?.lastSuccessfulPollAt
         appUpdater.appState = self
     }
@@ -713,6 +754,7 @@ final class AppState: ObservableObject {
     deinit {
         pollTask?.cancel()
         serviceStatusRefreshTask?.cancel()
+        costRefreshTask?.cancel()
         rebuildDebounceTask?.cancel()
         configRefreshTask?.cancel()
         attentionTask?.cancel()
@@ -770,7 +812,8 @@ final class AppState: ObservableObject {
     func stopPolling() {
         // Only the meter poll — the attention watcher has its own lifecycle (it's
         // not tied to having a usage data source).
-        let invalidatedExistingCycle = pollTask != nil || activePollCycleID != nil
+        let invalidatedExistingCycle =
+            pollTask != nil || activePollCycleID != nil || costRefreshTask != nil
         if invalidatedExistingCycle { invalidatePollGeneration() }
         pollTask?.cancel()
         pollTask = nil
@@ -783,6 +826,20 @@ final class AppState: ObservableObject {
     private func invalidatePollGeneration() {
         notificationEngine.pollFailed()
         pipelineGeneration += 1
+        pendingCostConfiguration = nil
+        clearCostReading()
+    }
+
+    private func clearCostReading() {
+        costReading = nil
+        // Do not cancel-and-await synchronous scans. Their generation is revoked;
+        // a later request replaces only the one pending configuration.
+        if var snapshot {
+            snapshot.models = []
+            snapshot.costObservation = nil
+            self.snapshot = snapshot
+            try? store.writeLatest(snapshot)
+        }
     }
 
     private func invalidateActivePollCycle() {
@@ -881,9 +938,6 @@ final class AppState: ObservableObject {
             // the old observation before that work can let delivery complete.
             notificationEngine.pollFailed()
         }
-        if enabled {
-            codexAccounts = codexReadingStore.restore(accounts: AppSettings.codexAccounts())
-        }
         optionalSourceSettingDidChange(enabled: enabled, clearState: clearCodexState)
         if codexOwnsMainMeter { finishMainMeterSelectionChange() }
     }
@@ -904,16 +958,13 @@ final class AppState: ObservableObject {
         let previousPublishedReading = publishedMainMeterReading
         let previousNotificationReading = lastNotificationReading
         let existing = Dictionary(uniqueKeysWithValues: codexAccounts.map { ($0.id, $0) })
-        let restored = Dictionary(
-            uniqueKeysWithValues: codexReadingStore.restore(
-                accounts: AppSettings.codexAccounts()
-            ).map { ($0.id, $0) })
         codexAccounts = AppSettings.codexAccounts().compactMap { account in
-            guard let reading = existing[account.id] ?? restored[account.id] else { return nil }
+            guard let reading = existing[account.id] else { return nil }
             return CodexAccountReading(
                 account: account,
                 state: reading.state,
-                lastAttemptAt: reading.lastAttemptAt)
+                lastAttemptAt: reading.lastAttemptAt,
+                ownerID: reading.ownerID)
         }
         guard codexOwnsMainMeter else { return }
         var currentReading = mainMeterReading
@@ -970,6 +1021,7 @@ final class AppState: ObservableObject {
 
     /// Debounced rebuild for source toggles — avoids restarting the poll loop on every flip.
     func scheduleRebuildPipeline() {
+        clearCostReading()
         if mainMeterProvider == .claude {
             // The setting changed before the debounce starts. Revoke its old
             // observation now instead of leaving it live during the delay.
@@ -1109,6 +1161,7 @@ final class AppState: ObservableObject {
         let configuration = PollConfiguration(
             generation: pipelineGeneration, refreshKind: kind)
         isLoading = true
+        if configuration.claudeEnabled { scheduleCostRefresh(configuration: configuration) }
         defer { finishPollCycle(cycleID) }
 
         await withTaskGroup(of: Void.self) { group in
@@ -1172,22 +1225,6 @@ final class AppState: ObservableObject {
             }
 
             if var snap = result.snapshot {
-                // Enrich with per-model token/cost usage scanned from local logs.
-                // Independent of which tier produced the rate-limit snapshot.
-                let costResult: CostUsageResult
-                do {
-                    let scan = costUsageScanner
-                    costResult = try await Timeout.run(
-                        seconds: Self.transcriptScanTimeoutSeconds,
-                        budget: Self.transcriptScanTimeoutBudget
-                    ) {
-                        await scan(now, configuration)
-                    }
-                } catch {
-                    costResult = CostUsageResult(models: [], isPartialEstimate: true)
-                }
-                guard configuration.generation == pipelineGeneration, canPoll else { return }
-                Self.applyCostModels(costResult, to: &snap)
                 // Opus weekly, extra-usage spend, and plan live only in the OAuth
                 // response. When statusline produced the snapshot, layer those
                 // fields on if OAuth credentials are available.
@@ -1216,7 +1253,7 @@ final class AppState: ObservableObject {
                     thresholds: configuration.thresholds,
                     activeTopLevelOAuthDetailsObservedAt: topLevelOAuthDetailsObservedAt)
                 snap = mergedSnap
-                costScanPartial = costResult.isPartialEstimate
+                applyCurrentCost(to: &snap)
                 do {
                     try store.writeLatest(snap)
                     try store.clearLastError()
@@ -1327,22 +1364,52 @@ final class AppState: ObservableObject {
             if activePollCycleID == cycleID { codexIsLoading = false }
         }
         let now = Date()
-        let previous = Dictionary(uniqueKeysWithValues: codexAccounts.map { ($0.id, $0) })
+        let accounts = configuration.codexAccounts
+        var previous = Dictionary(
+            uniqueKeysWithValues: codexReadingStore.candidates(accounts: accounts).map {
+                ($0.id, $0)
+            })
+        for reading in codexAccounts { previous[reading.id] = reading }
         let previousPublishedReading = publishedMainMeterReading
         let previousNotificationReading = lastNotificationReading
-        let accounts = configuration.codexAccounts
-        let readings = await Self.fetchCodexAccountReadings(
+        let readings = await Self.fetchOwnedCodexAccountReadings(
             accounts: accounts,
             previous: previous,
             mode: configuration.codexMode,
             now: now,
             perAccountTimeoutSeconds: Self.pollTimeoutSeconds,
             totalTimeoutSeconds: Self.pollTimeoutSeconds,
-            budget: Self.codexPollTimeoutBudget
-        ) { account, mode, now in
-            try await CodexUsageProvider(codexHome: account.home).fetchUsage(
-                mode: mode, now: now)
-        }
+            budget: Self.codexPollTimeoutBudget,
+            identityLoader: codexIdentityLoader,
+            identityGate: codexIdentityReadGate,
+            validatedPrevious: { [weak self] validated in
+                guard let self,
+                    configuration.generation == self.pipelineGeneration,
+                    self.activePollCycleID == cycleID, self.canPoll
+                else { return }
+                let previousReading = self.mainMeterReading
+                self.codexAccounts = validated
+                guard self.mainMeterProvider == .codex else { return }
+                if MainMeterPolicy.shouldBumpSelectionRevision(
+                    previous: previousReading, current: self.mainMeterReading,
+                    configurationChanged: false)
+                {
+                    AppGroupConfig.bumpMainMeterRevision()
+                    self.notificationIdentity = nil
+                    self.allowsPersistedNotificationRecovery = false
+                    self.notificationEngine.pollFailed()
+                }
+                self.publishMainMeterReading()
+                if MainMeterPolicy.shouldReloadWidget(
+                    previous: previousReading, current: self.mainMeterReading)
+                {
+                    WidgetCenter.shared.reloadAllTimelines()
+                }
+            },
+            fetch: { account, mode, now in
+                try await CodexUsageProvider(codexHome: account.home).fetchUsage(
+                    mode: mode, now: now)
+            })
         guard configuration.generation == pipelineGeneration,
             canPoll,
             AppSettings.codexSourceEnabled
@@ -1367,7 +1434,7 @@ final class AppState: ObservableObject {
         if let currentSelected,
             let lifecycle = codexAccounts.first(where: { $0.id == currentSelected.accountID })
         {
-            if case .current = lifecycle.state {
+            if case .current = lifecycle.state, lifecycle.ownerID != nil {
                 await processMainMeterObservation(
                     currentSelected,
                     previous: previousNotificationReading,
@@ -1385,6 +1452,83 @@ final class AppState: ObservableObject {
             current: currentSelected)
         {
             WidgetCenter.shared.reloadAllTimelines()
+        }
+    }
+
+    /// Ownership reads share the provider deadline and run on bounded detached
+    /// workers. Reserve the final read before fetching so even a timed-out source
+    /// cannot reuse another login's previous value. Unknown owners can supply a
+    /// current reading only when their source stayed unchanged; they are never
+    /// restored from cache or used for notification baselines.
+    nonisolated static func fetchOwnedCodexAccountReadings(
+        accounts: [CodexAccount],
+        previous: [String: CodexAccountReading],
+        mode: CodexSourceMode,
+        now: Date,
+        perAccountTimeoutSeconds: TimeInterval,
+        totalTimeoutSeconds: TimeInterval,
+        budget: Timeout.TaskBudget,
+        identityLoader: @escaping CodexIdentityLoadOperation,
+        identityGate: CodexIdentityReadGate = .init(),
+        validatedPrevious: @escaping @MainActor @Sendable ([CodexAccountReading]) -> Void = { _ in
+        },
+        fetch: @escaping CodexUsageFetchOperation
+    ) async -> [CodexAccountReading] {
+        let timeout = totalTimeoutSeconds.isFinite ? max(0, totalTimeoutSeconds) : 0
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        let identityAllowance = min(2, timeout / 4)
+        let before = await loadCodexIdentities(
+            accounts: accounts, timeout: identityAllowance, gate: identityGate,
+            loader: identityLoader)
+        let validPrevious = previous.filter { key, reading in
+            reading.ownerID != nil && reading.ownerID == before[key]?.ownerID
+        }
+        await validatedPrevious(accounts.compactMap { validPrevious[$0.id] })
+        let readings = await fetchCodexAccountReadings(
+            accounts: accounts, previous: validPrevious, mode: mode, now: now,
+            perAccountTimeoutSeconds: perAccountTimeoutSeconds,
+            totalTimeoutSeconds: max(
+                0, deadline - ProcessInfo.processInfo.systemUptime - identityAllowance),
+            budget: budget, fetch: fetch)
+        let after = await loadCodexIdentities(
+            accounts: accounts,
+            timeout: min(
+                identityAllowance, max(0, deadline - ProcessInfo.processInfo.systemUptime)),
+            gate: identityGate, loader: identityLoader)
+        return readings.map { reading in
+            guard let original = before[reading.id], let current = after[reading.id],
+                original.acceptsResult(after: current)
+            else {
+                return CodexAccountReading(
+                    account: reading.account,
+                    state: .failed(
+                        error: "Codex sign-in changed or could not be verified. Refresh again.",
+                        lastPolledAt: nil),
+                    lastAttemptAt: reading.lastAttemptAt)
+            }
+            return CodexAccountReading(
+                account: reading.account, state: reading.state,
+                lastAttemptAt: reading.lastAttemptAt, ownerID: current.ownerID)
+        }
+    }
+
+    nonisolated private static func loadCodexIdentities(
+        accounts: [CodexAccount], timeout: TimeInterval, gate: CodexIdentityReadGate,
+        loader: @escaping CodexIdentityLoadOperation
+    ) async -> [String: CodexCredentialIdentity] {
+        guard timeout > 0, !Task.isCancelled else { return [:] }
+        return await withTaskGroup(of: (String, CodexCredentialIdentity?).self) { group in
+            for account in accounts {
+                group.addTask {
+                    let identity = try? await Timeout.run(seconds: timeout, budget: gate.budget) {
+                        try gate.read(account, loader: loader)
+                    }
+                    return (account.id, identity)
+                }
+            }
+            var identities: [String: CodexCredentialIdentity] = [:]
+            for await (id, identity) in group { identities[id] = identity }
+            return identities
         }
     }
 
@@ -1470,7 +1614,7 @@ final class AppState: ObservableObject {
             return CodexAccountReading(
                 account: account,
                 state: .stale(value: usage, polledAt: polledAt, error: message),
-                lastAttemptAt: attemptedAt)
+                lastAttemptAt: attemptedAt, ownerID: prior?.ownerID)
         }
         return CodexAccountReading(
             account: account,
@@ -1772,17 +1916,67 @@ final class AppState: ObservableObject {
         return validAccountKeys.compactMap { byKey[$0] }
     }
 
-    /// Applies a complete scan even when it found no usage. An empty partial scan
-    /// can mean a timeout or unreadable root, so it keeps the prior last-good list.
-    @discardableResult
-    nonisolated static func applyCostModels(
-        _ result: CostUsageResult,
-        to snapshot: inout ClaudeUsageSnapshot
-    ) -> Bool {
-        guard !result.models.isEmpty || !result.isPartialEstimate else { return false }
-        guard snapshot.models != result.models else { return false }
-        snapshot.models = result.models
-        return true
+    /// Cost scans never join the quota task group. One active scan and one latest
+    /// pending request bound repeated opens, even when filesystem work ignores
+    /// cancellation. The separate one-slot budget also bounds timed-out workers.
+    private func scheduleCostRefresh(configuration: PollConfiguration) {
+        guard configuration.generation == pipelineGeneration, configuration.claudeEnabled,
+            configuration.costSourcesMatchCurrentSettings, canPoll
+        else { return }
+        guard costRefreshTask == nil else {
+            pendingCostConfiguration = configuration
+            return
+        }
+        let scan = costUsageScanner
+        let budget = costScanBudget
+        let timeout = costScanTimeoutSeconds
+        let now = Date()
+        costIsLoading = true
+        costRefreshTask = Task { [weak self] in
+            let result = try? await Timeout.run(seconds: timeout, budget: budget) {
+                await scan(now, configuration)
+            }
+            guard let self else { return }
+            costRefreshTask = nil
+            costIsLoading = false
+            if configuration.generation == pipelineGeneration,
+                configuration.costSourcesMatchCurrentSettings, canPoll
+            {
+                costReading = Self.updatedCostReading(result, previous: costReading, scannedAt: now)
+                // Merge only into the latest quota snapshot. Cost completion cannot
+                // restore an older quota, advance its timestamp, or emit quota alerts.
+                if var snapshot {
+                    applyCurrentCost(to: &snapshot)
+                    self.snapshot = snapshot
+                    try? store.writeLatest(snapshot)
+                }
+            }
+            let pending = pendingCostConfiguration
+            pendingCostConfiguration = nil
+            if let pending { scheduleCostRefresh(configuration: pending) }
+        }
+    }
+
+    nonisolated static func updatedCostReading(
+        _ result: CostUsageResult?, previous: ReadingState<CostUsageResult>?, scannedAt: Date
+    ) -> ReadingState<CostUsageResult> {
+        if let result, !result.models.isEmpty || !result.isPartialEstimate {
+            return .current(value: result, polledAt: scannedAt)
+        }
+        let error = "Cost scan did not complete."
+        if let previousValue = previous?.value, let previousDate = previous?.lastPolledAt,
+            let result, result.sourcePaths == previousValue.sourcePaths
+        {
+            return .stale(value: previousValue, polledAt: previousDate, error: error)
+        }
+        return .failed(error: error, lastPolledAt: nil)
+    }
+
+    private func applyCurrentCost(to snapshot: inout ClaudeUsageSnapshot) {
+        snapshot.models = costModels
+        snapshot.costObservation = costReading?.value.flatMap { _ in
+            costScannedAt.map { CostObservation(scannedAt: $0, isPartial: costScanPartial) }
+        }
     }
 
     @discardableResult
@@ -1821,7 +2015,7 @@ final class AppState: ObservableObject {
     /// days), unioned across every discovered config dir (cost is additive).
     /// Discovery happens here, off-main, rather than reusing a cached list — so the
     /// union is correct from the very first poll, independent of the statusline source.
-    private static func scanCostModels(
+    nonisolated private static func scanCostModels(
         now: Date,
         configuration: PollConfiguration
     ) async -> CostUsageResult {

@@ -36,7 +36,9 @@ public struct CostUsageScanner: Sendable {
         calendar: Calendar = .current
     ) {
         let roots = projectsPaths.isEmpty ? [JournalReader.defaultProjectsPath] : projectsPaths
-        self.projectsPaths = roots.dedupedByResolvedPath()
+        self.projectsPaths = roots.dedupedByResolvedPath().map {
+            $0.resolvingSymlinksInPath().standardizedFileURL
+        }
         self.pricing = pricing
         self.cache = cache
         self.calendar = calendar
@@ -93,7 +95,10 @@ public struct CostUsageScanner: Sendable {
         // resident entry — at the 2048-entry cap that was megabytes of atomic write
         // per minute for a cache whose only job is to avoid a cold-start re-parse.
         cache.flushIfDue(now: now)
-        return aggregate(byDayModel, isPartial: isPartial)
+        let result = aggregate(byDayModel, isPartial: isPartial)
+        return CostUsageResult(
+            models: result.models, isPartialEstimate: result.isPartialEstimate,
+            sourcePaths: projectsPaths.map(\.path).sorted())
     }
 
     /// Accumulates one `projects/` root into the running totals. A missing root is
@@ -175,6 +180,7 @@ public struct CostUsageScanner: Sendable {
                         path: file.path,
                         modDate: metadata.modificationDate,
                         fileSize: metadata.fileSize,
+                        identity: metadata.identity,
                         timeZoneIdentifier: calendar.timeZone.identifier)
                     {
                     case .exact(let value, let wasPartial):
@@ -188,11 +194,12 @@ public struct CostUsageScanner: Sendable {
                         // unchanged transcript is empty. Do not turn that failure
                         // into an exact cache hit on the next scan. Successful tail
                         // reads stay cacheable even though their estimate is partial.
-                        if parse.isCacheable {
+                        if parse.isCacheable, parse.metadata == metadata {
                             cache.store(
                                 file: file.path,
                                 modDate: metadata.modificationDate,
                                 fileSize: metadata.fileSize,
+                                identity: metadata.identity,
                                 timeZoneIdentifier: calendar.timeZone.identifier,
                                 scan: parse.scan)
                         }
@@ -271,6 +278,7 @@ public struct CostUsageScanner: Sendable {
     private struct FileParse: Sendable {
         let scan: FileScan
         let isCacheable: Bool
+        var metadata: JournalReader.TranscriptMetadata? = nil
     }
 
     // MARK: - Parsing
@@ -291,7 +299,7 @@ public struct CostUsageScanner: Sendable {
         guard !read.data.isEmpty else {
             return FileParse(
                 scan: FileScan(isPartial: read.isPartial, records: []),
-                isCacheable: true)
+                isCacheable: read.isCacheable, metadata: read.metadata)
         }
         // A tail read may start mid-line; drop the first partial line.
         return FileParse(
@@ -300,7 +308,7 @@ public struct CostUsageScanner: Sendable {
                 dropFirstLine: read.baseOffset > 0,
                 wasPartial: read.isPartial,
                 calendar: calendar),
-            isCacheable: true)
+            isCacheable: read.isCacheable, metadata: read.metadata)
     }
 
     /// Core line scanner over a byte buffer. Streaming chunks are keyed across the
@@ -446,14 +454,18 @@ public struct CostUsageScanner: Sendable {
 
 public struct CostUsageResult: Sendable, Equatable {
     public let models: [ModelUsage]
+    /// Canonical roots used by this scan, for safe reuse after an incomplete scan.
+    public let sourcePaths: [String]
     /// `true` when totals can be incomplete or an invalid counter was clamped.
     public let isPartialEstimate: Bool
 
     public init(
         models: [ModelUsage],
-        isPartialEstimate: Bool = false
+        isPartialEstimate: Bool = false,
+        sourcePaths: [String] = []
     ) {
         self.models = models
+        self.sourcePaths = sourcePaths
         self.isPartialEstimate = isPartialEstimate
     }
 
@@ -681,6 +693,7 @@ public final class CostUsageCache: @unchecked Sendable {
     private struct Entry {
         var modDate: Date
         var fileSize: UInt64
+        var identity: JournalReader.TranscriptIdentity
         var timeZoneIdentifier: String
         var records: [CostUsageScanner.RequestRecord]
         var retainedBytes: Int
@@ -692,9 +705,9 @@ public final class CostUsageCache: @unchecked Sendable {
     static let maxEntries = 2048
     static let maximumRetainedBytes = 32 * 1024 * 1024
     private static let maximumPersistenceFileBytes = 64 * 1_024 * 1_024
-    // v5 retains request identities and tier provenance. Older aggregate-only
-    // entries cannot reconcile copied history and must be rebuilt.
-    private static let diskVersion = 5
+    // v6 binds request records to device/inode identity. Rebuild older caches
+    // because equal path, size, and mtime cannot prove the file is unchanged.
+    private static let diskVersion = 6
 
     private let persistenceURL: URL?
     private let byteLimit: Int
@@ -737,6 +750,7 @@ public final class CostUsageCache: @unchecked Sendable {
         path: String,
         modDate: Date,
         fileSize: UInt64,
+        identity: JournalReader.TranscriptIdentity,
         timeZoneIdentifier: String = TimeZone.current.identifier
     ) -> Lookup {
         lock.lock()
@@ -745,6 +759,7 @@ public final class CostUsageCache: @unchecked Sendable {
         guard let entry = entries[path] else { return .miss }
         if entry.modDate == modDate,
             entry.fileSize == fileSize,
+            entry.identity == identity,
             entry.timeZoneIdentifier == timeZoneIdentifier
         {
             recency.touch(path)
@@ -760,6 +775,7 @@ public final class CostUsageCache: @unchecked Sendable {
         file path: String,
         modDate: Date,
         fileSize: UInt64,
+        identity: JournalReader.TranscriptIdentity,
         timeZoneIdentifier: String = TimeZone.current.identifier,
         scan: CostUsageScanner.FileScan
     ) {
@@ -775,6 +791,7 @@ public final class CostUsageCache: @unchecked Sendable {
         entries[path] = Entry(
             modDate: modDate,
             fileSize: fileSize,
+            identity: identity,
             timeZoneIdentifier: timeZoneIdentifier,
             records: scan.records, retainedBytes: bytes, isPartial: scan.isPartial)
         retainedBytes += bytes
@@ -883,6 +900,7 @@ public final class CostUsageCache: @unchecked Sendable {
             entries[de.path] = Entry(
                 modDate: Date(timeIntervalSinceReferenceDate: de.modDate),
                 fileSize: de.fileSize,
+                identity: de.identity,
                 timeZoneIdentifier: de.timeZoneIdentifier,
                 records: de.records,
                 retainedBytes: bytes,
@@ -901,6 +919,7 @@ public final class CostUsageCache: @unchecked Sendable {
                 return DiskEntry(
                     path: path, modDate: e.modDate.timeIntervalSinceReferenceDate,
                     fileSize: e.fileSize,
+                    identity: e.identity,
                     timeZoneIdentifier: e.timeZoneIdentifier,
                     isPartial: e.isPartial, records: e.records)
             })
@@ -927,6 +946,7 @@ public final class CostUsageCache: @unchecked Sendable {
         var path: String
         var modDate: Double
         var fileSize: UInt64
+        var identity: JournalReader.TranscriptIdentity
         var timeZoneIdentifier: String
         var isPartial: Bool
         var records: [CostUsageScanner.RequestRecord]

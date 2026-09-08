@@ -15,12 +15,20 @@ public enum JournalReader {
         var isPartial = false
     }
 
-    struct TranscriptMetadata {
+    struct TranscriptIdentity: Codable, Equatable, Sendable {
+        let device: UInt64
+        let inode: UInt64
+    }
+
+    struct TranscriptMetadata: Equatable, Sendable {
+        let identity: TranscriptIdentity
         let modificationDate: Date
         let fileSize: UInt64
     }
 
     struct TranscriptRead {
+        let metadata: TranscriptMetadata
+        let isCacheable: Bool
         let data: Data
         let baseOffset: UInt64
         let fileSize: UInt64
@@ -121,21 +129,28 @@ public enum JournalReader {
         return discovery
     }
 
-    /// Returns metadata only for a regular file. FileManager reports a symbolic
-    /// link as `.typeSymbolicLink`, so links are never accepted as transcripts.
+    /// Uses lstat so transcript symlinks remain excluded. Discovery and descriptor
+    /// reads use the same conversion, including the modification-time precision.
     static func regularTranscriptMetadata(
         at url: URL, fm: FileManager
     ) throws -> TranscriptMetadata? {
-        let attributes = try fm.attributesOfItem(atPath: url.path)
-        guard attributes[.type] as? FileAttributeType == .typeRegular else { return nil }
-        guard let modificationDate = attributes[.modificationDate] as? Date,
-            let size = attributes[.size] as? NSNumber
-        else {
-            throw CocoaError(.fileReadUnknown)
+        var status = stat()
+        guard url.path.withCString({ lstat($0, &status) }) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
         }
+        return transcriptMetadata(status)
+    }
+
+    private static func transcriptMetadata(_ status: stat) -> TranscriptMetadata? {
+        guard (status.st_mode & S_IFMT) == S_IFREG, status.st_size >= 0 else { return nil }
         return TranscriptMetadata(
-            modificationDate: modificationDate,
-            fileSize: size.uint64Value)
+            identity: TranscriptIdentity(
+                device: UInt64(UInt32(bitPattern: status.st_dev)), inode: UInt64(status.st_ino)),
+            modificationDate: Date(
+                timeIntervalSince1970:
+                    Double(status.st_mtimespec.tv_sec) + Double(status.st_mtimespec.tv_nsec)
+                    / 1_000_000_000),
+            fileSize: UInt64(status.st_size))
     }
 
     /// Opens one transcript without following links and reads at most the existing
@@ -144,7 +159,8 @@ public enum JournalReader {
     static func readRegularTranscript(
         at url: URL,
         maxFullReadBytes: UInt64,
-        tailReadBytes: UInt64
+        tailReadBytes: UInt64,
+        afterRead: (() -> Void)? = nil
     ) -> TranscriptRead? {
         let descriptor = url.path.withCString {
             Darwin.open($0, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
@@ -154,8 +170,7 @@ public enum JournalReader {
 
         var status = stat()
         guard fstat(descriptor, &status) == 0,
-            (status.st_mode & S_IFMT) == S_IFREG,
-            status.st_size >= 0
+            let metadata = transcriptMetadata(status)
         else { return nil }
 
         let fileSize = UInt64(status.st_size)
@@ -189,11 +204,18 @@ public enum JournalReader {
         if bytesRead < data.count {
             data.removeSubrange(bytesRead..<data.count)
         }
+        afterRead?()
+        var finalStatus = stat()
+        let isCacheable =
+            fstat(descriptor, &finalStatus) == 0
+            && transcriptMetadata(finalStatus) == metadata && UInt64(bytesRead) == requestedBytes
         return TranscriptRead(
+            metadata: metadata,
+            isCacheable: isCacheable,
             data: data,
             baseOffset: baseOffset,
             fileSize: fileSize,
-            isPartial: tailRead || UInt64(bytesRead) != requestedBytes)
+            isPartial: tailRead || !isCacheable)
     }
 
     static func isMissingPath(_ url: URL, fm: FileManager) -> Bool {

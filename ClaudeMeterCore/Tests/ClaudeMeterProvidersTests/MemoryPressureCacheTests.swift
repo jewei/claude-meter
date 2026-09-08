@@ -14,19 +14,19 @@ struct MemoryPressureCacheTests {
             cache.store(
                 file: "/tmp/cost-\(index)",
                 modDate: modDate,
-                fileSize: 0,
+                fileSize: 0, identity: .init(device: 1, inode: 1),
                 timeZoneIdentifier: "UTC",
                 scan: scan)
         }
         _ = cache.lookup(
             path: "/tmp/cost-0",
             modDate: modDate,
-            fileSize: 0,
+            fileSize: 0, identity: .init(device: 1, inode: 1),
             timeZoneIdentifier: "UTC")
         cache.store(
             file: "/tmp/cost-new",
             modDate: modDate,
-            fileSize: 0,
+            fileSize: 0, identity: .init(device: 1, inode: 1),
             timeZoneIdentifier: "UTC",
             scan: scan)
 
@@ -35,7 +35,7 @@ struct MemoryPressureCacheTests {
             case .exact = cache.lookup(
                 path: "/tmp/cost-0",
                 modDate: modDate,
-                fileSize: 0,
+                fileSize: 0, identity: .init(device: 1, inode: 1),
                 timeZoneIdentifier: "UTC")
         else {
             Issue.record("A recently touched cost entry was evicted")
@@ -45,7 +45,7 @@ struct MemoryPressureCacheTests {
             case .miss = cache.lookup(
                 path: "/tmp/cost-1",
                 modDate: modDate,
-                fileSize: 0,
+                fileSize: 0, identity: .init(device: 1, inode: 1),
                 timeZoneIdentifier: "UTC")
         else {
             Issue.record("The least-recently-used cost entry was retained")
@@ -62,19 +62,19 @@ struct MemoryPressureCacheTests {
             cache.store(
                 path: "/tmp/activity-\(index)",
                 modDate: modDate,
-                fileSize: 0,
+                fileSize: 0, identity: .init(device: 1, inode: 1),
                 timeZoneIdentifier: "UTC",
                 scan: scan)
         }
         _ = cache.cached(
             path: "/tmp/activity-0",
             modDate: modDate,
-            fileSize: 0,
+            fileSize: 0, identity: .init(device: 1, inode: 1),
             timeZoneIdentifier: "UTC")
         cache.store(
             path: "/tmp/activity-new",
             modDate: modDate,
-            fileSize: 0,
+            fileSize: 0, identity: .init(device: 1, inode: 1),
             timeZoneIdentifier: "UTC",
             scan: scan)
 
@@ -83,13 +83,13 @@ struct MemoryPressureCacheTests {
             cache.cached(
                 path: "/tmp/activity-0",
                 modDate: modDate,
-                fileSize: 0,
+                fileSize: 0, identity: .init(device: 1, inode: 1),
                 timeZoneIdentifier: "UTC") != nil)
         #expect(
             cache.cached(
                 path: "/tmp/activity-1",
                 modDate: modDate,
-                fileSize: 0,
+                fileSize: 0, identity: .init(device: 1, inode: 1),
                 timeZoneIdentifier: "UTC") == nil)
     }
 
@@ -106,12 +106,13 @@ struct MemoryPressureCacheTests {
         cache.store(
             file: "/tmp/session.jsonl",
             modDate: modDate,
-            fileSize: 10,
+            fileSize: 10, identity: .init(device: 1, inode: 1),
             scan: CostUsageScanner.FileScan(isPartial: false, records: []))
         cache.flush()
         guard
             case .exact = cache.lookup(
-                path: "/tmp/session.jsonl", modDate: modDate, fileSize: 10)
+                path: "/tmp/session.jsonl", modDate: modDate, fileSize: 10,
+                identity: .init(device: 1, inode: 1))
         else {
             Issue.record("expected cache entry before trim")
             return
@@ -122,7 +123,8 @@ struct MemoryPressureCacheTests {
         #expect(FileManager.default.fileExists(atPath: diskURL.path))
         guard
             case .miss = cache.lookup(
-                path: "/tmp/session.jsonl", modDate: modDate, fileSize: 10)
+                path: "/tmp/session.jsonl", modDate: modDate, fileSize: 10,
+                identity: .init(device: 1, inode: 1))
         else {
             Issue.record(
                 "trimmed process should repopulate lazily instead of reloading all entries")
@@ -137,14 +139,14 @@ struct MemoryPressureCacheTests {
         cache.store(
             path: "/tmp/session.jsonl",
             modDate: modDate,
-            fileSize: 10,
+            fileSize: 10, identity: .init(device: 1, inode: 1),
             timeZoneIdentifier: "UTC",
             scan: ActivityCache.FileScan(buckets: [:], isPartial: false))
         #expect(
             cache.cached(
                 path: "/tmp/session.jsonl",
                 modDate: modDate,
-                fileSize: 10,
+                fileSize: 10, identity: .init(device: 1, inode: 1),
                 timeZoneIdentifier: "UTC") != nil)
 
         #expect(cache.trimMemory() == 1)
@@ -153,7 +155,7 @@ struct MemoryPressureCacheTests {
             cache.cached(
                 path: "/tmp/session.jsonl",
                 modDate: modDate,
-                fileSize: 10,
+                fileSize: 10, identity: .init(device: 1, inode: 1),
                 timeZoneIdentifier: "UTC") == nil)
     }
 }

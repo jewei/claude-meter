@@ -167,6 +167,7 @@ public struct ActivityScanner: Sendable {
                         path: file.path,
                         modDate: metadata.modificationDate,
                         fileSize: metadata.fileSize,
+                        identity: metadata.identity,
                         timeZoneIdentifier: cal.timeZone.identifier)
                     {
                         scan = hit
@@ -176,11 +177,12 @@ public struct ActivityScanner: Sendable {
                         // A transient open/read failure must be retried even when
                         // mtime and size do not change. A successful tail read is a
                         // valid partial estimate and remains cacheable.
-                        if parse.isCacheable {
+                        if parse.isCacheable, parse.metadata == metadata {
                             cache.store(
                                 path: file.path,
                                 modDate: metadata.modificationDate,
                                 fileSize: metadata.fileSize,
+                                identity: metadata.identity,
                                 timeZoneIdentifier: cal.timeZone.identifier, scan: scan)
                         }
                     }
@@ -201,6 +203,7 @@ public struct ActivityScanner: Sendable {
     private struct FileParse: Sendable {
         let scan: ActivityCache.FileScan
         let isCacheable: Bool
+        var metadata: JournalReader.TranscriptMetadata? = nil
     }
 
     private func parseFile(_ file: URL, cal: Calendar) -> FileParse {
@@ -217,7 +220,7 @@ public struct ActivityScanner: Sendable {
         guard !read.data.isEmpty else {
             return FileParse(
                 scan: ActivityCache.FileScan(buckets: [:], isPartial: read.isPartial),
-                isCacheable: true)
+                isCacheable: read.isCacheable, metadata: read.metadata)
         }
 
         let text = String(decoding: read.data, as: UTF8.self)
@@ -251,7 +254,7 @@ public struct ActivityScanner: Sendable {
         }
         return FileParse(
             scan: ActivityCache.FileScan(buckets: buckets, isPartial: read.isPartial),
-            isCacheable: true)
+            isCacheable: read.isCacheable, metadata: read.metadata)
     }
 }
 
@@ -280,6 +283,7 @@ public final class ActivityCache: @unchecked Sendable {
     private struct Entry {
         let modDate: Date
         let fileSize: UInt64
+        let identity: JournalReader.TranscriptIdentity
         let timeZoneIdentifier: String
         let scan: FileScan
     }
@@ -300,13 +304,15 @@ public final class ActivityCache: @unchecked Sendable {
     }
 
     func cached(
-        path: String, modDate: Date, fileSize: UInt64, timeZoneIdentifier: String
+        path: String, modDate: Date, fileSize: UInt64, identity: JournalReader.TranscriptIdentity,
+        timeZoneIdentifier: String
     ) -> FileScan? {
         lock.lock()
         defer { lock.unlock() }
         guard let entry = entries[path],
             entry.modDate == modDate,
             entry.fileSize == fileSize,
+            entry.identity == identity,
             entry.timeZoneIdentifier == timeZoneIdentifier
         else { return nil }
         recency.touch(path)
@@ -314,13 +320,15 @@ public final class ActivityCache: @unchecked Sendable {
     }
 
     func store(
-        path: String, modDate: Date, fileSize: UInt64, timeZoneIdentifier: String,
+        path: String, modDate: Date, fileSize: UInt64, identity: JournalReader.TranscriptIdentity,
+        timeZoneIdentifier: String,
         scan: FileScan
     ) {
         lock.lock()
         defer { lock.unlock() }
         entries[path] = Entry(
-            modDate: modDate, fileSize: fileSize, timeZoneIdentifier: timeZoneIdentifier,
+            modDate: modDate, fileSize: fileSize, identity: identity,
+            timeZoneIdentifier: timeZoneIdentifier,
             scan: scan)
         recency.touch(path)
         while entries.count > Self.maxEntries, let oldest = recency.popLeastRecent() {

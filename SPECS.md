@@ -65,7 +65,10 @@ The statusline tier wins while it has fresh bridge data. If unavailable or stale
 may run. Every failed tier records a sanitized `SourceAttempt`; fallback does not erase
 the reason. Cached data is marked stale and preserves its original successful-fetch time.
 Source tiers return data only. After the full poll is assembled, `AppState` writes the
-snapshot if that poll generation is still current.
+snapshot if that poll generation is still current. Cost scanning runs independently of
+this quota commit. Each quota snapshot uses the latest completed cost reading from the
+current account configuration. A later cost completion updates only the cost fields in
+the latest snapshot. It preserves quota timestamps, errors, and notification observations.
 
 Polling normally runs every 60 seconds. It doubles on battery, parks while the display is
 asleep, refreshes immediately after wake or network reconnection, and times out a wedged
@@ -180,6 +183,18 @@ Expired rolling windows resolve to 0% used and no reset date. Consumers must cal
 
 ## 4. Local cost and activity
 
+Cost refreshes have one active scan and one pending request for the latest configuration.
+A separate one-worker timeout budget bounds scans that ignore cancellation. Repeated
+refresh requests do not delay quota publication or create a chain of waiting scans.
+Cost readings have their own scan time and partial/error state. An empty failed scan can
+retain an earlier result only within the same verified root scope and configuration. A
+timeout has no verified scope and clears old totals. A complete
+empty scan clears old totals. Account setting changes revoke old cost results immediately;
+old completions cannot restore them, including during the rebuild debounce. Persisted
+costs are not restored on launch until a scan verifies the current scope. `models` remains
+the compatibility list in `current.json`; `costObservation` records its scan time and
+partial state. Cost completion never advances quota freshness or sends quota alerts.
+
 Cost and activity scan every enabled discovered config directory's `projects/`, including
 top-level session journals and direct `subagents/*.jsonl`; context-fork replays and deeper
 workflow journals are excluded. One unreadable root or file marks the result partial and
@@ -195,7 +210,7 @@ legacy-only writes count as 5-minute cache writes. Paths use stable order when d
 metadata differs. Large files are tail-read and reported partial. Every changed file is
 reparsed; growth alone cannot prove an append. Model output is deterministically ordered.
 
-The version-5 cost cache retains request records as compact tuples instead of day/model
+The version-6 cost cache retains request records as compact tuples instead of day/model
 totals. Older versions are rebuilt. Parsing accepts at most 20,000 records and 8 MiB of accounted record
 storage per file. Reconciliation accepts at most 100,000 records and 32 MiB per root.
 Limits produce explicit partial estimates. The LRU cache retains at most 2,048 files and
@@ -205,7 +220,10 @@ bounds do not measure the allocator's total memory use.
 Activity is loaded on demand from the cost card. It reports a 7×24 local-time grid over the
 last 30 days, Monday at index zero, deduping message identity within each file. Its total is
 derived from the normalized grid. Both scanner caches include the local time zone in file
-identity, so travel cannot reuse buckets from the prior zone.
+identity, so travel cannot reuse buckets from the prior zone. They also require matching
+device, inode, modification time, and size. An atomic replacement invalidates the cache
+even when size and modification time are unchanged. A read enters either cache only when
+the descriptor stamp remains unchanged and matches discovery. Unstable reads are partial.
 
 Both scanners use bounded, constant-time LRU caches. Cost cache is persisted and
 rate-limited; activity cache is in memory only. On macOS memory-pressure warnings, the
@@ -258,6 +276,15 @@ show the count and each returned reset's title and time to expiry. Bar cards sho
 when collapsed and reveal the rows when expanded. Expiry rows are sorted by date; a tooltip
 shows the exact local date and time. Missing expiry details remain explicit. Reset credits
 are display-only; the app never consumes them.
+
+Codex home paths remain the stable settings and pin identifiers. Each observation
+also carries an opaque member-and-workspace owner when the local sign-in claims
+identify both. Ownership is checked before restoring cached usage and again before
+publishing a fetch result. A changed or unreadable sign-in clears the old reading.
+Normal token rotation for the same owner preserves offline usage. Missing claims
+permit current usage only while the source stays unchanged; such readings are not
+persisted and cannot establish quota notification baselines. Version-1 Codex reading
+archives have no owner and are rebuilt. All credential reads remain bounded and off-main.
 
 ### 5.3 Grok
 
@@ -313,7 +340,8 @@ The secondary Codex summary also expands to show each account's limits and usage
 Primary Claude and Codex ring cards are always expanded. Codex bar cards, secondary summaries,
 Cursor, and Grok cards remember their expanded state.
 The header timestamp belongs only to the selected reading. The last-seven-days cost card
-opens the activity heatmap. There is no footer or Add Account button.
+shows its own scan age and partial or failed-update state, and opens the activity heatmap.
+When no cost totals exist, the Activity entry shows scan loading or failure instead. There is no footer or Add Account button.
 
 First-run onboarding pauses polling and directs the user to Settings. Existing users skip
 onboarding when a snapshot exists, an attributes-only OAuth lookup finds a credential, Cursor

@@ -29,7 +29,18 @@ SwiftUI label modifiers and even the modern AppKit title setter can leave the me
 accessibility proxy reading only the compact visual text. Keep the public AX title
 override fallback until a native proxy check confirms it is no longer needed.
 
+## Local cost refresh
+
+`AppState` schedules cost scans outside the quota task group. Keep one active scan and
+one latest pending configuration, with a separate one-worker timeout budget. A cost
+completion merges only into the current snapshot under the captured generation and source
+settings. It must not change quota timestamps, clear provider errors, or send quota alerts.
+The cost card reads its own dated `ReadingState`; persisted cost totals need a new scan
+before display because their root scope is not verified on launch.
+
 ## Notifications
+
+- **Codex ownership** — home paths remain pins, while `MainMeterReading.observationOwnerID` separates alert baselines. `CodexReadingStore.candidates` are untrusted until the poll checks ownership off-main. Unknown-owner readings are current-only: no durable cache and no quota alerts.
 
 - **`NotificationEngine` is an actor**; quota alerts process only fresh `MainMeterReading` observations from the selected provider. Dedup includes provider plus a hashed account identity; switching provider/account starts a new baseline. Thresholds come from `AppGroupConfig.currentThresholds(defaults:)`. Claude attention-hook notifications remain separate.
 - **Subagent turn suppression** — Claude Code hook payloads fired inside subagents carry `agent_id`. `SessionEventStore.drain` consumes `Stop` markers with that field but does not emit them, so only the main agent's completed turn posts a "Claude finished" notification. Other subagent events remain actionable: permission notifications and rate-limit/billing `StopFailure`s still surface.

@@ -35,6 +35,8 @@ public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
     public var session: SessionInfo?
     public var limits: LimitInfo
     public var models: [ModelUsage]
+    /// Cost freshness is independent of the quota observation.
+    public var costObservation: CostObservation?
     public var mcp: MCPStatus?
     public var settingSources: String?
     public var state: SnapshotState
@@ -55,6 +57,7 @@ public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
         session: SessionInfo? = nil,
         limits: LimitInfo,
         models: [ModelUsage] = [],
+        costObservation: CostObservation? = nil,
         mcp: MCPStatus? = nil,
         settingSources: String? = nil,
         state: SnapshotState,
@@ -69,6 +72,7 @@ public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
         self.session = session
         self.limits = limits
         self.models = models
+        self.costObservation = costObservation
         self.mcp = mcp
         self.settingSources = settingSources
         self.state = state
@@ -86,6 +90,17 @@ public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
     public func limitsForActiveAccount(in snapshot: ClaudeUsageSnapshot?) -> LimitInfo? {
         guard let activeAccountID else { return snapshot?.limits }
         return snapshot?.accounts?.first(where: { $0.id == activeAccountID })?.limits
+    }
+}
+
+/// Metadata for the local cost totals mirrored in `ClaudeUsageSnapshot.models`.
+public struct CostObservation: Codable, Equatable, Sendable {
+    public let scannedAt: Date
+    public let isPartial: Bool
+
+    public init(scannedAt: Date, isPartial: Bool) {
+        self.scannedAt = scannedAt
+        self.isPartial = isPartial
     }
 }
 
@@ -592,6 +607,9 @@ public struct MainMeterReading: Codable, Equatable, Sendable {
     public var provider: MainMeterProvider
     public var accountID: String
     public var accountLabel: String
+    /// Optional opaque owner within a configured account location. Account pins
+    /// still use accountID; notification baselines also include this owner.
+    public var observationOwnerID: String?
     public var plan: String?
     public var limits: LimitInfo
     public var sessionLabel: String
@@ -615,7 +633,8 @@ public struct MainMeterReading: Codable, Equatable, Sendable {
         weeklyLabel: String = "week",
         observedAt: Date,
         selectionRevision: Int = 0,
-        sourceMarkedStale: Bool = false
+        sourceMarkedStale: Bool = false,
+        observationOwnerID: String? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.provider = provider
@@ -628,9 +647,13 @@ public struct MainMeterReading: Codable, Equatable, Sendable {
         self.observedAt = observedAt
         self.selectionRevision = selectionRevision
         self.sourceMarkedStale = sourceMarkedStale
+        self.observationOwnerID = observationOwnerID
     }
 
-    public var stableIdentity: String { "\(provider.rawValue):\(accountID)" }
+    public var stableIdentity: String {
+        let account = "\(provider.rawValue):\(accountID)"
+        return observationOwnerID.map { "\(account):owner:\($0)" } ?? account
+    }
 
     public func severity(
         thresholds: UsageThresholds = .default,
@@ -684,7 +707,8 @@ public enum MainMeterPolicy {
         pinnedAccountID: String?,
         selectionRevision: Int
     ) -> Bool {
-        guard reading.provider == provider,
+        guard reading.provider != .codex || reading.observationOwnerID != nil,
+            reading.provider == provider,
             reading.selectionRevision == selectionRevision
         else { return false }
         return pinnedAccountID == nil || reading.accountID == pinnedAccountID

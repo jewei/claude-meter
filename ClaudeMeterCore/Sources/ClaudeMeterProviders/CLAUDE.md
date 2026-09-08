@@ -22,6 +22,13 @@ diagnostics sanitizer, known gaps) stay in the root `AGENTS.md`.
 
 - **Reads must reject blocking special files and unbounded sizes** — use `BoundedRegularFileReader` for auth, settings, identity, event, and advisory-cache JSON. It opens with `O_NONBLOCK`, accepts only a regular file after `fstat`, caps allocation, and reads through the descriptor. Auth/settings/identity/cache paths may follow a symlink because users can deliberately link those files; app-owned statusline payloads and event markers reject links, including linked account directories. Open the app-owned `.claude-meter` root first, then traverse with `openat`; final-component `O_NOFOLLOW` does not reject a linked parent. Destructive cleanup must unlink only an unchanged entry through the descriptor that inspected it, and it can leave empty managed directories. Do not replace this boundary with `Data(contentsOf:)`: a FIFO can retain a timeout worker forever because task cancellation cannot stop a blocking filesystem call.
 
+## Cost scan results
+
+`CostUsageResult.sourcePaths` identifies the canonical roots actually scanned. Preserve
+this scope when returning partial results. The app can retain old totals after an empty
+partial scan only when those roots match. Cost scan and catalog work run independently
+of quota publication; source providers still do not write snapshots.
+
 ## Statusline bridge
 
 `StatuslineBridge.install(configDirs:)` runs on launch and each poll while statusline is enabled (idempotent + self-healing). `refreshConfigBridges` removes the snippet from disabled accounts. When the source is **off**, it removes the snippet from all discovered accounts and calls `purgeSessionData()` if any valid file changed, including when another account has invalid JSON. The purge is separate so `uninstall` never touches `~/.claude-meter` from tests, matching `HookBridge`. The bridge prepends a bash snippet to each enabled config dir's `settings.json` `statusLine.command`. It derives the **account key** from `$CLAUDE_CONFIG_DIR` (basename, one leading dot stripped, sanitized to `[alnum._-]`, fallback `claude`), extracts `session_id` (same sanitization), atomically writes stdin to `sessions/<accountKey>/<session_id>.json`, and sets `refreshInterval: 1`. The no-arg `install()`/`uninstall()` are `~/.claude`-only shims. A dir with invalid JSON is skipped, its error is surfaced after all other dirs are processed.

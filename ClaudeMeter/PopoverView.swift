@@ -313,8 +313,8 @@ struct PopoverView: View {
                 if let extra = snap.limits.extraUsage, extra.hasSpend {
                     extraUsageCard(extra)
                 }
-                if !snap.models.isEmpty {
-                    costCard(snap.models)
+                if !appState.costModels.isEmpty {
+                    costCard(appState.costModels)
                 } else {
                     activityEntryCard
                 }
@@ -839,9 +839,13 @@ struct PopoverView: View {
                     .font(PFont.display(14, .semibold))
                     .foregroundStyle(Color.pfInk)
                 Spacer()
-                Text("When you work")
-                    .font(PFont.body(12, .semibold))
-                    .foregroundStyle(Color.pfInkMuted)
+                Text(
+                    appState.costRefreshFailed
+                        ? "Cost scan failed"
+                        : appState.costIsLoading ? "Scanning cost…" : "When you work"
+                )
+                .font(PFont.body(12, .semibold))
+                .foregroundStyle(Color.pfInkMuted)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(Color.pfInkMuted)
@@ -864,11 +868,20 @@ struct PopoverView: View {
         return Button(action: openHeatmap) {
             HStack(spacing: 7) {
                 Text("💸").font(.system(size: 13))
-                Text("Last 7 days")
-                    .font(PFont.display(14, .semibold))
-                    .foregroundStyle(Color.pfInk)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Last 7 days")
+                        .font(PFont.display(14, .semibold))
+                        .foregroundStyle(Color.pfInk)
+                    if let scannedAt = appState.costScannedAt {
+                        Text(
+                            "Scanned \(Self.updatedText(lastPollAt: scannedAt, now: now).lowercased())"
+                        )
+                        .font(PFont.body(10, .semibold))
+                        .foregroundStyle(Color.pfInkMuted)
+                    }
+                }
                 if appState.costScanPartial {
-                    Text("partial")
+                    Text(appState.costRefreshFailed ? "update failed" : "partial")
                         .font(PFont.body(10, .semibold))
                         .foregroundStyle(Color.pfInkMuted)
                 }

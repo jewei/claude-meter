@@ -42,7 +42,18 @@ final class AppState: ObservableObject {
     @Published private var cursorReading: ReadingState<CursorUsage>?
     @Published private(set) var codexAccounts: [CodexAccountReading] = []
     @Published private var grokReading: ReadingState<GrokUsage>?
-    @Published var costScanPartial = false
+    @Published private var costReading: ReadingState<CostUsageResult>?
+    @Published private(set) var costIsLoading = false
+    var costModels: [ModelUsage] { costReading?.value?.models ?? [] }
+    var costScanPartial: Bool {
+        costReading?.value?.isPartialEstimate == true || costReading?.error != nil
+    }
+    var costScannedAt: Date? { costReading?.lastPolledAt }
+    var costRefreshFailed: Bool { costReading?.error != nil }
+    private var costRefreshTask: Task<Void, Never>?
+    private var pendingCostConfiguration: PollConfiguration?
+    private let costScanBudget = Timeout.TaskBudget(limit: 1)
+    private let costScanTimeoutSeconds: TimeInterval
     /// Activity heatmap (7×24 message counts), scanned on demand when the user
     /// opens it from the cost card. `nil` until first requested.
     @Published var activityHeatmap: ActivityHeatmap? = nil
@@ -132,12 +143,12 @@ final class AppState: ObservableObject {
     /// trip throws so `isLoading` resets and the loop recovers on the next interval
     /// instead of freezing every later refresh.
     private static let pollTimeoutSeconds: TimeInterval = 60
-    /// Transcript reads are advisory. Keep them below the main poll deadline so a
-    /// wedged filesystem cannot stop fresh quota data from being published.
+    /// Transcript deadlines release loading state. Cost scans run independently
+    /// of quota publication, so even a blocked read cannot hold fresh quota data.
     private static let transcriptScanTimeoutSeconds: TimeInterval = 30
     /// A stuck transcript read must not consume the capacity used by provider
-    /// requests. Two slots allow the cost and activity scans to overlap once.
-    private static let transcriptScanTimeoutBudget = Timeout.TaskBudget(limit: 2)
+    /// requests. Cost has a separate per-app budget; activity uses this slot.
+    private static let transcriptScanTimeoutBudget = Timeout.TaskBudget(limit: 1)
     /// Isolate cancellation-ignoring Codex processes from other providers. Two
     /// batches can remain abandoned; later cycles then fail fast until they exit.
     private static let codexPollTimeoutBudget = Timeout.TaskBudget(limit: 6)
@@ -574,6 +585,7 @@ final class AppState: ObservableObject {
         self.costUsageScanner = { now, configuration in
             await AppState.scanCostModels(now: now, configuration: configuration)
         }
+        self.costScanTimeoutSeconds = Self.transcriptScanTimeoutSeconds
         self.pollCompletionBarrier = nil
         self.configBridgeRefreshOperation = { request in
             AppState.performConfigBridgeRefresh(request)
@@ -590,6 +602,9 @@ final class AppState: ObservableObject {
         self.pipeline = AppState.makePipeline(store: store)
         // Self is fully initialized from here on.
         self.snapshot = try? store.readLatest()
+        // Persisted totals have no verified current root scope on launch.
+        self.snapshot?.models = []
+        self.snapshot?.costObservation = nil
         self.lastPolledAt = snapshot?.lastSuccessfulPollAt
         if AppSettings.codexSourceEnabled {
             self.codexAccounts = codexReadingStore.restore(accounts: AppSettings.codexAccounts())
@@ -656,6 +671,7 @@ final class AppState: ObservableObject {
         costUsageScanner: @escaping @Sendable (Date, PollConfiguration) async -> CostUsageResult = {
             _, _ in .empty
         },
+        costScanTimeoutSeconds: TimeInterval = 30,
         codexReadingStore: CodexReadingStore? = nil,
         notificationEngine: NotificationEngine = NotificationEngine(),
         pollCompletionBarrier: (@Sendable () async -> Void)? = nil,
@@ -687,6 +703,7 @@ final class AppState: ObservableObject {
         self.serviceStatusFetcher = serviceStatusFetcher
         self.oauthEnrichmentFetcher = oauthEnrichmentFetcher
         self.costUsageScanner = costUsageScanner
+        self.costScanTimeoutSeconds = costScanTimeoutSeconds
         self.pollCompletionBarrier = pollCompletionBarrier
         self.configBridgeRefreshOperation =
             configBridgeRefreshOperation
@@ -706,6 +723,8 @@ final class AppState: ObservableObject {
             }
         self.pipeline = pipeline
         self.snapshot = initialSnapshot
+        self.snapshot?.models = []
+        self.snapshot?.costObservation = nil
         self.lastPolledAt = initialSnapshot?.lastSuccessfulPollAt
         appUpdater.appState = self
     }
@@ -713,6 +732,7 @@ final class AppState: ObservableObject {
     deinit {
         pollTask?.cancel()
         serviceStatusRefreshTask?.cancel()
+        costRefreshTask?.cancel()
         rebuildDebounceTask?.cancel()
         configRefreshTask?.cancel()
         attentionTask?.cancel()
@@ -770,7 +790,8 @@ final class AppState: ObservableObject {
     func stopPolling() {
         // Only the meter poll — the attention watcher has its own lifecycle (it's
         // not tied to having a usage data source).
-        let invalidatedExistingCycle = pollTask != nil || activePollCycleID != nil
+        let invalidatedExistingCycle =
+            pollTask != nil || activePollCycleID != nil || costRefreshTask != nil
         if invalidatedExistingCycle { invalidatePollGeneration() }
         pollTask?.cancel()
         pollTask = nil
@@ -783,6 +804,20 @@ final class AppState: ObservableObject {
     private func invalidatePollGeneration() {
         notificationEngine.pollFailed()
         pipelineGeneration += 1
+        pendingCostConfiguration = nil
+        clearCostReading()
+    }
+
+    private func clearCostReading() {
+        costReading = nil
+        // Do not cancel-and-await synchronous scans. Their generation is revoked;
+        // a later request replaces only the one pending configuration.
+        if var snapshot {
+            snapshot.models = []
+            snapshot.costObservation = nil
+            self.snapshot = snapshot
+            try? store.writeLatest(snapshot)
+        }
     }
 
     private func invalidateActivePollCycle() {
@@ -970,6 +1005,7 @@ final class AppState: ObservableObject {
 
     /// Debounced rebuild for source toggles — avoids restarting the poll loop on every flip.
     func scheduleRebuildPipeline() {
+        clearCostReading()
         if mainMeterProvider == .claude {
             // The setting changed before the debounce starts. Revoke its old
             // observation now instead of leaving it live during the delay.
@@ -1109,6 +1145,7 @@ final class AppState: ObservableObject {
         let configuration = PollConfiguration(
             generation: pipelineGeneration, refreshKind: kind)
         isLoading = true
+        if configuration.claudeEnabled { scheduleCostRefresh(configuration: configuration) }
         defer { finishPollCycle(cycleID) }
 
         await withTaskGroup(of: Void.self) { group in
@@ -1172,22 +1209,6 @@ final class AppState: ObservableObject {
             }
 
             if var snap = result.snapshot {
-                // Enrich with per-model token/cost usage scanned from local logs.
-                // Independent of which tier produced the rate-limit snapshot.
-                let costResult: CostUsageResult
-                do {
-                    let scan = costUsageScanner
-                    costResult = try await Timeout.run(
-                        seconds: Self.transcriptScanTimeoutSeconds,
-                        budget: Self.transcriptScanTimeoutBudget
-                    ) {
-                        await scan(now, configuration)
-                    }
-                } catch {
-                    costResult = CostUsageResult(models: [], isPartialEstimate: true)
-                }
-                guard configuration.generation == pipelineGeneration, canPoll else { return }
-                Self.applyCostModels(costResult, to: &snap)
                 // Opus weekly, extra-usage spend, and plan live only in the OAuth
                 // response. When statusline produced the snapshot, layer those
                 // fields on if OAuth credentials are available.
@@ -1216,7 +1237,7 @@ final class AppState: ObservableObject {
                     thresholds: configuration.thresholds,
                     activeTopLevelOAuthDetailsObservedAt: topLevelOAuthDetailsObservedAt)
                 snap = mergedSnap
-                costScanPartial = costResult.isPartialEstimate
+                applyCurrentCost(to: &snap)
                 do {
                     try store.writeLatest(snap)
                     try store.clearLastError()
@@ -1772,17 +1793,67 @@ final class AppState: ObservableObject {
         return validAccountKeys.compactMap { byKey[$0] }
     }
 
-    /// Applies a complete scan even when it found no usage. An empty partial scan
-    /// can mean a timeout or unreadable root, so it keeps the prior last-good list.
-    @discardableResult
-    nonisolated static func applyCostModels(
-        _ result: CostUsageResult,
-        to snapshot: inout ClaudeUsageSnapshot
-    ) -> Bool {
-        guard !result.models.isEmpty || !result.isPartialEstimate else { return false }
-        guard snapshot.models != result.models else { return false }
-        snapshot.models = result.models
-        return true
+    /// Cost scans never join the quota task group. One active scan and one latest
+    /// pending request bound repeated opens, even when filesystem work ignores
+    /// cancellation. The separate one-slot budget also bounds timed-out workers.
+    private func scheduleCostRefresh(configuration: PollConfiguration) {
+        guard configuration.generation == pipelineGeneration, configuration.claudeEnabled,
+            configuration.costSourcesMatchCurrentSettings, canPoll
+        else { return }
+        guard costRefreshTask == nil else {
+            pendingCostConfiguration = configuration
+            return
+        }
+        let scan = costUsageScanner
+        let budget = costScanBudget
+        let timeout = costScanTimeoutSeconds
+        let now = Date()
+        costIsLoading = true
+        costRefreshTask = Task { [weak self] in
+            let result = try? await Timeout.run(seconds: timeout, budget: budget) {
+                await scan(now, configuration)
+            }
+            guard let self else { return }
+            costRefreshTask = nil
+            costIsLoading = false
+            if configuration.generation == pipelineGeneration,
+                configuration.costSourcesMatchCurrentSettings, canPoll
+            {
+                costReading = Self.updatedCostReading(result, previous: costReading, scannedAt: now)
+                // Merge only into the latest quota snapshot. Cost completion cannot
+                // restore an older quota, advance its timestamp, or emit quota alerts.
+                if var snapshot {
+                    applyCurrentCost(to: &snapshot)
+                    self.snapshot = snapshot
+                    try? store.writeLatest(snapshot)
+                }
+            }
+            let pending = pendingCostConfiguration
+            pendingCostConfiguration = nil
+            if let pending { scheduleCostRefresh(configuration: pending) }
+        }
+    }
+
+    nonisolated static func updatedCostReading(
+        _ result: CostUsageResult?, previous: ReadingState<CostUsageResult>?, scannedAt: Date
+    ) -> ReadingState<CostUsageResult> {
+        if let result, !result.models.isEmpty || !result.isPartialEstimate {
+            return .current(value: result, polledAt: scannedAt)
+        }
+        let error = "Cost scan did not complete."
+        if let previousValue = previous?.value, let previousDate = previous?.lastPolledAt,
+            let result, result.sourcePaths == previousValue.sourcePaths
+        {
+            return .stale(value: previousValue, polledAt: previousDate, error: error)
+        }
+        return .failed(error: error, lastPolledAt: nil)
+    }
+
+    private func applyCurrentCost(to snapshot: inout ClaudeUsageSnapshot) {
+        snapshot.models = costModels
+        snapshot.costObservation = costReading?.value.flatMap { _ in
+            costScannedAt.map { CostObservation(scannedAt: $0, isPartial: costScanPartial) }
+        }
     }
 
     @discardableResult
@@ -1821,7 +1892,7 @@ final class AppState: ObservableObject {
     /// days), unioned across every discovered config dir (cost is additive).
     /// Discovery happens here, off-main, rather than reusing a cached list — so the
     /// union is correct from the very first poll, independent of the statusline source.
-    private static func scanCostModels(
+    nonisolated private static func scanCostModels(
         now: Date,
         configuration: PollConfiguration
     ) async -> CostUsageResult {

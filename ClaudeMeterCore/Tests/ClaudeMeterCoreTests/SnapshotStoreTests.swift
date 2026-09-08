@@ -54,7 +54,8 @@ final class SnapshotStoreTests {
     @Test("Writes and reads back an identical snapshot")
     func roundtrip() throws {
         let store = try makeStore()
-        let original = makeSnapshot()
+        var original = makeSnapshot()
+        original.costObservation = CostObservation(scannedAt: fixedDate, isPartial: true)
 
         try store.writeLatest(original)
         let recovered = try store.readLatest()

@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Slow local cost scans no longer delay quota updates. The cost card now shows its own scan age and reports incomplete updates.
+
 ## [2.16] - 2026-09-05
 
 ### Added

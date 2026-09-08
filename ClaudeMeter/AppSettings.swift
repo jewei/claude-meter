@@ -188,6 +188,12 @@ struct PollConfiguration: Sendable {
     let codexMode: CodexSourceMode
     let codexAccounts: [CodexAccount]
 
+    var costSourcesMatchCurrentSettings: Bool {
+        claudeEnabled == AppSettings.hasClaudeSource
+            && configuredClaudeDirs == AppGroupConfig.configuredConfigDirs
+            && disabledClaudeAccountKeys == Set(AppGroupConfig.disabledAccountKeys)
+    }
+
     init(generation: Int, refreshKind: RefreshKind = .background) {
         self.generation = generation
         self.refreshKind = refreshKind

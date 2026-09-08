@@ -44,11 +44,9 @@ Icon?
 *.sqlite-shm
 *.sqlite-wal
 
-# Local Claude Code settings (personal)
-.claude/settings.local.json
-
-# Skills
-.claude/skills/mine-reference-codebase
+# Local agent settings and skills
+.agents/
+.claude/
 
 # Brag files
 brag-output/

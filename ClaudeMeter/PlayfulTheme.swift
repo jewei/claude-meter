@@ -283,6 +283,9 @@ struct PlanBadge: View {
         if p.contains("enterprise") { return (.pfPlanMaxFG, .pfPlanMaxBG, "ENTERPRISE") }
         if p.contains("team") { return (.pfPlanProFG, .pfPlanProBG, "TEAM") }
         if p.contains("business") { return (.pfPlanProFG, .pfPlanProBG, "BUSINESS") }
+        if p == "pro 5x" || p == "pro 20x" {
+            return (.pfPlanProFG, .pfPlanProBG, plan.uppercased())
+        }
         if p.contains("pro") { return (.pfPlanProFG, .pfPlanProBG, "PRO") }
         // Codex tiers with no Claude equivalent; paid, so they take the Pro
         // palette but keep their own label. `go` is matched exactly rather than

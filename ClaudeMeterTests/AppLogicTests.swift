@@ -1685,6 +1685,31 @@ struct AppLogicTests {
         #expect(meter.weeklyLabel == "Weekly")
     }
 
+    @Test("Main Codex account badges preserve both Pro tiers")
+    @MainActor
+    func codexProPlanBadges() {
+        for (raw, expected) in [("prolite", "PRO 5X"), ("pro", "PRO 20X")] {
+            let usage = CodexUsage(
+                primaryWindow: nil,
+                secondaryWindow: nil,
+                usageCredits: nil,
+                accountEmail: nil,
+                plan: raw,
+                source: .appServer,
+                updatedAt: Date())
+            let reading = MainMeterReading(
+                provider: .codex,
+                accountID: "codex",
+                accountLabel: "Codex",
+                plan: usage.displayPlanName,
+                limits: LimitInfo(currentSession: LimitWindow(percentUsed: 20)),
+                observedAt: Date())
+            let model = AccountCardModel(mainMeterReading: reading)
+            #expect(PlanBadge.style(for: model.plan ?? "").text == expected)
+        }
+        #expect(PlanBadge.style(for: "Pro").text == "PRO")
+    }
+
     @Test("Startup compares the current selection with the persisted publication")
     func startupMainMeterTransition() {
         func reading(_ id: String) -> MainMeterReading {

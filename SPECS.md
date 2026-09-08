@@ -1,8 +1,8 @@
 # Claude Meter specification
 
 This document defines current user-visible behavior and stable system boundaries.
-Implementation gotchas and migration history belong in `AGENTS.md`; visual tokens and
-component treatment belong in `DESIGN.md`. Removed features are not part of this spec.
+Development rules belong in the root and directory-level `AGENTS.md` files. Visual tokens
+and component treatment belong in `DESIGN.md`. Removed features are not part of this spec.
 
 ## 1. Product contract
 

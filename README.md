@@ -56,9 +56,9 @@ is replaced by the next release build.
 ## Docs
 
 - `SPECS.md` — full specification
-- `AGENTS.md` — development notes
+- [AGENTS.md](AGENTS.md) — shared development rules and links to directory instructions
 - `DESIGN.md` — UI design system and tokens
-- `docs/agents/` — conventions for coding agents (issue tracker, triage labels, domain docs)
+- [Issue workflow](docs/agents/issue-tracker.md) — GitHub issue and triage conventions
 
 ## License
 

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Codex readings and quota alerts no longer carry over to another login in the same home directory.
+- Cost and activity totals now update after an atomic transcript replacement, even when the file size and modification time stay the same.
 
 ## [2.16] - 2026-09-05
 

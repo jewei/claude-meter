@@ -179,6 +179,7 @@ struct CostUsageReconciliationTests {
                 let file = try write([], root: root, path: "p/\(index).jsonl")
                 cache.store(
                     file: file.path, modDate: now, fileSize: 0,
+                    identity: .init(device: 1, inode: 1),
                     scan: .init(isPartial: false, records: [record]))
             }
             #expect(cache.entryCount > 0 && cache.entryCount < 5)

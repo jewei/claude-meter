@@ -188,6 +188,7 @@ struct AppGroupConfigTests {
 
         var published = codex[0]
         published.selectionRevision = 4
+        published.observationOwnerID = "owner"
         #expect(
             MainMeterPolicy.acceptsPublished(
                 published, provider: .codex, pinnedAccountID: "first", selectionRevision: 4))

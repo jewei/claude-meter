@@ -443,13 +443,12 @@ the Xcode project and committed workspace resolution.
 
 Release publishing must make the signed GitHub asset available before pushing the new
 `appcast.xml` to `main`; users must never observe a feed pointing at a missing artifact.
-Release completion then requires a signed Sparkle upgrade from the previous public version
-in a fresh isolated macOS desktop. The report must match the exact feed, target version,
-build, and signing team, and record a new process that remains running after relaunch.
-The release attaches the report before removing its staging branch. A failed or missing
-check restores only the prior feed through a guarded normal push. A newer feed must never
-be overwritten by recovery. See `docs/releases.md`. Synthetic report and recovery fixtures
-run in the shared local/CI gate; the signed GUI check runs separately.
+Release completion requires successful publication of the signed artifacts and feed, then
+removal of the staging branch. A separate macOS account, VM, signed Sparkle upgrade test,
+or upgrade report is not required for this or future releases. Local verification, signing,
+notarization, matching debug symbols, DMG integrity, and feed metadata checks remain required.
+Optional manual Sparkle checks do not block publication or trigger automatic feed recovery.
+See `docs/releases.md`.
 
 Tests should be hermetic: temporary directories are unique and cleaned up, wall clocks and
 shared defaults are injectable where policy depends on them, and live user Keychain or

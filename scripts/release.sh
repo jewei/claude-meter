@@ -8,7 +8,6 @@
 #   • xcrun notarytool credentials stored: notarytool store-credentials "notarytool"
 #   • gh CLI authenticated: gh auth login
 #   • Project must build cleanly (Sparkle SPM package resolved)
-#   • A fresh isolated macOS desktop for the signed upgrade check (docs/releases.md)
 
 set -euo pipefail
 
@@ -21,7 +20,8 @@ SCHEME="ClaudeMeter"
 APP_NAME="ClaudeMeter"
 TEAM_ID="${TEAM_ID:-4L4SS26L9J}"
 APPLE_ID="${APPLE_ID:-jewei.mak@gmail.com}"
-KEYCHAIN_PROFILE="notarytool"
+KEYCHAIN_PROFILE="${KEYCHAIN_PROFILE:-notarytool}"
+NOTARY_KEYCHAIN="${NOTARY_KEYCHAIN:-}"
 GITHUB_REPO="jewei/claude-meter"
 MIN_MACOS="14.0"
 
@@ -55,7 +55,7 @@ if [[ -z "$VERSION" || -z "$BUILD" ]]; then
 fi
 
 if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}$ || ! "$BUILD" =~ ^[1-9][0-9]*$ ]]; then
-    echo "error: the upgrade check requires a numeric version and a positive integer build." >&2
+    echo "error: releases require a numeric version and a positive integer build." >&2
     exit 1
 fi
 
@@ -107,7 +107,6 @@ import sys
 if int(sys.argv[1]) <= int(sys.argv[2]):
     sys.exit("error: the new build must be greater than the advertised build")
 PYBUILD
-python3 "$SCRIPT_DIR/sparkle-upgrade.py" --help >/dev/null
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -184,11 +183,11 @@ echo "▶ Zipping for notarization…"
 ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
 
 echo "▶ Submitting to Apple notary service…"
-xcrun notarytool submit "$ZIP_PATH" \
-    --apple-id "$APPLE_ID" \
-    --team-id "$TEAM_ID" \
-    --keychain-profile "$KEYCHAIN_PROFILE" \
-    --wait
+NOTARY_ARGS=(--apple-id "$APPLE_ID" --team-id "$TEAM_ID" --keychain-profile "$KEYCHAIN_PROFILE")
+if [[ -n "$NOTARY_KEYCHAIN" ]]; then
+    NOTARY_ARGS+=(--keychain "$NOTARY_KEYCHAIN")
+fi
+xcrun notarytool submit "$ZIP_PATH" "${NOTARY_ARGS[@]}" --wait
 
 echo "▶ Stapling…"
 xcrun stapler staple "$APP_PATH"
@@ -292,39 +291,22 @@ git -C "$PROJECT_DIR" push origin "${RELEASE_COMMIT}:refs/heads/${STAGING_BRANCH
 # commit (including its matching appcast/changelog), not the pre-build HEAD.
 
 echo "▶ Creating GitHub release ${TAG}…"
+RELEASE_NOTES_PATH="$BUILD_DIR/release-notes.md"
+printf '%s\n\n---\nDownload and open **%s** to install.\n' \
+    "$RELEASE_NOTES" "$DMG_NAME" > "$RELEASE_NOTES_PATH"
 gh release create "$TAG" "$DMG_PATH" "$SYMBOLS_PATH" \
     --repo "$GITHUB_REPO" \
     --target "$RELEASE_COMMIT" \
     --title "Claude Meter $VERSION" \
-    --notes "$RELEASE_NOTES
-
----
-Download and open **$DMG_NAME** to install."
+    --notes-file "$RELEASE_NOTES_PATH"
 
 # Only now expose the new appcast. If this push fails, users remain on the prior
 # valid feed while the new release is still available for a safe manual retry.
-UPGRADE_NOT_BEFORE="$(date +%s)"
 echo "▶ Publishing release commit to main…"
 git -C "$PROJECT_DIR" push origin HEAD:main
 
-UPGRADE_REPORT="$BUILD_DIR/ClaudeMeter-$VERSION-$BUILD.upgrade.json"
-echo "▶ Waiting for a signed upgrade check in the isolated macOS desktop"
-echo "  Previous release: $PREV_TAG; expected version: $VERSION; expected build: $BUILD"
-echo "  Run scripts/sparkle-upgrade.py run there; see docs/releases.md."
-echo "  Copy its JSON report atomically to: $UPGRADE_REPORT"
-UPGRADE_COMMAND=(python3 "$SCRIPT_DIR/sparkle-upgrade.py" complete \
-    --project "$PROJECT_DIR" --previous-commit "$PREVIOUS_FEED_COMMIT" \
-    --previous-tag "$PREV_TAG" --version "$VERSION" --build "$BUILD" --team "$TEAM_ID" \
-    --feed "$PROJECT_DIR/appcast.xml" --report "$UPGRADE_REPORT" \
-    --not-before "$UPGRADE_NOT_BEFORE" \
-    --wait-seconds "${SPARKLE_UPGRADE_WAIT_SECONDS:-900}")
-# Keep the exact inputs for a safe retry after report transfer/upload failure.
-printf '#!/usr/bin/env bash\nexec ' > "$BUILD_DIR/complete-upgrade.sh"
-printf '%q ' "${UPGRADE_COMMAND[@]}" >> "$BUILD_DIR/complete-upgrade.sh"
-printf '\n' >> "$BUILD_DIR/complete-upgrade.sh"
-chmod +x "$BUILD_DIR/complete-upgrade.sh"
-echo "  Retry command: $BUILD_DIR/complete-upgrade.sh"
-"${UPGRADE_COMMAND[@]}"
+echo "▶ Removing release staging branch…"
+git -C "$PROJECT_DIR" push origin --delete "$STAGING_BRANCH"
 
 echo ""
 echo "✓ Released Claude Meter $VERSION"

@@ -8,7 +8,11 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 echo "▶ Checking release-symbol validation"
 "$SCRIPT_DIR/test-release-symbols.sh"
 
-echo "▶ Checking signed-upgrade report validation and feed recovery"
+echo "▶ Checking release script syntax and publication ordering"
+bash -n "$SCRIPT_DIR/release.sh"
+python3 "$SCRIPT_DIR/test-release-publication.py"
+
+echo "▶ Checking optional signed-upgrade helper fixtures"
 python3 "$SCRIPT_DIR/test-sparkle-upgrade.py"
 
 echo "▶ Checking Swift formatting"

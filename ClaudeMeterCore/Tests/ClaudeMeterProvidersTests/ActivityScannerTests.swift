@@ -198,7 +198,7 @@ struct ActivityScannerTests {
             cache.cached(
                 path: canonicalFile.path,
                 modDate: before.modificationDate,
-                fileSize: before.fileSize,
+                fileSize: before.fileSize, identity: before.identity,
                 timeZoneIdentifier: Calendar.current.timeZone.identifier) == nil)
 
         try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: canonicalFile.path)

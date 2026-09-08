@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Cost and activity totals now update after an atomic transcript replacement, even when the file size and modification time stay the same.
+
 ## [2.16] - 2026-09-05
 
 ### Added

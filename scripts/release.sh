@@ -8,6 +8,7 @@
 #   • xcrun notarytool credentials stored: notarytool store-credentials "notarytool"
 #   • gh CLI authenticated: gh auth login
 #   • Project must build cleanly (Sparkle SPM package resolved)
+#   • A fresh isolated macOS desktop for the signed upgrade check (docs/releases.md)
 
 set -euo pipefail
 
@@ -53,6 +54,11 @@ if [[ -z "$VERSION" || -z "$BUILD" ]]; then
     exit 1
 fi
 
+if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}$ || ! "$BUILD" =~ ^[1-9][0-9]*$ ]]; then
+    echo "error: the upgrade check requires a numeric version and a positive integer build." >&2
+    exit 1
+fi
+
 DMG_NAME="$APP_NAME-$VERSION.dmg"
 TAG="v$VERSION"
 
@@ -80,8 +86,28 @@ if [[ -z "${RELEASE_NOTES//[[:space:]]/}" ]]; then
     exit 1
 fi
 
-# Previous tag, captured before any tag is created, for the changelog compare link.
-PREV_TAG="$(git -C "$PROJECT_DIR" describe --tags --abbrev=0 2>/dev/null || true)"
+# Use the currently advertised public version. After a failed release, the newest
+# GitHub tag can be newer than the recovered feed that installed clients use.
+git -C "$PROJECT_DIR" fetch origin main
+PREVIOUS_FEED_COMMIT="$(git -C "$PROJECT_DIR" rev-parse FETCH_HEAD)"
+PREVIOUS_FEED_XML="$(git -C "$PROJECT_DIR" show "$PREVIOUS_FEED_COMMIT:appcast.xml")"
+PREV_VERSION="$(printf '%s' "$PREVIOUS_FEED_XML" | xmllint --xpath "string(//*[local-name()='shortVersionString'])" -)"
+PREV_BUILD="$(printf '%s' "$PREVIOUS_FEED_XML" | xmllint --xpath "string(//*[local-name()='version'])" -)"
+PREV_TAG="v$PREV_VERSION"
+if [[ ! "$PREV_VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}$ || ! "$PREV_BUILD" =~ ^[1-9][0-9]*$ ]]; then
+    echo "error: the previous published feed has invalid version metadata." >&2
+    exit 1
+fi
+[[ "$(gh release view "$PREV_TAG" --repo "$GITHUB_REPO" --json isDraft --jq .isDraft)" == "false" ]] || {
+    echo "error: the previous feed must name a public release." >&2
+    exit 1
+}
+python3 - "$BUILD" "$PREV_BUILD" <<'PYBUILD'
+import sys
+if int(sys.argv[1]) <= int(sys.argv[2]):
+    sys.exit("error: the new build must be greater than the advertised build")
+PYBUILD
+python3 "$SCRIPT_DIR/sparkle-upgrade.py" --help >/dev/null
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -277,11 +303,28 @@ Download and open **$DMG_NAME** to install."
 
 # Only now expose the new appcast. If this push fails, users remain on the prior
 # valid feed while the new release is still available for a safe manual retry.
+UPGRADE_NOT_BEFORE="$(date +%s)"
 echo "▶ Publishing release commit to main…"
 git -C "$PROJECT_DIR" push origin HEAD:main
 
-echo "▶ Removing staging branch…"
-git -C "$PROJECT_DIR" push origin --delete "${STAGING_BRANCH}"
+UPGRADE_REPORT="$BUILD_DIR/ClaudeMeter-$VERSION-$BUILD.upgrade.json"
+echo "▶ Waiting for a signed upgrade check in the isolated macOS desktop"
+echo "  Previous release: $PREV_TAG; expected version: $VERSION; expected build: $BUILD"
+echo "  Run scripts/sparkle-upgrade.py run there; see docs/releases.md."
+echo "  Copy its JSON report atomically to: $UPGRADE_REPORT"
+UPGRADE_COMMAND=(python3 "$SCRIPT_DIR/sparkle-upgrade.py" complete \
+    --project "$PROJECT_DIR" --previous-commit "$PREVIOUS_FEED_COMMIT" \
+    --previous-tag "$PREV_TAG" --version "$VERSION" --build "$BUILD" --team "$TEAM_ID" \
+    --feed "$PROJECT_DIR/appcast.xml" --report "$UPGRADE_REPORT" \
+    --not-before "$UPGRADE_NOT_BEFORE" \
+    --wait-seconds "${SPARKLE_UPGRADE_WAIT_SECONDS:-900}")
+# Keep the exact inputs for a safe retry after report transfer/upload failure.
+printf '#!/usr/bin/env bash\nexec ' > "$BUILD_DIR/complete-upgrade.sh"
+printf '%q ' "${UPGRADE_COMMAND[@]}" >> "$BUILD_DIR/complete-upgrade.sh"
+printf '\n' >> "$BUILD_DIR/complete-upgrade.sh"
+chmod +x "$BUILD_DIR/complete-upgrade.sh"
+echo "  Retry command: $BUILD_DIR/complete-upgrade.sh"
+"${UPGRADE_COMMAND[@]}"
 
 echo ""
 echo "✓ Released Claude Meter $VERSION"

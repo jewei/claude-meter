@@ -68,3 +68,5 @@ is replaced by the next release build.
 
 Claude Meter is an independent, community project. It is not affiliated with,
 endorsed by, or sponsored by Anthropic. "Claude" is a trademark of Anthropic.
+
+Signed release updates require an isolated Sparkle upgrade check. See [release verification](docs/releases.md).

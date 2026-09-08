@@ -8,6 +8,9 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 echo "▶ Checking release-symbol validation"
 "$SCRIPT_DIR/test-release-symbols.sh"
 
+echo "▶ Checking signed-upgrade report validation and feed recovery"
+python3 "$SCRIPT_DIR/test-sparkle-upgrade.py"
+
 echo "▶ Checking Swift formatting"
 swift format lint --recursive --strict \
     "$PROJECT_DIR/ClaudeMeterCore" \

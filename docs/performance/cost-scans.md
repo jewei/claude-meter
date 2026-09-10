@@ -18,6 +18,12 @@ CLAUDE_METER_PROFILE_COST_SCAN=1 swift test -c release \
   --package-path ClaudeMeterCore --filter CostScanProfileTests
 ```
 
+The timing table above is a baseline, not a gate. CI cannot enforce a wall-clock
+threshold reliably on a shared machine. `warmScanPerformsNoRepeatParsing` therefore counts
+the work instead: it asserts that a second scan of an unchanged corpus performs zero full
+parses, and that one changed transcript re-parses only itself. That test runs in the normal
+suite and fails if the per-file cache stops being consulted.
+
 Keep the existing per-file cache. These warm results do not justify an aggregate cache
 with another set of root, inventory, date-window, pricing, and time-zone invalidation rules.
 Cost scans now run independently of quota publication, so a slow scan cannot hold a ready

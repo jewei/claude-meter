@@ -543,6 +543,113 @@ struct AppLogicTests {
     }
 
     @MainActor
+    @Test("The selected main provider is never held back by the secondary cadence")
+    func mainMeterProviderPollsEveryCycle() async throws {
+        // Claude owns the main meter by default, so it drives the menu bar, the
+        // widget, and every quota alert. Repeated background cycles must each reach
+        // it, whatever the popover has done. Only popover-only sources may skip.
+        let defaults = UserDefaults.standard
+        let shared = AppGroupConfig.sharedDefaults
+        let providerKey = AppGroupConfig.mainMeterProviderKey
+        let previousStatusline = defaults.object(
+            forKey: AppSettings.statuslineSourceEnabledKey)
+        let previousProvider = defaults.object(forKey: providerKey)
+        let previousSharedProvider = shared?.object(forKey: providerKey)
+        defer {
+            if let previousStatusline {
+                defaults.set(previousStatusline, forKey: AppSettings.statuslineSourceEnabledKey)
+            } else {
+                defaults.removeObject(forKey: AppSettings.statuslineSourceEnabledKey)
+            }
+            if let previousProvider {
+                defaults.set(previousProvider, forKey: providerKey)
+            } else {
+                defaults.removeObject(forKey: providerKey)
+            }
+            if let previousSharedProvider {
+                shared?.set(previousSharedProvider, forKey: providerKey)
+            } else {
+                shared?.removeObject(forKey: providerKey)
+            }
+        }
+        AppSettings.statuslineSourceEnabled = true
+        defaults.set(MainMeterProvider.claude.rawValue, forKey: providerKey)
+        shared?.set(MainMeterProvider.claude.rawValue, forKey: providerKey)
+
+        let recorder = PollRecorder()
+        let appState = AppState(
+            pipeline: RecordingPipeline(recorder: recorder),
+            serviceStatusFetcher: { nil },
+            // Never reach the real bridge: it installs into `~/.claude` and now also
+            // changes permissions under `~/.claude-meter`.
+            configBridgeRefreshOperation: { _ in },
+            onboardingIsComplete: true)
+        defer { appState.stopPolling() }
+
+        #expect(appState.mainMeterProvider == .claude)
+        for expected in 1...3 {
+            appState.refreshNow(kind: .background)
+            try await Timeout.run(seconds: 2) { await recorder.waitForPoll(expected) }
+            #expect(await recorder.pollCount() == expected)
+        }
+    }
+
+    @Test("Claude and the selected main provider never take the slow cadence")
+    func cheapAndSelectedSourcesAreNeverGated() {
+        // Claude's first tier is a local statusline read, so slowing it saves
+        // nothing. Codex is gated only while it does not own the main meter.
+        #expect(!AppState.isRateLimitable(.claude, mainMeter: .claude))
+        #expect(!AppState.isRateLimitable(.claude, mainMeter: .codex))
+        #expect(!AppState.isRateLimitable(.codex, mainMeter: .codex))
+        #expect(AppState.isRateLimitable(.codex, mainMeter: .claude))
+        #expect(AppState.isRateLimitable(.cursor, mainMeter: .claude))
+        #expect(AppState.isRateLimitable(.cursor, mainMeter: .codex))
+        #expect(AppState.isRateLimitable(.grok, mainMeter: .claude))
+    }
+
+    @Test("A popover-only source skips a background cycle while nobody is looking")
+    func secondarySourceSkipsBackgroundCycle() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let enabled: Set<AppState.PollSource> = [.claude, .codex, .cursor, .grok]
+        let justPolled = [
+            AppState.PollSource.codex: now.addingTimeInterval(-60),
+            AppState.PollSource.cursor: now.addingTimeInterval(-60),
+            AppState.PollSource.grok: now.addingTimeInterval(-60),
+        ]
+
+        // Claude owns the meter and nobody is looking: only Claude runs.
+        let idle = AppState.admittedSources(
+            enabled: enabled, mainMeterProvider: .claude, lastAttemptAt: justPolled,
+            lastPopoverOpenAt: now.addingTimeInterval(-3600), isInteractive: false, now: now)
+        #expect(idle == [.claude])
+
+        // A user action reaches every enabled source at once.
+        let interactive = AppState.admittedSources(
+            enabled: enabled, mainMeterProvider: .claude, lastAttemptAt: justPolled,
+            lastPopoverOpenAt: now.addingTimeInterval(-3600), isInteractive: true, now: now)
+        #expect(interactive == enabled)
+
+        // A recent popover visit keeps every source on the fast cadence.
+        let recentlyViewed = AppState.admittedSources(
+            enabled: enabled, mainMeterProvider: .claude, lastAttemptAt: justPolled,
+            lastPopoverOpenAt: now.addingTimeInterval(-30), isInteractive: false, now: now)
+        #expect(recentlyViewed == enabled)
+
+        // After the idle interval the slow cadence runs them again.
+        let due = AppState.admittedSources(
+            enabled: enabled, mainMeterProvider: .claude,
+            lastAttemptAt: justPolled.mapValues { $0.addingTimeInterval(-300) },
+            lastPopoverOpenAt: now.addingTimeInterval(-3600), isInteractive: false, now: now)
+        #expect(due == enabled)
+
+        // With Codex selected, Codex keeps the fast cadence and Claude still runs.
+        let codexSelected = AppState.admittedSources(
+            enabled: enabled, mainMeterProvider: .codex, lastAttemptAt: justPolled,
+            lastPopoverOpenAt: now.addingTimeInterval(-3600), isInteractive: false, now: now)
+        #expect(codexSelected == [.claude, .codex])
+    }
+
+    @MainActor
     @Test("First-run onboarding blocks polling until Get Started")
     func onboardingLifecycle() async throws {
         let defaults = UserDefaults.standard

@@ -76,6 +76,19 @@ cycle. Opening the popover requests an interactive refresh. Source-setting rebui
 debounced and do not restart an active poll loop. Statusline/hook reconciliation permits
 one active operation and one coalesced rerun.
 
+Each cycle admits sources by cost. Claude and the selected main provider always run at the
+cycle cadence: Claude's first tier is a local statusline read, and the selected provider
+owns the hero, menu bar, header time, widget, and quota alerts. A source that appears only
+in the popover — Cursor, Grok, and Codex when Claude is selected — can drop to a slow
+cadence while nobody is looking.
+
+The slow cadence is at most 150 seconds, and always at least one poll cycle below the
+configured stale interval, so this policy alone can never make a card report itself stale.
+A stale interval at or below the cadence disables the slow cadence. An open popover, an
+interactive refresh, a first attempt, a backward clock change, wake, network reconnection,
+and any source or account change all admit every enabled source at once. Cost scans,
+attention hooks, and the advisory status sidecar keep their own schedules.
+
 ### 3.1 Statusline bridge
 
 The bridge prepends an idempotent pass-through command to every enabled discovered

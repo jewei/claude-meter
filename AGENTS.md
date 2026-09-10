@@ -53,6 +53,11 @@ IDs. Exclude instruction Markdown files from Swift package targets.
 - Build enabled Claude tiers in this order: `StatuslinePipeline`, `OAuthPipeline`,
   `CachedSnapshotPipeline`. Wrap the chain in `DisabledClaudeAccountFilteringPipeline`
   so fallback cannot restore disabled accounts.
+- `SecondaryPollPolicy` may slow only popover-only sources. Never gate Claude, whose first
+  tier is a local file read, and never gate the selected main provider, which owns alerts
+  and the menu bar. `AppState.isRateLimitable` states the rule; keep it pure and tested.
+  Its idle interval must stay one cycle below the configured stale interval, or the policy
+  would itself make a card stale. An open popover, wake, and reconnect admit every source.
 - Poll cadence and statusline max age are 60 s. Keep `StatuslinePipeline.fallbackCooldown`
   at 120 s, above cadence and below the 180 s default stale threshold. Cooldown results
   retain their observation time. Interactive refresh bypasses and records this cooldown;

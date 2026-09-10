@@ -122,6 +122,12 @@ final class AppState: ObservableObject {
     /// (likely, at a 60 s cadence) would silently downgrade to `.background` and
     /// serve cache, which is the exact case the bypass exists for.
     private var pendingRefreshKind: RefreshKind = .background
+    /// When each popover-only source last ran, successful or not. `SecondaryPollPolicy`
+    /// reads it to keep a source that nobody is looking at off the 60-second cadence.
+    private var lastSecondaryAttemptAt: [PollSource: Date] = [:]
+    /// When the popover last opened. A recent visit restores the fast cadence for
+    /// every source, because the user is switching between cards.
+    private var lastPopoverOpenAt: Date?
     /// Identity last processed by quota notifications. A provider/account switch
     /// starts a new baseline instead of comparing unrelated meters.
     private var notificationIdentity: String?
@@ -659,6 +665,7 @@ final class AppState: ObservableObject {
         }
         let monitor = PowerMonitor()
         monitor.onWake = { [weak self] in
+            self?.admitEverySourceOnNextCycle()
             self?.refreshNow()
             // Restart the attention watcher so markers written near wake surface
             // promptly instead of waiting out the asleep-recheck interval.
@@ -669,6 +676,7 @@ final class AppState: ObservableObject {
         network.onReconnect = { [weak self] in
             // Connectivity regained — refresh now instead of waiting out the
             // remaining poll interval. Mirrors PowerMonitor.onWake.
+            self?.admitEverySourceOnNextCycle()
             self?.refreshNow()
         }
         self.networkMonitor = network
@@ -827,6 +835,9 @@ final class AppState: ObservableObject {
         notificationEngine.pollFailed()
         pipelineGeneration += 1
         pendingCostConfiguration = nil
+        // A source or account change must take effect on the next cycle, not after
+        // the idle interval of the source that changed.
+        lastSecondaryAttemptAt.removeAll()
         clearCostReading()
     }
 
@@ -888,6 +899,7 @@ final class AppState: ObservableObject {
 
     func popoverDidOpen() {
         isPopoverOpen = true
+        lastPopoverOpenAt = Date()
         refreshNow(kind: .interactive)
     }
 
@@ -1164,25 +1176,132 @@ final class AppState: ObservableObject {
         if configuration.claudeEnabled { scheduleCostRefresh(configuration: configuration) }
         defer { finishPollCycle(cycleID) }
 
+        let admitted = admittedSources(configuration: configuration, now: Date())
         await withTaskGroup(of: Void.self) { group in
-            if configuration.claudeEnabled {
+            if admitted.contains(.claude) {
                 group.addTask {
                     await self.pollClaude(configuration: configuration, cycleID: cycleID)
                 }
             }
-            if configuration.cursorEnabled {
+            if admitted.contains(.cursor) {
                 group.addTask { await self.pollCursor(configuration: configuration) }
             }
-            if configuration.codexEnabled {
+            if admitted.contains(.codex) {
                 group.addTask {
                     await self.pollCodex(configuration: configuration, cycleID: cycleID)
                 }
             }
-            if configuration.grokEnabled {
+            if admitted.contains(.grok) {
                 group.addTask { await self.pollGrok(configuration: configuration) }
             }
         }
         await pollCompletionBarrier?()
+    }
+
+    /// One pollable source. Only the two that can own the main meter are named
+    /// separately from the popover-only sources.
+    enum PollSource: String, CaseIterable, Sendable {
+        case claude
+        case cursor
+        case codex
+        case grok
+    }
+
+    /// Clears the slow-cadence record so the next cycle runs every enabled source.
+    ///
+    /// Wake and reconnect stay `.background` on purpose (see `refreshNow`), so
+    /// without this a source that failed during sleep or a network loss would keep
+    /// its error for up to one idle interval after the machine recovers.
+    private func admitEverySourceOnNextCycle() {
+        lastSecondaryAttemptAt.removeAll()
+    }
+
+    /// The sources this cycle runs, and the record of the attempt.
+    private func admittedSources(
+        configuration: PollConfiguration, now: Date
+    ) -> Set<PollSource> {
+        let admitted = Self.admittedSources(
+            enabled: enabledSources(in: configuration),
+            mainMeterProvider: mainMeterProvider,
+            lastAttemptAt: lastSecondaryAttemptAt,
+            lastPopoverOpenAt: lastPopoverOpenAt,
+            isPopoverOpen: isPopoverOpen,
+            isInteractive: configuration.refreshKind == .interactive,
+            idleInterval: SecondaryPollPolicy.idleInterval(
+                staleAfterSeconds: AppGroupConfig.resolvedStaleAfterSeconds()),
+            now: now)
+        for source in admitted where Self.isRateLimitable(source, mainMeter: mainMeterProvider) {
+            lastSecondaryAttemptAt[source] = now
+        }
+        return admitted
+    }
+
+    /// Decides which enabled sources this cycle runs. Pure, so the rule can be
+    /// tested without driving the poll loop.
+    ///
+    /// Two sources always keep the 60-second cadence:
+    ///
+    /// - The selected main provider, because it owns the hero, the menu bar, the
+    ///   header time, the widget, and every quota alert.
+    /// - Claude, because its first tier is a local statusline file read. Slowing a
+    ///   file read saves nothing, and its OAuth tier already has a fallback cooldown
+    ///   and a shared 429 gate. Claude cost scans stay on their own schedule, and
+    ///   attention hooks keep their own watcher.
+    ///
+    /// The remaining sources appear only inside the popover, and opening the popover
+    /// always runs an interactive refresh. Slowing them removes the repeated
+    /// `codex app-server` and `sqlite3` launches that dominate a background cycle.
+    nonisolated static func admittedSources(
+        enabled: Set<PollSource>,
+        mainMeterProvider: MainMeterProvider,
+        lastAttemptAt: [PollSource: Date],
+        lastPopoverOpenAt: Date?,
+        isPopoverOpen: Bool = false,
+        isInteractive: Bool,
+        idleInterval: TimeInterval = SecondaryPollPolicy.idleInterval(
+            staleAfterSeconds: AppGroupConfig.defaultStaleAfterSeconds),
+        now: Date
+    ) -> Set<PollSource> {
+        var admitted: Set<PollSource> = []
+        for source in enabled {
+            guard isRateLimitable(source, mainMeter: mainMeterProvider) else {
+                admitted.insert(source)
+                continue
+            }
+            guard
+                SecondaryPollPolicy.shouldPoll(
+                    now: now,
+                    lastAttemptAt: lastAttemptAt[source],
+                    lastPopoverOpenAt: lastPopoverOpenAt,
+                    isPopoverOpen: isPopoverOpen,
+                    isInteractive: isInteractive,
+                    idleInterval: idleInterval)
+            else { continue }
+            admitted.insert(source)
+        }
+        return admitted
+    }
+
+    /// Whether the slow cadence may apply to this source.
+    nonisolated static func isRateLimitable(
+        _ source: PollSource, mainMeter: MainMeterProvider
+    ) -> Bool {
+        switch source {
+        // Never gated: a local file read, plus Claude-specific work that does not
+        // follow the main-meter selection.
+        case .claude: false
+        case .codex: mainMeter != .codex
+        case .cursor, .grok: true
+        }
+    }
+
+    private func enabledSources(in configuration: PollConfiguration) -> Set<PollSource> {
+        var enabled: Set<PollSource> = []
+        if configuration.claudeEnabled { enabled.insert(.claude) }
+        if configuration.cursorEnabled { enabled.insert(.cursor) }
+        if configuration.codexEnabled { enabled.insert(.codex) }
+        if configuration.grokEnabled { enabled.insert(.grok) }
+        return enabled
     }
 
     private func finishPollCycle(_ cycleID: UInt64) {

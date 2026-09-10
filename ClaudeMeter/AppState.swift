@@ -2187,6 +2187,11 @@ final class AppState: ObservableObject {
         let allDirs = allAccounts.map(\.configDir)
         var firstError: Error?
 
+        // Repair payload files that a pre-umask snippet left readable by other
+        // local accounts. Runs for both bridges, and whether or not either source
+        // is enabled, because the old files stay until an explicit purge.
+        StatuslineBridge.restrictDataTree()
+
         if request.statuslineEnabled {
             do {
                 try StatuslineBridge.install(configDirs: enabledDirs)

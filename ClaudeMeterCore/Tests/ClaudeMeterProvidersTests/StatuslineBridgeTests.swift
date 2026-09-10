@@ -269,13 +269,67 @@ struct StatuslineBridgeTests {
         #expect(StatuslineBridge.bridgeSnippet.contains(#"LC_ALL=C tr -cd "[:alnum:]._-""#))
     }
 
-    @Test func strippedOfAnyBridgeMigratesPriorPerSessionSnippet() {
-        // The pre-account per-session snippet is now legacyBridgeSnippets[0]; an
-        // install that stacked it before the new snippet must collapse to the user
-        // command (self-healing migration).
-        let legacyPerSession = StatuslineBridge.legacyBridgeSnippets[0]
-        let cmd = legacyPerSession + " | " + StatuslineBridge.bridgeSnippet + " | user.sh"
-        #expect(StatuslineBridge.strippedOfAnyBridge(from: cmd) == "user.sh")
+    @Test func strippedOfAnyBridgeMigratesEveryPriorSnippet() {
+        // Each earlier snippet must migrate: an install that stacked one before the
+        // current snippet collapses to the user command (self-healing migration).
+        for legacy in StatuslineBridge.legacyBridgeSnippets {
+            let cmd = legacy + " | " + StatuslineBridge.bridgeSnippet + " | user.sh"
+            #expect(StatuslineBridge.strippedOfAnyBridge(from: cmd) == "user.sh")
+        }
+    }
+
+    @Test("The snippet sets an owner-only umask before it creates anything")
+    func bridgeSnippetSetsOwnerOnlyUmask() throws {
+        // Claude Code keeps transcripts at 0600 in a 0700 directory. The captured
+        // payload carries the same class of data, so the umask must precede every
+        // mkdir and every write in the snippet.
+        let snippet = StatuslineBridge.bridgeSnippet
+        let umaskIndex = try #require(snippet.range(of: "umask 077;")?.lowerBound)
+        let mkdirIndex = try #require(snippet.range(of: "mkdir -p")?.lowerBound)
+        let writeIndex = try #require(snippet.range(of: #"printf "%s" "$I">"$T""#)?.lowerBound)
+        #expect(umaskIndex < mkdirIndex)
+        #expect(umaskIndex < writeIndex)
+        // Earlier snippets must stay recognisable so install can migrate them.
+        #expect(StatuslineBridge.legacyBridgeSnippets.allSatisfy { !$0.contains("umask") })
+    }
+
+    @Test("A captured session payload is owner-only on disk")
+    func bridgeSnippetWritesOwnerOnlyPayload() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-c", StatuslineBridge.bridgeSnippet]
+        var environment = ProcessInfo.processInfo.environment
+        environment["HOME"] = home.path
+        environment["CLAUDE_CONFIG_DIR"] = home.appendingPathComponent(".claude").path
+        process.environment = environment
+        let input = Pipe()
+        process.standardInput = input
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+
+        try process.run()
+        try input.fileHandleForWriting.write(
+            contentsOf: Data(#"{"session_id":"s1","workspace":{"current_dir":"/tmp"}}"#.utf8))
+        try input.fileHandleForWriting.close()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+
+        let accountDir = home.appendingPathComponent(".claude-meter/sessions/claude")
+        let payload = accountDir.appendingPathComponent("s1.json")
+        #expect(try mode(of: payload) == 0o600)
+        #expect(try mode(of: accountDir) == 0o700)
+    }
+
+    /// The permission bits of one path, without the file-type bits.
+    private func mode(of url: URL) throws -> Int {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        let permissions = try #require(attributes[.posixPermissions] as? NSNumber)
+        return permissions.intValue & 0o777
     }
 
     // MARK: - Multi-dir install
@@ -725,5 +779,84 @@ struct StatuslineBridgeTests {
             fm.fileExists(
                 atPath: dataRoot.appendingPathComponent("sessions/claude/outside.json").path))
         #expect(fm.fileExists(atPath: dataRoot.appendingPathComponent("statusline.json").path))
+    }
+
+    // MARK: - Data-tree permission repair
+
+    @Test("The repair pass restricts payloads that an older snippet left readable")
+    func restrictDataTreeRepairsLegacyPermissions() throws {
+        let fm = FileManager.default
+        let dataRoot = fm.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fm.removeItem(at: dataRoot) }
+
+        let sessionAccount = dataRoot.appendingPathComponent(
+            "sessions/claude", isDirectory: true)
+        let eventAccount = dataRoot.appendingPathComponent("events/claude", isDirectory: true)
+        for directory in [sessionAccount, eventAccount] {
+            try fm.createDirectory(
+                at: directory, withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o755])
+        }
+        let payloads = [
+            sessionAccount.appendingPathComponent("s1.json"),
+            eventAccount.appendingPathComponent("s1.Stop.100.json"),
+            dataRoot.appendingPathComponent("statusline.json"),
+        ]
+        for payload in payloads {
+            try Data("{}".utf8).write(to: payload)
+            try fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: payload.path)
+        }
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dataRoot.path)
+
+        StatuslineBridge.restrictDataTree(dataRoot: dataRoot)
+
+        for payload in payloads {
+            #expect(try mode(of: payload) == 0o600)
+        }
+        for directory in [dataRoot, sessionAccount, eventAccount] {
+            #expect(try mode(of: directory) == 0o700)
+        }
+    }
+
+    @Test("The repair pass reconciles the tree at most once per interval")
+    func restrictDataTreeIsThrottled() {
+        // Reconciliation runs every poll, and a full pass stats every payload.
+        StatuslineBridge.resetDataTreeRestrictThrottleForTesting()
+        defer { StatuslineBridge.resetDataTreeRestrictThrottleForTesting() }
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let interval = StatuslineBridge.dataTreeRestrictInterval
+
+        #expect(StatuslineBridge.dataTreeRestrictPassIsDue(now: start))
+        #expect(!StatuslineBridge.dataTreeRestrictPassIsDue(now: start.addingTimeInterval(60)))
+        #expect(
+            !StatuslineBridge.dataTreeRestrictPassIsDue(
+                now: start.addingTimeInterval(interval - 1)))
+        #expect(
+            StatuslineBridge.dataTreeRestrictPassIsDue(now: start.addingTimeInterval(interval)))
+        // A backward clock change must not park the pass until the clock catches up.
+        #expect(StatuslineBridge.dataTreeRestrictPassIsDue(now: start))
+    }
+
+    @Test("The repair pass skips a symbolic link instead of following it")
+    func restrictDataTreeIgnoresLinks() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fm.removeItem(at: base) }
+        let dataRoot = base.appendingPathComponent("data", isDirectory: true)
+        let account = dataRoot.appendingPathComponent("sessions/claude", isDirectory: true)
+        try fm.createDirectory(at: account, withIntermediateDirectories: true)
+
+        let outsider = base.appendingPathComponent("outsider.json")
+        try Data("{}".utf8).write(to: outsider)
+        try fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: outsider.path)
+        try fm.createSymbolicLink(
+            at: account.appendingPathComponent("link.json"), withDestinationURL: outsider)
+
+        StatuslineBridge.restrictDataTree(dataRoot: dataRoot)
+
+        // A link must never redirect the mode change outside the data tree.
+        #expect(try mode(of: outsider) == 0o644)
     }
 }

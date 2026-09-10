@@ -90,6 +90,13 @@ repairs legacy snippets, and is removed when the source is disabled. Invalid set
 one config directory do not block the others. Disabling an account filters both discovery
 and the session read path.
 
+Both bridge snippets set `umask 077` before they create a directory or write a payload.
+Managed directories under `~/.claude-meter` are `0700` and payloads are `0600`, which
+matches how Claude Code protects its own transcripts. Bridge reconciliation also repairs
+directories and payloads that an earlier snippet created under the default umask. The
+repair uses `O_NOFOLLOW` descriptors, never follows or modifies a symbolic link, and never
+blocks install when it fails.
+
 Fresh payloads are grouped and merged within an account only. The active account is the
 one with the latest observed activity-signature change; cold ties use the sticky previous
 active key, then payload recency, then key order. File mtime is not activity because an

@@ -296,6 +296,36 @@ enum BoundedRegularFileReader {
             unlinkEntry(named: name, ifUnchangedSince: file.entry)
         }
 
+        /// Restricts this directory to owner-only access. The mode change applies to
+        /// the open descriptor, so a replaced path cannot redirect it. Returns true
+        /// when the directory already excluded group and other access.
+        @discardableResult
+        func restrictToOwner() -> Bool {
+            var status = stat()
+            guard Darwin.fstat(descriptor, &status) == 0 else { return false }
+            guard (status.st_mode & 0o077) != 0 else { return true }
+            return Darwin.fchmod(descriptor, mode_t(0o700)) == 0
+        }
+
+        /// Restricts one direct regular-file child to owner-only access. A symbolic
+        /// link is neither followed nor modified, so an attacker cannot redirect the
+        /// mode change to a file outside this directory.
+        @discardableResult
+        func restrictEntryToOwner(named name: String) -> Bool {
+            guard (try? Self.validateEntryName(name)) != nil else { return false }
+            var status = stat()
+            let inspectionResult = name.withCString {
+                Darwin.fstatat(descriptor, $0, &status, AT_SYMLINK_NOFOLLOW)
+            }
+            guard inspectionResult == 0, (status.st_mode & S_IFMT) == S_IFREG else {
+                return false
+            }
+            guard (status.st_mode & 0o077) != 0 else { return true }
+            return name.withCString {
+                Darwin.fchmodat(descriptor, $0, mode_t(0o600), AT_SYMLINK_NOFOLLOW)
+            } == 0
+        }
+
         private static func validateEntryName(_ name: String) throws {
             guard !name.isEmpty,
                 name != ".",

@@ -10,6 +10,10 @@ final class ClaudeMeterAppDelegate: NSObject, NSApplicationDelegate,
 {
     func applicationWillFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        // Restore the user's log-file choice before any subsystem can log.
+        if UserDefaults.standard.bool(forKey: AppGroupConfig.fileLoggingEnabledKey) {
+            MeterLog.setFileLoggingEnabled(true)
+        }
     }
 
     func userNotificationCenter(

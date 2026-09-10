@@ -120,6 +120,8 @@ public enum AppGroupConfig {
     public static let codexMainMeterAccountKey = "codexMainMeterAccount"
     /// "nearest" | "5h" | "7d" | "both" | "forecast"
     public static let menuBarWindowKey = "menuBarWindow"
+    /// Opt-in diagnostic log file. App-local only; the widget never reads it.
+    public static let fileLoggingEnabledKey = "fileLoggingEnabled"
 
     /// Typed popover card style, shared-first so app processes observe one value.
     public static func resolvedCardStyle(

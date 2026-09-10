@@ -436,6 +436,13 @@ action or during an enabled provider poll.
 All errors are sanitized at UI and persistence boundaries. Sanitization redacts emails,
 home paths, UUIDs, bearer/JWT/provider tokens, session keys, and labeled sensitive fields.
 
+`MeterLog` is the logging seam. It sanitizes every message before the text reaches
+`os.Logger` or the log file, so a call site cannot leak a secret by forgetting to sanitize.
+Categories are app, poll, bridge, oauth, cost, notification, and widget. The log file is
+opt-in through Advanced settings, is written to `~/Library/Logs/ClaudeMeter/` at `0600`
+inside a `0700` directory, rotates once at 4 MiB, and is deleted when the user turns the
+setting off. Diagnostics keep showing present state only.
+
 ## 11. Verification and maintenance
 
 The authoritative local/CI gate is:

@@ -1135,6 +1135,10 @@ final class OAuthRateLimitGate: @unchecked Sendable {
         if let record, record.isValid(asOf: now), record.until >= candidate.until { return }
         record = candidate
         persist()
+        // A silent OAuth block is a common support question: usage stops updating,
+        // but nothing failed visibly. Record when it starts and how long it lasts.
+        MeterLog.logger(.oauth).warning(
+            "OAuth rate-limit gate engaged for \(Int(duration.rounded())) s")
     }
 
     func clearForTesting() {

@@ -1317,6 +1317,7 @@ final class AppState: ObservableObject {
         let sanitized = DiagnosticsSanitizer.sanitize(message)
         lastError = sanitized
         try? store.writeLastError(LastErrorRecord(message: sanitized))
+        MeterLog.logger(.poll).error("Claude poll failed: \(message)")
         if mainMeterProvider == .claude { notificationEngine.pollFailed() }
     }
 
@@ -1936,6 +1937,12 @@ final class AppState: ObservableObject {
             let result = try? await Timeout.run(seconds: timeout, budget: budget) {
                 await scan(now, configuration)
             }
+            if result == nil {
+                // A timeout has no verified scope, so it clears old totals. Users
+                // see the cost card empty itself with no visible cause.
+                MeterLog.logger(.cost).warning(
+                    "Cost scan did not complete within \(Int(timeout)) s")
+            }
             guard let self else { return }
             costRefreshTask = nil
             costIsLoading = false
@@ -2242,6 +2249,7 @@ final class AppState: ObservableObject {
                 ?? firstError.localizedDescription
             try? request.store.writeLastError(
                 LastErrorRecord(message: DiagnosticsSanitizer.sanitize(message)))
+            MeterLog.logger(.bridge).error("Bridge reconciliation failed: \(message)")
         }
     }
 

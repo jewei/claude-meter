@@ -42,6 +42,41 @@ struct SessionEventStoreTests {
         #expect(TerminalRoute(termProgram: "unknown", tty: nil, identifier: nil) == nil)
     }
 
+    @Test("Invalid Herdr context does not suppress an attention event")
+    func invalidHerdrContextKeepsEvent() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let metadata = Data("ghostty\nttys003\n\nrelative.sock\n--help\n/tmp/outer".utf8)
+            .base64EncodedString()
+        try writeMarker(
+            [
+                "claude_meter_hook_version": 2,
+                "terminal_route": metadata,
+                "event": ["hook_event_name": "Stop", "session_id": "s1"],
+            ], account: "claude", name: "s1.Stop.123", mtime: now, in: root)
+        let event = try #require(
+            SessionEventStore.drain(
+                eventsRoot: root, disabledAccountKeys: [], now: now, maxAge: 120
+            ).first)
+        #expect(event.kind == .stop)
+        #expect(event.terminalRoute?.client == .ghostty)
+        #expect(event.terminalRoute?.herdr == nil)
+    }
+
+    @Test("Herdr context rejects invalid socket paths and pane selectors")
+    func herdrContextRejectsInvalidTargets() {
+        for path in [
+            "relative.sock", "/tmp/line\nbreak.sock", "/" + String(repeating: "x", count: 103),
+        ] {
+            #expect(TerminalRoute.Herdr(socketPath: path, paneID: "w1:p1", startupCWD: nil) == nil)
+        }
+        for pane in ["", "--help", "agent-name", "w1:p1\n", "w1:p1 w2:p2"] {
+            #expect(
+                TerminalRoute.Herdr(socketPath: "/tmp/herdr.sock", paneID: pane, startupCWD: nil)
+                    == nil)
+        }
+    }
+
     @Test func parsesFreshStopAndNotificationAcrossAccounts() throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }

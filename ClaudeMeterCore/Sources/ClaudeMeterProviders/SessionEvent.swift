@@ -18,14 +18,45 @@ public struct TerminalRoute: Sendable, Equatable {
     public let tty: String?
     /// Client-specific locator. Currently this is a WezTerm pane id.
     public let identifier: String?
+    /// The inner Herdr pane and its server, independent of the outer terminal.
+    public let herdr: Herdr?
 
-    public init(client: Client, tty: String?, identifier: String?) {
+    public struct Herdr: Sendable, Equatable {
+        public let socketPath: String
+        public let paneID: String
+        public let startupCWD: String?
+
+        public init?(socketPath: String, paneID: String, startupCWD: String?) {
+            guard socketPath.hasPrefix("/"), socketPath.utf8.count < 104,
+                !socketPath.unicodeScalars.contains(where: {
+                    CharacterSet.controlCharacters.contains($0)
+                }),
+                paneID.range(of: #"^w[0-9A-Za-z]+:p[0-9A-Za-z]+$"#, options: .regularExpression)
+                    != nil,
+                paneID.utf8.count <= 64
+            else { return nil }
+            self.socketPath = socketPath
+            self.paneID = paneID
+            self.startupCWD = startupCWD.flatMap { value in
+                value.hasPrefix("/") && value.utf8.count <= 4096
+                    && !value.unicodeScalars.contains(where: {
+                        CharacterSet.controlCharacters.contains($0)
+                    })
+                    ? value : nil
+            }
+        }
+    }
+
+    public init(client: Client, tty: String?, identifier: String?, herdr: Herdr? = nil) {
         self.client = client
         self.tty = tty?.nilIfEmpty
         self.identifier = identifier?.nilIfEmpty
+        self.herdr = herdr
     }
 
-    public init?(termProgram: String, tty: String?, identifier: String?) {
+    public init?(
+        termProgram: String, tty: String?, identifier: String?, herdr: Herdr? = nil
+    ) {
         let client: Client
         switch termProgram.lowercased() {
         case "ghostty": client = .ghostty
@@ -35,7 +66,7 @@ public struct TerminalRoute: Sendable, Equatable {
         case "warpterminal", "warp": client = .warp
         default: return nil
         }
-        self.init(client: client, tty: tty, identifier: identifier)
+        self.init(client: client, tty: tty, identifier: identifier, herdr: herdr)
     }
 
     /// AppleScript terminal APIs expose the full device path.
@@ -51,7 +82,12 @@ public struct TerminalRoute: Sendable, Equatable {
             component.hasPrefix("cmr-")
         else { return nil }
 
-        guard let data = Base64URL.decode(String(component.dropFirst(4))),
+        self.init(encodedMetadata: String(component.dropFirst(4)))
+    }
+
+    fileprivate init?(encodedMetadata: String) {
+        guard encodedMetadata.utf8.count <= 8192,
+            let data = Base64URL.decode(encodedMetadata),
             let raw = String(data: data, encoding: .utf8)
         else { return nil }
         let fields = raw.split(separator: "\n", omittingEmptySubsequences: false)
@@ -59,7 +95,11 @@ public struct TerminalRoute: Sendable, Equatable {
         self.init(
             termProgram: String(program),
             tty: fields.count > 1 ? String(fields[1]) : nil,
-            identifier: fields.count > 2 ? String(fields[2]) : nil
+            identifier: fields.count > 2 ? String(fields[2]) : nil,
+            herdr: fields.count == 6
+                ? Herdr(
+                    socketPath: String(fields[3]), paneID: String(fields[4]),
+                    startupCWD: String(fields[5])) : nil
         )
     }
 }
@@ -321,8 +361,22 @@ public enum SessionEventStore {
     private static func parse(
         data: Data, markerFilename: String, accountKey: String, capturedAt: Date
     ) -> SessionEvent? {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        guard let marker = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
+        }
+        let json: [String: Any]
+        let terminalRoute: TerminalRoute?
+        if let version = marker["claude_meter_hook_version"] {
+            guard (version as? NSNumber)?.intValue == 2,
+                let event = marker["event"] as? [String: Any]
+            else { return nil }
+            json = event
+            terminalRoute = (marker["terminal_route"] as? String).flatMap {
+                TerminalRoute(encodedMetadata: $0)
+            }
+        } else {
+            json = marker
+            terminalRoute = TerminalRoute(markerFilename: markerFilename)
         }
         let kind = SessionEvent.Kind(from: json["hook_event_name"] as? String)
         let cwd =
@@ -337,7 +391,7 @@ public enum SessionEventStore {
             cwd: cwd,
             message: json["message"] as? String,
             errorType: json["error_type"] as? String,
-            terminalRoute: TerminalRoute(markerFilename: markerFilename),
+            terminalRoute: terminalRoute,
             capturedAt: capturedAt
         )
     }

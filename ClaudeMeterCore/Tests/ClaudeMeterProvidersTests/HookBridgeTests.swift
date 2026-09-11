@@ -187,10 +187,10 @@ struct HookBridgeTests {
         #expect(hooks["Stop"] as? [String] == ["bogus"])
     }
 
-    @Test func migratesLegacySnippet() throws {
+    @Test(arguments: HookBridge.legacyHookSnippets)
+    func migratesLegacySnippet(legacy: String) throws {
         let (dir, settings) = try makeConfigDir()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let legacy = try #require(HookBridge.legacyHookSnippets.first)
         try writeJSON(
             ["hooks": ["Stop": [["hooks": [["type": "command", "command": legacy]]]]]],
             to: settings)
@@ -210,15 +210,13 @@ struct HookBridgeTests {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-c", HookBridge.hookSnippet]
-        var environment = ProcessInfo.processInfo.environment
-        environment["HOME"] = home.path
-        environment["CLAUDE_CONFIG_DIR"] = home.appendingPathComponent(".claude-work").path
-        environment["TERM_PROGRAM"] = "WezTerm"
-        environment["WEZTERM_PANE"] = "42"
-        environment.removeValue(forKey: "ITERM_SESSION_ID")
-        environment.removeValue(forKey: "TERM_SESSION_ID")
-        environment.removeValue(forKey: "WARP_SESSION_ID")
-        process.environment = environment
+        process.environment = [
+            "HOME": home.path,
+            "PATH": "/usr/bin:/bin",
+            "CLAUDE_CONFIG_DIR": home.appendingPathComponent(".claude-work").path,
+            "TERM_PROGRAM": "WezTerm",
+            "WEZTERM_PANE": "42",
+        ]
         let input = Pipe()
         process.standardInput = input
         process.standardOutput = FileHandle.nullDevice
@@ -239,6 +237,85 @@ struct HookBridgeTests {
         #expect(event.accountKey == "claude-work")
         #expect(event.terminalRoute?.client == .wezTerm)
         #expect(event.terminalRoute?.identifier == "42")
+    }
+
+    @Test(arguments: ["/tmp/outer", "/tmp/" + String(repeating: "folder/", count: 80)])
+    func ghosttyHookPreservesHerdrFocusTarget(startupCWD: String) throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let socketPath = home.appendingPathComponent("herdr.sock").path
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["-c", HookBridge.hookSnippet]
+        process.environment = [
+            "HOME": home.path,
+            "PATH": "/usr/bin:/bin",
+            "TERM_PROGRAM": "ghostty",
+            "HERDR_SOCKET_PATH": socketPath,
+            "HERDR_PANE_ID": "w1:p2",
+            "HERDR_TAB_ID": "w1:t2",
+            "HERDR_WORKSPACE_ID": "w1",
+            "HERDR_STARTUP_CWD": startupCWD,
+        ]
+        let input = Pipe()
+        process.standardInput = input
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        try input.fileHandleForWriting.write(
+            contentsOf: Data(#"{"hook_event_name":"Stop","session_id":"s1"}"#.utf8))
+        try input.fileHandleForWriting.close()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+
+        let event = try #require(
+            SessionEventStore.drain(
+                eventsRoot: home.appendingPathComponent(".claude-meter/events"),
+                disabledAccountKeys: [], now: Date(), maxAge: 120
+            ).first)
+        #expect(event.kind == .stop)
+        #expect(event.terminalRoute?.client == .ghostty)
+        #expect(event.terminalRoute?.herdr?.socketPath == socketPath)
+        #expect(event.terminalRoute?.herdr?.paneID == "w1:p2")
+        #expect(event.terminalRoute?.herdr?.startupCWD == startupCWD)
+    }
+
+    @Test("A headless hook preserves its event without a terminal route")
+    func headlessHookPreservesEvent() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let payload: [String: String] = [
+            "hook_event_name": "Notification", "session_id": "headless",
+            "cwd": "/tmp/project with spaces", "message": "Permission for \"file\"?\nPlease check.",
+        ]
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["-c", HookBridge.hookSnippet]
+        process.environment = ["HOME": home.path, "PATH": "/usr/bin:/bin"]
+        let input = Pipe()
+        process.standardInput = input
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        try input.fileHandleForWriting.write(
+            contentsOf: JSONSerialization.data(withJSONObject: payload))
+        try input.fileHandleForWriting.close()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+        let event = try #require(
+            SessionEventStore.drain(
+                eventsRoot: home.appendingPathComponent(".claude-meter/events"),
+                disabledAccountKeys: [], now: Date(), maxAge: 120
+            ).first)
+        #expect(event.kind == .notification)
+        #expect(event.sessionId == payload["session_id"])
+        #expect(event.cwd == payload["cwd"])
+        #expect(event.message == payload["message"])
+        #expect(event.terminalRoute == nil)
     }
 
     @Test func invalidSettingsJSONThrows() throws {

@@ -85,8 +85,11 @@ proxy reading only compact text.
   notifying. Keep subagent permission and rate-limit/billing `StopFailure` events.
 - `TerminalFocusRouter` activates a running terminal before detached exact focus.
   Route Ghostty by cwd, Terminal/iTerm2 by TTY, and WezTerm by pane ID. Warp only
-  activates. Equal-cwd Ghostty windows remain ambiguous. Hook filenames carry the
-  base64url route; the snippet runs `ps`/`base64` only when `TERM_PROGRAM` is set.
+  activates. Herdr routes pin its socket and pane ID for `herdr agent focus`; Ghostty
+  uses `HERDR_STARTUP_CWD` for the outer terminal. Never use Herdr's inner TTY to select
+  an outer terminal tab. Equal-cwd Ghostty windows remain ambiguous. Version 2 hook
+  envelopes carry the base64url route; legacy filename routes remain readable. The
+  snippet runs `ps`/`base64` only when `TERM_PROGRAM` is set.
   Guard scripts with `if application X is running` so a race cannot launch a quit app.
   Bound subprocess waits to 10 s, then SIGTERM/SIGKILL. AppleScript clients need the
   Automation entitlement and usage description and can show a one-time system prompt.

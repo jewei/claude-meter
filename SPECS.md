@@ -430,6 +430,18 @@ Attention hooks support main-agent `Stop`, permission `Notification`, and limit/
 idempotent and pass-through. Click routing activates the app first, then best-effort focuses
 an already-running terminal; it never launches a terminal and bounds subprocess waits.
 
+For Herdr sessions, attention hooks capture `HERDR_SOCKET_PATH`, `HERDR_PANE_ID`, and
+`HERDR_STARTUP_CWD` with the outer terminal route. A click uses `herdr agent focus` with
+the captured socket and pane ID to select the workspace, tab, and pane. Ghostty focus
+uses Herdr's start folder because the inner Claude project folder can differ. The same
+folder in multiple Ghostty terminals remains ambiguous. A missing Herdr executable or
+closed session still permits outer app activation. Herdr commands do not start a server.
+
+Version 2 hook markers store the original event and base64 route in one atomic JSON
+envelope. Route data stays out of filenames to avoid the 255-byte filename limit. The
+reader also accepts legacy plain events and filename routes. Installation replaces all
+known old hook snippets. Existing delivered notifications keep their original route.
+
 ## 9. Widget
 
 The widget supports small, medium, and large families. It loads `main-meter.json` through

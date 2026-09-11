@@ -199,6 +199,8 @@ private actor ControlledNotificationDelivery: NotificationDelivery {
         continuations.removeValue(forKey: index)?.resume()
     }
 
+    func lastRequest() -> NotificationDeliveryRequest? { requests.last }
+
     func state() -> (requests: [String], pending: Set<String>, delivered: Set<String>) {
         (requests.map(\.identifier), pendingIdentifiers, deliveredIdentifiers)
     }
@@ -2881,6 +2883,104 @@ struct AppLogicTests {
         #expect(state.delivered.isEmpty)
         #expect(state.pendingRemovals == 1)
         #expect(state.deliveredRemovals == 1)
+    }
+
+    @Test("An attention notification preserves the Herdr pane through delivery and click decoding")
+    func attentionNotificationPreservesHerdrTarget() async throws {
+        let delivery = ControlledNotificationDelivery(suspendsAdds: false)
+        let suiteName = "HerdrNotification-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName) }
+        let engine = NotificationEngine(defaults: defaults, delivery: delivery)
+        let herdr = try #require(
+            TerminalRoute.Herdr(
+                socketPath: "/tmp/test-herdr.sock", paneID: "w2:p3", startupCWD: "/tmp/outer"))
+        let event = SessionEvent(
+            kind: .stop, accountKey: "claude", sessionId: "session", cwd: "/tmp/project",
+            message: nil,
+            terminalRoute: TerminalRoute(
+                client: .ghostty, tty: "ttys003", identifier: nil, herdr: herdr),
+            capturedAt: Date())
+        await engine.postAttention(
+            event: event, accountLabel: "Default", expectedRevision: engine.attentionLease())
+        let request = try #require(await delivery.lastRequest())
+        let clicked = try #require(AttentionNotificationRoute(userInfo: request.userInfo))
+        #expect(clicked.route.herdr == herdr)
+        #expect(clicked.cwd == "/tmp/project")
+
+        var commands: [TerminalFocusRouter.Command] = []
+        let focused = TerminalFocusRouter.focusPrecisely(
+            clicked, herdrExecutable: "/test/bin/herdr",
+            execute: { command in
+                commands.append(command)
+                return true
+            })
+        #expect(focused)
+        #expect(commands.count == 2)
+        let inner = try #require(commands.first)
+        #expect(inner.executable == "/test/bin/herdr")
+        #expect(inner.arguments == ["agent", "focus", "w2:p3"])
+        #expect(inner.environment == ["HERDR_SOCKET_PATH": "/tmp/test-herdr.sock"])
+        let outer = try #require(commands.last)
+        #expect(outer.executable == "/usr/bin/osascript")
+        let script = try #require(outer.arguments.last)
+        #expect(script.contains("set targetDirectory to \"/tmp/outer\""))
+        #expect(!script.contains("/tmp/project"))
+        #expect(script.contains("if application \"Ghostty\" is running then"))
+        #expect(
+            script.split(separator: "\n").contains {
+                $0.trimmingCharacters(in: .whitespaces) == "activate"
+            })
+    }
+
+    @Test("A closed Herdr session still permits Ghostty focus")
+    func herdrFocusFailureStillFocusesOuterTerminal() throws {
+        let herdr = try #require(
+            TerminalRoute.Herdr(
+                socketPath: "/tmp/closed-herdr.sock", paneID: "w2:p3", startupCWD: "/tmp/outer"))
+        let target = AttentionNotificationRoute(
+            route: TerminalRoute(client: .ghostty, tty: nil, identifier: nil, herdr: herdr),
+            cwd: "/tmp/project")
+        var commands: [TerminalFocusRouter.Command] = []
+        let focused = TerminalFocusRouter.focusPrecisely(
+            target, herdrExecutable: "/test/bin/herdr",
+            execute: { command in
+                commands.append(command)
+                return command.executable == "/usr/bin/osascript"
+            })
+        #expect(!focused)
+        #expect(commands.map(\.executable) == ["/test/bin/herdr", "/usr/bin/osascript"])
+        #expect(commands.first?.environment["HERDR_SOCKET_PATH"] == "/tmp/closed-herdr.sock")
+    }
+
+    @Test("Herdr does not substitute the inner folder or TTY for an outer terminal target")
+    func herdrDoesNotUseInnerTerminalLocators() throws {
+        let herdr = try #require(
+            TerminalRoute.Herdr(socketPath: "/tmp/herdr.sock", paneID: "w2:p3", startupCWD: nil))
+        for client in [TerminalRoute.Client.ghostty, .terminal, .iTerm2] {
+            let target = AttentionNotificationRoute(
+                route: TerminalRoute(client: client, tty: "ttys003", identifier: nil, herdr: herdr),
+                cwd: "/tmp/project")
+            var commands: [TerminalFocusRouter.Command] = []
+            _ = TerminalFocusRouter.focusPrecisely(
+                target, herdrExecutable: "/test/bin/herdr",
+                execute: { command in
+                    commands.append(command)
+                    return true
+                })
+            #expect(commands.count == 1)
+            #expect(commands.first?.arguments == ["agent", "focus", "w2:p3"])
+        }
+    }
+
+    @Test("The terminal helper passes a captured socket as a literal environment value")
+    func terminalFocusCommandPassesEnvironmentLiterally() {
+        let socket = "/tmp/herdr socket ' $(exit 1).sock"
+        let command = TerminalFocusRouter.Command(
+            executable: "/bin/sh",
+            arguments: ["-c", #"test "$HERDR_SOCKET_PATH" = "$1""#, "test-helper", socket],
+            environment: ["HERDR_SOCKET_PATH": socket])
+        #expect(TerminalFocusRouter.run(command))
     }
 
     @Test("Attention setting invalidation retracts a suspended alert")

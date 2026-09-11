@@ -59,6 +59,9 @@ struct AttentionNotificationRoute: Sendable {
     private static let ttyKey = "terminalTTY"
     private static let identifierKey = "terminalIdentifier"
     private static let cwdKey = "terminalCWD"
+    private static let herdrSocketKey = "herdrSocketPath"
+    private static let herdrPaneKey = "herdrPaneID"
+    private static let herdrCWDKey = "herdrStartupCWD"
 
     let route: TerminalRoute
     let cwd: String?
@@ -71,6 +74,11 @@ struct AttentionNotificationRoute: Sendable {
         if let tty = route.tty { info[Self.ttyKey] = tty }
         if let identifier = route.identifier { info[Self.identifierKey] = identifier }
         if let cwd, !cwd.isEmpty { info[Self.cwdKey] = cwd }
+        if let herdr = route.herdr {
+            info[Self.herdrSocketKey] = herdr.socketPath
+            info[Self.herdrPaneKey] = herdr.paneID
+            if let cwd = herdr.startupCWD { info[Self.herdrCWDKey] = cwd }
+        }
         return info
     }
 
@@ -85,10 +93,20 @@ struct AttentionNotificationRoute: Sendable {
             let client = TerminalRoute.Client(rawValue: rawClient)
         else { return nil }
 
+        let herdr: TerminalRoute.Herdr?
+        if let socket = userInfo[Self.herdrSocketKey] as? String,
+            let pane = userInfo[Self.herdrPaneKey] as? String
+        {
+            herdr = TerminalRoute.Herdr(
+                socketPath: socket, paneID: pane, startupCWD: userInfo[Self.herdrCWDKey] as? String)
+        } else {
+            herdr = nil
+        }
         self.route = TerminalRoute(
             client: client,
             tty: userInfo[Self.ttyKey] as? String,
-            identifier: userInfo[Self.identifierKey] as? String)
+            identifier: userInfo[Self.identifierKey] as? String,
+            herdr: herdr)
         self.cwd = userInfo[Self.cwdKey] as? String
     }
 }
@@ -107,18 +125,22 @@ enum TerminalFocusRouter {
     /// terminal or creates a new window; it simply becomes a no-op.
     static func focus(_ target: AttentionNotificationRoute) {
         guard let running = runningApplication(for: target.route.client) else { return }
-        // Activate up front: precise focus only selects the right tab/pane *within*
-        // the app. The Ghostty script has no `activate` and `wezterm cli
-        // activate-pane` changes mux-internal focus only, so without this a click
-        // that "succeeds" would leave the terminal behind the frontmost app.
-        running.activate(options: [.activateAllWindows])
-        guard target.route.client != .warp else { return }
+        // Transfer activation before exact selection, which may fail or only
+        // change focus inside a terminal or Herdr. macOS 14 uses cooperative
+        // activation; activating all windows does not grant activation priority.
+        NSApp.yieldActivation(to: running)
+        if !running.activate(from: .current, options: []) {
+            MeterLog.logger(.notification).warning("Terminal activation request was refused")
+        }
+        guard target.route.client != .warp || target.route.herdr != nil else { return }
 
         let wezTermExecutable =
             target.route.client == .wezTerm
             ? wezTermCLI(beside: running.executableURL) : nil
         Task.detached(priority: .userInitiated) {
-            _ = focusPrecisely(target, wezTermExecutable: wezTermExecutable)
+            if !focusPrecisely(target, wezTermExecutable: wezTermExecutable) {
+                MeterLog.logger(.notification).warning("Notification target focus failed")
+            }
         }
     }
 
@@ -135,27 +157,56 @@ enum TerminalFocusRouter {
         return nil
     }
 
-    private nonisolated static func focusPrecisely(
-        _ target: AttentionNotificationRoute, wezTermExecutable: String?
+    struct Command: Sendable, Equatable {
+        let executable: String
+        let arguments: [String]
+        var environment: [String: String] = [:]
+    }
+
+    /// The same command path serves notification clicks and isolated tests.
+    nonisolated static func focusPrecisely(
+        _ target: AttentionNotificationRoute, wezTermExecutable: String? = nil,
+        herdrExecutable: String? = nil, execute: (Command) -> Bool = { run($0) }
     ) -> Bool {
+        var innerFocused = true
+        if let herdr = target.route.herdr {
+            if let executable = herdrExecutable ?? fallbackHerdrCLI() {
+                innerFocused = execute(
+                    Command(
+                        executable: executable, arguments: ["agent", "focus", herdr.paneID],
+                        environment: ["HERDR_SOCKET_PATH": herdr.socketPath]))
+            } else {
+                innerFocused = false
+            }
+        }
+
+        let outerFocused: Bool
         switch target.route.client {
         case .ghostty:
-            guard let cwd = target.cwd else { return false }
-            return runAppleScript(ghosttyScript(cwd: cwd))
+            // Herdr's pane cwd belongs to its inner PTY. Ghostty still reports
+            // the folder from which the outer Herdr client started.
+            let cwd = if let herdr = target.route.herdr { herdr.startupCWD } else { target.cwd }
+            guard let cwd else { return false }
+            outerFocused = execute(appleScriptCommand(ghosttyScript(cwd: cwd)))
         case .terminal:
+            guard target.route.herdr == nil else { return innerFocused }
             guard let tty = target.route.deviceTTY else { return false }
-            return runAppleScript(terminalScript(tty: tty))
+            outerFocused = execute(appleScriptCommand(terminalScript(tty: tty)))
         case .iTerm2:
+            guard target.route.herdr == nil else { return innerFocused }
             guard let tty = target.route.deviceTTY else { return false }
-            return runAppleScript(iTermScript(tty: tty))
+            outerFocused = execute(appleScriptCommand(iTermScript(tty: tty)))
         case .wezTerm:
             guard let pane = target.route.identifier,
                 let executable = wezTermExecutable ?? fallbackWezTermCLI()
             else { return false }
-            return run(executable, arguments: ["cli", "activate-pane", "--pane-id", pane])
+            outerFocused = execute(
+                Command(
+                    executable: executable, arguments: ["cli", "activate-pane", "--pane-id", pane]))
         case .warp:
-            return false
+            return innerFocused
         }
+        return innerFocused && outerFocused
     }
 
     private static func wezTermCLI(beside executableURL: URL?) -> String? {
@@ -173,20 +224,35 @@ enum TerminalFocusRouter {
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    private nonisolated static func runAppleScript(_ source: String) -> Bool {
-        run("/usr/bin/osascript", arguments: ["-e", source])
+    private nonisolated static func fallbackHerdrCLI() -> String? {
+        let candidates = [
+            "/opt/homebrew/bin/herdr",
+            "/usr/local/bin/herdr",
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
+                ".local/bin/herdr"
+            ).path,
+        ]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    private nonisolated static func appleScriptCommand(_ source: String) -> Command {
+        Command(executable: "/usr/bin/osascript", arguments: ["-e", source])
     }
 
     /// Runs a helper with a bounded wait. A hung osascript (pending Automation
     /// consent dialog, busy AppleEvent target) must not pin a cooperative-pool
     /// thread indefinitely — SIGTERM after `timeout`, SIGKILL if it lingers
     /// (same escalation as `CursorTokenStore`'s sqlite3 runner).
-    private nonisolated static func run(
-        _ executable: String, arguments: [String], timeout: TimeInterval = 10
+    nonisolated static func run(
+        _ command: Command, timeout: TimeInterval = 10
     ) -> Bool {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
+        process.executableURL = URL(fileURLWithPath: command.executable)
+        process.arguments = command.arguments
+        process.environment = ProcessInfo.processInfo.environment.merging(command.environment) {
+            _, new in new
+        }
+        process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         let finished = DispatchSemaphore(value: 0)
@@ -224,6 +290,7 @@ enum TerminalFocusRouter {
                                 set wd to working directory of targetTerminal
                                 if wd is targetDirectory or wd is (targetDirectory & "/") then
                                     focus targetTerminal
+                                    activate
                                     return
                                 end if
                             end repeat

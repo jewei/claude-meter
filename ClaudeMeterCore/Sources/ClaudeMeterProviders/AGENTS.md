@@ -179,6 +179,14 @@ Follow the root [AGENTS.md](../../../AGENTS.md). Provider behavior is defined in
 - Use one explicit home per account, with ambient `CODEX_HOME` or `~/.codex` implicit.
   Store additional homes by canonical resolved path; never scan `~/.codex*`. Keep
   per-path display names and omit account email from cards and persisted readings.
+- `CodexAppServerClientPool` keeps one initialized process per home between polls. Its
+  restart rules are correctness, not caching: re-read the credential identity on every
+  fetch and never cache it, because a resident process holds its sign-in in memory and
+  would otherwise answer for the previous account. Restart also on a changed `codex`
+  executable, on child exit, and after any failed use, including a cancelled one, since an
+  unread response desynchronizes the next request. Keep `F_SETNOSIGPIPE` on the child's
+  stdin: a pooled child can exit between polls, and a plain write would end the app. The
+  app stops pooled processes through `CodexSubprocesses`; only this layer starts one.
 - Give each home its own provider/App Server and OAuth read. Run batches of three under
   one 60 s provider deadline and isolated timeout-task budget. Failed accounts retain
   last-good readings with separate last-attempt error/time and last-success time.

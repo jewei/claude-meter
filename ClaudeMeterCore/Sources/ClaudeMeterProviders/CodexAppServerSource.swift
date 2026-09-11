@@ -72,8 +72,9 @@ public final class CodexAppServerSource: CodexUsageSourceFetching, @unchecked Se
     private let startupTimeout: TimeInterval
     private let requestTimeout: TimeInterval
     private let resolver: @Sendable ([String: String]) -> String?
+    private let pool: CodexAppServerClientPool
 
-    public init(
+    public convenience init(
         env: [String: String] = ProcessInfo.processInfo.environment,
         startupTimeout: TimeInterval = 5,
         requestTimeout: TimeInterval = 5,
@@ -81,34 +82,49 @@ public final class CodexAppServerSource: CodexUsageSourceFetching, @unchecked Se
             CodexCLILocator.resolve(env: $0)
         }
     ) {
+        self.init(
+            env: env, startupTimeout: startupTimeout, requestTimeout: requestTimeout,
+            resolver: resolver, pool: .shared)
+    }
+
+    /// Tests inject their own pool so one case cannot reuse another's process.
+    init(
+        env: [String: String],
+        startupTimeout: TimeInterval,
+        requestTimeout: TimeInterval,
+        resolver: @escaping @Sendable ([String: String]) -> String?,
+        pool: CodexAppServerClientPool
+    ) {
         self.env = env
         self.startupTimeout = startupTimeout
         self.requestTimeout = requestTimeout
         self.resolver = resolver
+        self.pool = pool
     }
 
     public func fetchUsage(now: Date = Date()) async throws -> CodexUsage {
         try Task.checkCancellation()
         guard let executable = resolver(env) else { throw CodexUsageError.cliNotFound }
         try Task.checkCancellation()
-        let client = try CodexAppServerClient(
+        // The home keys the pooled process. `CODEX_HOME` is set per account by
+        // `CodexUsageProvider`; an unset value means the CLI's own default home.
+        let home = env["CODEX_HOME"] ?? ""
+        let credentialIdentity = CodexOAuthCredentialsStore.identity(
+            codexHome: URL(fileURLWithPath: home.isEmpty ? NSHomeDirectory() : home))
+        try Task.checkCancellation()
+        return try await pool.withClient(
+            home: home,
             executable: executable,
             env: env,
             startupTimeout: startupTimeout,
-            requestTimeout: requestTimeout)
-        do {
-            let usage = try await fetchUsage(client: client, now: now)
-            await client.shutdown()
-            return usage
-        } catch {
-            await client.shutdown()
-            throw error
+            requestTimeout: requestTimeout,
+            credentialIdentity: credentialIdentity
+        ) { client in
+            try await self.fetchUsage(client: client, now: now)
         }
     }
 
     private func fetchUsage(client: CodexAppServerClient, now: Date) async throws -> CodexUsage {
-        try Task.checkCancellation()
-        try await client.initialize()
         try Task.checkCancellation()
         let account: CodexAppServerAccount?
         do {
@@ -183,6 +199,11 @@ final class CodexAppServerClient: @unchecked Sendable {
         // account/provider than the local login.
         process.environment = AuthEnv.scrubbed(env)
         process.standardInput = stdinPipe
+        // A pooled client outlives one poll, so the child can exit between
+        // requests. Without this, the next write raises SIGPIPE and ends the whole
+        // app. `F_SETNOSIGPIPE` turns that into an ordinary `EPIPE` error, which
+        // `sendPayload` reports and the pool treats as a dead client.
+        _ = Darwin.fcntl(stdinPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
         let processExited = self.processExited
@@ -190,6 +211,12 @@ final class CodexAppServerClient: @unchecked Sendable {
 
         try process.run()
         installReaders()
+    }
+
+    /// Whether the child is still running. A pooled client that died while idle
+    /// must be replaced, not reused.
+    var isAlive: Bool {
+        shutdownLock.withLock { !shutdownStarted } && process.isRunning
     }
 
     func initialize() async throws {

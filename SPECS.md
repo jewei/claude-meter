@@ -276,7 +276,17 @@ detail rows cannot be decoded. Direct OAuth quota decoding remains strict.
 
 Codex is opt-in and supports one implicit `CODEX_HOME` plus explicitly configured homes.
 Each home has its own subprocess/provider state and display name. Provider subprocesses
-strip environment credential overrides. App-server request/response dispatch is actor
+strip environment credential overrides.
+
+One initialized `codex app-server` per home stays resident between polls, so a poll pays
+for two requests instead of a process start, an `initialize` handshake, and a reap. The
+resident process is replaced when the home's credential identity changes, when the
+resolved `codex` executable changes, when the child exits, or when any use of it fails,
+including a cancelled one. An unreadable executable identity counts as a change. A
+resident process ends after ten minutes without use, and when the app pauses, the display
+sleeps, or the app quits. Quit waits up to two seconds for this. The child's standard
+input suppresses `SIGPIPE`, so a write to a dead child reports an error instead of ending
+the app. App-server request/response dispatch is actor
 isolated so overlapping requests cannot consume one another's messages. Positional and
 keyed rate-limit windows independently fill missing session/weekly buckets. App-server
 account metadata retains the reported authentication mode. Auto-mode failures preserve

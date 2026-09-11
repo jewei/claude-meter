@@ -22,6 +22,10 @@ final class PowerMonitor {
     /// remaining interval.
     var onWake: (() -> Void)?
 
+    /// Invoked on the main actor when the display goes to sleep. The poll loop
+    /// parks, so anything the app keeps resident for polling can be released.
+    var onDisplaySleep: (() -> Void)?
+
     /// Observer tokens live in a plain (non-isolated) holder so they can be
     /// removed from its nonisolated `deinit` — a `@MainActor` class can't touch
     /// non-`Sendable` isolated state from its own nonisolated deinit (Swift 6).
@@ -32,7 +36,11 @@ final class PowerMonitor {
         for name in [NSWorkspace.screensDidSleepNotification] {
             observers.tokens.append(
                 center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.isDisplayAsleep = true }
+                    MainActor.assumeIsolated {
+                        guard let self, !self.isDisplayAsleep else { return }
+                        self.isDisplayAsleep = true
+                        self.onDisplaySleep?()
+                    }
                 })
         }
         for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {

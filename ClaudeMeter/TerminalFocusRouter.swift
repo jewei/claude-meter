@@ -16,6 +16,19 @@ final class ClaudeMeterAppDelegate: NSObject, NSApplicationDelegate,
         }
     }
 
+    /// Ends resident provider subprocesses before the app exits.
+    ///
+    /// A child outlives its parent on macOS, and closing the pipe only ends a
+    /// child that exits on stdin EOF. Ask explicitly, and bound the wait so a
+    /// wedged child cannot hold up quitting.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        Task {
+            try? await Timeout.run(seconds: 2) { await CodexSubprocesses.shutdownAll() }
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func userNotificationCenter(
         _ center: UNUserNotificationCenter, willPresent notification: UNNotification,
         withCompletionHandler completionHandler:

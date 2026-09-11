@@ -486,6 +486,9 @@ actor NotificationEngine {
             try await delivery.add(request)
             return requestID
         } catch {
+            // A rejected delivery is silent by design: the caller degrades instead
+            // of showing an error. Record it, or a missing alert has no explanation.
+            MeterLog.logger(.notification).error("Notification delivery failed", error: error)
             return nil
         }
     }

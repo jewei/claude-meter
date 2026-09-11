@@ -565,6 +565,8 @@ final class AppState: ObservableObject {
         } catch {
             // The main provider stores remain authoritative. Widget publication is
             // best-effort and must not change poll lifecycle or user-facing errors.
+            // It is therefore invisible when it fails, which is why it is logged.
+            MeterLog.logger(.widget).error("Main-meter publication failed", error: error)
         }
     }
 

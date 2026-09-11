@@ -666,6 +666,7 @@ final class AppState: ObservableObject {
             UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
         }
         let monitor = PowerMonitor()
+        monitor.onDisplaySleep = { AppState.releasePooledSubprocesses() }
         monitor.onWake = { [weak self] in
             self?.admitEverySourceOnNextCycle()
             self?.refreshNow()
@@ -828,6 +829,14 @@ final class AppState: ObservableObject {
         pollTask?.cancel()
         pollTask = nil
         invalidateActivePollCycle()
+        Self.releasePooledSubprocesses()
+    }
+
+    /// Ends resident provider subprocesses. Nothing polls while the app is paused,
+    /// the display sleeps, or the app quits, so a `codex app-server` must not stay
+    /// resident through any of them. The next poll starts a fresh one.
+    nonisolated static func releasePooledSubprocesses() {
+        Task.detached(priority: .utility) { await CodexSubprocesses.shutdownAll() }
     }
 
     /// A task can be suspended in Notification Center after its poll generation

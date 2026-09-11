@@ -10,8 +10,8 @@ account, with optional notifications.
     <th align="center">Dark mode</th>
   </tr>
   <tr>
-    <td><img src="assets/claude-meter-light-mode.jpg" alt="Claude Meter popover in light mode" width="480"></td>
-    <td><img src="assets/claude-meter-dark-mode.png" alt="Claude Meter popover in dark mode" width="480"></td>
+    <td><img src="assets/claude-meter-light-mode.png" alt="Claude Meter popover in light mode" width="406"></td>
+    <td><img src="assets/claude-meter-dark-mode.png" alt="Claude Meter popover in dark mode" width="406"></td>
   </tr>
 </table>
 

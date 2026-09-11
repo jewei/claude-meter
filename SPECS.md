@@ -76,6 +76,19 @@ cycle. Opening the popover requests an interactive refresh. Source-setting rebui
 debounced and do not restart an active poll loop. Statusline/hook reconciliation permits
 one active operation and one coalesced rerun.
 
+Each cycle admits sources by cost. Claude and the selected main provider always run at the
+cycle cadence: Claude's first tier is a local statusline read, and the selected provider
+owns the hero, menu bar, header time, widget, and quota alerts. A source that appears only
+in the popover — Cursor, Grok, and Codex when Claude is selected — can drop to a slow
+cadence while nobody is looking.
+
+The slow cadence is at most 150 seconds, and always at least one poll cycle below the
+configured stale interval, so this policy alone can never make a card report itself stale.
+A stale interval at or below the cadence disables the slow cadence. An open popover, an
+interactive refresh, a first attempt, a backward clock change, wake, network reconnection,
+and any source or account change all admit every enabled source at once. Cost scans,
+attention hooks, and the advisory status sidecar keep their own schedules.
+
 ### 3.1 Statusline bridge
 
 The bridge prepends an idempotent pass-through command to every enabled discovered
@@ -89,6 +102,13 @@ It preserves the user's existing statusline command, installs with `refreshInter
 repairs legacy snippets, and is removed when the source is disabled. Invalid settings in
 one config directory do not block the others. Disabling an account filters both discovery
 and the session read path.
+
+Both bridge snippets set `umask 077` before they create a directory or write a payload.
+Managed directories under `~/.claude-meter` are `0700` and payloads are `0600`, which
+matches how Claude Code protects its own transcripts. Bridge reconciliation also repairs
+directories and payloads that an earlier snippet created under the default umask. The
+repair uses `O_NOFOLLOW` descriptors, never follows or modifies a symbolic link, and never
+blocks install when it fails.
 
 Fresh payloads are grouped and merged within an account only. The active account is the
 one with the latest observed activity-signature change; cold ties use the sticky previous
@@ -428,6 +448,13 @@ action or during an enabled provider poll.
 
 All errors are sanitized at UI and persistence boundaries. Sanitization redacts emails,
 home paths, UUIDs, bearer/JWT/provider tokens, session keys, and labeled sensitive fields.
+
+`MeterLog` is the logging seam. It sanitizes every message before the text reaches
+`os.Logger` or the log file, so a call site cannot leak a secret by forgetting to sanitize.
+Categories are app, poll, bridge, oauth, cost, notification, and widget. The log file is
+opt-in through Advanced settings, is written to `~/Library/Logs/ClaudeMeter/` at `0600`
+inside a `0700` directory, rotates once at 4 MiB, and is deleted when the user turns the
+setting off. Diagnostics keep showing present state only.
 
 ## 11. Verification and maintenance
 

@@ -10,6 +10,29 @@ import Foundation
 /// field per unique message rather than summing chunks (summing over-counts badly).
 public struct CostUsageScanner: Sendable {
 
+    /// Counts the disk work one scan performs. The warm-scan promise — an unchanged
+    /// transcript is never parsed again — is otherwise provable only by a timing
+    /// measurement, which is not stable on shared machines. Counting the parses
+    /// instead gives the same protection in an ordinary test run.
+    ///
+    /// Injected only by tests. Production scans leave it nil.
+    final class WorkRecorder: @unchecked Sendable {
+        struct Counts: Equatable {
+            var filesConsidered = 0
+            var cacheHits = 0
+            var fullParses = 0
+        }
+
+        private let lock = NSLock()
+        private var counts = Counts()
+
+        func noteFileConsidered() { lock.withLock { counts.filesConsidered += 1 } }
+        func noteCacheHit() { lock.withLock { counts.cacheHits += 1 } }
+        func noteFullParse() { lock.withLock { counts.fullParses += 1 } }
+
+        func snapshot() -> Counts { lock.withLock { counts } }
+    }
+
     /// One or more `projects/` roots (one per Claude config dir / account). Costs
     /// are additive across accounts, so the scan unions them.
     public let projectsPaths: [URL]
@@ -18,6 +41,7 @@ public struct CostUsageScanner: Sendable {
     private let pricing: ModelPricing
     private let cache: CostUsageCache
     private let calendar: Calendar
+    private let workRecorder: WorkRecorder?
 
     /// Files larger than this are tail-read; transcripts are append-only so recent
     /// activity lives at the end.
@@ -35,6 +59,18 @@ public struct CostUsageScanner: Sendable {
         cache: CostUsageCache = .shared,
         calendar: Calendar = .current
     ) {
+        self.init(
+            projectsPaths: projectsPaths, pricing: pricing, cache: cache, calendar: calendar,
+            workRecorder: nil)
+    }
+
+    init(
+        projectsPaths: [URL],
+        pricing: ModelPricing,
+        cache: CostUsageCache,
+        calendar: Calendar,
+        workRecorder: WorkRecorder?
+    ) {
         let roots = projectsPaths.isEmpty ? [JournalReader.defaultProjectsPath] : projectsPaths
         self.projectsPaths = roots.dedupedByResolvedPath().map {
             $0.resolvingSymlinksInPath().standardizedFileURL
@@ -42,6 +78,7 @@ public struct CostUsageScanner: Sendable {
         self.pricing = pricing
         self.cache = cache
         self.calendar = calendar
+        self.workRecorder = workRecorder
     }
 
     /// Single-root convenience (defaults to `~/.claude/projects`).
@@ -174,6 +211,7 @@ public struct CostUsageScanner: Sendable {
                         return
                     }
                     guard metadata.modificationDate >= cutoff else { return }
+                    workRecorder?.noteFileConsidered()
 
                     let perFile: [RequestRecord]
                     switch cache.lookup(
@@ -184,9 +222,11 @@ public struct CostUsageScanner: Sendable {
                         timeZoneIdentifier: calendar.timeZone.identifier)
                     {
                     case .exact(let value, let wasPartial):
+                        workRecorder?.noteCacheHit()
                         perFile = value
                         if wasPartial { isPartial = true }
                     case .miss:
+                        workRecorder?.noteFullParse()
                         let parse = parseFull(file: file, calendar: calendar)
                         perFile = parse.scan.records
                         if parse.scan.isPartial { isPartial = true }

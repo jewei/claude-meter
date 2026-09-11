@@ -71,14 +71,22 @@ public enum StatuslineBridge: Sendable {
     /// `session_id`, and atomically writes the payload to
     /// `~/.claude-meter/sessions/<accountKey>/<session_id>.json`, then pipes stdin
     /// through to the next command unchanged.
+    ///
+    /// `umask 077` runs before any file is created, so the directory and the
+    /// payload are owner-only from the start. Claude Code keeps its own transcripts
+    /// at `0600` inside a `0700` directory, and this payload carries the same class
+    /// of data. The umask belongs to this `bash -c` process only; the user's own
+    /// statusline command runs in a separate process and is unaffected.
     static let bridgeSnippet =
-        #"bash -c 'I=$(cat);A=$(basename "${CLAUDE_CONFIG_DIR:-$HOME/.claude}");A=${A#.};A=$(printf "%s" "$A"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$A" ]&&A=claude;D=$HOME/.claude-meter/sessions/$A;mkdir -p "$D" 2>/dev/null;S=$(printf "%s" "$I"|sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p");S=$(printf "%s" "$S"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$S" ]&&S=default;T="$D/.tmp.$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/$S.json" 2>/dev/null||rm -f "$T" 2>/dev/null;printf "%s" "$I"'"#
+        #"bash -c 'umask 077;I=$(cat);A=$(basename "${CLAUDE_CONFIG_DIR:-$HOME/.claude}");A=${A#.};A=$(printf "%s" "$A"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$A" ]&&A=claude;D=$HOME/.claude-meter/sessions/$A;mkdir -p "$D" 2>/dev/null;S=$(printf "%s" "$I"|sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p");S=$(printf "%s" "$S"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$S" ]&&S=default;T="$D/.tmp.$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/$S.json" 2>/dev/null||rm -f "$T" 2>/dev/null;printf "%s" "$I"'"#
 
     /// Snippets from earlier app versions; recognised so `install()` can migrate
     /// them to the current snippet and `uninstall()` can remove them cleanly. First
-    /// is the pre-account per-session snippet (flat `sessions/<session_id>.json`),
-    /// second the original single-file snippet.
+    /// is the pre-umask per-account snippet, second the pre-account per-session
+    /// snippet (flat `sessions/<session_id>.json`), third the original single-file
+    /// snippet.
     static let legacyBridgeSnippets: [String] = [
+        #"bash -c 'I=$(cat);A=$(basename "${CLAUDE_CONFIG_DIR:-$HOME/.claude}");A=${A#.};A=$(printf "%s" "$A"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$A" ]&&A=claude;D=$HOME/.claude-meter/sessions/$A;mkdir -p "$D" 2>/dev/null;S=$(printf "%s" "$I"|sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p");S=$(printf "%s" "$S"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$S" ]&&S=default;T="$D/.tmp.$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/$S.json" 2>/dev/null||rm -f "$T" 2>/dev/null;printf "%s" "$I"'"#,
         #"bash -c 'I=$(cat);D=$HOME/.claude-meter/sessions;mkdir -p "$D" 2>/dev/null;S=$(printf "%s" "$I"|sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p");S=$(printf "%s" "$S"|tr -cd "[:alnum:]._-");[ -z "$S" ]&&S=default;T="$D/.tmp.$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/$S.json" 2>/dev/null||rm -f "$T" 2>/dev/null;printf "%s" "$I"'"#,
         #"bash -c 'I=$(cat);D=$HOME/.claude-meter;mkdir -p "$D" 2>/dev/null;T="$D/.sl-$$";printf "%s" "$I">"$T"&&mv -f "$T" "$D/statusline.json" 2>/dev/null||rm -f "$T" 2>/dev/null;printf "%s" "$I"'"#,
     ]
@@ -112,9 +120,88 @@ public enum StatuslineBridge: Sendable {
         if let firstError { throw firstError }
     }
 
+    /// Creates one managed directory with owner-only access. An existing directory
+    /// keeps its current mode here; `restrictDataTree` repairs it.
     static func ensureDirectory(at url: URL) throws {
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: url, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
     }
+
+    /// Restricts the app's own data tree to owner-only access.
+    ///
+    /// Claude Code keeps session transcripts at `0600` inside a `0700` directory.
+    /// The captured statusline and hook payloads carry the same class of data —
+    /// working directory, transcript path, session id, model, and cost — so they
+    /// must not stay readable by other local accounts. Versions before the `umask`
+    /// snippet wrote them under the default umask, so this repairs them.
+    ///
+    /// Best-effort by design: a failure never blocks install or reconciliation.
+    /// Every step uses a descriptor opened with `O_NOFOLLOW`, so a replaced path
+    /// cannot redirect a mode change outside the data tree.
+    ///
+    /// Rate-limited, because reconciliation runs every poll and a full pass stats
+    /// every payload. It stays repeated rather than one-time: a Claude Code session
+    /// that still runs the pre-umask snippet keeps writing `0644` files until it
+    /// restarts, so the repair must catch them without waiting for a relaunch.
+    public static func restrictDataTree(now: Date = Date()) {
+        guard dataTreeRestrictPassIsDue(now: now) else { return }
+        restrictDataTree(dataRoot: dataDir)
+    }
+
+    /// Claims the next pass. Returns true at most once per interval, and always
+    /// after a backward clock change.
+    static func dataTreeRestrictPassIsDue(now: Date) -> Bool {
+        restrictDataTreeLock.withLock {
+            if let last = lastDataTreeRestrictAt,
+                now >= last,
+                now.timeIntervalSince(last) < dataTreeRestrictInterval
+            {
+                return false
+            }
+            lastDataTreeRestrictAt = now
+            return true
+        }
+    }
+
+    /// One pass every five minutes is enough to catch files an old snippet writes,
+    /// and it keeps the poll cycle's syscall count flat.
+    static let dataTreeRestrictInterval: TimeInterval = 300
+    private static let restrictDataTreeLock = NSLock()
+    private nonisolated(unsafe) static var lastDataTreeRestrictAt: Date?
+
+    static func resetDataTreeRestrictThrottleForTesting() {
+        restrictDataTreeLock.withLock { lastDataTreeRestrictAt = nil }
+    }
+
+    static func restrictDataTree(dataRoot dataRootURL: URL) {
+        guard
+            let dataRoot = try? BoundedRegularFileReader.AnchoredDirectory(
+                opening: dataRootURL)
+        else { return }
+        dataRoot.restrictToOwner()
+        dataRoot.restrictEntryToOwner(named: legacyStatuslineFilename)
+        for childName in managedSubdirectoryNames {
+            guard let child = try? dataRoot.directory(named: childName) else { continue }
+            child.restrictToOwner()
+            for accountName in (try? child.entryNames()) ?? [] {
+                guard let account = try? child.directory(named: accountName) else {
+                    // A pre-account install left payloads directly in `sessions/`.
+                    child.restrictEntryToOwner(named: accountName)
+                    continue
+                }
+                account.restrictToOwner()
+                for payloadName in (try? account.entryNames()) ?? [] {
+                    account.restrictEntryToOwner(named: payloadName)
+                }
+            }
+        }
+    }
+
+    /// The data-tree directories that this app owns and writes.
+    static let managedSubdirectoryNames = ["sessions", "events"]
+
+    private static let legacyStatuslineFilename = "statusline.json"
 
     private static func installOne(settingsPath: URL) throws {
         var settings = try SettingsFile.read(at: settingsPath)

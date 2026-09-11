@@ -11,6 +11,7 @@ struct AdvancedSettingsTab: View {
     @AppStorage("launchAtLogin") private var launchAtLogin = false
     @State private var launchAtLoginNeedsApproval = false
     @AppStorage("SUEnableAutomaticChecks") private var automaticallyCheckForUpdates = true
+    @AppStorage(AppGroupConfig.fileLoggingEnabledKey) private var fileLoggingEnabled = false
     @State private var showingDiagnostics = false
 
     var body: some View {
@@ -115,27 +116,72 @@ struct AdvancedSettingsTab: View {
                 .padding(16).chunkyCard(radius: 18)
 
                 sectionHeading("Diagnostics")
-                HStack(spacing: 12) {
-                    RaisedTile(fill: Color(hex: "FF9D0A"), size: 40, radius: 11) {
-                        Image(systemName: "waveform.path.ecg").font(
-                            .system(size: 16, weight: .bold)
-                        )
-                        .foregroundStyle(.white)
-                    }
-                    cardText("Diagnostics", "Inspect logs, data sources & raw limits.")
-                    Spacer(minLength: 8)
-                    Button {
-                        showingDiagnostics = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Text("Open Diagnostics…").font(PFont.display(13, .semibold))
-                            Image(systemName: "chevron.right").font(
-                                .system(size: 10, weight: .bold))
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 12) {
+                        RaisedTile(fill: Color(hex: "FF9D0A"), size: 40, radius: 11) {
+                            Image(systemName: "waveform.path.ecg").font(
+                                .system(size: 16, weight: .bold)
+                            )
+                            .foregroundStyle(.white)
                         }
-                        .foregroundStyle(Color.pfInk).padding(.horizontal, 14).padding(.vertical, 9)
-                        .chunkyCard(radius: 12)
+                        cardText("Diagnostics", "Inspect logs, data sources & raw limits.")
+                        Spacer(minLength: 8)
+                        Button {
+                            showingDiagnostics = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text("Open Diagnostics…").font(PFont.display(13, .semibold))
+                                Image(systemName: "chevron.right").font(
+                                    .system(size: 10, weight: .bold))
+                            }
+                            .foregroundStyle(Color.pfInk).padding(.horizontal, 14).padding(
+                                .vertical, 9
+                            )
+                            .chunkyCard(radius: 12)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+                    Divider().overlay(Color.pfCardBorder)
+                    // Diagnostics show the present state. A log file records what
+                    // happened before a fault, which is what a bug report needs.
+                    // Off by default: it is a new file on the user's disk.
+                    HStack(spacing: 12) {
+                        RaisedTile(fill: Color(hex: "8D99AE"), size: 40, radius: 11) {
+                            Image(systemName: "doc.text").font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                        cardText(
+                            "Write a log file",
+                            "Record redacted activity for bug reports. Turning this off deletes it."
+                        )
+                        Spacer(minLength: 8)
+                        Toggle("", isOn: $fileLoggingEnabled)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                            .accessibilityLabel("Write a log file")
+                    }
+                    if fileLoggingEnabled {
+                        HStack(spacing: 12) {
+                            Button {
+                                NSWorkspace.shared.activateFileViewerSelecting([MeterLog.fileURL])
+                            } label: {
+                                HStack(spacing: 7) {
+                                    Image(systemName: "folder")
+                                        .font(.system(size: 12, weight: .bold))
+                                    Text("Show in Finder").font(PFont.display(13, .semibold))
+                                }
+                                .foregroundStyle(Color.pfInk).padding(.horizontal, 14).padding(
+                                    .vertical, 9
+                                )
+                                .chunkyCard(radius: 12)
+                            }
+                            .buttonStyle(.plain)
+                            Text("Library/Logs/ClaudeMeter")
+                                .font(PFont.body(12, .semibold))
+                                .foregroundStyle(Color.pfInkMuted)
+                            Spacer(minLength: 0)
+                        }
+                    }
                 }
                 .padding(16).chunkyCard(radius: 18)
             }
@@ -143,6 +189,9 @@ struct AdvancedSettingsTab: View {
         }
         .onAppear { syncLaunchAtLoginFromSystem() }
         .onChange(of: launchAtLogin) { _, newValue in applyLaunchAtLogin(newValue) }
+        .onChange(of: fileLoggingEnabled) { _, newValue in
+            MeterLog.setFileLoggingEnabled(newValue)
+        }
         .sheet(isPresented: $showingDiagnostics) {
             DiagnosticsView()
                 .environmentObject(appState)
@@ -205,9 +254,8 @@ struct AdvancedSettingsTab: View {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            NSLog(
-                "Claude Meter: launch-at-login \(enabled ? "register" : "unregister") failed: "
-                    + DiagnosticsSanitizer.sanitize(error.localizedDescription))
+            MeterLog.logger(.app).error(
+                "launch-at-login \(enabled ? "register" : "unregister") failed", error: error)
             syncLaunchAtLoginFromSystem()
             return
         }

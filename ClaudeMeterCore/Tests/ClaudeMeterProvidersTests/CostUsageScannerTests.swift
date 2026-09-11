@@ -535,6 +535,71 @@ struct CostUsageScannerTests {
         #expect(first.models.first?.inputTokens == 1_000_000)
     }
 
+    @Test("A warm scan of an unchanged corpus parses no transcript again")
+    func warmScanPerformsNoRepeatParsing() throws {
+        // Regression gate for the scan-storm class: re-parsing unchanged transcripts
+        // on every 60 s poll. A timing threshold is not stable on shared machines, so
+        // count the parses instead. The corpus stays small; the assertion is exact.
+        let now = Date()
+        let ts = iso(now)
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileCount = 12
+        for index in 0..<fileCount {
+            let project = root.appendingPathComponent("p\(index)", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: project, withIntermediateDirectories: true)
+            try assistantLine(
+                id: "a\(index)", requestId: "\(index)", model: "claude-opus-4-8",
+                input: 1000, output: 10, ts: ts
+            )
+            .data(using: .utf8)!.write(to: project.appendingPathComponent("s.jsonl"))
+        }
+
+        let cache = CostUsageCache()
+        func scan(recorder: CostUsageScanner.WorkRecorder) -> CostUsageResult {
+            CostUsageScanner(
+                projectsPaths: [root], pricing: .current, cache: cache, calendar: .current,
+                workRecorder: recorder
+            )
+            .scan(daysBack: 7, now: now)
+        }
+
+        let coldRecorder = CostUsageScanner.WorkRecorder()
+        let cold = scan(recorder: coldRecorder)
+        let coldCounts = coldRecorder.snapshot()
+        #expect(coldCounts.filesConsidered == fileCount)
+        #expect(coldCounts.fullParses == fileCount)
+        #expect(coldCounts.cacheHits == 0)
+
+        let warmRecorder = CostUsageScanner.WorkRecorder()
+        let warm = scan(recorder: warmRecorder)
+        let warmCounts = warmRecorder.snapshot()
+        #expect(warmCounts.filesConsidered == fileCount)
+        #expect(warmCounts.fullParses == 0)
+        #expect(warmCounts.cacheHits == fileCount)
+
+        // The cheaper scan must return the same answer as the expensive one.
+        #expect(warm.models == cold.models)
+        #expect(warm.isPartialEstimate == cold.isPartialEstimate)
+
+        // One changed transcript re-parses only itself.
+        let changed = root.appendingPathComponent("p0/s.jsonl")
+        let appended =
+            assistantLine(
+                id: "a0", requestId: "0", model: "claude-opus-4-8", input: 1000, output: 10,
+                ts: ts)
+            + assistantLine(
+                id: "b0", requestId: "b0", model: "claude-opus-4-8", input: 5, output: 5, ts: ts)
+        try appended.data(using: .utf8)!.write(to: changed)
+        let changedRecorder = CostUsageScanner.WorkRecorder()
+        _ = scan(recorder: changedRecorder)
+        let changedCounts = changedRecorder.snapshot()
+        #expect(changedCounts.fullParses == 1)
+        #expect(changedCounts.cacheHits == fileCount - 1)
+    }
+
     @Test("A time-zone change reparses cached local-day buckets")
     func timeZoneChangeInvalidatesCache() throws {
         let event = Date(timeIntervalSince1970: 1_782_779_400)  // 2026-06-30 00:30Z

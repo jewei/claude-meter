@@ -134,7 +134,8 @@ public struct CostUsageScanner: Sendable {
         cache.flushIfDue(now: now)
         let result = aggregate(byDayModel, isPartial: isPartial)
         return CostUsageResult(
-            models: result.models, isPartialEstimate: result.isPartialEstimate,
+            models: result.models, daily: result.daily,
+            isPartialEstimate: result.isPartialEstimate,
             sourcePaths: projectsPaths.map(\.path).sorted())
     }
 
@@ -470,8 +471,26 @@ public struct CostUsageScanner: Sendable {
             return lhsCost == rhsCost ? $0.name < $1.name : lhsCost > rhsCost
         }
 
+        let daily = byDayModel.map { key, totals in
+            DailyModelUsage(
+                day: key.day,
+                model: key.model,
+                inputTokens: totals.input,
+                outputTokens: totals.output,
+                cacheReadTokens: totals.cacheRead,
+                cacheWriteTokens: totals.cacheWrite,
+                costUsd: cost(forModel: key.model, totals: totals)
+            )
+        }.sorted {
+            if $0.day != $1.day { return $0.day < $1.day }
+            let lhsCost = $0.costUsd ?? 0
+            let rhsCost = $1.costUsd ?? 0
+            return lhsCost == rhsCost ? $0.model < $1.model : lhsCost > rhsCost
+        }
+
         return CostUsageResult(
             models: models,
+            daily: daily,
             isPartialEstimate: resultIsPartial
         )
     }
@@ -494,6 +513,12 @@ public struct CostUsageScanner: Sendable {
 
 public struct CostUsageResult: Sendable, Equatable {
     public let models: [ModelUsage]
+    /// Per-day, per-model rows for the same window as `models`.
+    ///
+    /// The scan groups by day and model before it collapses to `models`, so this
+    /// costs no extra parsing. Sorted by day, then by descending cost, then by
+    /// model name, so a view never has to re-sort and equal costs stay stable.
+    public let daily: [DailyModelUsage]
     /// Canonical roots used by this scan, for safe reuse after an incomplete scan.
     public let sourcePaths: [String]
     /// `true` when totals can be incomplete or an invalid counter was clamped.
@@ -501,10 +526,12 @@ public struct CostUsageResult: Sendable, Equatable {
 
     public init(
         models: [ModelUsage],
+        daily: [DailyModelUsage] = [],
         isPartialEstimate: Bool = false,
         sourcePaths: [String] = []
     ) {
         self.models = models
+        self.daily = daily
         self.sourcePaths = sourcePaths
         self.isPartialEstimate = isPartialEstimate
     }

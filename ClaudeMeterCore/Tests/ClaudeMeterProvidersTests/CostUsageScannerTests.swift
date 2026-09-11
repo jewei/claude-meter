@@ -535,6 +535,50 @@ struct CostUsageScannerTests {
         #expect(first.models.first?.inputTokens == 1_000_000)
     }
 
+    @Test("Daily rows reconcile with the collapsed per-model totals")
+    func dailyRowsReconcileWithModelTotals() throws {
+        // The day dimension exists in the scan already. Keeping it must not change
+        // what `models` reports, or the cost card and the spend view would disagree.
+        let now = Date()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = root.appendingPathComponent("p", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+
+        let today = iso(now)
+        let yesterday = iso(now.addingTimeInterval(-24 * 60 * 60))
+        let lines = [
+            assistantLine(
+                id: "a", requestId: "1", model: "claude-opus-4-8", input: 100, output: 10,
+                ts: today),
+            assistantLine(
+                id: "b", requestId: "2", model: "claude-opus-4-8", input: 200, output: 20,
+                ts: yesterday),
+            assistantLine(
+                id: "c", requestId: "3", model: "claude-sonnet-4-8", input: 50, output: 5,
+                ts: today),
+        ].joined(separator: "\n")
+        try lines.data(using: .utf8)!.write(to: project.appendingPathComponent("s.jsonl"))
+
+        let result = CostUsageScanner(projectsPath: root, cache: CostUsageCache())
+            .scan(daysBack: 7, now: now)
+
+        // One row per day and model that has usage.
+        #expect(result.daily.count == 3)
+        // Sorted by day first, so a chart can read it straight through.
+        #expect(result.daily.map(\.day) == result.daily.map(\.day).sorted())
+
+        for model in result.models {
+            let rows = result.daily.filter { $0.model == model.name }
+            #expect(rows.reduce(0) { $0 + ($1.inputTokens ?? 0) } == model.inputTokens)
+            #expect(rows.reduce(0) { $0 + ($1.outputTokens ?? 0) } == model.outputTokens)
+            let dailyCost = rows.reduce(0.0) { $0 + ($1.costUsd ?? 0) }
+            let modelCost = try #require(model.costUsd)
+            #expect(abs(dailyCost - modelCost) < 0.000_001)
+        }
+    }
+
     @Test("A warm scan of an unchanged corpus parses no transcript again")
     func warmScanPerformsNoRepeatParsing() throws {
         // Regression gate for the scan-storm class: re-parsing unchanged transcripts

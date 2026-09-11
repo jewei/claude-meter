@@ -42,6 +42,9 @@ public struct CostUsageScanner: Sendable {
     private let cache: CostUsageCache
     private let calendar: Calendar
     private let workRecorder: WorkRecorder?
+    /// The per-root record cap in force for this scanner. Tests lower it so a
+    /// bounds case does not have to write a hundred thousand records to reach it.
+    private let rootRecordLimit: Int
 
     /// Files larger than this are tail-read; transcripts are append-only so recent
     /// activity lives at the end.
@@ -69,8 +72,10 @@ public struct CostUsageScanner: Sendable {
         pricing: ModelPricing,
         cache: CostUsageCache,
         calendar: Calendar,
-        workRecorder: WorkRecorder?
+        workRecorder: WorkRecorder?,
+        rootRecordLimit: Int = CostUsageScanner.maximumRootRecords
     ) {
+        self.rootRecordLimit = rootRecordLimit
         let roots = projectsPaths.isEmpty ? [JournalReader.defaultProjectsPath] : projectsPaths
         self.projectsPaths = roots.dedupedByResolvedPath().map {
             $0.resolvingSymlinksInPath().standardizedFileURL
@@ -252,7 +257,7 @@ public struct CostUsageScanner: Sendable {
                             continue
                         }
                         let bytes = record.estimatedBytes
-                        guard recordCount < Self.maximumRootRecords,
+                        guard recordCount < rootRecordLimit,
                             bytes <= Self.maximumRootRecordBytes - recordBytes
                         else {
                             isPartial = true

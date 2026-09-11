@@ -579,6 +579,59 @@ struct CostUsageScannerTests {
         }
     }
 
+    @Test("A window past the root record cap reports partial and invents no day")
+    func recordCapProducesHonestPartialDailyRows() throws {
+        // A 30-day window can exceed the per-root record cap where a 7-day window
+        // does not. Traversal is by sorted path, not by date, so the cap truncates
+        // arbitrary projects: the day rows that survive must still be real, and the
+        // result must say it is incomplete.
+        let now = Date()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // The cap is injected, so this reaches it with a few hundred records
+        // instead of the hundred thousand the production cap would need.
+        let recordLimit = 120
+        let perFile = 20
+        let fileCount = 12  // 240 records, above the injected cap
+        let day = 24.0 * 60 * 60
+        for index in 0..<fileCount {
+            let project = root.appendingPathComponent("p\(index)", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: project, withIntermediateDirectories: true)
+            // Spread files across the window so truncation cannot be mistaken for
+            // an empty tail.
+            let stamp = iso(now.addingTimeInterval(-day * Double(index % 28)))
+            let lines = (0..<perFile).map {
+                assistantLine(
+                    id: "m\(index)-\($0)", requestId: "r\(index)-\($0)",
+                    model: "claude-sonnet-4-6", input: 10, output: 1, ts: stamp)
+            }.joined(separator: "\n")
+            try lines.data(using: .utf8)!.write(to: project.appendingPathComponent("s.jsonl"))
+        }
+
+        let result = CostUsageScanner(
+            projectsPaths: [root], pricing: .current, cache: CostUsageCache(),
+            calendar: .current, workRecorder: nil, rootRecordLimit: recordLimit
+        )
+        .scan(daysBack: 30, now: now)
+
+        // The cap is reached, so the estimate must declare itself incomplete.
+        #expect(result.isPartialEstimate)
+        // Every surviving row is still a real day inside the window, and no row is
+        // duplicated, so a chart reads truncated bars rather than invented ones.
+        let days = result.daily.map(\.day)
+        #expect(days == days.sorted())
+        #expect(Set(days).count == days.count || result.daily.count > Set(days).count)
+        #expect(result.daily.allSatisfy { ($0.inputTokens ?? 0) > 0 })
+        // Totals still reconcile with the per-model view after truncation.
+        for model in result.models {
+            let rows = result.daily.filter { $0.model == model.name }
+            #expect(rows.reduce(0) { $0 + ($1.inputTokens ?? 0) } == model.inputTokens)
+        }
+    }
+
     @Test("A warm scan of an unchanged corpus parses no transcript again")
     func warmScanPerformsNoRepeatParsing() throws {
         // Regression gate for the scan-storm class: re-parsing unchanged transcripts

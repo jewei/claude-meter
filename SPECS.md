@@ -383,6 +383,26 @@ All rolling-window reset/refill copy uses Core `ResetPhrase`: minutes below one 
 below 48 hours, and days plus remaining whole hours from 48 hours, such as `6d 7h`. Zero
 hours are omitted. Surfaces never introduce their own date/weekday formatter.
 
+### 6.1 Usage and Spend window
+
+A separate window shows Claude's local cost over 7 or 30 days. It is not a popover
+section, because 30 daily bars do not fit 360 points. The Activity screen opens it.
+
+The window runs its own scan off-main with its own generation check, so a 30-day scan
+never delays quota publication and never widens what the 60-second loop reads. Closing
+the window cancels the scan. A timeout publishes no total.
+
+It shows one bar per local day summed across models, per-model rows with tokens and
+estimated cost, and a JSON copy action. A day the scan did not read is absent rather than
+a zero bar. When the scan is partial, the bars are neutral, a banner states that any day
+can be understated, and the header says "at least" instead of "about". Every amount is
+labeled an estimate, never a bill.
+
+The export carries the day rows, the range, and the partial flag. It never carries project
+or session paths. Because the window is visible, the app stays activatable exactly like
+the Settings window, so an `LSUIElement` process is never dropped to `.accessory` while it
+is on screen.
+
 ## 7. Settings
 
 Settings uses a custom tab bar with Appearance, Data, Notifications, Advanced, and About.

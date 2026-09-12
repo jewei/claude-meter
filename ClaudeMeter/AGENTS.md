@@ -26,6 +26,13 @@ Follow the root [AGENTS.md](../AGENTS.md) and [DESIGN.md](../DESIGN.md).
 - `PopoverView` owns disclosure state, persistence, and rendering. `PopoverTransitionBody`
   owns measurement, resizing, clipping, interruption, and Reduce Motion. When Codex is
   primary, Claude expands inside one secondary card to show all its accounts and limits.
+- `UsageSpendView` is a `Window` scene, opened from the Activity screen through
+  `openWindow(id: AppState.usageSpendWindowID)`. It loads through
+  `loadSpendBreakdown(daysBack:)`, which is separate from `costReading` because the poll
+  covers seven days only. Keep presentation rules in `SpendBreakdownFormat` so they stay
+  testable: a missing day is absent, never a zero bar, and the export carries no paths.
+  A new window must join the `isSettingsWindowVisible` check in `AppUpdater`, or an
+  `LSUIElement` app drops to `.accessory` and strands it without Cmd-Tab.
 - The cost card opens `ActivityHeatmapGrid` with a Back button through
   `loadActivityHeatmap`. Load it off-main on demand, never in the quota pipeline.
   Keep account management in Settings; the popover has no duplicate footer action.

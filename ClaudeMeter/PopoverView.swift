@@ -6,6 +6,7 @@ import SwiftUI
 struct PopoverView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage(AppSettings.cursorSourceEnabledKey) private var cursorSourceEnabled = false
@@ -925,6 +926,22 @@ struct PopoverView: View {
                 }
                 .buttonStyle(.plain)
                 Spacer()
+                // The detail screen is where a user already came looking for more
+                // than one number, so the spend window is reachable from here
+                // rather than from a third icon in the popover header.
+                Button {
+                    NSApp.activate(ignoringOtherApps: true)
+                    openWindow(id: AppState.usageSpendWindowID)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chart.bar.fill")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("Usage & Spend").font(PFont.display(12, .semibold))
+                    }
+                    .foregroundStyle(Color.pfInk)
+                }
+                .buttonStyle(.plain)
+                .help("Open the Usage & Spend window")
                 Text("🗓️").font(.system(size: 13))
                 Text("Activity")
                     .font(PFont.display(15, .semibold))

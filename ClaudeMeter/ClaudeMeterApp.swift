@@ -22,5 +22,14 @@ struct ClaudeMeterApp: App {
             SettingsView()
                 .environmentObject(appState)
         }
+
+        // A separate window, not a popover section: 30 daily bars do not fit the
+        // 360-point popover. `.windowResizability(.contentMinSize)` keeps the user
+        // free to widen it without letting it collapse below the chart.
+        Window("Usage & Spend", id: AppState.usageSpendWindowID) {
+            UsageSpendView()
+                .environmentObject(appState)
+        }
+        .windowResizability(.contentMinSize)
     }
 }

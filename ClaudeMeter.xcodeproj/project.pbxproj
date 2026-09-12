@@ -25,6 +25,7 @@
 		C7A1B2C3D4E5F60718293A57 /* OAuthConnectionSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A1B2C3D4E5F60718293A58 /* OAuthConnectionSection.swift */; };
 		C7A1B2C3D4E5F60718293A59 /* ProviderReading.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A1B2C3D4E5F60718293A5A /* ProviderReading.swift */; };
 		69BE2128EB0F41ACBF84F636 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0B0219D0744A52A145A257 /* AppState.swift */; };
+		D5E3B874388BCB83C337D8D4 /* UsageSpendView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A47778CA789317589D6E8F55 /* UsageSpendView.swift */; };
 		C7A1B2C3D4E5F60718293A4D /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7A1B2C3D4E5F60718293A4E /* AppSettings.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* AppUpdater.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5D /* AppUpdater.swift */; };
 		C1D2E3F4A5B6C7D8E9F0A1B2 /* PowerMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2D3E4F5A6B7C8D9E0F1A2B3 /* PowerMonitor.swift */; };
@@ -102,6 +103,7 @@
 		AB2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeMeterWidget.swift; sourceTree = "<group>"; };
 		AC2F8E1B9C3D5E7F0A1B2C3D /* ClaudeMeterWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClaudeMeterWidget.entitlements; sourceTree = "<group>"; };
 		AD0B0219D0744A52A145A257 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		A47778CA789317589D6E8F55 /* UsageSpendView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageSpendView.swift; sourceTree = "<group>"; };
 		C7A1B2C3D4E5F60718293A4E /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		C2D3E4F5A6B7C8D9E0F1A2B3 /* PowerMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerMonitor.swift; sourceTree = "<group>"; };
 		D2E3F4A5B6C7D8E9F0A1B2C3 /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
@@ -153,6 +155,7 @@
 			children = (
 				262C9E3CBCA04E07BB465F9B /* ClaudeMeterApp.swift */,
 				AD0B0219D0744A52A145A257 /* AppState.swift */,
+				A47778CA789317589D6E8F55 /* UsageSpendView.swift */,
 				C7A1B2C3D4E5F60718293A4E /* AppSettings.swift */,
 				C7A1B2C3D4E5F60718293A5A /* ProviderReading.swift */,
 				A1B2C3D4E5F60718293A4B5D /* AppUpdater.swift */,
@@ -368,6 +371,7 @@
 			files = (
 				B39A8BBB94F64426BDF7E3C0 /* ClaudeMeterApp.swift in Sources */,
 				69BE2128EB0F41ACBF84F636 /* AppState.swift in Sources */,
+				D5E3B874388BCB83C337D8D4 /* UsageSpendView.swift in Sources */,
 				C7A1B2C3D4E5F60718293A4D /* AppSettings.swift in Sources */,
 				C7A1B2C3D4E5F60718293A59 /* ProviderReading.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* AppUpdater.swift in Sources */,

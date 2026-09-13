@@ -23,6 +23,13 @@ struct ModelPricingTests {
         #expect(abs(cost - 3.0) < 0.0001)
     }
 
+    @Test func namesEveryShippingFamily() {
+        #expect(ModelUsage(name: "claude-fable-5").displayName == "Fable 5")
+        #expect(ModelUsage(name: "claude-haiku-4-5-20251001").displayName == "Haiku 4.5")
+        // An unknown family still shows its raw id rather than a wrong name.
+        #expect(ModelUsage(name: "<synthetic>").displayName == "<synthetic>")
+    }
+
     @Test func fableHasItsOwnFallbackRateNotSonnet() {
         let r = ModelPricing.current.rate(forModel: "claude-fable-5")
         #expect(r.input == 10)

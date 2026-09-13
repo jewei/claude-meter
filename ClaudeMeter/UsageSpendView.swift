@@ -24,20 +24,30 @@ struct UsageSpendView: View {
     private static let ranges = [7, 30]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        // The header and footer are pinned and only the middle scrolls. The
+        // content is taller than the window on a real corpus, and a plain stack
+        // clipped the header, which took the range picker off screen with it.
+        VStack(alignment: .leading, spacing: 14) {
             header
-            if appState.spendBreakdownLoading, appState.spendBreakdown == nil {
-                placeholder("Reading transcripts…")
-            } else if let error = appState.spendBreakdownError, appState.spendBreakdown == nil {
-                placeholder(error)
-            } else if let result = appState.spendBreakdown, !result.isEmpty {
-                if result.isPartialEstimate { partialNotice }
-                DailyCostChart(rows: result.daily, isPartial: result.isPartialEstimate)
-                modelRows(result)
-            } else {
-                placeholder("No local usage in this range.")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if appState.spendBreakdownLoading, appState.spendBreakdown == nil {
+                        placeholder("Reading transcripts…")
+                    } else if let error = appState.spendBreakdownError,
+                        appState.spendBreakdown == nil
+                    {
+                        placeholder(error)
+                    } else if let result = appState.spendBreakdown, !result.isEmpty {
+                        if result.isPartialEstimate { partialNotice }
+                        DailyCostChart(rows: result.daily, isPartial: result.isPartialEstimate)
+                        modelRows(result)
+                    } else {
+                        placeholder("No local usage in this range.")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Spacer(minLength: 0)
+            .scrollIndicators(.automatic)
             footer
         }
         .padding(22)
@@ -109,7 +119,10 @@ struct UsageSpendView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("BY MODEL").font(PFont.body(11, .bold))
                 .foregroundStyle(Color.pfInkMuted).tracking(0.8)
-            ForEach(result.models, id: \.name) { model in
+            // Claude Code records pseudo-models such as `<synthetic>` that carry
+            // no tokens and no cost. They are real records, so the scan keeps
+            // them, but a row of zeros tells the reader nothing.
+            ForEach(SpendBreakdownFormat.billableModels(result.models), id: \.name) { model in
                 HStack(spacing: 12) {
                     Text(model.displayName)
                         .font(PFont.body(13, .semibold)).foregroundStyle(Color.pfInk)
@@ -202,6 +215,20 @@ enum SpendBreakdownFormat {
         return "\(value)"
     }
 
+    /// Drops rows that carry neither tokens nor cost.
+    ///
+    /// Claude Code records pseudo-models such as `<synthetic>`. They are genuine
+    /// records, so the scan must keep them, but a row of zeros adds nothing to
+    /// read and pushes real models down the list.
+    static func billableModels(_ models: [ModelUsage]) -> [ModelUsage] {
+        models.filter { model in
+            let tokens =
+                (model.inputTokens ?? 0) + (model.outputTokens ?? 0)
+                + (model.cacheReadTokens ?? 0) + (model.cacheWriteTokens ?? 0)
+            return tokens > 0 || (model.costUsd ?? 0) > 0
+        }
+    }
+
     /// One bar per day, summed across models, in ascending day order.
     ///
     /// A day with no rows is absent rather than zero: the scan can be truncated,
@@ -261,6 +288,14 @@ struct DailyCostChart: View {
         SpendBreakdownFormat.dailyTotals(rows)
     }
 
+    /// `2026-09-13` reads as `09-13`. The scanner's day key is already a local
+    /// calendar day, so this trims it rather than re-parsing it into a `Date`.
+    static func shortDay(_ day: String) -> String {
+        let parts = day.split(separator: "-")
+        guard parts.count == 3 else { return day }
+        return "\(parts[1])-\(parts[2])"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("BY DAY").font(PFont.body(11, .bold))
@@ -271,8 +306,12 @@ struct DailyCostChart: View {
                 HStack(alignment: .bottom, spacing: spacing) {
                     ForEach(days, id: \.day) { entry in
                         VStack(spacing: 4) {
+                            // Always the energy colour. A 30-day range is partial
+                            // on most real corpora, so greying the bars for that
+                            // would make "incomplete" the permanent look and stop
+                            // carrying information. The banner says it instead.
                             RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .fill(isPartial ? Color.pfInkMuted : Color.pfEnergyFull)
+                                .fill(Color.pfEnergyFull)
                                 .frame(
                                     height: max(
                                         2, geometry.size.height * 0.82 * (entry.cost / peak)))
@@ -286,6 +325,19 @@ struct DailyCostChart: View {
                 .frame(height: geometry.size.height, alignment: .bottom)
             }
             .frame(height: 160)
+            // The bars carry no axis, so name the ends. Hovering a bar gives its
+            // own day and amount.
+            if let first = days.first, let last = days.last, days.count > 1 {
+                HStack {
+                    Text(Self.shortDay(first.day))
+                    Spacer(minLength: 8)
+                    Text("peak \(SpendBreakdownFormat.money(days.map(\.cost).max() ?? 0))")
+                    Spacer(minLength: 8)
+                    Text(Self.shortDay(last.day))
+                }
+                .font(PFont.body(11, .semibold))
+                .foregroundStyle(Color.pfInkMuted)
+            }
         }
         .padding(16)
         .chunkyCard(radius: 18)

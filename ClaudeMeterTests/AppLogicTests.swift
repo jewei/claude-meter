@@ -4095,6 +4095,29 @@ struct SpendBreakdownFormatTests {
         #expect(SpendBreakdownFormat.compact(Int.min).hasSuffix("B"))
     }
 
+    @Test("Rows with no tokens and no cost are not listed")
+    func billableModelsDropsEmptyPseudoModels() {
+        // Claude Code records `<synthetic>` with nothing attached. It is a real
+        // record, so the scan keeps it, but listing a row of zeros pushes real
+        // models down and tells the reader nothing.
+        let models = [
+            ModelUsage(name: "claude-opus-5", inputTokens: 10, costUsd: 1),
+            ModelUsage(name: "<synthetic>", inputTokens: 0, costUsd: 0),
+            ModelUsage(name: "cache-only", cacheReadTokens: 5, costUsd: 0),
+        ]
+
+        let listed = SpendBreakdownFormat.billableModels(models).map(\.name)
+
+        #expect(listed == ["claude-opus-5", "cache-only"])
+    }
+
+    @Test("A day key shortens without being parsed back into a date")
+    func shortDayTrimsTheYear() {
+        #expect(DailyCostChart.shortDay("2026-09-13") == "09-13")
+        // Anything unexpected passes through rather than being mangled.
+        #expect(DailyCostChart.shortDay("2026-09") == "2026-09")
+    }
+
     @Test("The export carries the rows and the partial flag, never a path")
     func exportOmitsPathsAndKeepsPartialFlag() throws {
         let result = CostUsageResult(

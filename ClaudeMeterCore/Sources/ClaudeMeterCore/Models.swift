@@ -605,6 +605,8 @@ public struct ModelUsage: Codable, Equatable, Sendable {
             family = "Sonnet"
         } else if lower.contains("haiku") {
             family = "Haiku"
+        } else if lower.contains("fable") {
+            family = "Fable"
         } else {
             return name
         }

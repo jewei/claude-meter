@@ -39,7 +39,12 @@ struct UsageSpendView: View {
                         placeholder(error)
                     } else if let result = appState.spendBreakdown, !result.isEmpty {
                         if result.isPartialEstimate { partialNotice }
-                        DailyCostChart(rows: result.daily, isPartial: result.isPartialEstimate)
+                        DailyCostChart(
+                            rows: result.daily,
+                            // A complete scan knows a quiet day is a real zero,
+                            // so the axis can stay proportional to time.
+                            expectedDays: result.isPartialEstimate
+                                ? nil : SpendBreakdownFormat.dayKeys(rangeDays: range))
                         modelRows(result)
                     } else {
                         placeholder("No local usage in this range.")
@@ -231,16 +236,41 @@ enum SpendBreakdownFormat {
 
     /// One bar per day, summed across models, in ascending day order.
     ///
-    /// A day with no rows is absent rather than zero: the scan can be truncated,
-    /// so the view must not draw a confident zero for a day it never read.
-    static func dailyTotals(_ rows: [DailyModelUsage]) -> [(day: String, cost: Double)] {
+    /// `expectedDays` decides what a missing day means:
+    ///
+    /// - Pass the window's days when the scan completed. A day with no rows is a
+    ///   real zero, so it gets a zero bar and the axis stays proportional to time.
+    /// - Pass nil when the scan was truncated. Absence then means "not read", and
+    ///   a zero bar would claim the user spent nothing that day.
+    static func dailyTotals(
+        _ rows: [DailyModelUsage], expectedDays: [String]? = nil
+    ) -> [(day: String, cost: Double)] {
         var totals: [String: Double] = [:]
+        if let expectedDays {
+            for day in expectedDays { totals[day] = 0 }
+        }
         for row in rows {
             let cost = row.costUsd ?? 0
             guard cost.isFinite else { continue }
             totals[row.day, default: 0] += cost
         }
         return totals.keys.sorted().map { ($0, totals[$0] ?? 0) }
+    }
+
+    /// The local day keys the scan covers, in the scanner's own `yyyy-MM-dd`
+    /// form: `rangeDays` days ending today, inclusive.
+    static func dayKeys(
+        rangeDays: Int, now: Date = Date(), calendar: Calendar = .current
+    ) -> [String] {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        let start = calendar.startOfDay(for: now)
+        return (0..<max(rangeDays, 1)).compactMap { offset in
+            calendar.date(byAdding: .day, value: -offset, to: start).map(formatter.string(from:))
+        }.sorted()
     }
 
     /// The clipboard export.
@@ -281,11 +311,12 @@ enum SpendBreakdownFormat {
 /// introducing a charting framework with a different visual language.
 struct DailyCostChart: View {
     let rows: [DailyModelUsage]
-    let isPartial: Bool
+    /// Non-nil only when the scan completed. See `dailyTotals(_:expectedDays:)`.
+    let expectedDays: [String]?
 
     /// One bar per day, summed across models, in the scanner's day order.
     private var days: [(day: String, cost: Double)] {
-        SpendBreakdownFormat.dailyTotals(rows)
+        SpendBreakdownFormat.dailyTotals(rows, expectedDays: expectedDays)
     }
 
     /// `2026-09-13` reads as `09-13`. The scanner's day key is already a local

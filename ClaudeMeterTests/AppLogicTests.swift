@@ -4051,16 +4051,49 @@ struct SpendBreakdownFormatTests {
         #expect(totals[1].cost == 2)
     }
 
-    @Test("A day the scan never read is absent, not a zero bar")
-    func missingDayIsAbsent() {
-        // The scan can be truncated, so a gap means "unknown". Drawing a zero bar
-        // would assert the user spent nothing that day.
+    @Test("A truncated scan leaves an unread day absent, not a zero bar")
+    func missingDayIsAbsentWhenScanWasTruncated() {
+        // With no expected days the scan was partial, so a gap means "not read".
+        // A zero bar would assert the user spent nothing that day.
         let totals = SpendBreakdownFormat.dailyTotals([
             row(day: "2026-09-01", model: "m", cost: 1),
             row(day: "2026-09-03", model: "m", cost: 1),
         ])
 
         #expect(totals.map(\.day) == ["2026-09-01", "2026-09-03"])
+    }
+
+    @Test("A complete scan fills a quiet day, so the axis stays proportional")
+    func quietDayBecomesZeroWhenScanWasComplete() {
+        // A complete scan read every day in the window, so a day with no rows is
+        // a real zero. Hiding it would make the bars lie about elapsed time.
+        let totals = SpendBreakdownFormat.dailyTotals(
+            [
+                row(day: "2026-09-01", model: "m", cost: 1),
+                row(day: "2026-09-03", model: "m", cost: 2),
+            ],
+            expectedDays: ["2026-09-01", "2026-09-02", "2026-09-03"])
+
+        #expect(totals.map(\.day) == ["2026-09-01", "2026-09-02", "2026-09-03"])
+        #expect(totals[1].cost == 0)
+    }
+
+    @Test("Day keys cover the range, end today, and stay sorted")
+    func dayKeysCoverTheRange() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try! #require(TimeZone(identifier: "Asia/Kuala_Lumpur"))
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        let keys = SpendBreakdownFormat.dayKeys(rangeDays: 7, now: now, calendar: calendar)
+
+        #expect(keys.count == 7)
+        #expect(keys == keys.sorted())
+        // Inclusive of today, matching the scanner's own window.
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        #expect(keys.last == formatter.string(from: now))
     }
 
     @Test("A non-finite cost cannot poison a day total")

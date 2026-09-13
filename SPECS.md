@@ -393,10 +393,19 @@ never delays quota publication and never widens what the 60-second loop reads. C
 the window cancels the scan. A timeout publishes no total.
 
 It shows one bar per local day summed across models, per-model rows with tokens and
-estimated cost, and a JSON copy action. A day the scan did not read is absent rather than
-a zero bar. When the scan is partial, the bars are neutral, a banner states that any day
-can be understated, and the header says "at least" instead of "about". Every amount is
-labeled an estimate, never a bill.
+estimated cost, and a JSON copy action. Rows with neither tokens nor cost, such as
+Claude Code's `<synthetic>` pseudo-model, are not listed.
+
+A complete scan read every day in the window, so a quiet day is a real zero and gets a
+zero bar, which keeps the bars proportional to elapsed time. A partial scan did not, so an
+unread day stays absent instead: a zero bar would claim the user spent nothing. When the
+scan is partial, a banner states that any day can be understated and the header says
+"at least" instead of "about". Bar colour does not carry the partial state, because a
+30-day range is partial on most real corpora and a permanent colour change carries no
+information. Every amount is labeled an estimate, never a bill.
+
+The window is opened from the popover header, not from the cost card. The cost card
+renders only while Claude owns the main meter, so a Codex-primary user could not reach it.
 
 The export carries the day rows, the range, and the partial flag. It never carries project
 or session paths. Because the window is visible, the app stays activatable exactly like

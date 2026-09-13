@@ -335,7 +335,7 @@ struct CostUsageScannerTests {
         {
         case .miss:
             break
-        case .exact:
+        case .exact, .appendCandidate:
             Issue.record("A failed transcript read entered the cost cache")
         }
 
@@ -688,7 +688,7 @@ struct CostUsageScannerTests {
         #expect(warm.models == cold.models)
         #expect(warm.isPartialEstimate == cold.isPartialEstimate)
 
-        // One changed transcript re-parses only itself.
+        // An append parses only the changed transcript's uncommitted suffix.
         let changed = root.appendingPathComponent("p0/s.jsonl")
         let appended =
             assistantLine(
@@ -700,7 +700,8 @@ struct CostUsageScannerTests {
         let changedRecorder = CostUsageScanner.WorkRecorder()
         _ = scan(recorder: changedRecorder)
         let changedCounts = changedRecorder.snapshot()
-        #expect(changedCounts.fullParses == 1)
+        #expect(changedCounts.fullParses == 0)
+        #expect(changedCounts.appendParses == 1)
         #expect(changedCounts.cacheHits == fileCount - 1)
     }
 
@@ -767,7 +768,7 @@ struct CostUsageScannerTests {
         }
         let diskURL = root.appendingPathComponent("cache.json")
         try JSONEncoder().encode(
-            Disk(version: 7, entries: paths.map { Entry(path: $0) })
+            Disk(version: 8, entries: paths.map { Entry(path: $0) })
         ).write(to: diskURL)
 
         let cache = CostUsageCache(persistenceURL: diskURL)

@@ -21,6 +21,9 @@ public struct CostUsageScanner: Sendable {
             var filesConsidered = 0
             var cacheHits = 0
             var fullParses = 0
+            var appendParses = 0
+            var parsedBytes = 0
+            var prefixBytesRead: UInt64 = 0
         }
 
         private let lock = NSLock()
@@ -29,6 +32,13 @@ public struct CostUsageScanner: Sendable {
         func noteFileConsidered() { lock.withLock { counts.filesConsidered += 1 } }
         func noteCacheHit() { lock.withLock { counts.cacheHits += 1 } }
         func noteFullParse() { lock.withLock { counts.fullParses += 1 } }
+        func noteRead(_ read: JournalReader.TranscriptRead) {
+            lock.withLock {
+                if read.isAppend { counts.appendParses += 1 } else { counts.fullParses += 1 }
+                counts.parsedBytes += read.data.count
+                counts.prefixBytesRead += read.prefixBytesRead
+            }
+        }
 
         func snapshot() -> Counts { lock.withLock { counts } }
     }
@@ -56,12 +66,10 @@ public struct CostUsageScanner: Sendable {
     /// the old limit counted 36% of it in 0.60 s, this one counts all of it in
     /// 2.74 s.
     ///
-    /// This buys headroom, it does not remove the problem. `maximumFileRecords`
-    /// binds next, near 12 MiB at one record per 650 bytes, and an active
-    /// transcript is re-parsed on every poll because growth alone cannot prove an
-    /// append. The durable fix is to digest the prefix and parse only the
-    /// appended tail, which makes the cost track new data instead of total data.
-    private static let maxFullReadBytes: UInt64 = 32 * 1024 * 1024
+    /// Changed files within this limit can reuse complete lines after the reader
+    /// verifies their entire prefix. Record limits still apply to the combined
+    /// records. Files above the limit retain the bounded partial tail behavior.
+    static let maxFullReadBytes: UInt64 = 32 * 1024 * 1024
     private static let tailReadBytes: UInt64 = 16 * 1024 * 1024
     static let maximumFileRecords = 20_000
     static let maximumFileRecordBytes = 8 * 1024 * 1024
@@ -233,20 +241,24 @@ public struct CostUsageScanner: Sendable {
                     workRecorder?.noteFileConsidered()
 
                     let perFile: [RequestRecord]
-                    switch cache.lookup(
+                    let cached = cache.lookup(
                         path: file.path,
                         modDate: metadata.modificationDate,
                         fileSize: metadata.fileSize,
                         identity: metadata.identity,
                         timeZoneIdentifier: calendar.timeZone.identifier)
-                    {
-                    case .exact(let value, let wasPartial):
+                    if case .exact(let value, let wasPartial) = cached {
                         workRecorder?.noteCacheHit()
                         perFile = value
                         if wasPartial { isPartial = true }
-                    case .miss:
-                        workRecorder?.noteFullParse()
-                        let parse = parseFull(file: file, calendar: calendar)
+                    } else {
+                        let previous: (scan: FileScan, cursor: JournalReader.AppendCursor)?
+                        if case .appendCandidate(let records, let partial, let cursor) = cached {
+                            previous = (FileScan(isPartial: partial, records: records), cursor)
+                        } else {
+                            previous = nil
+                        }
+                        let parse = parseFile(file: file, calendar: calendar, previous: previous)
                         perFile = parse.scan.records
                         if parse.scan.isPartial { isPartial = true }
                         // A transient open/read failure is not a statement that the
@@ -260,7 +272,7 @@ public struct CostUsageScanner: Sendable {
                                 fileSize: metadata.fileSize,
                                 identity: metadata.identity,
                                 timeZoneIdentifier: calendar.timeZone.identifier,
-                                scan: parse.scan)
+                                scan: parse.scan, appendState: parse.appendState)
                         }
                     }
                     for record in perFile where record.day >= cutoffDay {
@@ -312,12 +324,20 @@ public struct CostUsageScanner: Sendable {
         let model: String
         var totals: TokenTotals
         var hasCacheWriteBreakdown: Bool
+        /// Only used when a message has no request ID. It can merge chunks in one
+        /// file, but must never become a cross-file/account request identity.
+        var localMessageID: String? = nil
+
+        var fileIdentity: RequestIdentity? {
+            identity ?? localMessageID.map { RequestIdentity(messageID: $0, requestID: "") }
+        }
 
         /// Accounting bound for retained strings and record/dictionary overhead.
         /// It is not a measurement of allocator or Foundation memory use.
         var estimatedBytes: Int {
             256 + day.utf8.count + model.utf8.count
                 + (identity?.messageID.utf8.count ?? 0) + (identity?.requestID.utf8.count ?? 0)
+                + (localMessageID?.utf8.count ?? 0)
         }
 
         mutating func merge(_ other: Self) -> Bool {
@@ -338,35 +358,63 @@ public struct CostUsageScanner: Sendable {
         let scan: FileScan
         let isCacheable: Bool
         var metadata: JournalReader.TranscriptMetadata? = nil
+        var appendState: AppendState? = nil
+    }
+
+    struct AppendState: Codable, Sendable {
+        let cursor: JournalReader.AppendCursor
+        let isPartial: Bool
+        /// Nil means all visible records are committed. Otherwise this excludes
+        /// the provisional EOF record, including any maxima it changed.
+        let committedRecords: [RequestRecord]?
     }
 
     // MARK: - Parsing
 
-    /// Full parse from scratch (cache miss). Large files are tail-read, so their
-    /// result remains explicitly partial even after later growth.
-    private func parseFull(file: URL, calendar: Calendar) -> FileParse {
+    /// Reuse committed records only after the descriptor reader verifies their
+    /// full prefix. Large files retain the bounded, partial tail-read behavior.
+    private func parseFile(
+        file: URL, calendar: Calendar,
+        previous: (scan: FileScan, cursor: JournalReader.AppendCursor)?
+    ) -> FileParse {
         guard
             let read = JournalReader.readRegularTranscript(
                 at: file,
                 maxFullReadBytes: Self.maxFullReadBytes,
-                tailReadBytes: Self.tailReadBytes)
+                tailReadBytes: Self.tailReadBytes, trackAppend: true,
+                appendCursor: previous?.cursor)
         else {
+            workRecorder?.noteFullParse()
             return FileParse(
                 scan: FileScan(isPartial: true, records: []),
                 isCacheable: false)
         }
-        guard !read.data.isEmpty else {
+        workRecorder?.noteRead(read)
+        let seed = read.isAppend ? previous?.scan : nil
+        if let cursor = read.appendCursor {
+            let committedCount = Int(cursor.offset - read.baseOffset)
+            let committed = scanBytes(
+                read.data.prefix(committedCount), dropFirstLine: false,
+                wasPartial: read.isPartial, calendar: calendar, seed: seed)
+            let hasPending = committedCount < read.data.count
+            let visible =
+                hasPending
+                ? scanBytes(
+                    Data(read.data.suffix(read.data.count - committedCount)), dropFirstLine: false,
+                    wasPartial: false, calendar: calendar, seed: committed) : committed
             return FileParse(
-                scan: FileScan(isPartial: read.isPartial, records: []),
-                isCacheable: read.isCacheable, metadata: read.metadata)
+                scan: visible, isCacheable: true, metadata: read.metadata,
+                appendState: AppendState(
+                    cursor: cursor, isPartial: committed.isPartial,
+                    committedRecords: hasPending ? committed.records : nil))
         }
         // A tail read may start mid-line; drop the first partial line.
         return FileParse(
             scan: scanBytes(
                 read.data,
-                dropFirstLine: read.baseOffset > 0,
+                dropFirstLine: !read.isAppend && read.baseOffset > 0,
                 wasPartial: read.isPartial,
-                calendar: calendar),
+                calendar: calendar, seed: seed),
             isCacheable: read.isCacheable, metadata: read.metadata)
     }
 
@@ -376,12 +424,13 @@ public struct CostUsageScanner: Sendable {
         _ data: Data,
         dropFirstLine: Bool,
         wasPartial: Bool,
-        calendar: Calendar
+        calendar: Calendar,
+        seed: FileScan? = nil
     ) -> FileScan {
-        var isPartial = wasPartial
+        var isPartial = wasPartial || seed?.isPartial == true
         // Collect newline-delimited line ranges, plus any trailing line with no final
-        // newline. A genuinely in-progress trailing line fails to decode; any file
-        // growth invalidates the cache and re-reads the complete range next time.
+        // newline. EOF data is provisional; parseFile keeps it outside the
+        // checkpoint so the next append can replace it without stale maxima.
         var lineRanges: [Range<Int>] = []
         data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             guard let base = raw.baseAddress else { return }
@@ -395,13 +444,12 @@ public struct CostUsageScanner: Sendable {
         }
 
         let decoder = JSONDecoder()
-        enum MessageKey: Hashable {
-            case message(String, String)
-            case line(Int)
+        var records = seed?.records ?? []
+        var indices: [RequestIdentity: Int] = [:]
+        for (index, record) in records.enumerated() {
+            if let key = record.fileIdentity { indices[key] = index }
         }
-        var messages: [MessageKey: RequestRecord] = [:]
-        var order: [MessageKey] = []
-        var recordBytes = 0
+        var recordBytes = records.reduce(0) { $0 + $1.estimatedBytes }
 
         for (lineIndex, range) in lineRanges.enumerated() {
             if dropFirstLine && lineIndex == 0 { continue }
@@ -419,9 +467,6 @@ public struct CostUsageScanner: Sendable {
             let model = message.model ?? "unknown"
             let messageID = message.id.flatMap { $0.isEmpty ? nil : $0 }
             let requestID = entry.requestId.flatMap { $0.isEmpty ? nil : $0 }
-            let key =
-                messageID.map { MessageKey.message($0, requestID ?? "") }
-                ?? .line(lineIndex)
             let identity = messageID.flatMap { mid in
                 requestID.map { RequestIdentity(messageID: mid, requestID: $0) }
             }
@@ -438,25 +483,27 @@ public struct CostUsageScanner: Sendable {
             let record = RequestRecord(
                 identity: identity,
                 day: JournalReader.dayString(from: date, calendar: calendar),
-                model: model, totals: totals, hasCacheWriteBreakdown: cacheWrite.hasBreakdown)
-            if var existing = messages[key] {
+                model: model, totals: totals, hasCacheWriteBreakdown: cacheWrite.hasBreakdown,
+                localMessageID: requestID == nil ? messageID : nil)
+            if let key = record.fileIdentity, let index = indices[key] {
+                var existing = records[index]
                 if existing.merge(record) { isPartial = true }
-                messages[key] = existing
+                records[index] = existing
             } else {
                 let bytes = record.estimatedBytes
-                guard messages.count < Self.maximumFileRecords,
+                guard records.count < Self.maximumFileRecords,
                     bytes <= Self.maximumFileRecordBytes - recordBytes
                 else {
                     isPartial = true
                     continue
                 }
                 recordBytes += bytes
-                order.append(key)
-                messages[key] = record
+                if let key = record.fileIdentity { indices[key] = records.count }
+                records.append(record)
             }
         }
 
-        return FileScan(isPartial: isPartial, records: order.compactMap { messages[$0] })
+        return FileScan(isPartial: isPartial, records: records)
     }
 
     // MARK: - Aggregation
@@ -716,7 +763,7 @@ private struct CacheCreationBreakdown: Decodable {
 }
 
 /// Compact tuples reduce encoding memory and disk size. Field order belongs to
-/// the version-5 cache schema; change the version when changing this layout.
+/// the version-8 cache schema; change the version when changing this layout.
 extension CostUsageScanner.RequestRecord {
     init(from decoder: Decoder) throws {
         var fields = try decoder.unkeyedContainer()
@@ -735,7 +782,8 @@ extension CostUsageScanner.RequestRecord {
                 input: try fields.decode(Int.self), output: try fields.decode(Int.self),
                 cacheRead: try fields.decode(Int.self), cacheWrite5m: try fields.decode(Int.self),
                 cacheWrite1h: try fields.decode(Int.self)),
-            hasCacheWriteBreakdown: try fields.decode(Bool.self))
+            hasCacheWriteBreakdown: try fields.decode(Bool.self),
+            localMessageID: try fields.decodeIfPresent(String.self))
         guard fields.isAtEnd else {
             throw DecodingError.dataCorruptedError(
                 in: fields, debugDescription: "Unexpected request fields")
@@ -754,6 +802,7 @@ extension CostUsageScanner.RequestRecord {
         try fields.encode(totals.cacheWrite5m)
         try fields.encode(totals.cacheWrite1h)
         try fields.encode(hasCacheWriteBreakdown)
+        try fields.encode(localMessageID)
     }
 }
 
@@ -762,8 +811,8 @@ extension CostUsageScanner.RequestRecord {
 /// Caches per-file request records for account-root reconciliation, invalidated by file
 /// mtime + size. Window filtering happens at read time so the same cache serves
 /// any `daysBack`. Persisted to disk (Application Support, `0o600`) so a relaunch
-/// avoids re-parsing unchanged transcripts. Changed files are conservatively
-/// re-parsed because mtime + size cannot prove that growth was append-only.
+/// avoids re-parsing unchanged transcripts. Changed files can reuse committed
+/// records only after the reader verifies a digest of their complete prefix.
 public final class CostUsageCache: @unchecked Sendable {
     public static let shared = CostUsageCache(persistenceURL: CostUsageCache.defaultPersistenceURL)
 
@@ -771,6 +820,11 @@ public final class CostUsageCache: @unchecked Sendable {
     enum Lookup {
         /// File unchanged. Request records still need account-root reconciliation.
         case exact(records: [CostUsageScanner.RequestRecord], isPartial: Bool)
+        /// Metadata permits an append check. The reader must still verify every
+        /// committed prefix byte before it can use these records.
+        case appendCandidate(
+            records: [CostUsageScanner.RequestRecord], isPartial: Bool,
+            cursor: JournalReader.AppendCursor)
         /// No usable entry (absent, shrunk, or rewritten in place) — full parse needed.
         case miss
     }
@@ -783,6 +837,7 @@ public final class CostUsageCache: @unchecked Sendable {
         var records: [CostUsageScanner.RequestRecord]
         var retainedBytes: Int
         var isPartial: Bool
+        var appendState: CostUsageScanner.AppendState?
     }
 
     // Subagent transcripts roughly triple the file count vs top-level-only scans,
@@ -790,9 +845,8 @@ public final class CostUsageCache: @unchecked Sendable {
     static let maxEntries = 2048
     static let maximumRetainedBytes = 32 * 1024 * 1024
     private static let maximumPersistenceFileBytes = 64 * 1_024 * 1_024
-    // v7 rebuilds entries parsed with the old 8 MiB full-read / 4 MiB tail limits.
-    // Otherwise unchanged transcripts keep their truncated v6 totals after upgrade.
-    private static let diskVersion = 7
+    // v8 adds complete-line checkpoints and file-local message identities.
+    private static let diskVersion = 8
 
     private let persistenceURL: URL?
     private let byteLimit: Int
@@ -850,9 +904,14 @@ public final class CostUsageCache: @unchecked Sendable {
             recency.touch(path)
             return .exact(records: entry.records, isPartial: entry.isPartial)
         }
-        // mtime+size cannot prove that growth was append-only: editors and sync tools
-        // can replace a transcript with a larger file. Re-parse on every stamp change
-        // so stale committed totals can never be merged into unrelated contents.
+        if entry.identity == identity, entry.timeZoneIdentifier == timeZoneIdentifier,
+            fileSize >= entry.fileSize, fileSize <= CostUsageScanner.maxFullReadBytes,
+            let state = entry.appendState
+        {
+            return .appendCandidate(
+                records: state.committedRecords ?? entry.records, isPartial: state.isPartial,
+                cursor: state.cursor)
+        }
         return .miss
     }
 
@@ -862,7 +921,8 @@ public final class CostUsageCache: @unchecked Sendable {
         fileSize: UInt64,
         identity: JournalReader.TranscriptIdentity,
         timeZoneIdentifier: String = TimeZone.current.identifier,
-        scan: CostUsageScanner.FileScan
+        scan: CostUsageScanner.FileScan,
+        appendState: CostUsageScanner.AppendState? = nil
     ) {
         lock.lock()
         defer { lock.unlock() }
@@ -871,22 +931,27 @@ public final class CostUsageCache: @unchecked Sendable {
         recency.remove(path)
         dirty = true
         guard scan.records.count <= CostUsageScanner.maximumFileRecords else { return }
-        let bytes = Self.storageBytes(path: path, records: scan.records)
+        let bytes = Self.storageBytes(path: path, records: scan.records, appendState: appendState)
         guard bytes <= byteLimit else { return }
         entries[path] = Entry(
             modDate: modDate,
             fileSize: fileSize,
             identity: identity,
             timeZoneIdentifier: timeZoneIdentifier,
-            records: scan.records, retainedBytes: bytes, isPartial: scan.isPartial)
+            records: scan.records, retainedBytes: bytes, isPartial: scan.isPartial,
+            appendState: appendState)
         retainedBytes += bytes
         recency.touch(path)
         evictIfNeededLocked()
     }
 
-    private static func storageBytes(path: String, records: [CostUsageScanner.RequestRecord]) -> Int
-    {
+    private static func storageBytes(
+        path: String, records: [CostUsageScanner.RequestRecord],
+        appendState: CostUsageScanner.AppendState? = nil
+    ) -> Int {
         records.reduce(128 + path.utf8.count) { $0 + $1.estimatedBytes }
+            + (appendState == nil ? 0 : 128)
+            + (appendState?.committedRecords?.reduce(0) { $0 + $1.estimatedBytes } ?? 0)
     }
 
     private func evictIfNeededLocked() {
@@ -979,7 +1044,17 @@ public final class CostUsageCache: @unchecked Sendable {
             guard de.records.count <= CostUsageScanner.maximumFileRecords,
                 PersistedDateBounds.contains(Date(timeIntervalSinceReferenceDate: de.modDate))
             else { continue }
-            let bytes = Self.storageBytes(path: de.path, records: de.records)
+            // A corrupt checkpoint must not select a byte offset or seed records.
+            // Keep the visible cache entry, but force a full read on any change.
+            let state = de.appendState.flatMap { state -> CostUsageScanner.AppendState? in
+                guard state.cursor.offset <= de.fileSize,
+                    de.fileSize <= CostUsageScanner.maxFullReadBytes,
+                    state.cursor.identity == de.identity, state.cursor.digest.count == 32,
+                    (state.committedRecords?.count ?? 0) <= CostUsageScanner.maximumFileRecords
+                else { return nil }
+                return state
+            }
+            let bytes = Self.storageBytes(path: de.path, records: de.records, appendState: state)
             guard bytes <= byteLimit else { continue }
             if let old = entries[de.path] { retainedBytes -= old.retainedBytes }
             entries[de.path] = Entry(
@@ -989,7 +1064,7 @@ public final class CostUsageCache: @unchecked Sendable {
                 timeZoneIdentifier: de.timeZoneIdentifier,
                 records: de.records,
                 retainedBytes: bytes,
-                isPartial: de.isPartial)
+                isPartial: de.isPartial, appendState: state)
             retainedBytes += bytes
             recency.touch(de.path)
             evictIfNeededLocked()
@@ -1006,7 +1081,7 @@ public final class CostUsageCache: @unchecked Sendable {
                     fileSize: e.fileSize,
                     identity: e.identity,
                     timeZoneIdentifier: e.timeZoneIdentifier,
-                    isPartial: e.isPartial, records: e.records)
+                    isPartial: e.isPartial, records: e.records, appendState: e.appendState)
             })
         guard let data = try? JSONEncoder().encode(disk),
             data.count <= Self.maximumPersistenceFileBytes
@@ -1035,5 +1110,6 @@ public final class CostUsageCache: @unchecked Sendable {
         var timeZoneIdentifier: String
         var isPartial: Bool
         var records: [CostUsageScanner.RequestRecord]
+        var appendState: CostUsageScanner.AppendState?
     }
 }

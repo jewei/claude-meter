@@ -229,18 +229,25 @@ so copied history counts once while unique continuations count separately. Missi
 remain separate across files. Accounts remain additive, even with matching request IDs.
 Cache creation tier breakdown wins over the legacy total across both chunks and files;
 legacy-only writes count as 5-minute cache writes. Paths use stable order when duplicate
-metadata differs. Large files are tail-read and reported partial. Every changed file is
-reparsed; growth alone cannot prove an append. Model output is deterministically ordered.
+metadata differs. Large files are tail-read and reported partial. A changed file can reuse
+committed records only after SHA-256 verification of its complete earlier prefix through
+the same safe file descriptor. A mismatch requires a full parse; growth alone is not proof
+of an append. Model output is deterministically ordered.
 
-The version-7 cost cache retains request records as compact tuples instead of day/model
-totals. Older versions are rebuilt, including version 6, which could retain partial
-results from the former 8 MiB full-read and 4 MiB tail limits for unchanged files.
+The version-8 cost cache retains compact request records, file-local identity, cache-tier
+provenance, and a verified append cursor. Older formats are rebuilt. The cursor stops after
+the last newline. An unfinished final line can contribute to the displayed estimate, but
+never to committed records. The next append reparses that line, including after a cache
+reload. This permits an invalidated unfinished line to retract its provisional maxima.
+Append parsing is permitted only while the current whole file is at most 32 MiB.
+Prefix verification still reads the earlier bytes; only JSON parsing skips those bytes.
 Parsing accepts at most 20,000 records and 8 MiB of accounted record
 storage per file. Reconciliation accepts at most 100,000 records and 32 MiB per root.
 Files above 32 MiB are tail-read at 16 MiB. A tail-read total falls as the file grows,
 because the fixed tail covers a shrinking share of it, so the limit is set above ordinary
 session sizes rather than at them. Limits produce explicit partial estimates. The LRU cache retains at most 2,048 files and
-32 MiB of accounted record storage, including path/record overhead. These accounting
+32 MiB of accounted record storage, including path/record overhead, append cursors, and
+separate committed records when an unfinished final line is present. These accounting
 bounds do not measure the allocator's total memory use.
 
 Activity is loaded on demand from the cost card. It reports a 7×24 local-time grid over the

@@ -179,17 +179,31 @@ struct PopoverView: View {
                 .fixedSize(horizontal: true, vertical: false)
             Spacer(minLength: 6)
             if !needsOnboarding {
+                // Not fixed-size: with three buttons the header can run out of
+                // room at 360 points, and the timestamp is the element that may
+                // shrink. Letting it truncate keeps the controls from clipping.
                 Text(updatedText)
                     .font(PFont.body(11, .semibold))
                     .foregroundStyle(Color.pfInkMuted)
                     .monospacedDigit()
                     .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
+                    .truncationMode(.tail)
+                    .layoutPriority(-1)
                     .help("Last updated")
             }
             // Settings and Quit moved up from the footer, which is now gone.
             // Refresh went with it: `popoverDidOpen()` already refreshes on every
             // open, so the button only re-did what had just happened.
+            //
+            // Usage & Spend belongs here, not behind the cost card: that card
+            // renders only while Claude owns the main meter, so a Codex-primary
+            // user had no route to it at all.
+            if !needsOnboarding {
+                squareButton("chart.bar.fill", help: "Usage & Spend", size: 28) {
+                    NSApp.activate(ignoringOtherApps: true)
+                    openWindow(id: AppState.usageSpendWindowID)
+                }
+            }
             squareButton("gearshape.fill", help: "Settings", size: 28) {
                 openSettingsAndCompleteOnboarding()
             }
@@ -926,22 +940,6 @@ struct PopoverView: View {
                 }
                 .buttonStyle(.plain)
                 Spacer()
-                // The detail screen is where a user already came looking for more
-                // than one number, so the spend window is reachable from here
-                // rather than from a third icon in the popover header.
-                Button {
-                    NSApp.activate(ignoringOtherApps: true)
-                    openWindow(id: AppState.usageSpendWindowID)
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chart.bar.fill")
-                            .font(.system(size: 10, weight: .bold))
-                        Text("Usage & Spend").font(PFont.display(12, .semibold))
-                    }
-                    .foregroundStyle(Color.pfInk)
-                }
-                .buttonStyle(.plain)
-                .help("Open the Usage & Spend window")
                 Text("🗓️").font(.system(size: 13))
                 Text("Activity")
                     .font(PFont.display(15, .semibold))

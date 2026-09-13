@@ -95,7 +95,9 @@ final class AppUpdater {
                 // strands it without Cmd-Tab focus. Sparkle's own windows are
                 // closing at this point; ours is found by title, via the single
                 // constant that also sets it (see SettingsWindowAccessor).
-                if !isSettingsWindowVisible() { NSApp.setActivationPolicy(.accessory) }
+                if !isSettingsWindowVisible(), !isUsageSpendWindowVisible() {
+                    NSApp.setActivationPolicy(.accessory)
+                }
             }
         }
     }

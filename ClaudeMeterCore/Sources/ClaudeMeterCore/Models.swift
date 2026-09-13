@@ -535,6 +535,40 @@ public struct LimitWindow: Codable, Equatable, Sendable {
 
 // MARK: - Model usage
 
+/// One local day's usage for one model.
+///
+/// The scanner already groups by day and model before it collapses to per-model
+/// totals, so keeping this costs no extra parsing. `day` is a local-time
+/// `yyyy-MM-dd` key, matching the scanner's bucketing; a consumer must not parse
+/// it back into a `Date` for arithmetic across a time-zone change.
+public struct DailyModelUsage: Codable, Equatable, Sendable {
+    public var day: String
+    public var model: String
+    public var inputTokens: Int?
+    public var outputTokens: Int?
+    public var cacheReadTokens: Int?
+    public var cacheWriteTokens: Int?
+    public var costUsd: Double?
+
+    public init(
+        day: String,
+        model: String,
+        inputTokens: Int? = nil,
+        outputTokens: Int? = nil,
+        cacheReadTokens: Int? = nil,
+        cacheWriteTokens: Int? = nil,
+        costUsd: Double? = nil
+    ) {
+        self.day = day
+        self.model = model
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.cacheReadTokens = cacheReadTokens
+        self.cacheWriteTokens = cacheWriteTokens
+        self.costUsd = costUsd
+    }
+}
+
 public struct ModelUsage: Codable, Equatable, Sendable {
     public var name: String
     public var inputTokens: Int?

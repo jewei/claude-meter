@@ -591,7 +591,9 @@ struct AppLogicTests {
         #expect(appState.mainMeterProvider == .claude)
         for expected in 1...3 {
             appState.refreshNow(kind: .background)
-            try await Timeout.run(seconds: 2) { await recorder.waitForPoll(expected) }
+            // This asserts that each cycle reaches Claude, not how fast. A tight
+            // deadline only makes it flaky when the whole gate loads the machine.
+            try await Timeout.run(seconds: 10) { await recorder.waitForPoll(expected) }
             #expect(await recorder.pollCount() == expected)
         }
     }
@@ -4025,5 +4027,99 @@ struct AppLogicTests {
             authMode: .chatGPT,
             source: .appServer,
             updatedAt: Date(timeIntervalSince1970: 100))
+    }
+}
+
+@Suite("Usage & Spend presentation")
+struct SpendBreakdownFormatTests {
+    private func row(
+        day: String, model: String, input: Int = 0, cost: Double
+    ) -> DailyModelUsage {
+        DailyModelUsage(day: day, model: model, inputTokens: input, costUsd: cost)
+    }
+
+    @Test("Day bars sum every model and stay in ascending day order")
+    func dailyTotalsSumModelsInDayOrder() {
+        let totals = SpendBreakdownFormat.dailyTotals([
+            row(day: "2026-09-02", model: "claude-opus-4-8", cost: 2),
+            row(day: "2026-09-01", model: "claude-opus-4-8", cost: 1),
+            row(day: "2026-09-01", model: "claude-sonnet-4-6", cost: 0.5),
+        ])
+
+        #expect(totals.map(\.day) == ["2026-09-01", "2026-09-02"])
+        #expect(totals[0].cost == 1.5)
+        #expect(totals[1].cost == 2)
+    }
+
+    @Test("A day the scan never read is absent, not a zero bar")
+    func missingDayIsAbsent() {
+        // The scan can be truncated, so a gap means "unknown". Drawing a zero bar
+        // would assert the user spent nothing that day.
+        let totals = SpendBreakdownFormat.dailyTotals([
+            row(day: "2026-09-01", model: "m", cost: 1),
+            row(day: "2026-09-03", model: "m", cost: 1),
+        ])
+
+        #expect(totals.map(\.day) == ["2026-09-01", "2026-09-03"])
+    }
+
+    @Test("A non-finite cost cannot poison a day total")
+    func nonFiniteCostIsSkipped() {
+        let totals = SpendBreakdownFormat.dailyTotals([
+            row(day: "2026-09-01", model: "m", cost: 1),
+            row(day: "2026-09-01", model: "bad", cost: .nan),
+        ])
+
+        #expect(totals.count == 1)
+        #expect(totals[0].cost == 1)
+    }
+
+    @Test("Money copy marks a tiny amount instead of rounding it to zero")
+    func moneyFormatsSmallAndInvalidValues() {
+        #expect(SpendBreakdownFormat.money(0) == "$0.00")
+        #expect(SpendBreakdownFormat.money(0.004) == "<$0.01")
+        #expect(SpendBreakdownFormat.money(12.345) == "$12.35")
+        #expect(SpendBreakdownFormat.money(.nan) == "—")
+        #expect(SpendBreakdownFormat.money(.infinity) == "—")
+    }
+
+    @Test("Compact token counts promote at the rounding boundary")
+    func compactPromotesAtRoundedBoundary() {
+        // 999,500 would render as "1000.0K" with a naive threshold.
+        #expect(SpendBreakdownFormat.compact(999) == "999")
+        #expect(SpendBreakdownFormat.compact(1000) == "1.0K")
+        #expect(SpendBreakdownFormat.compact(999_499) == "999.5K")
+        #expect(SpendBreakdownFormat.compact(999_500) == "1.0M")
+        #expect(SpendBreakdownFormat.compact(999_500_000) == "1.0B")
+        // Uses the unsigned magnitude, so this cannot overflow on negation.
+        #expect(SpendBreakdownFormat.compact(Int.min).hasSuffix("B"))
+    }
+
+    @Test("The export carries the rows and the partial flag, never a path")
+    func exportOmitsPathsAndKeepsPartialFlag() throws {
+        let result = CostUsageResult(
+            models: [ModelUsage(name: "claude-opus-4-8", costUsd: 3)],
+            daily: [row(day: "2026-09-01", model: "claude-opus-4-8", input: 10, cost: 3)],
+            isPartialEstimate: true,
+            sourcePaths: ["/Users/someone/.claude/projects"])
+
+        let json = try #require(
+            SpendBreakdownFormat.exportJSON(
+                result, rangeDays: 30,
+                generatedAt: Date(timeIntervalSince1970: 1_800_000_000)))
+
+        // A user pasting this into an issue must not publish their directory layout.
+        #expect(!json.contains("/Users/"))
+        #expect(!json.contains("sourcePaths"))
+        // A reader must not mistake a truncated range for a complete one.
+        #expect(json.contains("\"isPartialEstimate\" : true"))
+        #expect(json.contains("\"rangeDays\" : 30"))
+        #expect(json.contains("\"day\" : \"2026-09-01\""))
+
+        let parsed = try #require(
+            try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        let daily = try #require(parsed["daily"] as? [[String: Any]])
+        #expect(daily.count == 1)
+        #expect((daily[0]["estimatedCostUsd"] as? NSNumber)?.doubleValue == 3)
     }
 }

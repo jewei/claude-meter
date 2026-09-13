@@ -75,6 +75,15 @@ final class AppState: ObservableObject {
     /// opens it from the cost card. `nil` until first requested.
     @Published var activityHeatmap: ActivityHeatmap? = nil
     @Published var activityHeatmapLoading = false
+    /// Scene id for the Usage and Spend window, shared by the scene and the
+    /// `openWindow` caller so the two cannot drift.
+    static let usageSpendWindowID = "usage-spend"
+    /// State for the Usage and Spend window. Separate from `costReading`, which
+    /// belongs to the poll and covers seven days only.
+    @Published var spendBreakdown: CostUsageResult? = nil
+    @Published var spendBreakdownLoading = false
+    @Published var spendBreakdownError: String? = nil
+    @Published var spendBreakdownRange = 7
     private let cursorProvider = CursorUsageProvider()
     private let grokProvider = GrokUsageProvider()
 
@@ -2177,6 +2186,8 @@ final class AppState: ObservableObject {
     /// keeps a cancelled scan's completion from clobbering a newer load's state.
     private var activityHeatmapTask: Task<Void, Never>?
     private var activityHeatmapGeneration = 0
+    private var spendBreakdownTask: Task<Void, Never>?
+    private var spendBreakdownGeneration = 0
 
     func loadActivityHeatmap() {
         guard !activityHeatmapLoading else { return }
@@ -2216,6 +2227,64 @@ final class AppState: ObservableObject {
                 self.activityHeatmapLoading = false
             }
         }
+    }
+
+    /// Loads the Usage and Spend window's own scan.
+    ///
+    /// Deliberately separate from the poll's cost reading: the window offers a
+    /// 30-day range, and a 30-day scan must never delay quota publication or
+    /// widen what the 60-second loop reads. Mirrors `loadActivityHeatmap`.
+    func loadSpendBreakdown(daysBack: Int) {
+        spendBreakdownGeneration += 1
+        let generation = spendBreakdownGeneration
+        spendBreakdownLoading = true
+        spendBreakdownRange = daysBack
+        let now = Date()
+        let configuredDirs = AppGroupConfig.configuredConfigDirs
+        let disabledKeys = Set(AppGroupConfig.disabledAccountKeys)
+        spendBreakdownTask?.cancel()
+        spendBreakdownTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let result: CostUsageResult?
+            do {
+                result = try await Timeout.run(
+                    seconds: Self.transcriptScanTimeoutSeconds,
+                    budget: Self.transcriptScanTimeoutBudget
+                ) {
+                    let accounts = ConfigDirDiscovery.discover(
+                        configuredDirs: configuredDirs, disabledKeys: disabledKeys)
+                    let paths =
+                        accounts.isEmpty
+                        ? [JournalReader.defaultProjectsPath] : accounts.map(\.projectsPath)
+                    return CostUsageScanner(projectsPaths: paths).scan(
+                        daysBack: daysBack, now: now)
+                }
+            } catch is CancellationError {
+                result = nil
+            } catch {
+                // A timeout has no verified scope, so it cannot claim any total.
+                result = nil
+                await MainActor.run { [weak self] in
+                    guard let self, spendBreakdownGeneration == generation else { return }
+                    spendBreakdownError = "The scan did not finish."
+                }
+            }
+            let cancelled = Task.isCancelled
+            await MainActor.run { [weak self] in
+                guard let self, spendBreakdownGeneration == generation else { return }
+                if !cancelled, let result {
+                    spendBreakdown = result
+                    spendBreakdownError = nil
+                }
+                spendBreakdownLoading = false
+            }
+        }
+    }
+
+    func cancelSpendBreakdownLoad() {
+        spendBreakdownTask?.cancel()
+        spendBreakdownTask = nil
+        spendBreakdownGeneration += 1
+        spendBreakdownLoading = false
     }
 
     /// Cancels an in-flight heatmap scan (the user closed the heatmap or the

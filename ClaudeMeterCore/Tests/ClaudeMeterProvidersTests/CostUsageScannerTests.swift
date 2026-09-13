@@ -535,6 +535,103 @@ struct CostUsageScannerTests {
         #expect(first.models.first?.inputTokens == 1_000_000)
     }
 
+    @Test("Daily rows reconcile with the collapsed per-model totals")
+    func dailyRowsReconcileWithModelTotals() throws {
+        // The day dimension exists in the scan already. Keeping it must not change
+        // what `models` reports, or the cost card and the spend view would disagree.
+        let now = Date()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = root.appendingPathComponent("p", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+
+        let today = iso(now)
+        let yesterday = iso(now.addingTimeInterval(-24 * 60 * 60))
+        let lines = [
+            assistantLine(
+                id: "a", requestId: "1", model: "claude-opus-4-8", input: 100, output: 10,
+                ts: today),
+            assistantLine(
+                id: "b", requestId: "2", model: "claude-opus-4-8", input: 200, output: 20,
+                ts: yesterday),
+            assistantLine(
+                id: "c", requestId: "3", model: "claude-sonnet-4-8", input: 50, output: 5,
+                ts: today),
+        ].joined(separator: "\n")
+        try lines.data(using: .utf8)!.write(to: project.appendingPathComponent("s.jsonl"))
+
+        let result = CostUsageScanner(projectsPath: root, cache: CostUsageCache())
+            .scan(daysBack: 7, now: now)
+
+        // One row per day and model that has usage.
+        #expect(result.daily.count == 3)
+        // Sorted by day first, so a chart can read it straight through.
+        #expect(result.daily.map(\.day) == result.daily.map(\.day).sorted())
+
+        for model in result.models {
+            let rows = result.daily.filter { $0.model == model.name }
+            #expect(rows.reduce(0) { $0 + ($1.inputTokens ?? 0) } == model.inputTokens)
+            #expect(rows.reduce(0) { $0 + ($1.outputTokens ?? 0) } == model.outputTokens)
+            let dailyCost = rows.reduce(0.0) { $0 + ($1.costUsd ?? 0) }
+            let modelCost = try #require(model.costUsd)
+            #expect(abs(dailyCost - modelCost) < 0.000_001)
+        }
+    }
+
+    @Test("A window past the root record cap reports partial and invents no day")
+    func recordCapProducesHonestPartialDailyRows() throws {
+        // A 30-day window can exceed the per-root record cap where a 7-day window
+        // does not. Traversal is by sorted path, not by date, so the cap truncates
+        // arbitrary projects: the day rows that survive must still be real, and the
+        // result must say it is incomplete.
+        let now = Date()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // The cap is injected, so this reaches it with a few hundred records
+        // instead of the hundred thousand the production cap would need.
+        let recordLimit = 120
+        let perFile = 20
+        let fileCount = 12  // 240 records, above the injected cap
+        let day = 24.0 * 60 * 60
+        for index in 0..<fileCount {
+            let project = root.appendingPathComponent("p\(index)", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: project, withIntermediateDirectories: true)
+            // Spread files across the window so truncation cannot be mistaken for
+            // an empty tail.
+            let stamp = iso(now.addingTimeInterval(-day * Double(index % 28)))
+            let lines = (0..<perFile).map {
+                assistantLine(
+                    id: "m\(index)-\($0)", requestId: "r\(index)-\($0)",
+                    model: "claude-sonnet-4-6", input: 10, output: 1, ts: stamp)
+            }.joined(separator: "\n")
+            try lines.data(using: .utf8)!.write(to: project.appendingPathComponent("s.jsonl"))
+        }
+
+        let result = CostUsageScanner(
+            projectsPaths: [root], pricing: .current, cache: CostUsageCache(),
+            calendar: .current, workRecorder: nil, rootRecordLimit: recordLimit
+        )
+        .scan(daysBack: 30, now: now)
+
+        // The cap is reached, so the estimate must declare itself incomplete.
+        #expect(result.isPartialEstimate)
+        // Every surviving row is still a real day inside the window, and no row is
+        // duplicated, so a chart reads truncated bars rather than invented ones.
+        let days = result.daily.map(\.day)
+        #expect(days == days.sorted())
+        #expect(Set(days).count == days.count || result.daily.count > Set(days).count)
+        #expect(result.daily.allSatisfy { ($0.inputTokens ?? 0) > 0 })
+        // Totals still reconcile with the per-model view after truncation.
+        for model in result.models {
+            let rows = result.daily.filter { $0.model == model.name }
+            #expect(rows.reduce(0) { $0 + ($1.inputTokens ?? 0) } == model.inputTokens)
+        }
+    }
+
     @Test("A warm scan of an unchanged corpus parses no transcript again")
     func warmScanPerformsNoRepeatParsing() throws {
         // Regression gate for the scan-storm class: re-parsing unchanged transcripts

@@ -37,14 +37,14 @@ struct UsageSpendView: View {
                         appState.spendBreakdown == nil
                     {
                         placeholder(error)
-                    } else if let result = appState.spendBreakdown, !result.isEmpty {
+                    } else if let breakdown = appState.spendBreakdown,
+                        !breakdown.result.isEmpty
+                    {
+                        let result = breakdown.result
                         if result.isPartialEstimate { partialNotice }
                         DailyCostChart(
                             rows: result.daily,
-                            // A complete scan knows a quiet day is a real zero,
-                            // so the axis can stay proportional to time.
-                            expectedDays: result.isPartialEstimate
-                                ? nil : SpendBreakdownFormat.dayKeys(rangeDays: range))
+                            expectedDays: SpendBreakdownFormat.expectedDays(breakdown))
                         modelRows(result)
                     } else {
                         placeholder("No local usage in this range.")
@@ -92,12 +92,14 @@ struct UsageSpendView: View {
     }
 
     private var totalText: String {
-        guard let result = appState.spendBreakdown, !result.isEmpty else {
+        guard let breakdown = appState.spendBreakdown, !breakdown.result.isEmpty else {
             return "Estimated from local transcripts"
         }
+        let result = breakdown.result
         let total = result.models.reduce(0.0) { $0 + ($1.costUsd ?? 0) }
         let qualifier = result.isPartialEstimate ? "at least " : "about "
-        return "\(qualifier)\(SpendBreakdownFormat.money(total)) estimated over \(range) days"
+        return
+            "\(qualifier)\(SpendBreakdownFormat.money(total)) estimated over \(breakdown.rangeDays) days"
     }
 
     /// The scanner truncates by sorted path, not by date, so a capped scan can
@@ -161,7 +163,7 @@ struct UsageSpendView: View {
                 .chunkyCard(radius: 12)
             }
             .buttonStyle(.plain)
-            .disabled(appState.spendBreakdown?.isEmpty ?? true)
+            .disabled(appState.spendBreakdown?.result.isEmpty ?? true)
             Text("Estimates from local transcripts. Not a bill.")
                 .font(PFont.body(12, .semibold)).foregroundStyle(Color.pfInkMuted)
             Spacer(minLength: 0)
@@ -180,8 +182,8 @@ struct UsageSpendView: View {
     // MARK: - Export
 
     private func copyExport() {
-        guard let result = appState.spendBreakdown,
-            let text = SpendBreakdownFormat.exportJSON(result, rangeDays: range)
+        guard let breakdown = appState.spendBreakdown,
+            let text = SpendBreakdownFormat.exportJSON(breakdown)
         else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
@@ -257,19 +259,31 @@ enum SpendBreakdownFormat {
         return totals.keys.sorted().map { ($0, totals[$0] ?? 0) }
     }
 
+    /// Only the completed scan can establish which missing days are known zeros.
+    static func expectedDays(_ breakdown: SpendBreakdown) -> [String]? {
+        guard !breakdown.result.isPartialEstimate else { return nil }
+        return dayKeys(
+            rangeDays: breakdown.rangeDays, now: breakdown.scannedAt,
+            calendar: breakdown.calendar)
+    }
+
+    /// `2026-09-13` reads as `09-13`. The key is already a local calendar day.
+    static func shortDay(_ day: String) -> String {
+        let parts = day.split(separator: "-")
+        guard parts.count == 3 else { return day }
+        return "\(parts[1])-\(parts[2])"
+    }
+
     /// The local day keys the scan covers, in the scanner's own `yyyy-MM-dd`
     /// form: `rangeDays` days ending today, inclusive.
     static func dayKeys(
         rangeDays: Int, now: Date = Date(), calendar: Calendar = .current
     ) -> [String] {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "yyyy-MM-dd"
         let start = calendar.startOfDay(for: now)
         return (0..<max(rangeDays, 1)).compactMap { offset in
-            calendar.date(byAdding: .day, value: -offset, to: start).map(formatter.string(from:))
+            calendar.date(byAdding: .day, value: -offset, to: start).map {
+                JournalReader.dayString(from: $0, calendar: calendar)
+            }
         }.sorted()
     }
 
@@ -280,14 +294,15 @@ enum SpendBreakdownFormat {
     /// layout. `isPartialEstimate` travels with the data so a reader cannot
     /// mistake a truncated range for a complete one.
     static func exportJSON(
-        _ result: CostUsageResult,
-        rangeDays: Int,
+        _ breakdown: SpendBreakdown,
         generatedAt: Date = Date()
     ) -> String? {
+        let result = breakdown.result
         let payload: [String: Any] = [
-            "rangeDays": rangeDays,
+            "rangeDays": breakdown.rangeDays,
             "isPartialEstimate": result.isPartialEstimate,
             "generatedAt": ISO8601DateFormatter().string(from: generatedAt),
+            "scannedAt": ISO8601DateFormatter().string(from: breakdown.scannedAt),
             "daily": result.daily.map { row in
                 [
                     "day": row.day, "model": row.model,
@@ -317,14 +332,6 @@ struct DailyCostChart: View {
     /// One bar per day, summed across models, in the scanner's day order.
     private var days: [(day: String, cost: Double)] {
         SpendBreakdownFormat.dailyTotals(rows, expectedDays: expectedDays)
-    }
-
-    /// `2026-09-13` reads as `09-13`. The scanner's day key is already a local
-    /// calendar day, so this trims it rather than re-parsing it into a `Date`.
-    static func shortDay(_ day: String) -> String {
-        let parts = day.split(separator: "-")
-        guard parts.count == 3 else { return day }
-        return "\(parts[1])-\(parts[2])"
     }
 
     var body: some View {
@@ -360,13 +367,14 @@ struct DailyCostChart: View {
             // own day and amount.
             if let first = days.first, let last = days.last, days.count > 1 {
                 HStack {
-                    Text(Self.shortDay(first.day))
+                    Text(SpendBreakdownFormat.shortDay(first.day))
                     Spacer(minLength: 8)
                     Text("peak \(SpendBreakdownFormat.money(days.map(\.cost).max() ?? 0))")
                     Spacer(minLength: 8)
-                    Text(Self.shortDay(last.day))
+                    Text(SpendBreakdownFormat.shortDay(last.day))
                 }
                 .font(PFont.body(11, .semibold))
+                .monospacedDigit()
                 .foregroundStyle(Color.pfInkMuted)
             }
         }

@@ -364,7 +364,8 @@ stale, loading, and unavailable states use explicit words; stale and paused summ
 omit the percentage. Forecast speech uses `RunsOutPhrase.spoken`.
 
 The popover is 360 points wide with a screen-derived scrolling height. Header controls are
-Settings and Quit; opening performs refresh, so there is no redundant refresh button.
+Usage & Spend, Settings, and Quit. Opening performs refresh, so there is no redundant
+refresh button. Usage & Spend appears after onboarding.
 The selected provider owns the hero and first account section. An exact account pin wins;
 otherwise the account nearest its limit owns every primary surface. The other eligible
 provider remains visible below as one compact secondary summary. When Claude is secondary,
@@ -390,11 +391,15 @@ hours are omitted. Surfaces never introduce their own date/weekday formatter.
 ### 6.1 Usage and Spend window
 
 A separate window shows Claude's local cost over 7 or 30 days. It is not a popover
-section, because 30 daily bars do not fit 360 points. The Activity screen opens it.
+section, because 30 daily bars do not fit 360 points. The popover header opens it.
 
 The window runs its own scan off-main with its own generation check, so a 30-day scan
 never delays quota publication and never widens what the 60-second loop reads. Closing
-the window cancels the scan. A timeout publishes no total.
+the window cancels the scan. A new request clears the previous result and error before
+loading. A failed scan, including a timeout, shows an error with no total or export.
+Each completed result keeps its requested range, scan date, and calendar. The chart,
+total label, and export use that completed window, even after midnight. They never use
+the current picker value or export time to extend the scanned range.
 
 It shows one bar per local day summed across models, per-model rows with tokens and
 estimated cost, and a JSON copy action. Rows with neither tokens nor cost, such as
@@ -411,7 +416,8 @@ information. Every amount is labeled an estimate, never a bill.
 The window is opened from the popover header, not from the cost card. The cost card
 renders only while Claude owns the main meter, so a Codex-primary user could not reach it.
 
-The export carries the day rows, the range, and the partial flag. It never carries project
+The export carries the day rows, the completed range, the scan time as `scannedAt`, the
+export time as `generatedAt`, and the partial flag. It never carries project
 or session paths. Because the window is visible, the app stays activatable exactly like
 the Settings window, so an `LSUIElement` process is never dropped to `.accessory` while it
 is on screen.

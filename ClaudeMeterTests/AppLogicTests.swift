@@ -4030,6 +4030,98 @@ struct AppLogicTests {
     }
 }
 
+@Suite("Usage & Spend scan lifecycle")
+struct SpendBreakdownLoadingTests {
+    private actor ControlledScanner {
+        private var requests: [SpendBreakdownRequest] = []
+        private var pending: CheckedContinuation<CostUsageResult, any Error>?
+
+        func scan(_ request: SpendBreakdownRequest) async throws -> CostUsageResult {
+            requests.append(request)
+            return try await withCheckedThrowingContinuation { pending = $0 }
+        }
+
+        func waitForCalls(_ count: Int) async -> Bool {
+            let clock = ContinuousClock()
+            let deadline = clock.now.advanced(by: .seconds(5))
+            while requests.count < count, clock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+            return requests.count >= count
+        }
+
+        func finish(_ result: Result<CostUsageResult, any Error>) {
+            let continuation = pending
+            pending = nil
+            continuation?.resume(with: result)
+        }
+    }
+
+    @MainActor
+    private func waitForCompletion(_ state: AppState) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while state.spendBreakdownLoading, clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try #require(!state.spendBreakdownLoading)
+    }
+
+    @MainActor
+    @Test("A range switch clears old bars and exports through failure and retry")
+    func rangeSwitchCannotReusePreviousScan() async throws {
+        let scanner = ControlledScanner()
+        let state = AppState(
+            pipeline: ThrowingPipeline(message: "Unused"),
+            spendBreakdownScanner: { try await scanner.scan($0) })
+        defer { state.cancelSpendBreakdownLoad() }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "Asia/Kuala_Lumpur"))
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let result = CostUsageResult(
+            models: [ModelUsage(name: "m", inputTokens: 100, costUsd: 1)],
+            daily: [
+                DailyModelUsage(
+                    day: JournalReader.dayString(from: now, calendar: calendar),
+                    model: "m", inputTokens: 100, costUsd: 1)
+            ],
+            isPartialEstimate: false)
+
+        state.loadSpendBreakdown(daysBack: 7, now: now, calendar: calendar)
+        try #require(await scanner.waitForCalls(1))
+        await scanner.finish(.success(result))
+        try await waitForCompletion(state)
+        let first = try #require(state.spendBreakdown)
+        #expect(first.rangeDays == 7)
+        #expect(first.scannedAt == now)
+        #expect(first.calendar == calendar)
+        #expect(SpendBreakdownFormat.expectedDays(first)?.count == 7)
+
+        let nextDay = now.addingTimeInterval(86_400)
+        state.loadSpendBreakdown(daysBack: 30, now: nextDay, calendar: calendar)
+        #expect(state.spendBreakdown == nil)
+        #expect(state.spendBreakdownLoading)
+        try #require(await scanner.waitForCalls(2))
+        await scanner.finish(.failure(TimeoutError(seconds: 30)))
+        try await waitForCompletion(state)
+        #expect(state.spendBreakdown == nil)
+        #expect(state.spendBreakdownError == "The scan did not finish.")
+
+        state.loadSpendBreakdown(daysBack: 30, now: nextDay, calendar: calendar)
+        #expect(state.spendBreakdownError == nil)
+        try #require(await scanner.waitForCalls(3))
+        await scanner.finish(.success(result))
+        try await waitForCompletion(state)
+        let completed = try #require(state.spendBreakdown)
+        #expect(completed.rangeDays == 30)
+        #expect(completed.scannedAt == nextDay)
+        let days = try #require(SpendBreakdownFormat.expectedDays(completed))
+        #expect(days.count == 30)
+        #expect(days.last == JournalReader.dayString(from: nextDay, calendar: calendar))
+        #expect(state.spendBreakdownError == nil)
+    }
+}
+
 @Suite("Usage & Spend presentation")
 struct SpendBreakdownFormatTests {
     private func row(
@@ -4051,16 +4143,77 @@ struct SpendBreakdownFormatTests {
         #expect(totals[1].cost == 2)
     }
 
-    @Test("A day the scan never read is absent, not a zero bar")
-    func missingDayIsAbsent() {
-        // The scan can be truncated, so a gap means "unknown". Drawing a zero bar
-        // would assert the user spent nothing that day.
+    @Test("A truncated scan leaves an unread day absent, not a zero bar")
+    func missingDayIsAbsentWhenScanWasTruncated() {
+        // With no expected days the scan was partial, so a gap means "not read".
+        // A zero bar would assert the user spent nothing that day.
         let totals = SpendBreakdownFormat.dailyTotals([
             row(day: "2026-09-01", model: "m", cost: 1),
             row(day: "2026-09-03", model: "m", cost: 1),
         ])
 
         #expect(totals.map(\.day) == ["2026-09-01", "2026-09-03"])
+    }
+
+    @Test("A complete scan fills a quiet day, so the axis stays proportional")
+    func quietDayBecomesZeroWhenScanWasComplete() {
+        // A complete scan read every day in the window, so a day with no rows is
+        // a real zero. Hiding it would make the bars lie about elapsed time.
+        let totals = SpendBreakdownFormat.dailyTotals(
+            [
+                row(day: "2026-09-01", model: "m", cost: 1),
+                row(day: "2026-09-03", model: "m", cost: 2),
+            ],
+            expectedDays: ["2026-09-01", "2026-09-02", "2026-09-03"])
+
+        #expect(totals.map(\.day) == ["2026-09-01", "2026-09-02", "2026-09-03"])
+        #expect(totals[1].cost == 0)
+    }
+
+    @Test("Day keys cover the range, end today, and stay sorted")
+    func dayKeysCoverTheRange() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try! #require(TimeZone(identifier: "Asia/Kuala_Lumpur"))
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        let keys = SpendBreakdownFormat.dayKeys(rangeDays: 7, now: now, calendar: calendar)
+
+        #expect(keys.count == 7)
+        #expect(keys == keys.sorted())
+        // Inclusive of today, matching the scanner's own window.
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        #expect(keys.last == formatter.string(from: now))
+    }
+
+    @Test("Chart and export keep the completed range and date after midnight")
+    func completedWindowDoesNotFollowExportTime() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "Asia/Kuala_Lumpur"))
+        let scannedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let breakdown = SpendBreakdown(
+            result: CostUsageResult(models: [], isPartialEstimate: false),
+            rangeDays: 7, scannedAt: scannedAt, calendar: calendar)
+        let keys = try #require(SpendBreakdownFormat.expectedDays(breakdown))
+        #expect(keys.count == 7)
+        #expect(keys.last == JournalReader.dayString(from: scannedAt, calendar: calendar))
+
+        let exportedAt = scannedAt.addingTimeInterval(86_400)
+        let json = try #require(
+            SpendBreakdownFormat.exportJSON(breakdown, generatedAt: exportedAt))
+        let payload = try #require(
+            JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        #expect(payload["rangeDays"] as? Int == 7)
+        #expect(payload["scannedAt"] as? String == ISO8601DateFormatter().string(from: scannedAt))
+        #expect(
+            payload["generatedAt"] as? String == ISO8601DateFormatter().string(from: exportedAt))
+
+        let partial = SpendBreakdown(
+            result: CostUsageResult(models: [], isPartialEstimate: true),
+            rangeDays: 30, scannedAt: scannedAt, calendar: calendar)
+        #expect(SpendBreakdownFormat.expectedDays(partial) == nil)
     }
 
     @Test("A non-finite cost cannot poison a day total")
@@ -4095,6 +4248,29 @@ struct SpendBreakdownFormatTests {
         #expect(SpendBreakdownFormat.compact(Int.min).hasSuffix("B"))
     }
 
+    @Test("Rows with no tokens and no cost are not listed")
+    func billableModelsDropsEmptyPseudoModels() {
+        // Claude Code records `<synthetic>` with nothing attached. It is a real
+        // record, so the scan keeps it, but listing a row of zeros pushes real
+        // models down and tells the reader nothing.
+        let models = [
+            ModelUsage(name: "claude-opus-5", inputTokens: 10, costUsd: 1),
+            ModelUsage(name: "<synthetic>", inputTokens: 0, costUsd: 0),
+            ModelUsage(name: "cache-only", cacheReadTokens: 5, costUsd: 0),
+        ]
+
+        let listed = SpendBreakdownFormat.billableModels(models).map(\.name)
+
+        #expect(listed == ["claude-opus-5", "cache-only"])
+    }
+
+    @Test("A day key shortens without being parsed back into a date")
+    func shortDayTrimsTheYear() {
+        #expect(SpendBreakdownFormat.shortDay("2026-09-13") == "09-13")
+        // Anything unexpected passes through rather than being mangled.
+        #expect(SpendBreakdownFormat.shortDay("2026-09") == "2026-09")
+    }
+
     @Test("The export carries the rows and the partial flag, never a path")
     func exportOmitsPathsAndKeepsPartialFlag() throws {
         let result = CostUsageResult(
@@ -4103,10 +4279,10 @@ struct SpendBreakdownFormatTests {
             isPartialEstimate: true,
             sourcePaths: ["/Users/someone/.claude/projects"])
 
-        let json = try #require(
-            SpendBreakdownFormat.exportJSON(
-                result, rangeDays: 30,
-                generatedAt: Date(timeIntervalSince1970: 1_800_000_000)))
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let breakdown = SpendBreakdown(
+            result: result, rangeDays: 30, scannedAt: now, calendar: .current)
+        let json = try #require(SpendBreakdownFormat.exportJSON(breakdown, generatedAt: now))
 
         // A user pasting this into an issue must not publish their directory layout.
         #expect(!json.contains("/Users/"))

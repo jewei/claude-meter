@@ -206,6 +206,8 @@ Expired rolling windows resolve to 0% used and no reset date. Consumers must cal
 Cost refreshes have one active scan and one pending request for the latest configuration.
 A separate one-worker timeout budget bounds scans that ignore cancellation. Repeated
 refresh requests do not delay quota publication or create a chain of waiting scans.
+Completed work releases its timeout slot before returning a result, so an immediate
+next scan can use it. Timed-out work retains its slot until the operation finishes.
 Cost readings have their own scan time and partial/error state. An empty failed scan can
 retain an earlier result only within the same verified root scope and configuration. A
 timeout has no verified scope and clears old totals. A complete
@@ -230,10 +232,14 @@ legacy-only writes count as 5-minute cache writes. Paths use stable order when d
 metadata differs. Large files are tail-read and reported partial. Every changed file is
 reparsed; growth alone cannot prove an append. Model output is deterministically ordered.
 
-The version-6 cost cache retains request records as compact tuples instead of day/model
-totals. Older versions are rebuilt. Parsing accepts at most 20,000 records and 8 MiB of accounted record
+The version-7 cost cache retains request records as compact tuples instead of day/model
+totals. Older versions are rebuilt, including version 6, which could retain partial
+results from the former 8 MiB full-read and 4 MiB tail limits for unchanged files.
+Parsing accepts at most 20,000 records and 8 MiB of accounted record
 storage per file. Reconciliation accepts at most 100,000 records and 32 MiB per root.
-Limits produce explicit partial estimates. The LRU cache retains at most 2,048 files and
+Files above 32 MiB are tail-read at 16 MiB. A tail-read total falls as the file grows,
+because the fixed tail covers a shrinking share of it, so the limit is set above ordinary
+session sizes rather than at them. Limits produce explicit partial estimates. The LRU cache retains at most 2,048 files and
 32 MiB of accounted record storage, including path/record overhead. These accounting
 bounds do not measure the allocator's total memory use.
 
@@ -360,7 +366,8 @@ stale, loading, and unavailable states use explicit words; stale and paused summ
 omit the percentage. Forecast speech uses `RunsOutPhrase.spoken`.
 
 The popover is 360 points wide with a screen-derived scrolling height. Header controls are
-Settings and Quit; opening performs refresh, so there is no redundant refresh button.
+Usage & Spend, Settings, and Quit. Opening performs refresh, so there is no redundant
+refresh button. Usage & Spend appears after onboarding.
 The selected provider owns the hero and first account section. An exact account pin wins;
 otherwise the account nearest its limit owns every primary surface. The other eligible
 provider remains visible below as one compact secondary summary. When Claude is secondary,
@@ -386,19 +393,33 @@ hours are omitted. Surfaces never introduce their own date/weekday formatter.
 ### 6.1 Usage and Spend window
 
 A separate window shows Claude's local cost over 7 or 30 days. It is not a popover
-section, because 30 daily bars do not fit 360 points. The Activity screen opens it.
+section, because 30 daily bars do not fit 360 points. The popover header opens it.
 
 The window runs its own scan off-main with its own generation check, so a 30-day scan
 never delays quota publication and never widens what the 60-second loop reads. Closing
-the window cancels the scan. A timeout publishes no total.
+the window cancels the scan. A new request clears the previous result and error before
+loading. A failed scan, including a timeout, shows an error with no total or export.
+Each completed result keeps its requested range, scan date, and calendar. The chart,
+total label, and export use that completed window, even after midnight. They never use
+the current picker value or export time to extend the scanned range.
 
 It shows one bar per local day summed across models, per-model rows with tokens and
-estimated cost, and a JSON copy action. A day the scan did not read is absent rather than
-a zero bar. When the scan is partial, the bars are neutral, a banner states that any day
-can be understated, and the header says "at least" instead of "about". Every amount is
-labeled an estimate, never a bill.
+estimated cost, and a JSON copy action. Rows with neither tokens nor cost, such as
+Claude Code's `<synthetic>` pseudo-model, are not listed.
 
-The export carries the day rows, the range, and the partial flag. It never carries project
+A complete scan read every day in the window, so a quiet day is a real zero and gets a
+zero bar, which keeps the bars proportional to elapsed time. A partial scan did not, so an
+unread day stays absent instead: a zero bar would claim the user spent nothing. When the
+scan is partial, a banner states that any day can be understated and the header says
+"at least" instead of "about". Bar colour does not carry the partial state, because a
+30-day range is partial on most real corpora and a permanent colour change carries no
+information. Every amount is labeled an estimate, never a bill.
+
+The window is opened from the popover header, not from the cost card. The cost card
+renders only while Claude owns the main meter, so a Codex-primary user could not reach it.
+
+The export carries the day rows, the completed range, the scan time as `scannedAt`, the
+export time as `generatedAt`, and the partial flag. It never carries project
 or session paths. Because the window is visible, the app stays activatable exactly like
 the Settings window, so an `LSUIElement` process is never dropped to `.accessory` while it
 is on screen.

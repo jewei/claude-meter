@@ -24,20 +24,35 @@ struct UsageSpendView: View {
     private static let ranges = [7, 30]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        // The header and footer are pinned and only the middle scrolls. The
+        // content is taller than the window on a real corpus, and a plain stack
+        // clipped the header, which took the range picker off screen with it.
+        VStack(alignment: .leading, spacing: 14) {
             header
-            if appState.spendBreakdownLoading, appState.spendBreakdown == nil {
-                placeholder("Reading transcripts…")
-            } else if let error = appState.spendBreakdownError, appState.spendBreakdown == nil {
-                placeholder(error)
-            } else if let result = appState.spendBreakdown, !result.isEmpty {
-                if result.isPartialEstimate { partialNotice }
-                DailyCostChart(rows: result.daily, isPartial: result.isPartialEstimate)
-                modelRows(result)
-            } else {
-                placeholder("No local usage in this range.")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if appState.spendBreakdownLoading, appState.spendBreakdown == nil {
+                        placeholder("Reading transcripts…")
+                    } else if let error = appState.spendBreakdownError,
+                        appState.spendBreakdown == nil
+                    {
+                        placeholder(error)
+                    } else if let breakdown = appState.spendBreakdown,
+                        !breakdown.result.isEmpty
+                    {
+                        let result = breakdown.result
+                        if result.isPartialEstimate { partialNotice }
+                        DailyCostChart(
+                            rows: result.daily,
+                            expectedDays: SpendBreakdownFormat.expectedDays(breakdown))
+                        modelRows(result)
+                    } else {
+                        placeholder("No local usage in this range.")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Spacer(minLength: 0)
+            .scrollIndicators(.automatic)
             footer
         }
         .padding(22)
@@ -77,12 +92,14 @@ struct UsageSpendView: View {
     }
 
     private var totalText: String {
-        guard let result = appState.spendBreakdown, !result.isEmpty else {
+        guard let breakdown = appState.spendBreakdown, !breakdown.result.isEmpty else {
             return "Estimated from local transcripts"
         }
+        let result = breakdown.result
         let total = result.models.reduce(0.0) { $0 + ($1.costUsd ?? 0) }
         let qualifier = result.isPartialEstimate ? "at least " : "about "
-        return "\(qualifier)\(SpendBreakdownFormat.money(total)) estimated over \(range) days"
+        return
+            "\(qualifier)\(SpendBreakdownFormat.money(total)) estimated over \(breakdown.rangeDays) days"
     }
 
     /// The scanner truncates by sorted path, not by date, so a capped scan can
@@ -109,7 +126,10 @@ struct UsageSpendView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("BY MODEL").font(PFont.body(11, .bold))
                 .foregroundStyle(Color.pfInkMuted).tracking(0.8)
-            ForEach(result.models, id: \.name) { model in
+            // Claude Code records pseudo-models such as `<synthetic>` that carry
+            // no tokens and no cost. They are real records, so the scan keeps
+            // them, but a row of zeros tells the reader nothing.
+            ForEach(SpendBreakdownFormat.billableModels(result.models), id: \.name) { model in
                 HStack(spacing: 12) {
                     Text(model.displayName)
                         .font(PFont.body(13, .semibold)).foregroundStyle(Color.pfInk)
@@ -143,7 +163,7 @@ struct UsageSpendView: View {
                 .chunkyCard(radius: 12)
             }
             .buttonStyle(.plain)
-            .disabled(appState.spendBreakdown?.isEmpty ?? true)
+            .disabled(appState.spendBreakdown?.result.isEmpty ?? true)
             Text("Estimates from local transcripts. Not a bill.")
                 .font(PFont.body(12, .semibold)).foregroundStyle(Color.pfInkMuted)
             Spacer(minLength: 0)
@@ -162,8 +182,8 @@ struct UsageSpendView: View {
     // MARK: - Export
 
     private func copyExport() {
-        guard let result = appState.spendBreakdown,
-            let text = SpendBreakdownFormat.exportJSON(result, rangeDays: range)
+        guard let breakdown = appState.spendBreakdown,
+            let text = SpendBreakdownFormat.exportJSON(breakdown)
         else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
@@ -202,18 +222,69 @@ enum SpendBreakdownFormat {
         return "\(value)"
     }
 
+    /// Drops rows that carry neither tokens nor cost.
+    ///
+    /// Claude Code records pseudo-models such as `<synthetic>`. They are genuine
+    /// records, so the scan must keep them, but a row of zeros adds nothing to
+    /// read and pushes real models down the list.
+    static func billableModels(_ models: [ModelUsage]) -> [ModelUsage] {
+        models.filter { model in
+            let tokens =
+                (model.inputTokens ?? 0) + (model.outputTokens ?? 0)
+                + (model.cacheReadTokens ?? 0) + (model.cacheWriteTokens ?? 0)
+            return tokens > 0 || (model.costUsd ?? 0) > 0
+        }
+    }
+
     /// One bar per day, summed across models, in ascending day order.
     ///
-    /// A day with no rows is absent rather than zero: the scan can be truncated,
-    /// so the view must not draw a confident zero for a day it never read.
-    static func dailyTotals(_ rows: [DailyModelUsage]) -> [(day: String, cost: Double)] {
+    /// `expectedDays` decides what a missing day means:
+    ///
+    /// - Pass the window's days when the scan completed. A day with no rows is a
+    ///   real zero, so it gets a zero bar and the axis stays proportional to time.
+    /// - Pass nil when the scan was truncated. Absence then means "not read", and
+    ///   a zero bar would claim the user spent nothing that day.
+    static func dailyTotals(
+        _ rows: [DailyModelUsage], expectedDays: [String]? = nil
+    ) -> [(day: String, cost: Double)] {
         var totals: [String: Double] = [:]
+        if let expectedDays {
+            for day in expectedDays { totals[day] = 0 }
+        }
         for row in rows {
             let cost = row.costUsd ?? 0
             guard cost.isFinite else { continue }
             totals[row.day, default: 0] += cost
         }
         return totals.keys.sorted().map { ($0, totals[$0] ?? 0) }
+    }
+
+    /// Only the completed scan can establish which missing days are known zeros.
+    static func expectedDays(_ breakdown: SpendBreakdown) -> [String]? {
+        guard !breakdown.result.isPartialEstimate else { return nil }
+        return dayKeys(
+            rangeDays: breakdown.rangeDays, now: breakdown.scannedAt,
+            calendar: breakdown.calendar)
+    }
+
+    /// `2026-09-13` reads as `09-13`. The key is already a local calendar day.
+    static func shortDay(_ day: String) -> String {
+        let parts = day.split(separator: "-")
+        guard parts.count == 3 else { return day }
+        return "\(parts[1])-\(parts[2])"
+    }
+
+    /// The local day keys the scan covers, in the scanner's own `yyyy-MM-dd`
+    /// form: `rangeDays` days ending today, inclusive.
+    static func dayKeys(
+        rangeDays: Int, now: Date = Date(), calendar: Calendar = .current
+    ) -> [String] {
+        let start = calendar.startOfDay(for: now)
+        return (0..<max(rangeDays, 1)).compactMap { offset in
+            calendar.date(byAdding: .day, value: -offset, to: start).map {
+                JournalReader.dayString(from: $0, calendar: calendar)
+            }
+        }.sorted()
     }
 
     /// The clipboard export.
@@ -223,14 +294,15 @@ enum SpendBreakdownFormat {
     /// layout. `isPartialEstimate` travels with the data so a reader cannot
     /// mistake a truncated range for a complete one.
     static func exportJSON(
-        _ result: CostUsageResult,
-        rangeDays: Int,
+        _ breakdown: SpendBreakdown,
         generatedAt: Date = Date()
     ) -> String? {
+        let result = breakdown.result
         let payload: [String: Any] = [
-            "rangeDays": rangeDays,
+            "rangeDays": breakdown.rangeDays,
             "isPartialEstimate": result.isPartialEstimate,
             "generatedAt": ISO8601DateFormatter().string(from: generatedAt),
+            "scannedAt": ISO8601DateFormatter().string(from: breakdown.scannedAt),
             "daily": result.daily.map { row in
                 [
                     "day": row.day, "model": row.model,
@@ -254,11 +326,12 @@ enum SpendBreakdownFormat {
 /// introducing a charting framework with a different visual language.
 struct DailyCostChart: View {
     let rows: [DailyModelUsage]
-    let isPartial: Bool
+    /// Non-nil only when the scan completed. See `dailyTotals(_:expectedDays:)`.
+    let expectedDays: [String]?
 
     /// One bar per day, summed across models, in the scanner's day order.
     private var days: [(day: String, cost: Double)] {
-        SpendBreakdownFormat.dailyTotals(rows)
+        SpendBreakdownFormat.dailyTotals(rows, expectedDays: expectedDays)
     }
 
     var body: some View {
@@ -271,8 +344,12 @@ struct DailyCostChart: View {
                 HStack(alignment: .bottom, spacing: spacing) {
                     ForEach(days, id: \.day) { entry in
                         VStack(spacing: 4) {
+                            // Always the energy colour. A 30-day range is partial
+                            // on most real corpora, so greying the bars for that
+                            // would make "incomplete" the permanent look and stop
+                            // carrying information. The banner says it instead.
                             RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .fill(isPartial ? Color.pfInkMuted : Color.pfEnergyFull)
+                                .fill(Color.pfEnergyFull)
                                 .frame(
                                     height: max(
                                         2, geometry.size.height * 0.82 * (entry.cost / peak)))
@@ -286,6 +363,20 @@ struct DailyCostChart: View {
                 .frame(height: geometry.size.height, alignment: .bottom)
             }
             .frame(height: 160)
+            // The bars carry no axis, so name the ends. Hovering a bar gives its
+            // own day and amount.
+            if let first = days.first, let last = days.last, days.count > 1 {
+                HStack {
+                    Text(SpendBreakdownFormat.shortDay(first.day))
+                    Spacer(minLength: 8)
+                    Text("peak \(SpendBreakdownFormat.money(days.map(\.cost).max() ?? 0))")
+                    Spacer(minLength: 8)
+                    Text(SpendBreakdownFormat.shortDay(last.day))
+                }
+                .font(PFont.body(11, .semibold))
+                .monospacedDigit()
+                .foregroundStyle(Color.pfInkMuted)
+            }
         }
         .padding(16)
         .chunkyCard(radius: 18)

@@ -92,12 +92,17 @@ public enum Timeout {
         guard budget.acquire() else { throw TimeoutCapacityError() }
         let race = RaceBox<T>()
         let work = Task.detached(priority: priority) {
-            defer { budget.release() }
+            let result: Result<T, Error>
             do {
-                race.resolve(.success(try await operation()))
+                result = .success(try await operation())
             } catch {
-                race.resolve(.failure(error))
+                result = .failure(error)
             }
+            // The resumed caller can immediately reuse a one-worker budget.
+            // Release completed work before exposing its result. Timed-out work
+            // still holds its slot until the operation actually finishes.
+            budget.release()
+            race.resolve(result)
         }
         let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
         timer.schedule(deadline: .now() + seconds)

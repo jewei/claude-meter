@@ -222,7 +222,9 @@ when accounts/providers overflow.
 ### Header
 - Left: 30×30 raised header icon (radius 9, `energy-full` fill, white ⚡/bolt.fill) + "Claude Usage"
   Fredoka 600/18 `ink`.
-- Right: compact relative update time plus 28×28 Settings and Quit buttons. Opening
+- Right: compact relative update time plus 28×28 Usage & Spend, Settings, and Quit buttons.
+  Usage & Spend appears after onboarding, for either selected main provider. The update
+  time truncates when space is limited so all controls remain visible. Opening
   the popover already triggers an interactive refresh, so no redundant refresh
   control is shown. Pause/resume lives in Settings.
 
@@ -272,6 +274,24 @@ rounded square shaded in 5 `energy-full` intensity levels by message volume rela
 hour (empty = `track`). Weekday labels at left, a 6-hour axis below, and a "Less → More" legend. A
 **Back** button returns to the main view. Data is scanned on demand from local transcripts (last 30
 days, local time); shows "Scanning…" / "No activity" placeholders.
+
+---
+
+## Usage and Spend window
+
+Open this separate window from the popover header. Its minimum size is 620×520 points,
+with 22-point padding. Keep the title, estimated total, and 7/30-day picker pinned above
+the scroll area. Keep Copy JSON and the estimate notice pinned below it. Only the
+partial notice, daily chart, and model rows scroll.
+
+Daily bars use `energy-full` for both complete and partial scans. A partial scan shows
+an explicit banner and uses "at least" for the total. Only a complete scan adds zero
+bars for quiet days. The chart's end dates and peak amount use the existing caption
+font with monospaced digits. Omit model rows that have neither tokens nor cost.
+
+Starting a scan clears the old chart and total, shows the loading message, and disables
+Copy JSON. A failed scan shows the error in that area. Completed charts, total labels,
+and exports use the range and date captured for the successful scan.
 
 ---
 

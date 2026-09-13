@@ -40,7 +40,8 @@ Follow the root [AGENTS.md](../../../AGENTS.md). Provider behavior is defined in
   path. Include top-level JSONL and direct `subagents/*.jsonl`. Exclude
   `agent-acompact-*` and `agent-aside_question-*` replays and deeper workflow journals.
   Continue across unreadable roots and report partial results.
-- Both scanners read only the last 4 MiB of files larger than 8 MiB. Caches require
+- Cost reads the last 16 MiB of files larger than 32 MiB. Activity reads the last 4 MiB
+  of files larger than 8 MiB. Caches require
   device/inode, mtime, size, and local time zone. Cache only descriptor reads whose
   stamp stays stable and matches discovery. Keep nonblocking opens and link rejection.
   This detects atomic replacement, not every in-place edit with restored metadata.
@@ -53,8 +54,10 @@ Follow the root [AGENTS.md](../../../AGENTS.md). Provider behavior is defined in
   through `resolvedCacheWrite1h`. `ModelPricing` uses reviewed family estimates, with
   Sonnet as the default. Cached models.dev overrides need a non-future timestamp and
   positive, bounded input/output/cache-read/cache-write/derived-1h rates.
-- Cost disk format v6 retains request identity and cache-tier provenance; rebuild older
-  formats. Keep record limits of 20,000 / 8 MiB per file and 100,000 / 32 MiB per root.
+- Cost disk format v7 retains request identity and cache-tier provenance. Rebuild older
+  formats so unchanged files cannot reuse partial results from the former 8 MiB/4 MiB
+  read limits. Invalidate the cache when a read-policy change can change its records.
+  Keep record limits of 20,000 / 8 MiB per file and 100,000 / 32 MiB per root.
   The constant-time LRU holds at most 2,048 files and 32 MiB of accounted records.
   Limits set `isPartialEstimate`. Filter time windows at read time and call `flushIfDue`
   no more than once per 10 minutes. Default totals cover seven days.

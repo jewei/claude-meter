@@ -189,7 +189,10 @@ struct ProviderHTTPClientBoundsTests {
             try await client.send(URLRequest(url: url))
         }
         let watchdog = Task.detached {
-            try? await Task.sleep(for: .seconds(2))
+            // This only bounds a broken test. Under the full CI suite the
+            // executor can take over four seconds to resume a ready timeout.
+            // Keep the receiver blocked until that timeout can be observed.
+            try? await Task.sleep(for: .seconds(10))
             if !Task.isCancelled { release.signal() }
         }
         defer {

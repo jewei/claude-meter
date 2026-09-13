@@ -767,7 +767,7 @@ struct CostUsageScannerTests {
         }
         let diskURL = root.appendingPathComponent("cache.json")
         try JSONEncoder().encode(
-            Disk(version: 6, entries: paths.map { Entry(path: $0) })
+            Disk(version: 7, entries: paths.map { Entry(path: $0) })
         ).write(to: diskURL)
 
         let cache = CostUsageCache(persistenceURL: diskURL)
@@ -892,6 +892,47 @@ struct CostUsageScannerTests {
         let usage = try #require(result.models.first)
         #expect(usage.cacheWriteTokens == 1_000_000)
         #expect(abs((usage.costUsd ?? 0) - 6.0) < 0.001)
+    }
+
+    @Test("Version 6 tail reads are discarded when the full-read limit increases")
+    func oldTailReadCacheIsReparsed() throws {
+        let now = Date()
+        let ts = iso(now)
+        let (_, root) = try makeScanner(lines: [
+            assistantLine(
+                id: "first", requestId: "first", model: "claude-sonnet-4-6",
+                input: 100, output: 0, ts: ts),
+            String(repeating: " ", count: 9 * 1024 * 1024),
+            assistantLine(
+                id: "last", requestId: "last", model: "claude-sonnet-4-6",
+                input: 100, output: 0, ts: ts),
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let diskURL = root.appendingPathComponent("cache.json")
+        let fresh = CostUsageScanner(
+            projectsPath: root, cache: CostUsageCache(persistenceURL: diskURL)
+        ).scan(now: now)
+        #expect(fresh.models.first?.inputTokens == 200)
+        #expect(!fresh.isPartialEstimate)
+
+        // Keep the real file identity, but reproduce the v6 cache from the old
+        // 4 MiB tail read. It contained only the last request of this 9 MiB file.
+        var disk = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: diskURL)) as? [String: Any])
+        var entries = try #require(disk["entries"] as? [[String: Any]])
+        var entry = try #require(entries.first)
+        let records = try #require(entry["records"] as? [Any])
+        #expect(records.count == 2)
+        entry["records"] = Array(records.suffix(1))
+        entry["isPartial"] = true
+        entries[0] = entry
+        disk["entries"] = entries
+        disk["version"] = 6
+        try JSONSerialization.data(withJSONObject: disk).write(to: diskURL)
+
+        let reloaded = CostUsageCache(persistenceURL: diskURL)
+        let upgraded = CostUsageScanner(projectsPath: root, cache: reloaded).scan(now: now)
+        #expect(upgraded == fresh)
     }
 
     @Test("Negative split cache counters are clamped and mark the result partial")

@@ -790,9 +790,9 @@ public final class CostUsageCache: @unchecked Sendable {
     static let maxEntries = 2048
     static let maximumRetainedBytes = 32 * 1024 * 1024
     private static let maximumPersistenceFileBytes = 64 * 1_024 * 1_024
-    // v6 binds request records to device/inode identity. Rebuild older caches
-    // because equal path, size, and mtime cannot prove the file is unchanged.
-    private static let diskVersion = 6
+    // v7 rebuilds entries parsed with the old 8 MiB full-read / 4 MiB tail limits.
+    // Otherwise unchanged transcripts keep their truncated v6 totals after upgrade.
+    private static let diskVersion = 7
 
     private let persistenceURL: URL?
     private let byteLimit: Int

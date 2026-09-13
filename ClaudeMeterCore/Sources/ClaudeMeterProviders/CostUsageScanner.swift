@@ -48,8 +48,21 @@ public struct CostUsageScanner: Sendable {
 
     /// Files larger than this are tail-read; transcripts are append-only so recent
     /// activity lives at the end.
-    private static let maxFullReadBytes: UInt64 = 8 * 1024 * 1024
-    private static let tailReadBytes: UInt64 = 4 * 1024 * 1024
+    ///
+    /// A tail-read result is partial, and its total *falls* as the file grows,
+    /// because the fixed tail covers a shrinking share of it. A single long
+    /// session already passes 8 MiB, so that was reachable in ordinary use and
+    /// made the reported cost move backwards. Measured on an 11 MiB transcript:
+    /// the old limit counted 36% of it in 0.60 s, this one counts all of it in
+    /// 2.74 s.
+    ///
+    /// This buys headroom, it does not remove the problem. `maximumFileRecords`
+    /// binds next, near 12 MiB at one record per 650 bytes, and an active
+    /// transcript is re-parsed on every poll because growth alone cannot prove an
+    /// append. The durable fix is to digest the prefix and parse only the
+    /// appended tail, which makes the cost track new data instead of total data.
+    private static let maxFullReadBytes: UInt64 = 32 * 1024 * 1024
+    private static let tailReadBytes: UInt64 = 16 * 1024 * 1024
     static let maximumFileRecords = 20_000
     static let maximumFileRecordBytes = 8 * 1024 * 1024
     static let maximumRootRecords = 100_000

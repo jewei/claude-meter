@@ -233,7 +233,9 @@ reparsed; growth alone cannot prove an append. Model output is deterministically
 The version-6 cost cache retains request records as compact tuples instead of day/model
 totals. Older versions are rebuilt. Parsing accepts at most 20,000 records and 8 MiB of accounted record
 storage per file. Reconciliation accepts at most 100,000 records and 32 MiB per root.
-Limits produce explicit partial estimates. The LRU cache retains at most 2,048 files and
+Files above 32 MiB are tail-read at 16 MiB. A tail-read total falls as the file grows,
+because the fixed tail covers a shrinking share of it, so the limit is set above ordinary
+session sizes rather than at them. Limits produce explicit partial estimates. The LRU cache retains at most 2,048 files and
 32 MiB of accounted record storage, including path/record overhead. These accounting
 bounds do not measure the allocator's total memory use.
 

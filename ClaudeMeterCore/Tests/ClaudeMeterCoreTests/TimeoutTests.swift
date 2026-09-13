@@ -83,6 +83,23 @@ struct TimeoutTests {
         #expect(Date().timeIntervalSince(startedAt) < 1)
     }
 
+    @Test("A completed operation releases its slot before the caller starts the next one")
+    func completedOperationReleasesBudgetBeforeReturning() async throws {
+        struct ExpectedFailure: Error {}
+        let budget = Timeout.TaskBudget(limit: 1)
+        for index in 0..<10_000 {
+            do {
+                let value = try await Timeout.run(seconds: 5, budget: budget) {
+                    if index.isMultiple(of: 2) { throw ExpectedFailure() }
+                    return index
+                }
+                #expect(value == index)
+            } catch is ExpectedFailure {
+                // A completed failure must release its slot before returning too.
+            }
+        }
+    }
+
     @Test("An isolated budget cannot exhaust the default timeout pool")
     func isolatedBudgetDoesNotAffectDefaultPool() async throws {
         let budget = Timeout.TaskBudget(limit: 1)

@@ -206,6 +206,8 @@ Expired rolling windows resolve to 0% used and no reset date. Consumers must cal
 Cost refreshes have one active scan and one pending request for the latest configuration.
 A separate one-worker timeout budget bounds scans that ignore cancellation. Repeated
 refresh requests do not delay quota publication or create a chain of waiting scans.
+Completed work releases its timeout slot before returning a result, so an immediate
+next scan can use it. Timed-out work retains its slot until the operation finishes.
 Cost readings have their own scan time and partial/error state. An empty failed scan can
 retain an earlier result only within the same verified root scope and configuration. A
 timeout has no verified scope and clears old totals. A complete

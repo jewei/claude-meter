@@ -37,15 +37,10 @@ struct UsageSpendView: View {
                         appState.spendBreakdown == nil
                     {
                         placeholder(error)
-                    } else if let breakdown = appState.spendBreakdown,
-                        !breakdown.result.isEmpty
-                    {
-                        let result = breakdown.result
-                        if result.isPartialEstimate { partialNotice }
-                        DailyCostChart(
-                            rows: result.daily,
-                            expectedDays: SpendBreakdownFormat.expectedDays(breakdown))
-                        modelRows(result)
+                    } else if let breakdown = appState.spendBreakdown {
+                        ForEach(breakdown.result.providers) { provider in
+                            providerSection(provider, breakdown: breakdown)
+                        }
                     } else {
                         placeholder("No local usage in this range.")
                     }
@@ -73,7 +68,7 @@ struct UsageSpendView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Usage & Spend").font(PFont.display(22, .semibold))
                     .foregroundStyle(Color.pfInk)
-                Text(totalText).font(PFont.body(13, .semibold))
+                Text(totalText).font(PFont.body(13, .semibold)).monospacedDigit()
                     .foregroundStyle(Color.pfInkMuted)
             }
             Spacer(minLength: 8)
@@ -92,29 +87,68 @@ struct UsageSpendView: View {
     }
 
     private var totalText: String {
-        guard let breakdown = appState.spendBreakdown, !breakdown.result.isEmpty else {
+        guard let breakdown = appState.spendBreakdown else {
             return "Estimated from local transcripts"
         }
-        let result = breakdown.result
-        let total = result.models.reduce(0.0) { $0 + ($1.costUsd ?? 0) }
-        let qualifier = result.isPartialEstimate ? "at least " : "about "
-        return
-            "\(qualifier)\(SpendBreakdownFormat.money(total)) estimated over \(breakdown.rangeDays) days"
+        return "\(SpendBreakdownFormat.total(breakdown.result)) over \(breakdown.rangeDays) days"
     }
 
-    /// The scanner truncates by sorted path, not by date, so a capped scan can
-    /// short any day. Say that plainly instead of drawing bars that look whole.
-    private var partialNotice: some View {
+    private func providerSection(_ provider: ProviderSpend, breakdown: SpendBreakdown) -> some View
+    {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(provider.provider.displayName).font(PFont.display(18, .semibold))
+                Spacer()
+                if provider.isEnabled {
+                    Text(SpendBreakdownFormat.amount(provider))
+                        .font(PFont.body(13, .bold)).monospacedDigit()
+                }
+            }
+            .foregroundStyle(Color.pfInk)
+            if !provider.isEnabled {
+                notice("Codex is disabled in Settings and is excluded from the combined total.")
+            } else {
+                if provider.usage.isPartialEstimate {
+                    notice("Some usage could not be counted. Any day can be incomplete.")
+                }
+                if provider.hasUnknownCosts {
+                    notice(
+                        "Some usage has no known cost. The combined amount includes known costs only."
+                    )
+                }
+                if provider.usesStandardTierAssumption {
+                    notice(
+                        "Some Codex records have no service tier. Their estimate uses standard rates; priority can cost more."
+                    )
+                }
+                if provider.usage.isEmpty {
+                    Text(
+                        provider.usage.isPartialEstimate
+                            ? "No usage could be counted." : "No local usage in this range."
+                    )
+                    .font(PFont.body(13, .semibold)).foregroundStyle(Color.pfInkMuted)
+                    .padding(.vertical, 16)
+                } else {
+                    DailyCostChart(
+                        rows: provider.usage.daily,
+                        expectedDays: SpendBreakdownFormat.expectedDays(
+                            breakdown, provider: provider),
+                        knownDailyCosts: provider.knownDailyCosts,
+                        unknownCostDays: provider.unknownCostDays,
+                        isLowerBound: provider.isLowerBound)
+                    modelRows(provider.usage)
+                }
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    private func notice(_ text: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(Color.pfEnergyLow)
-            Text(
-                "This range is incomplete, so any day can be understated. "
-                    + "Treat the bars as a floor, not a total."
-            )
-            .font(PFont.body(12, .semibold))
-            .foregroundStyle(Color.pfInk)
+            Text(text).font(PFont.body(12, .semibold)).foregroundStyle(Color.pfInk)
             Spacer(minLength: 0)
         }
         .padding(12)
@@ -131,12 +165,13 @@ struct UsageSpendView: View {
             // them, but a row of zeros tells the reader nothing.
             ForEach(SpendBreakdownFormat.billableModels(result.models), id: \.name) { model in
                 HStack(spacing: 12) {
-                    Text(model.displayName)
+                    Text(SpendBreakdownFormat.modelName(model))
                         .font(PFont.body(13, .semibold)).foregroundStyle(Color.pfInk)
                     Spacer(minLength: 8)
                     Text(Self.tokens(model))
                         .font(PFont.body(12, .semibold)).foregroundStyle(Color.pfInkMuted)
-                    Text(SpendBreakdownFormat.money(model.costUsd ?? 0))
+                    Text(model.costUsd.map(SpendBreakdownFormat.money) ?? "Unknown")
+                        .monospacedDigit()
                         .font(PFont.body(13, .bold)).foregroundStyle(Color.pfInk)
                         .frame(width: 84, alignment: .trailing)
                 }
@@ -163,7 +198,7 @@ struct UsageSpendView: View {
                 .chunkyCard(radius: 12)
             }
             .buttonStyle(.plain)
-            .disabled(appState.spendBreakdown?.result.isEmpty ?? true)
+            .disabled(appState.spendBreakdown == nil)
             Text("Estimates from local transcripts. Not a bill.")
                 .font(PFont.body(12, .semibold)).foregroundStyle(Color.pfInkMuted)
             Spacer(minLength: 0)
@@ -236,32 +271,72 @@ enum SpendBreakdownFormat {
         }
     }
 
-    /// One bar per day, summed across models, in ascending day order.
-    ///
-    /// `expectedDays` decides what a missing day means:
-    ///
-    /// - Pass the window's days when the scan completed. A day with no rows is a
-    ///   real zero, so it gets a zero bar and the axis stays proportional to time.
-    /// - Pass nil when the scan was truncated. Absence then means "not read", and
-    ///   a zero bar would claim the user spent nothing that day.
-    static func dailyTotals(
-        _ rows: [DailyModelUsage], expectedDays: [String]? = nil
-    ) -> [(day: String, cost: Double)] {
-        var totals: [String: Double] = [:]
-        if let expectedDays {
-            for day in expectedDays { totals[day] = 0 }
+    static func modelName(_ model: ModelUsage) -> String {
+        switch model.name {
+        case "gpt-6-astra": "Astra"
+        case "gpt-5.6-sol", "gpt-5.6": "Sol"
+        default: model.displayName
         }
-        for row in rows {
-            let cost = row.costUsd ?? 0
-            guard cost.isFinite else { continue }
-            totals[row.day, default: 0] += cost
-        }
-        return totals.keys.sorted().map { ($0, totals[$0] ?? 0) }
     }
 
-    /// Only the completed scan can establish which missing days are known zeros.
-    static func expectedDays(_ breakdown: SpendBreakdown) -> [String]? {
-        guard !breakdown.result.isPartialEstimate else { return nil }
+    static func amount(_ provider: ProviderSpend) -> String {
+        if provider.knownCostUsd == 0, provider.hasUnknownCosts || provider.usage.isPartialEstimate
+        {
+            return "Cost unknown"
+        }
+        return
+            "\(provider.isLowerBound ? "at least " : "about ")\(money(provider.knownCostUsd)) estimated"
+    }
+
+    static func total(_ result: SpendScanResult) -> String {
+        if result.knownCostUsd == 0,
+            result.isPartialEstimate || result.providers.contains(where: \.hasUnknownCosts)
+        {
+            return "Combined cost unknown"
+        }
+        return
+            "Combined \(result.isLowerBound ? "at least " : "about ")\(money(result.knownCostUsd)) estimated"
+    }
+
+    static func dayAmount(cost: Double, isIncomplete: Bool, isLowerBound: Bool) -> String {
+        if isIncomplete, cost == 0 { return "Cost unknown" }
+        let prefix = isLowerBound || isIncomplete ? "at least " : ""
+        return prefix + money(cost)
+    }
+
+    /// Unknown rows retain their day and a separate flag. Their cost is never a known zero.
+    static func dailyTotals(
+        _ rows: [DailyModelUsage], expectedDays: [String]? = nil,
+        knownDailyCosts: [String: Double]? = nil, unknownCostDays: Set<String> = []
+    ) -> [(day: String, cost: Double, isIncomplete: Bool)] {
+        var totals = knownDailyCosts ?? [:]
+        var unknown = unknownCostDays
+        if let expectedDays {
+            for day in expectedDays where totals[day] == nil { totals[day] = 0 }
+        }
+        for row in rows {
+            guard let cost = row.costUsd, cost.isFinite else {
+                unknown.insert(row.day)
+                if totals[row.day] == nil { totals[row.day] = 0 }
+                continue
+            }
+            if knownDailyCosts == nil { totals[row.day, default: 0] += cost }
+        }
+        for day in unknown where totals[day] == nil { totals[day] = 0 }
+        return totals.keys.sorted().map { ($0, totals[$0] ?? 0, unknown.contains($0)) }
+    }
+
+    /// Only complete accounting and pricing can establish known zero days.
+    static func expectedDays(_ breakdown: SpendBreakdown, provider: ProviderSpend? = nil)
+        -> [String]?
+    {
+        if let provider {
+            guard !provider.usage.isPartialEstimate, !provider.hasUnknownCosts else { return nil }
+        } else {
+            guard !breakdown.result.isPartialEstimate,
+                !breakdown.result.providers.contains(where: \.hasUnknownCosts)
+            else { return nil }
+        }
         return dayKeys(
             rangeDays: breakdown.rangeDays, now: breakdown.scannedAt,
             calendar: breakdown.calendar)
@@ -299,18 +374,35 @@ enum SpendBreakdownFormat {
     ) -> String? {
         let result = breakdown.result
         let payload: [String: Any] = [
+            "schemaVersion": 2,
             "rangeDays": breakdown.rangeDays,
             "isPartialEstimate": result.isPartialEstimate,
+            "isLowerBound": result.isLowerBound,
+            "knownEstimatedCostUsd": result.knownCostUsd,
             "generatedAt": ISO8601DateFormatter().string(from: generatedAt),
             "scannedAt": ISO8601DateFormatter().string(from: breakdown.scannedAt),
-            "daily": result.daily.map { row in
+            "providers": result.providers.map { provider -> [String: Any] in
                 [
-                    "day": row.day, "model": row.model,
-                    "inputTokens": row.inputTokens ?? 0,
-                    "outputTokens": row.outputTokens ?? 0,
-                    "cacheReadTokens": row.cacheReadTokens ?? 0,
-                    "cacheWriteTokens": row.cacheWriteTokens ?? 0,
-                    "estimatedCostUsd": row.costUsd ?? 0,
+                    "provider": provider.provider.rawValue,
+                    "isEnabled": provider.isEnabled,
+                    "isPartialEstimate": provider.usage.isPartialEstimate,
+                    "hasUnknownCosts": provider.hasUnknownCosts,
+                    "usesStandardTierAssumption": provider.usesStandardTierAssumption,
+                    "knownEstimatedCostUsd": provider.knownCostUsd,
+                    "knownDailyCosts": provider.knownDailyCosts,
+                    "unknownCostDays": provider.unknownCostDays.sorted(),
+                    "daily": provider.usage.daily.map { row -> [String: Any] in
+                        [
+                            "day": row.day, "model": row.model,
+                            "inputTokens": row.inputTokens ?? 0,
+                            "outputTokens": row.outputTokens ?? 0,
+                            "cacheReadTokens": row.cacheReadTokens ?? 0,
+                            "cacheWriteTokens": row.cacheWriteTokens ?? 0,
+                            "estimatedCostUsd": row.costUsd.flatMap { $0.isFinite ? $0 : nil }.map {
+                                $0 as Any
+                            } ?? NSNull(),
+                        ]
+                    },
                 ]
             },
         ]
@@ -328,10 +420,15 @@ struct DailyCostChart: View {
     let rows: [DailyModelUsage]
     /// Non-nil only when the scan completed. See `dailyTotals(_:expectedDays:)`.
     let expectedDays: [String]?
+    var knownDailyCosts: [String: Double]? = nil
+    var unknownCostDays: Set<String> = []
+    var isLowerBound = false
 
     /// One bar per day, summed across models, in the scanner's day order.
-    private var days: [(day: String, cost: Double)] {
-        SpendBreakdownFormat.dailyTotals(rows, expectedDays: expectedDays)
+    private var days: [(day: String, cost: Double, isIncomplete: Bool)] {
+        SpendBreakdownFormat.dailyTotals(
+            rows, expectedDays: expectedDays,
+            knownDailyCosts: knownDailyCosts, unknownCostDays: unknownCostDays)
     }
 
     var body: some View {
@@ -349,15 +446,21 @@ struct DailyCostChart: View {
                             // would make "incomplete" the permanent look and stop
                             // carrying information. The banner says it instead.
                             RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .fill(Color.pfEnergyFull)
+                                .fill(
+                                    entry.isIncomplete && entry.cost == 0
+                                        ? Color.pfInkMuted : Color.pfEnergyFull
+                                )
                                 .frame(
                                     height: max(
                                         2, geometry.size.height * 0.82 * (entry.cost / peak)))
                         }
                         .frame(maxWidth: .infinity, alignment: .bottom)
-                        .help("\(entry.day) · \(SpendBreakdownFormat.money(entry.cost))")
+                        .help(
+                            "\(entry.day) · \(SpendBreakdownFormat.dayAmount(cost: entry.cost, isIncomplete: entry.isIncomplete, isLowerBound: isLowerBound))"
+                        )
                         .accessibilityLabel(
-                            "\(entry.day), \(SpendBreakdownFormat.money(entry.cost))")
+                            "\(entry.day), \(SpendBreakdownFormat.dayAmount(cost: entry.cost, isIncomplete: entry.isIncomplete, isLowerBound: isLowerBound))"
+                        )
                     }
                 }
                 .frame(height: geometry.size.height, alignment: .bottom)
@@ -369,7 +472,9 @@ struct DailyCostChart: View {
                 HStack {
                     Text(SpendBreakdownFormat.shortDay(first.day))
                     Spacer(minLength: 8)
-                    Text("peak \(SpendBreakdownFormat.money(days.map(\.cost).max() ?? 0))")
+                    Text(
+                        "\(isLowerBound ? "known peak" : "peak") \(SpendBreakdownFormat.money(days.map(\.cost).max() ?? 0))"
+                    )
                     Spacer(minLength: 8)
                     Text(SpendBreakdownFormat.shortDay(last.day))
                 }

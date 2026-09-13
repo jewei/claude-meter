@@ -172,6 +172,7 @@ public enum JournalReader {
         at url: URL,
         maxFullReadBytes: UInt64,
         tailReadBytes: UInt64,
+        maximumReadBytes: UInt64? = nil,
         trackAppend: Bool = false,
         appendCursor: AppendCursor? = nil,
         afterRead: (() -> Void)? = nil
@@ -222,6 +223,9 @@ public enum JournalReader {
             : tailRead ? fileSize - min(fileSize, tailReadBytes) : 0
         let requestedBytes = fileSize - baseOffset
         guard requestedBytes <= UInt64(Int.max) else { return nil }
+        // Bound the descriptor's current size, not discovery metadata that can
+        // change before open. Advisory scanners share a whole-scan byte budget.
+        if let maximumReadBytes, requestedBytes > maximumReadBytes { return nil }
         guard let data = readBytes(descriptor, offset: baseOffset, count: requestedBytes) else {
             return nil
         }

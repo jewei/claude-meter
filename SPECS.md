@@ -399,8 +399,11 @@ hours are omitted. Surfaces never introduce their own date/weekday formatter.
 
 ### 6.1 Usage and Spend window
 
-A separate window shows Claude's local cost over 7 or 30 days. It is not a popover
-section, because 30 daily bars do not fit 360 points. The popover header opens it.
+A separate window shows one combined estimated cost over 7 or 30 days, with separate
+Claude and Codex sections. Each section has its own subtotal, daily chart, and model rows.
+The popover header opens it. The selected main meter does not change this layout. Claude
+uses enabled discovered config dirs. Codex uses the implicit and configured homes only
+when its source is enabled. A disabled Codex section states that its usage is excluded.
 
 The window runs its own scan off-main with its own generation check, so a 30-day scan
 never delays quota publication and never widens what the 60-second loop reads. Closing
@@ -408,10 +411,14 @@ the window cancels the scan. A new request clears the previous result and error 
 loading. A failed scan, including a timeout, shows an error with no total or export.
 Each completed result keeps its requested range, scan date, and calendar. The chart,
 total label, and export use that completed window, even after midnight. They never use
-the current picker value or export time to extend the scanned range.
+the current picker value or export time to extend the scanned range. The request captures
+provider settings and raw home paths before background work. A source or account change
+replaces the open window's scan and revokes the old result. If canceled work still holds
+the scan slot, only the latest request waits for it. Waiting and scanning share the
+30-second deadline. Closing cancels the waiter and stops this reload policy.
 
-It shows one bar per local day summed across models, per-model rows with tokens and
-estimated cost, and a JSON copy action. Rows with neither tokens nor cost, such as
+Each provider shows one bar per local day summed across its models, per-model rows with
+tokens and estimated cost, and a shared JSON copy action. Rows with neither tokens nor cost, such as
 Claude Code's `<synthetic>` pseudo-model, are not listed.
 
 A complete scan read every day in the window, so a quiet day is a real zero and gets a
@@ -421,6 +428,55 @@ scan is partial, a banner states that any day can be understated and the header 
 "at least" instead of "about". Bar colour does not carry the partial state, because a
 30-day range is partial on most real corpora and a permanent colour change carries no
 information. Every amount is labeled an estimate, never a bill.
+
+Unknown cost is separate from scan completeness. A model with any unpriced request shows
+"Unknown" for its complete cost. Known request costs still contribute to the provider and
+combined lower bound, and to known daily subtotals. A wholly unknown total says "Cost
+unknown". An unknown day is marked and never claims a known zero. Missing prices prevent
+zero-filled quiet days. Schema-version-2 JSON export names each provider, retains null
+costs, known subtotals, partial and pricing flags, and carries no source paths.
+
+Codex reads native `session_meta`, `turn_context`, and `event_msg/token_count` JSONL from
+both `sessions/` and `archived_sessions/`, including date directories and flat layouts.
+Directory dates do not filter files; earlier events establish cumulative baselines before
+the requested date filter. Canonical homes and file identities deduplicate aliases.
+Matching same-session event prefixes count once and retain the longest continuation.
+Divergent copies retain one stream and mark the result partial. Homes remain additive.
+
+A monotonic cumulative watermark prevents repeated or regressed totals from counting
+again. When last-request usage is present, count no more than positive cumulative growth
+or that request's counters. Unexplained gaps and regressions mark accounting partial.
+Totals-only growth can contribute tokens but has unknown cost because request boundaries
+control long-context prices. Last-only records need a response ID for exact deduplication;
+otherwise identical usage within a turn counts once as a partial lower bound. Cached
+input is a subset of input, and reasoning is already in output. Normalized input excludes
+cache reads and writes, so the displayed token total counts each token once.
+
+Copied fork history needs a verified inherited baseline and an owned suffix. Unresolved
+forks and tail-only files contribute no spend and mark the scan partial. Reads use the
+shared safe descriptor helper with the 32 MiB full-read and 16 MiB tail limits. Parsing is
+bounded to 20,000 events and 8 MiB of retained data per file, 100,000 events and 32 MiB per
+home, 2,048 files per home, 100,000 retained rows across homes, and 256 MiB of reads per
+scan. Stable path/session order makes limit selection repeatable. Codex cost runs on demand only
+and has no durable cache. It does not enter quota polls or change the Claude cost card.
+
+Codex pricing uses reviewed API rates, separate from Claude's family estimates. Rates
+verified on 2026-09-13, in USD per million tokens:
+
+| Model | Input | Cached input | Cache write | Output |
+| --- | ---: | ---: | ---: | ---: |
+| Astra (`gpt-6-astra`) | 10 | 1 | 12.5 | 50 |
+| Sol (`gpt-5.6-sol`, alias `gpt-5.6`) | 4 | 0.4 | 5 | 20 |
+
+Price each exact request before day/model aggregation. Above 272,000 input tokens,
+input and cache rates double, and output rates multiply by 1.5. An explicit priority or
+fast tier doubles the applicable rates. Missing historical tier uses standard rates and
+shows a lower-bound notice. Never infer historical tier from current settings. Unknown
+models, unsupported tiers, or uncertain request boundaries retain unknown costs. These
+are API-equivalent estimates of local usage, not ChatGPT subscription charges.
+Sources: [Astra model](https://developers.openai.com/api/docs/models/gpt-6-astra),
+[Sol model](https://developers.openai.com/api/docs/models/gpt-5.6-sol), and
+[OpenAI pricing](https://developers.openai.com/api/docs/pricing).
 
 The window is opened from the popover header, not from the cost card. The cost card
 renders only while Claude owns the main meter, so a Codex-primary user could not reach it.

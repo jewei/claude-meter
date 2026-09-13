@@ -4050,6 +4050,8 @@ struct SpendBreakdownLoadingTests {
             return requests.count >= count
         }
 
+        func ranges() -> [Int] { requests.map(\.rangeDays) }
+
         func finish(_ result: Result<CostUsageResult, any Error>) {
             let continuation = pending
             pending = nil
@@ -4073,7 +4075,10 @@ struct SpendBreakdownLoadingTests {
         let scanner = ControlledScanner()
         let state = AppState(
             pipeline: ThrowingPipeline(message: "Unused"),
-            spendBreakdownScanner: { try await scanner.scan($0) })
+            spendBreakdownScanner: {
+                let usage = try await scanner.scan($0)
+                return SpendScanResult(providers: [ProviderSpend(provider: .claude, usage: usage)])
+            })
         defer { state.cancelSpendBreakdownLoad() }
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try #require(TimeZone(identifier: "Asia/Kuala_Lumpur"))
@@ -4120,6 +4125,41 @@ struct SpendBreakdownLoadingTests {
         #expect(days.last == JournalReader.dayString(from: nextDay, calendar: calendar))
         #expect(state.spendBreakdownError == nil)
     }
+
+    @MainActor
+    @Test("Only the latest range starts after canceled work releases the scan slot")
+    func canceledWorkDoesNotBlockReplacement() async throws {
+        let scanner = ControlledScanner()
+        let state = AppState(
+            pipeline: ThrowingPipeline(message: "Unused"),
+            spendBreakdownScanner: {
+                let usage = try await scanner.scan($0)
+                return SpendScanResult(providers: [ProviderSpend(provider: .claude, usage: usage)])
+            })
+        defer { state.cancelSpendBreakdownLoad() }
+        state.loadSpendBreakdown(daysBack: 7)
+        try #require(await scanner.waitForCalls(1))
+        // The injected scanner ignores cancellation while its continuation is held.
+        state.loadSpendBreakdown(daysBack: 30)
+        state.loadSpendBreakdown(daysBack: 7)
+        state.loadSpendBreakdown(daysBack: 30)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(state.spendBreakdownLoading)
+        #expect(state.spendBreakdownError == nil)
+        #expect(await scanner.ranges() == [7])
+        await scanner.finish(
+            .success(CostUsageResult(models: [ModelUsage(name: "old", costUsd: 9)])))
+        try #require(await scanner.waitForCalls(2))
+        #expect(state.spendBreakdown == nil)
+        await scanner.finish(
+            .success(CostUsageResult(models: [ModelUsage(name: "new", costUsd: 2)])))
+        try await waitForCompletion(state)
+        #expect(await scanner.ranges() == [7, 30])
+        #expect(state.spendBreakdown?.rangeDays == 30)
+        #expect(state.spendBreakdown?.result.knownCostUsd == 2)
+        #expect(state.spendBreakdownError == nil)
+    }
+
 }
 
 @Suite("Usage & Spend presentation")
@@ -4194,7 +4234,7 @@ struct SpendBreakdownFormatTests {
         calendar.timeZone = try #require(TimeZone(identifier: "Asia/Kuala_Lumpur"))
         let scannedAt = Date(timeIntervalSince1970: 1_800_000_000)
         let breakdown = SpendBreakdown(
-            result: CostUsageResult(models: [], isPartialEstimate: false),
+            result: SpendScanResult(providers: [ProviderSpend(provider: .claude, usage: .empty)]),
             rangeDays: 7, scannedAt: scannedAt, calendar: calendar)
         let keys = try #require(SpendBreakdownFormat.expectedDays(breakdown))
         #expect(keys.count == 7)
@@ -4211,7 +4251,10 @@ struct SpendBreakdownFormatTests {
             payload["generatedAt"] as? String == ISO8601DateFormatter().string(from: exportedAt))
 
         let partial = SpendBreakdown(
-            result: CostUsageResult(models: [], isPartialEstimate: true),
+            result: SpendScanResult(providers: [
+                ProviderSpend(
+                    provider: .claude, usage: CostUsageResult(models: [], isPartialEstimate: true))
+            ]),
             rangeDays: 30, scannedAt: scannedAt, calendar: calendar)
         #expect(SpendBreakdownFormat.expectedDays(partial) == nil)
     }
@@ -4281,7 +4324,8 @@ struct SpendBreakdownFormatTests {
 
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let breakdown = SpendBreakdown(
-            result: result, rangeDays: 30, scannedAt: now, calendar: .current)
+            result: SpendScanResult(providers: [ProviderSpend(provider: .claude, usage: result)]),
+            rangeDays: 30, scannedAt: now, calendar: .current)
         let json = try #require(SpendBreakdownFormat.exportJSON(breakdown, generatedAt: now))
 
         // A user pasting this into an issue must not publish their directory layout.
@@ -4294,8 +4338,123 @@ struct SpendBreakdownFormatTests {
 
         let parsed = try #require(
             try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
-        let daily = try #require(parsed["daily"] as? [[String: Any]])
+        let providers = try #require(parsed["providers"] as? [[String: Any]])
+        let daily = try #require(providers.first?["daily"] as? [[String: Any]])
         #expect(daily.count == 1)
         #expect((daily[0]["estimatedCostUsd"] as? NSNumber)?.doubleValue == 3)
+    }
+}
+
+@Suite("Combined provider spend")
+struct CombinedProviderSpendTests {
+    @Test("Combined amounts retain provider totals and missing-cost state")
+    func combinedKnownCost() throws {
+        let claude = ProviderSpend(
+            provider: .claude,
+            usage: CostUsageResult(models: [
+                ModelUsage(name: "claude-sonnet-4-6", inputTokens: 10, costUsd: 3)
+            ]))
+        let codex = ProviderSpend(
+            provider: .codex,
+            usage: CostUsageResult(models: [
+                ModelUsage(name: "gpt-6-astra", inputTokens: 20, costUsd: nil)
+            ]), knownCostUsd: 2, hasUnknownCosts: true)
+        let combined = SpendScanResult(providers: [claude, codex])
+        #expect(combined.knownCostUsd == 5)
+        #expect(combined.isLowerBound)
+        #expect(!combined.isPartialEstimate)
+        #expect(SpendBreakdownFormat.total(combined) == "Combined at least $5.00 estimated")
+        #expect(SpendBreakdownFormat.amount(claude) == "about $3.00 estimated")
+        #expect(SpendBreakdownFormat.amount(codex) == "at least $2.00 estimated")
+    }
+
+    @Test("An entirely unpriced provider is unknown, with no false zero")
+    func unknownCosts() {
+        let provider = ProviderSpend(
+            provider: .codex,
+            usage: CostUsageResult(
+                models: [ModelUsage(name: "unknown", inputTokens: 30)],
+                daily: [DailyModelUsage(day: "2026-09-13", model: "unknown", inputTokens: 30)]))
+        let combined = SpendScanResult(providers: [provider])
+        #expect(SpendBreakdownFormat.total(combined) == "Combined cost unknown")
+        #expect(SpendBreakdownFormat.amount(provider) == "Cost unknown")
+        let days = SpendBreakdownFormat.dailyTotals(provider.usage.daily)
+        #expect(days.count == 1)
+        #expect(days[0].isIncomplete)
+        #expect(days[0].cost == 0)
+        let breakdown = SpendBreakdown(
+            result: combined, rangeDays: 7, scannedAt: Date(), calendar: .current)
+        #expect(SpendBreakdownFormat.expectedDays(breakdown, provider: provider) == nil)
+    }
+
+    @Test("Known daily subtotals survive mixed priced and unpriced requests")
+    func knownDailySubtotal() {
+        let days = SpendBreakdownFormat.dailyTotals(
+            [DailyModelUsage(day: "2026-09-13", model: "gpt-6-astra", inputTokens: 500)],
+            knownDailyCosts: ["2026-09-13": 2], unknownCostDays: ["2026-09-13"])
+        #expect(days.count == 1)
+        #expect(days[0].cost == 2)
+        #expect(days[0].isIncomplete)
+    }
+
+    @Test("A missing service tier gives a lower bound without losing known quiet days")
+    func standardTierAssumption() {
+        let provider = ProviderSpend(
+            provider: .codex,
+            usage: CostUsageResult(models: [
+                ModelUsage(name: "gpt-5.6-sol", inputTokens: 20, costUsd: 1)
+            ]), usesStandardTierAssumption: true)
+        let combined = SpendScanResult(providers: [provider])
+        #expect(combined.isLowerBound)
+        #expect(!combined.isPartialEstimate)
+        let breakdown = SpendBreakdown(
+            result: combined, rangeDays: 7, scannedAt: Date(), calendar: .current)
+        #expect(SpendBreakdownFormat.expectedDays(breakdown, provider: provider)?.count == 7)
+    }
+
+    @Test("Day labels distinguish zero, unknown, and known lower bounds")
+    func dayCostLabels() {
+        #expect(
+            SpendBreakdownFormat.dayAmount(cost: 0, isIncomplete: false, isLowerBound: false)
+                == "$0.00")
+        #expect(
+            SpendBreakdownFormat.dayAmount(cost: 0, isIncomplete: true, isLowerBound: true)
+                == "Cost unknown")
+        #expect(
+            SpendBreakdownFormat.dayAmount(cost: 2, isIncomplete: true, isLowerBound: false)
+                == "at least $2.00")
+        #expect(
+            SpendBreakdownFormat.dayAmount(cost: 2, isIncomplete: false, isLowerBound: true)
+                == "at least $2.00")
+    }
+
+    @Test("Export names both providers and preserves null costs without paths")
+    func providerExport() throws {
+        let provider = ProviderSpend(
+            provider: .codex,
+            usage: CostUsageResult(
+                models: [ModelUsage(name: "gpt-6-astra", inputTokens: 500)],
+                daily: [DailyModelUsage(day: "2026-09-13", model: "gpt-6-astra", inputTokens: 500)],
+                sourcePaths: ["/Users/private/.codex"]),
+            knownCostUsd: 2, hasUnknownCosts: true, usesStandardTierAssumption: true,
+            knownDailyCosts: ["2026-09-13": 2])
+        let result = SpendScanResult(providers: [
+            ProviderSpend(provider: .claude, usage: .empty), provider,
+        ])
+        let breakdown = SpendBreakdown(
+            result: result, rangeDays: 7, scannedAt: Date(), calendar: .current)
+        let json = try #require(SpendBreakdownFormat.exportJSON(breakdown))
+        #expect(!json.contains("/Users"))
+        #expect(!json.contains("sourcePaths"))
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        #expect(object["schemaVersion"] as? Int == 2)
+        #expect(object["knownEstimatedCostUsd"] as? Double == 2)
+        let providers = try #require(object["providers"] as? [[String: Any]])
+        #expect(providers.map { $0["provider"] as? String } == ["claude", "codex"])
+        #expect(providers[1]["hasUnknownCosts"] as? Bool == true)
+        #expect(providers[1]["usesStandardTierAssumption"] as? Bool == true)
+        let daily = try #require(providers[1]["daily"] as? [[String: Any]])
+        #expect(daily[0]["estimatedCostUsd"] is NSNull)
     }
 }

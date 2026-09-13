@@ -35,6 +35,12 @@ Follow the root [AGENTS.md](../AGENTS.md) and [DESIGN.md](../DESIGN.md).
   chart labels and export. A new request clears the old result and error; a failed scan
   shows an error with no total or export. The export carries no paths. Keep the header
   and footer pinned while the chart and model rows scroll.
+  Show one combined estimate with separate Claude and Codex sections. Capture raw Codex
+  home paths and the enabled flag with the request; resolve paths off-main. Source and
+  account changes replace an open window's scan. Keep known costs separate from unknown
+  costs, scan partial state, and missing service-tier assumptions. Unknown costs must
+  remain null in provider-tagged exports, never become a claimed zero. Codex scans stay
+  on demand and do not enter the quota poll or change the Claude cost card.
   A new window must join the `isSettingsWindowVisible` check in `AppUpdater`, or an
   `LSUIElement` app drops to `.accessory` and strands it without Cmd-Tab.
 - The cost card opens `ActivityHeatmapGrid` with a Back button through

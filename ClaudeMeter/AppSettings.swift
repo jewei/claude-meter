@@ -76,14 +76,21 @@ enum AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: codexAccountNamesKey) }
     }
 
+    static func codexHomePaths(
+        env: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default
+    ) -> [String] {
+        let implicitPath =
+            env["CODEX_HOME"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".codex").path
+        return [implicitPath] + configuredCodexHomes
+    }
+
     static func codexAccounts(
         env: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default
     ) -> [CodexAccount] {
-        let implicitPath =
-            env["CODEX_HOME"].flatMap { $0.isEmpty ? nil : $0 }
-            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".codex").path
-        let paths = [implicitPath] + configuredCodexHomes
+        let paths = codexHomePaths(env: env, fileManager: fileManager)
         let names = codexAccountNames
         var seen = Set<String>()
         return paths.enumerated().compactMap { index, path in

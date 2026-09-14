@@ -282,12 +282,21 @@ days, local time); shows "Scanning…" / "No activity" placeholders.
 Open this separate window from the popover header. Its minimum size is 620×520 points,
 with 22-point padding. Keep the title, estimated total, and 7/30-day picker pinned above
 the scroll area. Keep Copy JSON and the estimate notice pinned below it. Only the
-partial notice, daily chart, and model rows scroll.
+provider sections scroll. Show one combined estimate in the header, then Claude and
+Codex sections in that order. Each section has an 18-point provider title, its subtotal,
+its notices, daily chart, and model rows. There is no provider picker. A disabled Codex
+section states that its usage is excluded from the total.
 
 Daily bars use `energy-full` for both complete and partial scans. A partial scan shows
 an explicit banner and uses "at least" for the total. Only a complete scan adds zero
 bars for quiet days. The chart's end dates and peak amount use the existing caption
 font with monospaced digits. Omit model rows that have neither tokens nor cost.
+Unknown model costs say "Unknown". A wholly unpriced total says "Cost unknown". Keep
+known subtotals in combined and provider amounts and label them "at least". Use a muted
+minimum-height mark for a day with unknown cost and no known amount; its tooltip and
+accessibility text say "Cost unknown". Missing prices prevent zero-filled quiet days.
+State missing Codex service-tier assumptions in a notice. Keep scan incompleteness and
+unknown pricing as separate notices. JSON export retains these states and provider names.
 
 Starting a scan clears the old chart and total, shows the loading message, and disables
 Copy JSON. A failed scan shows the error in that area. Completed charts, total labels,

@@ -18,14 +18,73 @@ struct SpendBreakdownRequest: Sendable {
     let calendar: Calendar
     let configuredDirs: [String]
     let disabledKeys: Set<String>
+    let codexHomes: [String]
+    let codexEnabled: Bool
 }
 
 /// The completed scan and its time window travel together for display and export.
 struct SpendBreakdown: Sendable {
-    let result: CostUsageResult
+    let result: SpendScanResult
     let rangeDays: Int
     let scannedAt: Date
     let calendar: Calendar
+}
+
+/// Provider amounts stay separate until the window computes its combined total.
+struct ProviderSpend: Sendable, Identifiable {
+    let provider: MainMeterProvider
+    let usage: CostUsageResult
+    let knownCostUsd: Double
+    let hasUnknownCosts: Bool
+    let usesStandardTierAssumption: Bool
+    let knownDailyCosts: [String: Double]
+    let unknownCostDays: Set<String>
+    let isEnabled: Bool
+
+    var id: MainMeterProvider { provider }
+    var isLowerBound: Bool {
+        usage.isPartialEstimate || hasUnknownCosts || usesStandardTierAssumption
+    }
+
+    init(
+        provider: MainMeterProvider, usage: CostUsageResult,
+        knownCostUsd: Double? = nil, hasUnknownCosts: Bool = false,
+        usesStandardTierAssumption: Bool = false,
+        knownDailyCosts: [String: Double]? = nil,
+        unknownCostDays: Set<String> = [], isEnabled: Bool = true
+    ) {
+        self.provider = provider
+        self.usage = usage
+        self.knownCostUsd =
+            knownCostUsd
+            ?? usage.models.compactMap(\.costUsd)
+            .filter(\.isFinite).reduce(0, +)
+        self.hasUnknownCosts =
+            hasUnknownCosts
+            || usage.models.contains {
+                $0.costUsd == nil || $0.costUsd?.isFinite == false
+            }
+        self.usesStandardTierAssumption = usesStandardTierAssumption
+        self.knownDailyCosts =
+            knownDailyCosts
+            ?? usage.daily.reduce(into: [:]) { days, row in
+                if let cost = row.costUsd, cost.isFinite { days[row.day, default: 0] += cost }
+            }
+        self.unknownCostDays = unknownCostDays.union(
+            usage.daily.compactMap {
+                $0.costUsd == nil || $0.costUsd?.isFinite == false ? $0.day : nil
+            })
+        self.isEnabled = isEnabled
+    }
+}
+
+struct SpendScanResult: Sendable {
+    let providers: [ProviderSpend]
+    static let empty = SpendScanResult(providers: [])
+    var isEmpty: Bool { providers.allSatisfy { $0.usage.isEmpty } }
+    var knownCostUsd: Double { providers.reduce(0) { $0 + $1.knownCostUsd } }
+    var isLowerBound: Bool { providers.contains(where: \.isLowerBound) }
+    var isPartialEstimate: Bool { providers.contains { $0.usage.isPartialEstimate } }
 }
 
 typealias ConfigBridgeRefreshOperation =
@@ -100,7 +159,7 @@ final class AppState: ObservableObject {
     @Published private(set) var spendBreakdownLoading = false
     @Published private(set) var spendBreakdownError: String? = nil
     private let spendBreakdownScanner:
-        @Sendable (SpendBreakdownRequest) async throws -> CostUsageResult
+        @Sendable (SpendBreakdownRequest) async throws -> SpendScanResult
     private let spendBreakdownScanBudget: Timeout.TaskBudget
     private let cursorProvider = CursorUsageProvider()
     private let grokProvider = GrokUsageProvider()
@@ -197,7 +256,7 @@ final class AppState: ObservableObject {
     private static let pollTimeoutSeconds: TimeInterval = 60
     /// Transcript deadlines release loading state. Cost scans run independently
     /// of quota publication, so even a blocked read cannot hold fresh quota data.
-    private static let transcriptScanTimeoutSeconds: TimeInterval = 30
+    nonisolated private static let transcriptScanTimeoutSeconds: TimeInterval = 30
     /// A stuck transcript read must not consume the capacity used by provider
     /// requests. Cost has a separate per-app budget; activity uses this slot.
     private static let transcriptScanTimeoutBudget = Timeout.TaskBudget(limit: 1)
@@ -733,7 +792,7 @@ final class AppState: ObservableObject {
         },
         costScanTimeoutSeconds: TimeInterval = 30,
         spendBreakdownScanner:
-            @escaping @Sendable (SpendBreakdownRequest) async throws -> CostUsageResult = {
+            @escaping @Sendable (SpendBreakdownRequest) async throws -> SpendScanResult = {
                 _ in .empty
             },
         codexReadingStore: CodexReadingStore? = nil,
@@ -888,6 +947,7 @@ final class AppState: ObservableObject {
     }
 
     private func clearCostReading() {
+        refreshSpendConfigurationIfNeeded()
         costReading = nil
         // Do not cancel-and-await synchronous scans. Their generation is revoked;
         // a later request replaces only the one pending configuration.
@@ -2214,6 +2274,7 @@ final class AppState: ObservableObject {
     private var activityHeatmapGeneration = 0
     private var spendBreakdownTask: Task<Void, Never>?
     private var spendBreakdownGeneration = 0
+    private var spendBreakdownRequest: SpendBreakdownRequest?
 
     func loadActivityHeatmap() {
         guard !activityHeatmapLoading else { return }
@@ -2270,23 +2331,16 @@ final class AppState: ObservableObject {
         spendBreakdown = nil
         spendBreakdownError = nil
         spendBreakdownLoading = true
-        let request = SpendBreakdownRequest(
-            rangeDays: daysBack, now: now, calendar: calendar,
-            configuredDirs: AppGroupConfig.configuredConfigDirs,
-            disabledKeys: Set(AppGroupConfig.disabledAccountKeys))
+        let request = Self.spendRequest(daysBack: daysBack, now: now, calendar: calendar)
+        spendBreakdownRequest = request
         let scan = spendBreakdownScanner
         let budget = spendBreakdownScanBudget
         spendBreakdownTask?.cancel()
         spendBreakdownTask = Task.detached(priority: .userInitiated) { [weak self] in
-            let result: CostUsageResult?
+            let result: SpendScanResult?
             let errorMessage: String?
             do {
-                result = try await Timeout.run(
-                    seconds: Self.transcriptScanTimeoutSeconds,
-                    budget: budget
-                ) {
-                    try await scan(request)
-                }
+                result = try await Self.runSpendScan(request, scan: scan, budget: budget)
                 errorMessage = nil
             } catch is CancellationError {
                 result = nil
@@ -2315,19 +2369,78 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// A canceled file read can retain the shared slot. Keep only this latest
+    /// request waiting, within the same total deadline, until that read finishes.
+    nonisolated private static func runSpendScan(
+        _ request: SpendBreakdownRequest,
+        scan: @escaping @Sendable (SpendBreakdownRequest) async throws -> SpendScanResult,
+        budget: Timeout.TaskBudget
+    ) async throws -> SpendScanResult {
+        let deadline = ProcessInfo.processInfo.systemUptime + transcriptScanTimeoutSeconds
+        while true {
+            try Task.checkCancellation()
+            let remaining = deadline - ProcessInfo.processInfo.systemUptime
+            guard remaining > 0 else { throw TimeoutError(seconds: transcriptScanTimeoutSeconds) }
+            do {
+                return try await Timeout.run(seconds: remaining, budget: budget) {
+                    try Task.checkCancellation()
+                    return try await scan(request)
+                }
+            } catch is TimeoutCapacityError {
+                try await Task.sleep(for: .milliseconds(100))
+            }
+        }
+    }
+
     nonisolated private static func scanSpendBreakdown(_ request: SpendBreakdownRequest)
-        -> CostUsageResult
+        -> SpendScanResult
     {
         let accounts = ConfigDirDiscovery.discover(
             configuredDirs: request.configuredDirs, disabledKeys: request.disabledKeys)
         let paths =
             accounts.isEmpty
             ? [JournalReader.defaultProjectsPath] : accounts.map(\.projectsPath)
-        return CostUsageScanner(projectsPaths: paths, calendar: request.calendar).scan(
+        let claude = CostUsageScanner(projectsPaths: paths, calendar: request.calendar).scan(
             daysBack: request.rangeDays, now: request.now)
+        let codex: ProviderSpend
+        if request.codexEnabled {
+            let report = CodexCostScanner().scanReport(
+                codexHomes: request.codexHomes.map { URL(fileURLWithPath: $0) },
+                daysBack: request.rangeDays, now: request.now, calendar: request.calendar)
+            codex = ProviderSpend(
+                provider: .codex, usage: report.usage, knownCostUsd: report.knownCostUsd,
+                hasUnknownCosts: report.hasUnknownCosts,
+                usesStandardTierAssumption: report.usesStandardTierAssumption,
+                knownDailyCosts: report.knownDailyCosts, unknownCostDays: report.unknownCostDays)
+        } else {
+            codex = ProviderSpend(provider: .codex, usage: .empty, isEnabled: false)
+        }
+        return SpendScanResult(providers: [ProviderSpend(provider: .claude, usage: claude), codex])
+    }
+
+    private static func spendRequest(daysBack: Int, now: Date, calendar: Calendar)
+        -> SpendBreakdownRequest
+    {
+        SpendBreakdownRequest(
+            rangeDays: daysBack, now: now, calendar: calendar,
+            configuredDirs: AppGroupConfig.configuredConfigDirs,
+            disabledKeys: Set(AppGroupConfig.disabledAccountKeys),
+            codexHomes: AppSettings.codexHomePaths(), codexEnabled: AppSettings.codexSourceEnabled)
+    }
+
+    private func refreshSpendConfigurationIfNeeded() {
+        guard let old = spendBreakdownRequest else { return }
+        let current = Self.spendRequest(
+            daysBack: old.rangeDays, now: old.now, calendar: old.calendar)
+        guard
+            current.configuredDirs != old.configuredDirs || current.disabledKeys != old.disabledKeys
+                || current.codexHomes != old.codexHomes || current.codexEnabled != old.codexEnabled
+        else { return }
+        loadSpendBreakdown(daysBack: old.rangeDays, calendar: old.calendar)
     }
 
     func cancelSpendBreakdownLoad() {
+        spendBreakdownRequest = nil
         spendBreakdownTask?.cancel()
         spendBreakdownTask = nil
         spendBreakdownGeneration += 1

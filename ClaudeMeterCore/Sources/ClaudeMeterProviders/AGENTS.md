@@ -68,6 +68,16 @@ Follow the root [AGENTS.md](../../../AGENTS.md). Provider behavior is defined in
 - Preserve `CostUsageResult.sourcePaths` on partial results so the app can verify root
   scope before retaining old totals. Cost and catalog work must not delay quota
   publication. Providers never write snapshots.
+- `CodexCostScanner` reads native token events from `sessions/` and `archived_sessions/`
+  on demand. Parse baseline/model events before filtering dates. Deduplicate matching
+  same-session prefixes within each canonical home; homes stay additive. Never sum
+  repeated cumulative totals, add reasoning to output, or add cached input to inclusive
+  input. Unresolved forks and divergent copies are partial, not new spend.
+- `CodexCostPricing` owns reviewed Astra/Sol rates. Price exact requests before grouping;
+  totals-only deltas cannot establish the long-context threshold. Unknown models and
+  uncertain request boundaries keep nil costs. Preserve known subtotals separately.
+  Missing tier evidence uses a disclosed standard-rate assumption, never current config.
+  Keep Codex scan bounds and uncertainty policy documented in `SPECS.md`.
 - Activity counts each `message.id` once within a file. Its 30-day grid uses local hours
   and Monday index zero, `(Calendar.weekday + 5) % 7`. Cache unfiltered local-day buckets
   and apply `daysBack` at read time. `ActivityCache` is memory-only with 2,048 LRU entries.

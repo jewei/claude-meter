@@ -48,17 +48,21 @@ Follow the root [AGENTS.md](../../../AGENTS.md). Provider behavior is defined in
 - Cost combines cumulative chunks by `message.id + requestId`, taking the maximum per
   token field. Complete pairs reconcile across files within one canonical account root;
   separate accounts stay additive. Missing IDs use per-file fallbacks and never merge
-  across files. Reparse changed files; growth does not prove an append.
+  across files. Reuse a changed file's committed records only after full-prefix SHA-256
+  verification through the same stable descriptor. Growth alone does not prove an append.
+  Keep the cursor after the last newline. Reparse provisional EOF records on each append;
+  they must never change committed maxima. Current file size, not suffix size, selects
+  the 32 MiB full-read limit.
 - The `usage.cache_creation` 5m/1h breakdown wins over the legacy creation total across
   chunks and files. Never add both. Legacy-only writes are 5m; 1h writes cost twice input
   through `resolvedCacheWrite1h`. `ModelPricing` uses reviewed family estimates, with
   Sonnet as the default. Cached models.dev overrides need a non-future timestamp and
   positive, bounded input/output/cache-read/cache-write/derived-1h rates.
-- Cost disk format v7 retains request identity and cache-tier provenance. Rebuild older
-  formats so unchanged files cannot reuse partial results from the former 8 MiB/4 MiB
-  read limits. Invalidate the cache when a read-policy change can change its records.
+- Cost disk format v8 retains request and file-local identity, cache-tier provenance, and
+  committed append state. Rebuild older formats. Invalidate the cache when a read-policy change can change its records.
   Keep record limits of 20,000 / 8 MiB per file and 100,000 / 32 MiB per root.
-  The constant-time LRU holds at most 2,048 files and 32 MiB of accounted records.
+  The constant-time LRU holds at most 2,048 files and 32 MiB of accounted records,
+  including retained committed records and cursor overhead.
   Limits set `isPartialEstimate`. Filter time windows at read time and call `flushIfDue`
   no more than once per 10 minutes. Default totals cover seven days.
 - Preserve `CostUsageResult.sourcePaths` on partial results so the app can verify root

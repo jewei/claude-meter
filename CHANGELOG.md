@@ -11,6 +11,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.18] - 2026-09-14
+
+### Added
+
+- Usage & Spend now opens from the popover header. It shows one combined Claude and Codex estimate, separate provider sections, daily charts, model totals, and JSON export over 7 or 30 days.
+- Codex cost estimates support Astra and Sol. Missing prices and incomplete usage are marked, and exports preserve unknown costs.
+- Optional diagnostic file logging removes sensitive values and records notification and widget failures.
+
+### Changed
+
+- Active Claude transcripts reuse verified earlier records, which reduces repeated parsing during cost updates.
+- Codex reuses its local app-server process between polls to reduce refresh work.
+- Optional providers shown only in the popover refresh less often while it is closed. The selected main provider keeps its normal polling schedule.
+
+### Fixed
+
+- Cost scans read more of large Claude sessions before reporting an incomplete estimate.
+- Attention notifications can focus the correct Herdr pane inside Ghostty.
+
+### Security
+
+- Local statusline and attention-event files restrict access to their owner.
+
 ## [2.17] - 2026-09-08
 
 ### Fixed
@@ -669,7 +692,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.17...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.18...HEAD
+[2.18]: https://github.com/jewei/claude-meter/compare/v2.17...v2.18
 [2.17]: https://github.com/jewei/claude-meter/compare/v2.16...v2.17
 [2.16]: https://github.com/jewei/claude-meter/compare/v2.15...v2.16
 [2.15]: https://github.com/jewei/claude-meter/compare/v2.14...v2.15

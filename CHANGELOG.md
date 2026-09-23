@@ -11,71 +11,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Release validation
-
-- Sign and notarize the distribution DMG before Sparkle signs the update archive.
-- Add a private candidate preparation mode that stops before publication.
-- Defer popover window attachment updates until SwiftUI finishes the current view update.
-- Correct Settings text for Claude account selection.
-
-- Claude usage now comes only from OAuth. Removed statusline capture, bridge repair,
-  activity-based account selection, live-session indicators, and duplicate OAuth enrichment.
-- Upgrades remove five exact historical statusline snippets and captured files. User
-  commands and refresh intervals are preserved. Failed cleanup retries at the next launch.
-- Upgrades remove obsolete cost/pricing caches, widget data, and usage history after
-  required compatibility migrations complete. The old App Group snapshot is removed
-  only after a successful import check. Cleanup failures retry on a later launch;
-  current usage data, settings, credentials, and unrelated files are preserved.
-
-### Removed
-
-- Cursor credential subprocesses and the database-change detection cache.
-
-- Resident Codex App Server processes and the Codex source-mode picker.
-
-- Optional Claude web reset offers and their separate web sign-in. Quota reset countdowns remain.
-
-- The desktop widget, its extension, and App Group settings sync.
-- Anthropic service-status polling and incident banners.
-- Usage pace markers, depletion predictions, and the menu-bar forecast option.
-- The Usage & Spend window, local Claude and Codex cost estimates, and activity heatmap.
-- Transcript scans, pricing downloads, analytics caches, and their memory-pressure monitor.
-- Native quota, recovery, predictive, update, and Claude Code attention notifications.
-- The Notifications tab, attention hooks, event polling, and terminal focus actions.
+## [3.0] - 2026-09-23
 
 ### Changed
 
-- Cursor reads credentials directly through system SQLite in read-only mode. Busy
-  databases retain stale usage; Keychain fallback and token refresh remain available.
+- Claude Meter now focuses on current usage, balances, and quota reset countdowns for
+  Claude, Codex, Cursor, and Grok.
+- Claude usage requires OAuth. Connect Claude Code credentials or enter OAuth
+  credentials in Settings. Account selection no longer uses local session activity.
+- All enabled providers refresh every five minutes while the display is awake.
+  Opening the popover refreshes missing, failed, stale, or at least one-minute-old data.
+  Reset countdowns update locally. The default age threshold for stale data is ten minutes.
+- Display sleep stops refresh work. Wake checks freshness before requesting data.
+  Provider settings changes refresh only the affected provider.
+- Codex reads usage through direct OAuth. Only credential or authentication failures
+  start a temporary Codex App Server for recovery. Codex controls credential refresh and
+  storage. API-key sign-ins show unavailable subscription quota. Reset-credit totals
+  remain available; detailed expiry rows appear only when recovery supplies them.
+- Cursor reads credentials through system SQLite in read-only mode. Busy databases
+  retain stale usage. Keychain fallback and token refresh remain available.
+- Each Claude and Codex account keeps its own observation time, errors, and last-good
+  readings. Snapshot writes do not block the UI. Cancelled or disabled refreshes cannot
+  publish late results for any provider.
+- Claude snapshots now use Application Support. Upgrades import newer last-good data
+  from the former App Group before cleanup. Existing app settings remain in place.
+- Upgrades remove obsolete app-owned statusline snippets, attention hooks, caches,
+  widget data, and usage history after required migrations complete. User commands,
+  current usage data, settings, credentials, and unrelated files remain. Failed cleanup
+  retries at a later launch.
+- Visual warning and critical thresholds are now in Appearance settings. An old
+  menu-bar forecast setting falls back to the nearest-limit percentage.
 
-- Codex now tries direct OAuth first. Only credential/auth failures use a temporary App
-  Server recovery process. Network and server failures retain stale data without a process.
-  Codex keeps ownership of credential refresh and writes. API-key sign-ins show unavailable
-  subscription quota. Direct quota reads keep reset-credit totals; detailed reset-credit
-  expiry rows are available only when recovery supplies them.
+### Removed
 
-- Background usage refresh now runs every five minutes for all enabled providers.
-  Opening the popover refreshes only missing, failed, stale or at least one-minute-old data.
-  Countdown updates stay local. The UI age threshold is now ten minutes.
-- Display sleep parks refresh work. Wake checks freshness before requesting data.
-  Removed battery-dependent intervals and network-reconnect refreshes. Provider settings
-  changes refresh only the affected provider without restarting the background timer.
+- Claude Code statusline usage capture, bridge repair, and live-session indicators.
+- The desktop widget and App Group settings sync.
+- The Usage & Spend window, local Claude and Codex cost estimates, activity heatmap,
+  transcript scans, and pricing downloads.
+- Usage pace markers, depletion predictions, and the menu-bar forecast option.
+- Quota, recovery, predictive, update, and Claude Code attention notifications,
+  including the Notifications tab and terminal focus actions.
+- Anthropic service-status polling and incident banners.
+- Optional Claude web reset offers and their separate web sign-in. Quota reset
+  countdowns remain.
+- Resident Codex App Server processes and the Codex source-mode picker.
+- Cursor credential subprocesses, battery-dependent refresh intervals, and
+  network-reconnect refreshes.
 
-- Claude now uses the same usage-state owner as Codex, Cursor and Grok. Each account keeps
-  its own freshness and errors. Existing account selection, OAuth behavior and reset displays
-  remain. Accepted Claude snapshots are saved in order without blocking the UI.
+### Fixed
 
-- Codex now uses the same usage-state owner as Cursor and Grok. Multiple homes retain
-  separate errors and last-good readings. Sign-in checks and late-result protection also
-  guard saved readings. Account names, credits, resets and source options remain unchanged.
+- Popover window attachment updates wait until the current SwiftUI view update ends.
+- Settings text now describes Claude account selection correctly.
 
-- Cursor and Grok now share one usage-state owner. Their cards keep the same data and layout; cancelled or disabled refreshes cannot publish late results.
+### Security
 
-- Added a shared provider account, quota-window and balance model. Existing displays, refresh behavior and stored readings remain unchanged.
-
-- Claude snapshots now use Application Support. Upgrades import a newer last-good snapshot from the former App Group. Existing app settings remain in standard defaults.
-- The removed menu-bar forecast setting now falls back to nearest-limit percentage.
-- Visual warning and critical thresholds are now in Appearance settings.
+- The distribution DMG is signed and notarized before Sparkle signs the update archive.
 
 ## [2.18] - 2026-09-14
 
@@ -716,7 +706,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v2.18...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v3.0...HEAD
+[3.0]: https://github.com/jewei/claude-meter/compare/v2.18...v3.0
 [2.18]: https://github.com/jewei/claude-meter/compare/v2.17...v2.18
 [2.17]: https://github.com/jewei/claude-meter/compare/v2.16...v2.17
 [2.16]: https://github.com/jewei/claude-meter/compare/v2.15...v2.16

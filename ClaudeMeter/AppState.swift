@@ -127,6 +127,10 @@ final class AppState: ObservableObject {
     /// Anthropic service status, refreshed alongside Claude polls. Surfaced only
     /// during incidents to distinguish an outage from bad credentials.
     @Published var serviceStatus: ServiceStatus? = nil
+    @Published private(set) var claudeWebResetObservations: [String: ClaudeWebResetObservation] =
+        [:]
+    @Published private(set) var claudeWebResetError: String?
+    @Published private(set) var claudeWebResetLastSuccessAt: Date?
     @Published private(set) var isActive: Bool
     @Published private(set) var hasEnabledDataSource: Bool
 
@@ -195,6 +199,10 @@ final class AppState: ObservableObject {
     private let attentionEventDrainOperation: AttentionEventDrainOperation
     private let mainMeterPublicationOperation: MainMeterPublicationOperation
     private var serviceStatusRefreshTask: Task<Void, Never>?
+    private(set) var claudeWebResetSession: ClaudeWebResetSession?
+    private var claudeWebResetTask: Task<Void, Never>?
+    private var lastClaudeWebResetAttemptAt: Date?
+    private var claudeWebResetRerunRequested = false
     private var pollTask: Task<Void, Never>?
     /// Identifies the cycle that owns the aggregate and provider loading flags.
     /// A cancelled cycle can resume later, but it cannot clear a newer cycle's UI.
@@ -688,6 +696,7 @@ final class AppState: ObservableObject {
         self.ephemeralDefaultsSuiteName = nil
         self.ephemeralStoreDirectory = nil
         self.systemIntegrationEnabled = true
+        self.claudeWebResetSession = ClaudeWebResetSession()
         self.notificationEngine = NotificationEngine()
         self.isActive = AppSettings.isActive
         self.hasEnabledDataSource = AppSettings.hasEnabledDataSource
@@ -1434,6 +1443,7 @@ final class AppState: ObservableObject {
         let previousPublishedReading = publishedMainMeterReading
         let previousNotificationReading = lastNotificationReading
         scheduleServiceStatusRefresh(generation: configuration.generation)
+        refreshClaudeWebResets(force: configuration.refreshKind == .interactive)
         do {
             let result = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
                 try await pipeline.poll(now: now, kind: configuration.refreshKind)
@@ -1532,6 +1542,82 @@ final class AppState: ObservableObject {
         } catch {
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             recordClaudePollFailure(message, generation: configuration.generation)
+        }
+    }
+
+    func claudeWebResets(organizationID: String?) -> ClaudeLimitResets? {
+        guard UserDefaults.standard.bool(forKey: AppSettings.claudeWebResetsEnabledKey),
+            let organizationID,
+            let observation = claudeWebResetObservations[organizationID.lowercased()],
+            Date().timeIntervalSince(observation.observedAt) < 600,
+            claudeWebResetError == nil
+        else { return nil }
+        return observation.resets
+    }
+
+    func claudeWebResetsSettingDidChange(enabled: Bool) {
+        if enabled {
+            refreshClaudeWebResets(force: true)
+        } else {
+            claudeWebResetTask?.cancel()
+            claudeWebResetObservations = [:]
+            claudeWebResetError = nil
+            claudeWebResetLastSuccessAt = nil
+            lastClaudeWebResetAttemptAt = nil
+        }
+    }
+
+    func refreshClaudeWebResets(force: Bool = false) {
+        guard systemIntegrationEnabled,
+            UserDefaults.standard.bool(forKey: AppSettings.claudeWebResetsEnabledKey),
+            let session = claudeWebResetSession,
+            isActive
+        else { return }
+        if claudeWebResetTask != nil {
+            if force { claudeWebResetRerunRequested = true }
+            return
+        }
+        let now = Date()
+        if !force, let lastClaudeWebResetAttemptAt,
+            now.timeIntervalSince(lastClaudeWebResetAttemptAt) < 300
+        {
+            return
+        }
+        lastClaudeWebResetAttemptAt = now
+        let generation = pipelineGeneration
+        claudeWebResetTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                self.claudeWebResetTask = nil
+                if self.claudeWebResetRerunRequested {
+                    self.claudeWebResetRerunRequested = false
+                    self.refreshClaudeWebResets(force: true)
+                }
+            }
+            do {
+                let observations = try await session.fetch()
+                guard !Task.isCancelled,
+                    generation == self.pipelineGeneration,
+                    UserDefaults.standard.bool(forKey: AppSettings.claudeWebResetsEnabledKey)
+                else { return }
+                self.claudeWebResetObservations = Dictionary(
+                    uniqueKeysWithValues: observations.map {
+                        ($0.organizationID.lowercased(), $0)
+                    })
+                self.claudeWebResetError = nil
+                self.claudeWebResetLastSuccessAt = Date()
+            } catch {
+                guard !Task.isCancelled,
+                    generation == self.pipelineGeneration,
+                    UserDefaults.standard.bool(forKey: AppSettings.claudeWebResetsEnabledKey)
+                else { return }
+                self.claudeWebResetObservations = [:]
+                self.claudeWebResetError =
+                    error is ClaudeWebResetSession.FetchError
+                        && (error as? ClaudeWebResetSession.FetchError) == .signInRequired
+                    ? "Sign in to Claude to show limit resets."
+                    : "Could not check Claude limit resets."
+            }
         }
     }
 

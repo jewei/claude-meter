@@ -180,6 +180,19 @@ usage. The newest observation replaces that bundle in both the top-level and acc
 records, including nil fields; an equal
 timestamp favors the per-account request because it runs later in the poll.
 
+Claude limit resets use a separate, optional Claude web session. The user signs in inside
+Claude Meter in Settings > Data. WebKit retains that session in its website data store;
+Sign out removes Claude and Anthropic website data from that store. The app reads only reset
+offers from the signed-in web Usage response. It does not use the Claude Code OAuth
+token for this offer because that token reports an ineligible surface. It never uses or
+redeems a reset. The web read runs outside the quota pipeline at most every five minutes,
+or on interactive refresh, and does not delay quota publication. The app keeps the last
+successful web observation in memory for up to ten minutes. An error clears the display.
+It shows a reset count and expiry only on a Claude account card whose organization ID
+exactly matches the web organization ID. A missing ID, a different ID, or no web offer
+leaves the count unknown. In that case the popover links to Claude Settings > Usage.
+The user confirms any reset in Claude. The next Claude quota poll reads its new limits.
+
 ### 3.3 Snapshot and staleness
 
 The App Group suite is `group.com.jewei.claudemeter`. `AppState` is the only poll-time
@@ -558,8 +571,10 @@ color helpers intentionally remain target-local.
 
 ## 10. Networking, Keychain, and diagnostics
 
-Every provider request uses `ProviderHTTPClient.shared` or an injected `HTTPTransport`.
-The production session is ephemeral and cookie-less. It has a ten-second idle timeout, an
+OAuth and other direct provider requests use `ProviderHTTPClient.shared` or an injected
+`HTTPTransport`. The separate Claude reset read runs in a signed-in WebKit page, with
+same-origin browser requests and WebKit-managed cookies. The direct provider session is
+ephemeral and cookie-less. It has a ten-second idle timeout, an
 eight-MiB response cap, and a 30-second hard deadline for the complete send, including retry
 waits. A chunk receiver rejects an oversized declared `Content-Length` before body receipt
 and cancels a streamed response when it crosses the cap. A dedicated timeout-task budget

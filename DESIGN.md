@@ -255,6 +255,12 @@ Chunky card, flex row, gap 14.
     available count. Each returned reset shows its title and time to expiry, sorted by expiry.
     Hovering a row shows the exact local expiry date and time. Missing or partial expiry
     details are stated below the count. The section uses the card's existing fonts and colors.
+  - A Claude account with a matching signed-in web offer shows "Usage limit resets",
+    the available count, and each offer's title and time to expiry below its limits.
+    Hovering an offer shows the local expiry date and time. The section links to Claude
+    Settings > Usage to use a reset. Without a matching offer observation, show a compact
+    "Claude limit resets" link card below the Claude accounts or compact secondary card.
+    Do not show a count when the web session or account match is unavailable.
 
 **Per-account data reality:** label, 5-hr %, week %, reset/refill exist for every account. Email,
 plan badge, and weekly-Opus are OAuth-only → present only on the active account. Never fabricate

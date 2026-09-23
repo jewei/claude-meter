@@ -106,6 +106,44 @@ public struct CostObservation: Codable, Equatable, Sendable {
 
 // MARK: - Per-account usage
 
+/// A Claude web offer that can restore one or more usage limit windows.
+public struct ClaudeLimitResetOffer: Codable, Equatable, Sendable {
+    public let title: String
+    public let remainingCount: Int
+    public let startsAt: Date?
+    public let expiresAt: Date?
+
+    public init(title: String, remainingCount: Int, startsAt: Date?, expiresAt: Date?) {
+        self.title = title
+        self.remainingCount = remainingCount
+        self.startsAt = startsAt
+        self.expiresAt = expiresAt
+    }
+
+    public func isAvailable(asOf now: Date) -> Bool {
+        remainingCount > 0 && (startsAt.map { $0 <= now } ?? true)
+            && (expiresAt.map { $0 > now } ?? true)
+    }
+}
+
+/// Reset offers observed for one exact Claude web organization.
+public struct ClaudeLimitResets: Codable, Equatable, Sendable {
+    public let offers: [ClaudeLimitResetOffer]
+
+    public init(offers: [ClaudeLimitResetOffer]) {
+        self.offers = offers
+    }
+
+    public func availableOffers(asOf now: Date) -> [ClaudeLimitResetOffer] {
+        offers.filter { $0.isAvailable(asOf: now) }
+            .sorted { ($0.expiresAt ?? .distantFuture) < ($1.expiresAt ?? .distantFuture) }
+    }
+
+    public func availableCount(asOf now: Date) -> Int {
+        availableOffers(asOf: now).reduce(0) { $0 + $1.remainingCount }
+    }
+}
+
 /// A single account's rate-limit usage, for the popover's multi-account list.
 ///
 /// Flat display value type (no nested snapshot) so it persists cleanly inside the

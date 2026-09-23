@@ -17,6 +17,7 @@ enum AppSettings {
     static let isActiveKey = "isActive"
     static let statuslineSourceEnabledKey = "statuslineSourceEnabled"
     static let oauthSourceEnabledKey = "oauthSourceEnabled"
+    static let claudeWebResetsEnabledKey = "claudeWebResetsEnabled"
     static let cursorSourceEnabledKey = "cursorSourceEnabled"
     static let codexSourceEnabledKey = "codexSourceEnabled"
     static let grokSourceEnabledKey = "grokSourceEnabled"

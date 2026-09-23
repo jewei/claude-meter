@@ -325,6 +325,9 @@ struct PopoverView: View {
                                 now: now))
                 }
                 accountsSection(primaryOrdered(models))
+                if !models.contains(where: { $0.claudeLimitResets != nil }) {
+                    claudeLimitResetsLink
+                }
                 if let extra = snap.limits.extraUsage, extra.hasSpend {
                     extraUsageCard(extra)
                 }
@@ -391,15 +394,48 @@ struct PopoverView: View {
     }
 
     private func claudeSecondaryCard(_ models: [AccountCardModel]) -> some View {
-        secondaryProviderCard(
-            name: "Claude",
-            models: models,
-            hasError: appState.lastError != nil,
-            isStale: appState.claudeIsStale,
-            cardID: Self.claudeSecondaryCardID
-        ) {
-            claudeMark
+        VStack(spacing: 10) {
+            secondaryProviderCard(
+                name: "Claude",
+                models: models,
+                hasError: appState.lastError != nil,
+                isStale: appState.claudeIsStale,
+                cardID: Self.claudeSecondaryCardID
+            ) {
+                claudeMark
+            }
+            if !models.contains(where: { $0.claudeLimitResets != nil }) {
+                claudeLimitResetsLink
+            }
         }
+    }
+
+    private var claudeLimitResetsLink: some View {
+        Link(destination: URL(string: "https://claude.ai/settings/usage")!) {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.clockwise.circle")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color.pfInk)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Claude limit resets")
+                        .font(PFont.display(13, .semibold))
+                        .foregroundStyle(Color.pfInk)
+                    Text("Check available resets in Claude")
+                        .font(PFont.body(11, .semibold))
+                        .foregroundStyle(Color.pfInkMuted)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .chunkyCard()
+        }
+        .buttonStyle(.plain)
+        .help("Open Claude Settings > Usage to check or use a limit reset")
+        .accessibilityLabel("Check Claude limit resets in Settings, Usage")
     }
 
     private func secondaryProviderCard<Mark: View>(
@@ -524,6 +560,9 @@ struct PopoverView: View {
                     }
                     if let resets = model.rateLimitResets {
                         CodexUsageResetsView(resets: resets, now: now)
+                    }
+                    if let resets = model.claudeLimitResets {
+                        ClaudeUsageResetsView(resets: resets, now: now)
                     }
                 }
             }
@@ -762,6 +801,9 @@ struct PopoverView: View {
                     opus: acc.isActive
                         ? (snap.limits.currentWeekOpus ?? acc.limits.currentWeekOpus)
                         : acc.limits.currentWeekOpus,
+                    claudeLimitResets: appState.claudeWebResets(
+                        organizationID: acc.account?.organization
+                            ?? (acc.isActive ? snap.account?.organization : nil)),
                     scoped: Self.scopedLimits(for: acc, topLevel: snap.limits),
                     isDuplicateLogin: duplicates.contains(acc.id),
                     isLive: acc.isActive && bridgeLive
@@ -780,6 +822,8 @@ struct PopoverView: View {
                 session: snap.limits.currentSession,
                 week: snap.limits.currentWeekAllModels,
                 opus: snap.limits.currentWeekOpus,
+                claudeLimitResets: appState.claudeWebResets(
+                    organizationID: snap.account?.organization),
                 scoped: snap.limits.scopedWeekly ?? [],
                 isLive: bridgeLive
             )

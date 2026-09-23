@@ -254,6 +254,7 @@ struct AccountCardModel: Identifiable {
     var opus: LimitWindow?
     /// Popover-only Codex details, kept outside the persisted main-meter model.
     var rateLimitResets: CodexRateLimitResets? = nil
+    var claudeLimitResets: ClaudeLimitResets? = nil
     /// Scoped weekly windows (`seven_day_sonnet`, …) — display-only rows below
     /// Opus; they don't influence the card's band or the reset summary.
     var scoped: [ScopedLimitWindow] = []
@@ -437,6 +438,9 @@ struct AccountRingCard: View {
             if let resets = model.rateLimitResets {
                 CodexUsageResetsView(resets: resets, now: now)
             }
+            if let resets = model.claudeLimitResets {
+                ClaudeUsageResetsView(resets: resets, now: now)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
@@ -615,6 +619,57 @@ struct CodexUsageResetsView: View {
     }
 }
 
+struct ClaudeUsageResetsView: View {
+    let resets: ClaudeLimitResets
+    let now: Date
+
+    var body: some View {
+        let offers = resets.availableOffers(asOf: now)
+        return VStack(alignment: .leading, spacing: 6) {
+            Divider().overlay(Color.pfCardBorder)
+            HStack {
+                Text("Usage limit resets")
+                    .font(PFont.body(11, .bold))
+                Spacer(minLength: 4)
+                Text("\(resets.availableCount(asOf: now)) available")
+                    .font(PFont.body(11, .bold))
+                    .monospacedDigit()
+            }
+            .foregroundStyle(Color.pfInk)
+            .accessibilityElement(children: .combine)
+
+            ForEach(Array(offers.enumerated()), id: \.offset) { _, offer in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(offer.title)
+                        .lineLimit(2)
+                    Spacer(minLength: 0)
+                    Text(expirationText(for: offer))
+                        .monospacedDigit()
+                        .multilineTextAlignment(.trailing)
+                }
+                .font(PFont.body(11, .semibold))
+                .foregroundStyle(Color.pfInkMuted)
+                .accessibilityElement(children: .combine)
+                .help(
+                    offer.expiresAt.map {
+                        "Expires \($0.formatted(date: .abbreviated, time: .shortened))"
+                    } ?? "Expiry date not provided")
+            }
+            Link(
+                "Open Claude to use a reset",
+                destination: URL(string: "https://claude.ai/settings/usage")!
+            )
+            .font(PFont.body(11, .semibold))
+        }
+    }
+
+    private func expirationText(for offer: ClaudeLimitResetOffer) -> String {
+        guard let expiresAt = offer.expiresAt else { return "Expiry date not provided" }
+        guard let phrase = ResetPhrase.spoken(until: expiresAt, asOf: now) else { return "Expired" }
+        return "Expires \(phrase)"
+    }
+}
+
 // MARK: - Account bar card (energy-bar variant)
 
 struct AccountBarCard: View {
@@ -655,6 +710,9 @@ struct AccountBarCard: View {
                 barSection(
                     "Weekly \(scoped.displayName)", icon: "📊", window: scoped.window,
                     kind: .weekly)
+            }
+            if let resets = model.claudeLimitResets {
+                ClaudeUsageResetsView(resets: resets, now: now)
             }
         }
         .padding(.horizontal, 14)

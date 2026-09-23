@@ -55,6 +55,8 @@ struct DataSettingsTab: View {
 
     @AppStorage(AppSettings.statuslineSourceEnabledKey) private var statuslineSourceEnabled = true
     @AppStorage(AppSettings.oauthSourceEnabledKey) private var oauthSourceEnabled = true
+    @AppStorage(AppSettings.claudeWebResetsEnabledKey)
+    private var claudeWebResetsEnabled = false
     @AppStorage(AppSettings.oauthModeKey) private var oauthMode = ""
     @AppStorage(AppSettings.cursorSourceEnabledKey) private var cursorSourceEnabled = false
     @AppStorage(AppSettings.codexSourceEnabledKey) private var codexSourceEnabled = false
@@ -71,6 +73,7 @@ struct DataSettingsTab: View {
     @State private var grokStatus = ""
     @State private var grokStatusGeneration = 0
     @State private var grokStatusTask: Task<Void, Never>?
+    @State private var showingClaudeWebSignIn = false
 
     private var oauthSubtitle: String {
         guard !oauthMode.isEmpty else {
@@ -122,6 +125,45 @@ struct DataSettingsTab: View {
                 }
 
                 DataSourceCard(
+                    icon: "arrow.clockwise.circle",
+                    iconColor: Color(hex: "C77DFF"),
+                    title: "Claude limit resets",
+                    subtitle: "Read reset count and expiry from Claude on the web.",
+                    isEnabled: $claudeWebResetsEnabled
+                ) {
+                    if claudeWebResetsEnabled {
+                        VStack(alignment: .leading, spacing: 7) {
+                            HStack(spacing: 10) {
+                                Button("Sign in to Claude") {
+                                    showingClaudeWebSignIn = true
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                Button("Sign out") {
+                                    Task {
+                                        await appState.claudeWebResetSession?.signOut()
+                                        appState.claudeWebResetsSettingDidChange(enabled: false)
+                                        claudeWebResetsEnabled = false
+                                    }
+                                }
+                                .buttonStyle(.borderless)
+                                .controlSize(.small)
+                            }
+                            if let error = appState.claudeWebResetError {
+                                Text(error).foregroundStyle(.orange)
+                            } else if appState.claudeWebResetLastSuccessAt != nil {
+                                Text("Claude web session connected")
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("Sign in to check your reset offers")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .font(.caption)
+                    }
+                }
+
+                DataSourceCard(
                     icon: "cursorarrow.rays",
                     iconColor: Color(hex: "2DD4BF"),
                     title: "Cursor",
@@ -160,6 +202,17 @@ struct DataSettingsTab: View {
         }
         .onChange(of: statuslineSourceEnabled) { _, _ in appState.scheduleRebuildPipeline() }
         .onChange(of: oauthSourceEnabled) { _, _ in appState.scheduleRebuildPipeline() }
+        .onChange(of: claudeWebResetsEnabled) { _, enabled in
+            appState.claudeWebResetsSettingDidChange(enabled: enabled)
+        }
+        .sheet(isPresented: $showingClaudeWebSignIn) {
+            if let session = appState.claudeWebResetSession {
+                ClaudeWebSignInView(session: session) {
+                    claudeWebResetsEnabled = true
+                    appState.refreshClaudeWebResets(force: true)
+                }
+            }
+        }
         .onChange(of: cursorSourceEnabled) { _, enabled in
             loadCursorStatus()
             appState.setCursorSourceEnabled(enabled)

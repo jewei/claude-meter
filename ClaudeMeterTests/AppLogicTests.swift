@@ -65,221 +65,6 @@ private final class TestPopoverWindowAdapter: PopoverWindowAdapter {
     }
 }
 
-private actor SuspendedNotificationDelivery: NotificationDelivery {
-    private var addContinuation: CheckedContinuation<Void, Never>?
-    private var addStarted = false
-    private var addStartWaiters: [CheckedContinuation<Void, Never>] = []
-    private var pendingIdentifiers: Set<String> = []
-    private var deliveredIdentifiers: Set<String> = []
-    private var pendingRemovalCount = 0
-    private var deliveredRemovalCount = 0
-
-    func authorizationState() async -> NotificationAuthorizationState {
-        .authorized
-    }
-
-    func requestAuthorization() async throws {}
-
-    func add(_ request: NotificationDeliveryRequest) async throws {
-        addStarted = true
-        let waiters = addStartWaiters
-        addStartWaiters.removeAll()
-        for waiter in waiters { waiter.resume() }
-
-        await withCheckedContinuation { continuation in
-            addContinuation = continuation
-        }
-
-        // Populate both collections to prove that stale delivery cleanup covers
-        // either Notification Center state.
-        pendingIdentifiers.insert(request.identifier)
-        deliveredIdentifiers.insert(request.identifier)
-    }
-
-    func removePendingRequests(withIdentifiers identifiers: [String]) async {
-        pendingRemovalCount += 1
-        pendingIdentifiers.subtract(identifiers)
-    }
-
-    func removeDeliveredNotifications(withIdentifiers identifiers: [String]) async {
-        deliveredRemovalCount += 1
-        deliveredIdentifiers.subtract(identifiers)
-    }
-
-    func waitUntilAddStarts() async {
-        guard !addStarted else { return }
-        await withCheckedContinuation { continuation in
-            addStartWaiters.append(continuation)
-        }
-    }
-
-    func waitUntilAddStarts(for timeout: Duration) async -> Bool {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: timeout)
-        while !addStarted, clock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-        return addStarted
-    }
-
-    func finishAdd() {
-        let continuation = addContinuation
-        addContinuation = nil
-        continuation?.resume()
-    }
-
-    func waitUntilRetractionCompletes(for timeout: Duration) async -> Bool {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: timeout)
-        while pendingRemovalCount == 0 || deliveredRemovalCount == 0, clock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-        return pendingRemovalCount > 0 && deliveredRemovalCount > 0
-    }
-
-    func state() -> (
-        pending: Set<String>,
-        delivered: Set<String>,
-        pendingRemovals: Int,
-        deliveredRemovals: Int,
-        addStarted: Bool
-    ) {
-        (
-            pendingIdentifiers,
-            deliveredIdentifiers,
-            pendingRemovalCount,
-            deliveredRemovalCount,
-            addStarted
-        )
-    }
-}
-
-private actor ControlledNotificationDelivery: NotificationDelivery {
-    private let suspendsAdds: Bool
-    private var requests: [NotificationDeliveryRequest] = []
-    private var continuations: [Int: CheckedContinuation<Void, Never>] = [:]
-    private var pendingIdentifiers: Set<String> = []
-    private var deliveredIdentifiers: Set<String> = []
-
-    init(suspendsAdds: Bool = true) {
-        self.suspendsAdds = suspendsAdds
-    }
-
-    func authorizationState() async -> NotificationAuthorizationState { .authorized }
-    func requestAuthorization() async throws {}
-
-    func add(_ request: NotificationDeliveryRequest) async throws {
-        let index = requests.count
-        requests.append(request)
-        if suspendsAdds {
-            await withCheckedContinuation { continuations[index] = $0 }
-        }
-        pendingIdentifiers.insert(request.identifier)
-        deliveredIdentifiers.insert(request.identifier)
-    }
-
-    func removePendingRequests(withIdentifiers identifiers: [String]) async {
-        pendingIdentifiers.subtract(identifiers)
-    }
-
-    func removeDeliveredNotifications(withIdentifiers identifiers: [String]) async {
-        deliveredIdentifiers.subtract(identifiers)
-    }
-
-    func waitForAdds(_ count: Int) async -> Bool {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(5))
-        while requests.count < count, clock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-        return requests.count >= count
-    }
-
-    func finishAdd(_ index: Int) {
-        continuations.removeValue(forKey: index)?.resume()
-    }
-
-    func lastRequest() -> NotificationDeliveryRequest? { requests.last }
-
-    func state() -> (requests: [String], pending: Set<String>, delivered: Set<String>) {
-        (requests.map(\.identifier), pendingIdentifiers, deliveredIdentifiers)
-    }
-}
-
-private final class BlockingMainMeterPublication: @unchecked Sendable {
-    private let entered = DispatchSemaphore(value: 0)
-    private let release = DispatchSemaphore(value: 0)
-
-    func publish(_: MainMeterReading?, in _: SnapshotStore) {
-        entered.signal()
-        release.wait()
-    }
-
-    func waitUntilEntered(for timeout: DispatchTimeInterval) -> Bool {
-        entered.wait(timeout: .now() + timeout) == .success
-    }
-
-    func finish() {
-        release.signal()
-    }
-}
-
-private actor AuthorizationRecordingDelivery: NotificationDelivery {
-    private var requestCount = 0
-    private var requestWaiters: [CheckedContinuation<Void, Never>] = []
-
-    func authorizationState() async -> NotificationAuthorizationState {
-        .notDetermined
-    }
-
-    func requestAuthorization() async throws {
-        requestCount += 1
-        let waiters = requestWaiters
-        requestWaiters.removeAll()
-        for waiter in waiters { waiter.resume() }
-    }
-
-    func add(_: NotificationDeliveryRequest) async throws {}
-    func removePendingRequests(withIdentifiers _: [String]) async {}
-    func removeDeliveredNotifications(withIdentifiers _: [String]) async {}
-
-    func waitForRequest() async {
-        guard requestCount == 0 else { return }
-        await withCheckedContinuation { requestWaiters.append($0) }
-    }
-
-    var requests: Int { requestCount }
-}
-
-private actor SuspendedAttentionEventDrainer {
-    private let event: SessionEvent
-    private var continuation: CheckedContinuation<[SessionEvent], Never>?
-    private var started = false
-    private var startWaiters: [CheckedContinuation<Void, Never>] = []
-
-    init(event: SessionEvent) {
-        self.event = event
-    }
-
-    func drain() async -> [SessionEvent] {
-        started = true
-        let waiters = startWaiters
-        startWaiters.removeAll()
-        for waiter in waiters { waiter.resume() }
-        return await withCheckedContinuation { continuation = $0 }
-    }
-
-    func waitUntilStarted() async {
-        guard !started else { return }
-        await withCheckedContinuation { startWaiters.append($0) }
-    }
-
-    func release() {
-        continuation?.resume(returning: [event])
-        continuation = nil
-    }
-}
-
 private actor PollRecorder {
     private var count = 0
     private var waiters: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
@@ -301,221 +86,84 @@ private actor PollRecorder {
     }
 }
 
-private actor PollCompletionBarrier {
-    private var arrivalCount = 0
-    private var arrivalWaiters: [(target: Int, continuation: CheckedContinuation<Void, Never>)] =
-        []
-    private var suspended: [Int: CheckedContinuation<Void, Never>] = [:]
-
-    func arriveAndSuspend() async {
-        arrivalCount += 1
-        let arrival = arrivalCount
-        let ready = arrivalWaiters.filter { $0.target <= arrivalCount }
-        arrivalWaiters.removeAll { $0.target <= arrivalCount }
-        for waiter in ready { waiter.continuation.resume() }
-        await withCheckedContinuation { suspended[arrival] = $0 }
-    }
-
-    func waitForArrivals(_ target: Int) async {
-        guard arrivalCount < target else { return }
-        await withCheckedContinuation {
-            arrivalWaiters.append((target: target, continuation: $0))
-        }
-    }
-
-    func release(_ arrival: Int) {
-        suspended.removeValue(forKey: arrival)?.resume()
-    }
-}
-
-private struct RecordingPipeline: ClaudeMeterPipeline {
+private struct RecordingProvider: UsageProvider {
+    let id: ProviderID = .claude
     let recorder: PollRecorder
 
-    func poll(now _: Date, kind _: RefreshKind) async throws -> ParseResult {
+    func fetch(now: Date, previous: ProviderSnapshot?, refreshID: UUID) async throws
+        -> ProviderSnapshot
+    {
         await recorder.record()
-        return ParseResult(snapshot: nil, warnings: [], errors: [], rawHash: "")
-    }
-}
-
-private actor SuspendedSnapshotPipeline: ClaudeMeterPipeline {
-    private let result: ParseResult
-    private var continuation: CheckedContinuation<Void, Never>?
-    private var started = false
-    private var startWaiters: [CheckedContinuation<Void, Never>] = []
-
-    init(snapshot: ClaudeUsageSnapshot) {
-        result = ParseResult(
-            snapshot: snapshot,
-            warnings: [],
-            errors: [],
-            rawHash: snapshot.parserVersion,
-            parserVersion: snapshot.parserVersion)
-    }
-
-    func poll(now _: Date, kind _: RefreshKind) async throws -> ParseResult {
-        started = true
-        let waiters = startWaiters
-        startWaiters.removeAll()
-        for waiter in waiters { waiter.resume() }
-        await withCheckedContinuation { continuation = $0 }
-        return result
-    }
-
-    func waitUntilStarted() async {
-        guard !started else { return }
-        await withCheckedContinuation { startWaiters.append($0) }
-    }
-
-    func release() {
-        let pending = continuation
-        continuation = nil
-        pending?.resume()
-    }
-}
-
-private struct FixedSnapshotPipeline: ClaudeMeterPipeline {
-    let snapshot: ClaudeUsageSnapshot
-
-    func poll(now _: Date, kind _: RefreshKind) async throws -> ParseResult {
-        ParseResult(
-            snapshot: snapshot,
-            warnings: [],
-            errors: [],
-            rawHash: snapshot.parserVersion,
-            parserVersion: snapshot.parserVersion)
-    }
-}
-
-private struct FixedResultPipeline: ClaudeMeterPipeline {
-    let result: ParseResult
-
-    func poll(now _: Date, kind _: RefreshKind) async throws -> ParseResult {
-        result
-    }
-}
-
-private struct ThrowingPipeline: ClaudeMeterPipeline {
-    struct Failure: LocalizedError, Sendable {
-        let message: String
-        var errorDescription: String? { message }
-    }
-
-    let message: String
-
-    func poll(now _: Date, kind _: RefreshKind) async throws -> ParseResult {
-        throw Failure(message: message)
-    }
-}
-
-private actor SuspendedResultPipeline: ClaudeMeterPipeline {
-    private let result: ParseResult
-    private var continuation: CheckedContinuation<Void, Never>?
-    private var started = false
-    private var startWaiters: [CheckedContinuation<Void, Never>] = []
-
-    init(result: ParseResult) {
-        self.result = result
-    }
-
-    func poll(now _: Date, kind _: RefreshKind) async throws -> ParseResult {
-        started = true
-        let waiters = startWaiters
-        startWaiters.removeAll()
-        for waiter in waiters { waiter.resume() }
-        await withCheckedContinuation { continuation = $0 }
-        return result
-    }
-
-    func waitUntilStarted() async {
-        guard !started else { return }
-        await withCheckedContinuation { startWaiters.append($0) }
-    }
-
-    func release() {
-        let pending = continuation
-        continuation = nil
-        pending?.resume()
+        return ProviderSnapshot(provider: .claude, accounts: [], fetchedAt: now)
     }
 }
 
 @Suite("App logic", .serialized)
 struct AppLogicTests {
-    private actor SuspendedStatusFetcher {
-        private var continuation: CheckedContinuation<ServiceStatus?, Never>?
-        private var completedResult: ServiceStatus??
-        private(set) var callCount = 0
-
-        func fetch() async -> ServiceStatus? {
-            callCount += 1
-            if let completedResult { return completedResult }
-            return await withCheckedContinuation { continuation = $0 }
-        }
-
-        func finish(with status: ServiceStatus?) {
-            if let continuation {
-                self.continuation = nil
-                continuation.resume(returning: status)
-            } else {
-                completedResult = .some(status)
-            }
-        }
+    private struct CodexDisplayProvider: UsageProvider {
+        var id: ProviderID { snapshot.provider }
+        let snapshot: ProviderSnapshot
+        func fetch(
+            now: Date, previous: ProviderSnapshot?, refreshID: UUID
+        ) async throws -> ProviderSnapshot { snapshot }
     }
 
-    private struct UnusedPipeline: ClaudeMeterPipeline {
-        func poll(now _: Date, kind _: RefreshKind) async throws -> ParseResult {
-            ParseResult(snapshot: nil, warnings: [], errors: [], rawHash: "")
-        }
+    @MainActor private func recordingStore(_ recorder: PollRecorder) -> UsageStore {
+        let store = UsageStore(providers: [RecordingProvider(recorder: recorder)])
+        store.setEnabled(.claude, enabled: true)
+        return store
     }
 
-    private actor SuspendedConfigBridgeRefresher {
-        private var callCount = 0
-        private var startWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
-        private var running: [CheckedContinuation<Void, Never>] = []
-
-        func refresh(_: ConfigBridgeRefreshRequest) async {
-            callCount += 1
-            let ready = startWaiters.filter { $0.0 <= callCount }
-            startWaiters.removeAll { $0.0 <= callCount }
-            for waiter in ready { waiter.1.resume() }
-            await withCheckedContinuation { running.append($0) }
+    @Test("Codex main meter reads the store, honors exact pins and removes missing homes")
+    @MainActor
+    func codexStoreSelection() async {
+        let defaults = UserDefaults.standard
+        let keys = [
+            AppSettings.configuredCodexHomesKey, AppSettings.codexAccountNamesKey,
+            AppSettings.codexSourceEnabledKey, MeterSettings.mainMeterProviderKey,
+            MeterSettings.codexMainMeterAccountKey,
+        ]
+        let saved = keys.map { ($0, defaults.object(forKey: $0)) }
+        defer { for (key, value) in saved { defaults.set(value, forKey: key) } }
+        let homeA = URL(fileURLWithPath: "/test/personal").resolvingSymlinksInPath().path
+        let homeB = URL(fileURLWithPath: "/test/work").resolvingSymlinksInPath().path
+        defaults.set([homeA, homeB], forKey: AppSettings.configuredCodexHomesKey)
+        defaults.set([homeA: "Personal", homeB: "Work"], forKey: AppSettings.codexAccountNamesKey)
+        defaults.set(true, forKey: AppSettings.codexSourceEnabledKey)
+        defaults.set("codex", forKey: MeterSettings.mainMeterProviderKey)
+        defaults.removeObject(forKey: MeterSettings.codexMainMeterAccountKey)
+        let now = Date()
+        let accounts = [(homeA, 20.0), (homeB, 80.0)].map { id, used in
+            ProviderAccountSnapshot(
+                id: id, label: "Old name", plan: "Plus",
+                windows: [
+                    UsageWindow(
+                        id: "primary", title: "5h", kind: .session, usedPercent: used,
+                        resetAt: now.addingTimeInterval(3600))
+                ], observedAt: now)
         }
-
-        func waitForCalls(_ count: Int) async {
-            guard callCount < count else { return }
-            await withCheckedContinuation { startWaiters.append((count, $0)) }
-        }
-
-        func releaseNext() {
-            guard !running.isEmpty else { return }
-            running.removeFirst().resume()
-        }
-    }
-
-    private actor SuspendedCodexFetcher {
-        private var callCount = 0
-        private var waiters: [(Int, CheckedContinuation<Void, Never>)] = []
-        private var running: [CheckedContinuation<Void, Never>] = []
-
-        func suspend() async {
-            callCount += 1
-            let ready = waiters.filter { $0.0 <= callCount }
-            waiters.removeAll { $0.0 <= callCount }
-            for waiter in ready { waiter.1.resume() }
-            await withCheckedContinuation { running.append($0) }
-        }
-
-        func waitForCalls(_ count: Int) async {
-            guard callCount < count else { return }
-            await withCheckedContinuation { waiters.append((count, $0)) }
-        }
-
-        func releaseAll() {
-            let continuations = running
-            running.removeAll()
-            for continuation in continuations { continuation.resume() }
-        }
-
-        var calls: Int { callCount }
+        let store = UsageStore(providers: [
+            CodexDisplayProvider(
+                snapshot: ProviderSnapshot(
+                    provider: .codex, accounts: accounts, fetchedAt: now))
+        ])
+        store.setEnabled(.codex, enabled: true)
+        let app = AppState(
+            usageStore: store, onboardingIsComplete: false)
+        await store.refresh([.codex])
+        #expect(app.codexAccounts.map(\.label) == ["Personal", "Work"])
+        #expect(app.mainMeterReading?.accountID == homeB)
+        defaults.set(homeA, forKey: MeterSettings.codexMainMeterAccountKey)
+        #expect(app.mainMeterReading?.accountID == homeA)
+        defaults.set([homeB], forKey: AppSettings.configuredCodexHomesKey)
+        app.codexConfigurationDidChange()
+        #expect(app.mainMeterReading == nil)
+        #expect(app.mainMeterError?.contains("no longer configured") == true)
+        #expect(app.codexAccounts.map(\.id) == [homeB])
+        AppSettings.codexSourceEnabled = false
+        app.providerEnablementDidChange()
+        #expect(app.codexAccounts.isEmpty)
+        #expect(store.reading(for: .codex) == nil)
     }
 
     @Test("A temporary Keychain failure does not skip first-run onboarding")
@@ -527,8 +175,7 @@ struct AppLogicTests {
                 manualOAuthAvailability: .temporarilyUnavailable,
                 cursorStateExists: false,
                 codexUsageExists: false,
-                codexConfigurationExists: false,
-                statuslineDataDirectoryExists: false))
+                codexConfigurationExists: false))
     }
 
     @Test("Confirmed OAuth credential presence skips first-run onboarding")
@@ -540,117 +187,7 @@ struct AppLogicTests {
                 manualOAuthAvailability: .missing,
                 cursorStateExists: false,
                 codexUsageExists: false,
-                codexConfigurationExists: false,
-                statuslineDataDirectoryExists: false))
-    }
-
-    @MainActor
-    @Test("The selected main provider is never held back by the secondary cadence")
-    func mainMeterProviderPollsEveryCycle() async throws {
-        // Claude owns the main meter by default, so it drives the menu bar, the
-        // widget, and every quota alert. Repeated background cycles must each reach
-        // it, whatever the popover has done. Only popover-only sources may skip.
-        let defaults = UserDefaults.standard
-        let shared = AppGroupConfig.sharedDefaults
-        let providerKey = AppGroupConfig.mainMeterProviderKey
-        let previousStatusline = defaults.object(
-            forKey: AppSettings.statuslineSourceEnabledKey)
-        let previousProvider = defaults.object(forKey: providerKey)
-        let previousSharedProvider = shared?.object(forKey: providerKey)
-        defer {
-            if let previousStatusline {
-                defaults.set(previousStatusline, forKey: AppSettings.statuslineSourceEnabledKey)
-            } else {
-                defaults.removeObject(forKey: AppSettings.statuslineSourceEnabledKey)
-            }
-            if let previousProvider {
-                defaults.set(previousProvider, forKey: providerKey)
-            } else {
-                defaults.removeObject(forKey: providerKey)
-            }
-            if let previousSharedProvider {
-                shared?.set(previousSharedProvider, forKey: providerKey)
-            } else {
-                shared?.removeObject(forKey: providerKey)
-            }
-        }
-        AppSettings.statuslineSourceEnabled = true
-        defaults.set(MainMeterProvider.claude.rawValue, forKey: providerKey)
-        shared?.set(MainMeterProvider.claude.rawValue, forKey: providerKey)
-
-        let recorder = PollRecorder()
-        let appState = AppState(
-            pipeline: RecordingPipeline(recorder: recorder),
-            serviceStatusFetcher: { nil },
-            // Never reach the real bridge: it installs into `~/.claude` and now also
-            // changes permissions under `~/.claude-meter`.
-            configBridgeRefreshOperation: { _ in },
-            onboardingIsComplete: true)
-        defer { appState.stopPolling() }
-
-        #expect(appState.mainMeterProvider == .claude)
-        for expected in 1...3 {
-            appState.refreshNow(kind: .background)
-            // This asserts that each cycle reaches Claude, not how fast. A tight
-            // deadline only makes it flaky when the whole gate loads the machine.
-            try await Timeout.run(seconds: 10) { await recorder.waitForPoll(expected) }
-            #expect(await recorder.pollCount() == expected)
-        }
-    }
-
-    @Test("Claude and the selected main provider never take the slow cadence")
-    func cheapAndSelectedSourcesAreNeverGated() {
-        // Claude's first tier is a local statusline read, so slowing it saves
-        // nothing. Codex is gated only while it does not own the main meter.
-        #expect(!AppState.isRateLimitable(.claude, mainMeter: .claude))
-        #expect(!AppState.isRateLimitable(.claude, mainMeter: .codex))
-        #expect(!AppState.isRateLimitable(.codex, mainMeter: .codex))
-        #expect(AppState.isRateLimitable(.codex, mainMeter: .claude))
-        #expect(AppState.isRateLimitable(.cursor, mainMeter: .claude))
-        #expect(AppState.isRateLimitable(.cursor, mainMeter: .codex))
-        #expect(AppState.isRateLimitable(.grok, mainMeter: .claude))
-    }
-
-    @Test("A popover-only source skips a background cycle while nobody is looking")
-    func secondarySourceSkipsBackgroundCycle() {
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let enabled: Set<AppState.PollSource> = [.claude, .codex, .cursor, .grok]
-        let justPolled = [
-            AppState.PollSource.codex: now.addingTimeInterval(-60),
-            AppState.PollSource.cursor: now.addingTimeInterval(-60),
-            AppState.PollSource.grok: now.addingTimeInterval(-60),
-        ]
-
-        // Claude owns the meter and nobody is looking: only Claude runs.
-        let idle = AppState.admittedSources(
-            enabled: enabled, mainMeterProvider: .claude, lastAttemptAt: justPolled,
-            lastPopoverOpenAt: now.addingTimeInterval(-3600), isInteractive: false, now: now)
-        #expect(idle == [.claude])
-
-        // A user action reaches every enabled source at once.
-        let interactive = AppState.admittedSources(
-            enabled: enabled, mainMeterProvider: .claude, lastAttemptAt: justPolled,
-            lastPopoverOpenAt: now.addingTimeInterval(-3600), isInteractive: true, now: now)
-        #expect(interactive == enabled)
-
-        // A recent popover visit keeps every source on the fast cadence.
-        let recentlyViewed = AppState.admittedSources(
-            enabled: enabled, mainMeterProvider: .claude, lastAttemptAt: justPolled,
-            lastPopoverOpenAt: now.addingTimeInterval(-30), isInteractive: false, now: now)
-        #expect(recentlyViewed == enabled)
-
-        // After the idle interval the slow cadence runs them again.
-        let due = AppState.admittedSources(
-            enabled: enabled, mainMeterProvider: .claude,
-            lastAttemptAt: justPolled.mapValues { $0.addingTimeInterval(-300) },
-            lastPopoverOpenAt: now.addingTimeInterval(-3600), isInteractive: false, now: now)
-        #expect(due == enabled)
-
-        // With Codex selected, Codex keeps the fast cadence and Claude still runs.
-        let codexSelected = AppState.admittedSources(
-            enabled: enabled, mainMeterProvider: .codex, lastAttemptAt: justPolled,
-            lastPopoverOpenAt: now.addingTimeInterval(-3600), isInteractive: false, now: now)
-        #expect(codexSelected == [.claude, .codex])
+                codexConfigurationExists: false))
     }
 
     @MainActor
@@ -659,30 +196,30 @@ struct AppLogicTests {
         let defaults = UserDefaults.standard
         let completionKey = "hasCompletedOnboarding"
         let previousCompletion = defaults.object(forKey: completionKey)
-        let previousStatusline = defaults.object(forKey: AppSettings.statuslineSourceEnabledKey)
+        let previousOAuth = defaults.object(forKey: AppSettings.oauthSourceEnabledKey)
         defer {
             if let previousCompletion {
                 defaults.set(previousCompletion, forKey: completionKey)
             } else {
                 defaults.removeObject(forKey: completionKey)
             }
-            if let previousStatusline {
-                defaults.set(previousStatusline, forKey: AppSettings.statuslineSourceEnabledKey)
+            if let previousOAuth {
+                defaults.set(previousOAuth, forKey: AppSettings.oauthSourceEnabledKey)
             } else {
-                defaults.removeObject(forKey: AppSettings.statuslineSourceEnabledKey)
+                defaults.removeObject(forKey: AppSettings.oauthSourceEnabledKey)
             }
         }
-        AppSettings.statuslineSourceEnabled = true
+        AppSettings.oauthSourceEnabled = true
 
         let recorder = PollRecorder()
         let appState = AppState(
-            pipeline: RecordingPipeline(recorder: recorder),
-            serviceStatusFetcher: { nil },
+            usageStore: recordingStore(recorder),
             onboardingIsComplete: false)
-        defer { appState.stopPolling() }
+        defer { appState.refreshScheduler.stop() }
 
-        appState.startPolling()
-        try await Task.sleep(for: .milliseconds(50))
+        appState.providerEnablementDidChange()
+        appState.refreshNow()
+        await Task.yield()
         let countBeforeStart = await recorder.pollCount()
         #expect(countBeforeStart == 0)
 
@@ -691,727 +228,6 @@ struct AppLogicTests {
         let countAfterStart = await recorder.pollCount()
         #expect(countAfterStart == 1)
         #expect(defaults.bool(forKey: completionKey))
-    }
-
-    @MainActor
-    @Test("First-run onboarding delays the notification permission prompt")
-    func onboardingDelaysNotificationAuthorization() async {
-        let delivery = AuthorizationRecordingDelivery()
-        let engine = NotificationEngine(delivery: delivery)
-        let appState = AppState(
-            pipeline: UnusedPipeline(),
-            notificationEngine: engine,
-            onboardingIsComplete: false)
-        defer { appState.stopPolling() }
-
-        await Task.yield()
-        #expect(await delivery.requests == 0)
-
-        appState.completeOnboarding()
-        await delivery.waitForRequest()
-        #expect(await delivery.requests == 1)
-    }
-
-    @MainActor
-    @Test("Pausing cancels an attention drain before it can post")
-    func pauseCancelsSuspendedAttentionDrain() async {
-        let defaults = UserDefaults.standard
-        let previousStop = defaults.object(forKey: AppSettings.attentionStopEnabledKey)
-        let previousActive = defaults.object(forKey: AppSettings.isActiveKey)
-        defer {
-            if let previousStop {
-                defaults.set(previousStop, forKey: AppSettings.attentionStopEnabledKey)
-            } else {
-                defaults.removeObject(forKey: AppSettings.attentionStopEnabledKey)
-            }
-            if let previousActive {
-                defaults.set(previousActive, forKey: AppSettings.isActiveKey)
-            } else {
-                defaults.removeObject(forKey: AppSettings.isActiveKey)
-            }
-        }
-        AppSettings.attentionStopEnabled = true
-
-        let event = SessionEvent(
-            kind: .stop,
-            accountKey: "claude",
-            sessionId: "session",
-            cwd: nil,
-            message: nil,
-            capturedAt: Date())
-        let drainer = SuspendedAttentionEventDrainer(event: event)
-        let delivery = SuspendedNotificationDelivery()
-        let state = AppState(
-            pipeline: UnusedPipeline(),
-            notificationEngine: NotificationEngine(delivery: delivery),
-            systemIntegrationEnabled: true,
-            configBridgeRefreshOperation: { _ in },
-            attentionEventDrainOperation: { _, _ in await drainer.drain() })
-
-        let watcher = state.startAttentionWatcherForTesting()
-        await drainer.waitUntilStarted()
-        state.setActive(false)
-        await drainer.release()
-        await watcher?.value
-
-        #expect(!(await delivery.state()).addStarted)
-    }
-
-    @MainActor
-    @Test("Pausing retracts an attention alert suspended in delivery")
-    func pauseRetractsSuspendedAttentionAlert() async {
-        let defaults = UserDefaults.standard
-        let previousStop = defaults.object(forKey: AppSettings.attentionStopEnabledKey)
-        let previousActive = defaults.object(forKey: AppSettings.isActiveKey)
-        defer {
-            if let previousStop {
-                defaults.set(previousStop, forKey: AppSettings.attentionStopEnabledKey)
-            } else {
-                defaults.removeObject(forKey: AppSettings.attentionStopEnabledKey)
-            }
-            if let previousActive {
-                defaults.set(previousActive, forKey: AppSettings.isActiveKey)
-            } else {
-                defaults.removeObject(forKey: AppSettings.isActiveKey)
-            }
-        }
-        AppSettings.attentionStopEnabled = true
-
-        let event = SessionEvent(
-            kind: .stop,
-            accountKey: "claude",
-            sessionId: "session",
-            cwd: nil,
-            message: nil,
-            capturedAt: Date())
-        let drainer = SuspendedAttentionEventDrainer(event: event)
-        let delivery = SuspendedNotificationDelivery()
-        let state = AppState(
-            pipeline: UnusedPipeline(),
-            notificationEngine: NotificationEngine(delivery: delivery),
-            systemIntegrationEnabled: true,
-            configBridgeRefreshOperation: { _ in },
-            attentionEventDrainOperation: { _, _ in await drainer.drain() })
-
-        let watcher = state.startAttentionWatcherForTesting()
-        await drainer.waitUntilStarted()
-        await drainer.release()
-        let didStartDelivery = await delivery.waitUntilAddStarts(for: .seconds(5))
-        #expect(didStartDelivery)
-        guard didStartDelivery else {
-            state.setActive(false)
-            await watcher?.value
-            return
-        }
-
-        state.setActive(false)
-        await delivery.finishAdd()
-        let didRetract = await delivery.waitUntilRetractionCompletes(for: .seconds(5))
-        await watcher?.value
-
-        #expect(didRetract)
-        let deliveryState = await delivery.state()
-        #expect(deliveryState.pending.isEmpty)
-        #expect(deliveryState.delivered.isEmpty)
-        #expect(deliveryState.pendingRemovals == 1)
-        #expect(deliveryState.deliveredRemovals == 1)
-    }
-
-    @MainActor
-    @Test("An enabled watcher restart preserves an event already removed from disk")
-    func enabledAttentionRestartPreservesInProgressDrain() async {
-        let defaults = UserDefaults.standard
-        let previousStop = defaults.object(forKey: AppSettings.attentionStopEnabledKey)
-        let previousActive = defaults.object(forKey: AppSettings.isActiveKey)
-        defer {
-            if let previousStop {
-                defaults.set(previousStop, forKey: AppSettings.attentionStopEnabledKey)
-            } else {
-                defaults.removeObject(forKey: AppSettings.attentionStopEnabledKey)
-            }
-            if let previousActive {
-                defaults.set(previousActive, forKey: AppSettings.isActiveKey)
-            } else {
-                defaults.removeObject(forKey: AppSettings.isActiveKey)
-            }
-        }
-        AppSettings.attentionStopEnabled = true
-
-        let event = SessionEvent(
-            kind: .stop,
-            accountKey: "claude",
-            sessionId: "session",
-            cwd: nil,
-            message: nil,
-            capturedAt: Date())
-        let drainer = SuspendedAttentionEventDrainer(event: event)
-        let delivery = SuspendedNotificationDelivery()
-        let state = AppState(
-            pipeline: UnusedPipeline(),
-            notificationEngine: NotificationEngine(delivery: delivery),
-            systemIntegrationEnabled: true,
-            configBridgeRefreshOperation: { _ in },
-            attentionEventDrainOperation: { _, _ in await drainer.drain() })
-        defer { state.setActive(false) }
-
-        state.startAttentionWatcherForTesting()
-        await drainer.waitUntilStarted()
-        state.startAttentionWatcherForTesting()
-        await drainer.release()
-
-        let didStartDelivery = await delivery.waitUntilAddStarts(for: .seconds(5))
-        if didStartDelivery { await delivery.finishAdd() }
-        #expect(didStartDelivery)
-    }
-
-    @MainActor
-    @Test("A cancelled poll cycle cannot clear a newer cycle's loading state")
-    func cancelledPollCycleDoesNotOwnNewLoadingState() async throws {
-        let defaults = UserDefaults.standard
-        let sourceKeys = [
-            AppSettings.statuslineSourceEnabledKey,
-            AppSettings.oauthSourceEnabledKey,
-            AppSettings.cursorSourceEnabledKey,
-            AppSettings.codexSourceEnabledKey,
-            AppSettings.grokSourceEnabledKey,
-        ]
-        let previousValues = sourceKeys.map { defaults.object(forKey: $0) }
-        defer {
-            for (key, value) in zip(sourceKeys, previousValues) {
-                if let value {
-                    defaults.set(value, forKey: key)
-                } else {
-                    defaults.removeObject(forKey: key)
-                }
-            }
-        }
-        AppSettings.statuslineSourceEnabled = true
-        AppSettings.oauthSourceEnabled = false
-        AppSettings.cursorSourceEnabled = false
-        AppSettings.codexSourceEnabled = false
-        AppSettings.grokSourceEnabled = false
-
-        let recorder = PollRecorder()
-        let barrier = PollCompletionBarrier()
-        let appState = AppState(
-            pipeline: RecordingPipeline(recorder: recorder),
-            serviceStatusFetcher: { nil },
-            pollCompletionBarrier: { await barrier.arriveAndSuspend() })
-        defer {
-            appState.stopPolling()
-            Task {
-                await barrier.release(1)
-                await barrier.release(2)
-                await barrier.release(3)
-            }
-        }
-
-        appState.startPolling()
-        try await Timeout.run(seconds: 2) { await barrier.waitForArrivals(1) }
-        appState.stopPolling()
-        appState.startPolling()
-        try await Timeout.run(seconds: 2) { await barrier.waitForArrivals(2) }
-
-        await barrier.release(1)
-        try await Task.sleep(for: .milliseconds(25))
-        #expect(appState.isLoading)
-
-        appState.refreshNow()
-        try await Task.sleep(for: .milliseconds(25))
-        #expect(await recorder.pollCount() == 2)
-
-        await barrier.release(2)
-        try await Timeout.run(seconds: 2) { await barrier.waitForArrivals(3) }
-        #expect(await recorder.pollCount() == 3)
-        await barrier.release(3)
-    }
-
-    @MainActor
-    @Test("A cancelled old poll cannot overwrite a newer persisted snapshot")
-    func cancelledOldPollCannotOverwriteNewerPersistedSnapshot() async throws {
-        let defaults = UserDefaults.standard
-        let sourceKeys = [
-            AppSettings.statuslineSourceEnabledKey,
-            AppSettings.oauthSourceEnabledKey,
-            AppSettings.cursorSourceEnabledKey,
-            AppSettings.codexSourceEnabledKey,
-            AppSettings.grokSourceEnabledKey,
-        ]
-        let previousValues = sourceKeys.map { defaults.object(forKey: $0) }
-        defer {
-            for (key, value) in zip(sourceKeys, previousValues) {
-                if let value {
-                    defaults.set(value, forKey: key)
-                } else {
-                    defaults.removeObject(forKey: key)
-                }
-            }
-        }
-        AppSettings.statuslineSourceEnabled = true
-        AppSettings.oauthSourceEnabled = false
-        AppSettings.cursorSourceEnabled = false
-        AppSettings.codexSourceEnabled = false
-        AppSettings.grokSourceEnabled = false
-
-        func snapshot(_ version: String, percent: Double) -> ClaudeUsageSnapshot {
-            ClaudeUsageSnapshot(
-                parserVersion: version,
-                createdAt: Date(),
-                lastSuccessfulPollAt: Date(),
-                source: SourceInfo(cliPath: "/test", command: version),
-                limits: LimitInfo(
-                    currentSession: LimitWindow(percentUsed: percent)),
-                state: SnapshotState(status: .ok, severity: .normal))
-        }
-
-        let oldPipeline = SuspendedSnapshotPipeline(snapshot: snapshot("old", percent: 10))
-        let state = AppState(
-            pipeline: oldPipeline,
-            serviceStatusFetcher: { nil },
-            oauthEnrichmentFetcher: { _ in .unavailable(.notConnected) })
-        defer {
-            state.stopPolling()
-            Task { await oldPipeline.release() }
-        }
-
-        state.startPolling()
-        await oldPipeline.waitUntilStarted()
-        state.stopPolling()
-        state.pipeline = FixedSnapshotPipeline(snapshot: snapshot("new", percent: 90))
-        state.startPolling()
-
-        for _ in 0..<200 where state.snapshot?.parserVersion != "new" {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        #expect(state.snapshot?.parserVersion == "new")
-        #expect(state.persistedSnapshotForTesting()?.parserVersion == "new")
-
-        await oldPipeline.release()
-        for _ in 0..<20 { await Task.yield() }
-
-        #expect(state.snapshot?.parserVersion == "new")
-        #expect(state.persistedSnapshotForTesting()?.parserVersion == "new")
-    }
-
-    @MainActor
-    @Test("Test polls use an explicit cost scanner or an empty default", arguments: [true, false])
-    func testPollCostScannerIsExplicit(usesInjectedScan: Bool) async throws {
-        let defaults = UserDefaults.standard
-        let sourceKeys = [
-            AppSettings.statuslineSourceEnabledKey,
-            AppSettings.oauthSourceEnabledKey,
-            AppSettings.cursorSourceEnabledKey,
-            AppSettings.codexSourceEnabledKey,
-            AppSettings.grokSourceEnabledKey,
-        ]
-        let previousValues = sourceKeys.map { defaults.object(forKey: $0) }
-        defer {
-            for (key, value) in zip(sourceKeys, previousValues) {
-                if let value {
-                    defaults.set(value, forKey: key)
-                } else {
-                    defaults.removeObject(forKey: key)
-                }
-            }
-        }
-        AppSettings.statuslineSourceEnabled = true
-        AppSettings.oauthSourceEnabled = false
-        AppSettings.cursorSourceEnabled = false
-        AppSettings.codexSourceEnabled = false
-        AppSettings.grokSourceEnabled = false
-        let now = Date()
-        let snapshot = ClaudeUsageSnapshot(
-            parserVersion: "test-scanner", createdAt: now, lastSuccessfulPollAt: now,
-            source: SourceInfo(cliPath: "/test", command: "test"),
-            limits: LimitInfo(currentSession: LimitWindow(percentUsed: 42)),
-            models: [ModelUsage(name: "old-model")],
-            state: SnapshotState(status: .ok, severity: .normal))
-        let expectedModels = usesInjectedScan ? [ModelUsage(name: "test-model")] : []
-        let completion = PollRecorder()
-        let state: AppState
-        if usesInjectedScan {
-            state = AppState(
-                pipeline: FixedSnapshotPipeline(snapshot: snapshot),
-                costUsageScanner: { _, _ in
-                    CostUsageResult(models: expectedModels, isPartialEstimate: true)
-                },
-                pollCompletionBarrier: { await completion.record() })
-        } else {
-            state = AppState(
-                pipeline: FixedSnapshotPipeline(snapshot: snapshot),
-                pollCompletionBarrier: { await completion.record() })
-        }
-        defer { state.stopPolling() }
-        state.startPolling()
-        try await Timeout.run(seconds: 2) { await completion.waitForPoll() }
-        for _ in 0..<200 where state.costIsLoading {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        #expect(!state.costIsLoading)
-        #expect(state.snapshot?.models == expectedModels)
-        #expect(state.persistedSnapshotForTesting()?.models == expectedModels)
-        #expect(state.snapshot?.limits.currentSession.percentUsed == 42)
-        #expect(state.costScanPartial == usesInjectedScan)
-    }
-
-    private actor SuspendedCostScanner {
-        private(set) var callCount = 0
-        private var running: [CheckedContinuation<CostUsageResult, Never>] = []
-        func scan() async -> CostUsageResult {
-            callCount += 1
-            return await withCheckedContinuation { running.append($0) }
-        }
-        func release(_ result: CostUsageResult) {
-            guard !running.isEmpty else { return }
-            running.removeFirst().resume(returning: result)
-        }
-    }
-
-    @MainActor
-    private func onlyClaudeSourcesForCostTest() -> () -> Void {
-        let defaults = UserDefaults.standard
-        let keys = [
-            AppSettings.statuslineSourceEnabledKey, AppSettings.oauthSourceEnabledKey,
-            AppSettings.cursorSourceEnabledKey, AppSettings.codexSourceEnabledKey,
-            AppSettings.grokSourceEnabledKey,
-        ]
-        let previous = keys.map { defaults.object(forKey: $0) }
-        for key in keys { defaults.set(key == AppSettings.statuslineSourceEnabledKey, forKey: key) }
-        return {
-            for (key, value) in zip(keys, previous) {
-                if let value {
-                    defaults.set(value, forKey: key)
-                } else {
-                    defaults.removeObject(forKey: key)
-                }
-            }
-        }
-    }
-
-    @MainActor
-    @Test("Slow cost scans do not delay quota and merge into the latest snapshot")
-    func independentCostPublication() async throws {
-        let restore = onlyClaudeSourcesForCostTest()
-        defer { restore() }
-        let scan = SuspendedCostScanner()
-        let completion = PollRecorder()
-        let now = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
-        func snapshot(_ percent: Double) -> ClaudeUsageSnapshot {
-            ClaudeUsageSnapshot(
-                parserVersion: "cost-test", createdAt: now,
-                lastSuccessfulPollAt: now, source: SourceInfo(cliPath: "/test", command: "test"),
-                limits: LimitInfo(currentSession: LimitWindow(percentUsed: percent)),
-                models: [ModelUsage(name: "unverified-old-root")],
-                state: SnapshotState(status: .ok, severity: .normal))
-        }
-        let state = AppState(
-            pipeline: FixedSnapshotPipeline(snapshot: snapshot(42)),
-            costUsageScanner: { _, _ in await scan.scan() },
-            pollCompletionBarrier: { await completion.record() })
-        defer { state.stopPolling() }
-        state.startPolling()
-        try await Timeout.run(seconds: 2) { await completion.waitForPoll() }
-        for _ in 0..<200 where state.isLoading { try await Task.sleep(for: .milliseconds(5)) }
-        #expect(!state.isLoading)
-        #expect(state.costIsLoading)
-        #expect(state.snapshot?.limits.currentSession.percentUsed == 42)
-        #expect(state.persistedSnapshotForTesting()?.models == [])
-
-        state.pipeline = FixedSnapshotPipeline(snapshot: snapshot(80))
-        for count in 2...5 {
-            state.refreshNow()
-            try await Timeout.run(seconds: 2) { await completion.waitForPoll(count) }
-            for _ in 0..<200 where state.isLoading { try await Task.sleep(for: .milliseconds(5)) }
-        }
-        #expect(await scan.callCount == 1)
-        let before = state.mainMeterReading
-        await scan.release(CostUsageResult(models: [ModelUsage(name: "fresh-cost")]))
-        for _ in 0..<200 where await scan.callCount < 2 {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        #expect(await scan.callCount == 2)
-        #expect(state.costModels.first?.name == "fresh-cost")
-        #expect(state.snapshot?.limits.currentSession.percentUsed == 80)
-        #expect(state.persistedSnapshotForTesting()?.limits.currentSession.percentUsed == 80)
-        #expect(state.lastPolledAt == now)
-        #expect(state.mainMeterReading == before)
-        #expect(state.persistedSnapshotForTesting()?.costObservation?.scannedAt != nil)
-        await scan.release(.empty)
-        for _ in 0..<200 where state.costIsLoading { try await Task.sleep(for: .milliseconds(5)) }
-        #expect(state.costModels.isEmpty)
-        #expect(state.persistedSnapshotForTesting()?.models == [])
-    }
-
-    @MainActor
-    @Test("A revoked cost scan cannot republish data from the old account scope")
-    func revokedCostScanIsDiscarded() async throws {
-        let restore = onlyClaudeSourcesForCostTest()
-        defer { restore() }
-        let scan = SuspendedCostScanner()
-        let completion = PollRecorder()
-        let now = Date()
-        let snapshot = ClaudeUsageSnapshot(
-            parserVersion: "scope-test", createdAt: now,
-            lastSuccessfulPollAt: now, source: SourceInfo(cliPath: "/test", command: "test"),
-            limits: LimitInfo(currentSession: LimitWindow(percentUsed: 10)),
-            state: SnapshotState(status: .ok, severity: .normal))
-        let state = AppState(
-            pipeline: FixedSnapshotPipeline(snapshot: snapshot),
-            costUsageScanner: { _, _ in await scan.scan() },
-            pollCompletionBarrier: { await completion.record() })
-        defer { state.stopPolling() }
-        state.startPolling()
-        try await Timeout.run(seconds: 2) { await completion.waitForPoll() }
-        for _ in 0..<200 where await scan.callCount < 1 {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        let defaults = UserDefaults.standard
-        let oldDisabled = defaults.object(forKey: AppGroupConfig.disabledAccountKeysKey)
-        defer {
-            if let oldDisabled {
-                defaults.set(oldDisabled, forKey: AppGroupConfig.disabledAccountKeysKey)
-            } else {
-                defaults.removeObject(forKey: AppGroupConfig.disabledAccountKeysKey)
-            }
-        }
-        // The setting changes before the debounce advances the poll generation.
-        defaults.set(["revoked-root"], forKey: AppGroupConfig.disabledAccountKeysKey)
-        await scan.release(CostUsageResult(models: [ModelUsage(name: "revoked-root")]))
-        for _ in 0..<200 where state.costIsLoading {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        #expect(state.costModels.isEmpty)
-        #expect(state.persistedSnapshotForTesting()?.models == [])
-        state.stopPolling()
-        state.startPolling()
-        try await Timeout.run(seconds: 2) { await completion.waitForPoll(2) }
-        for _ in 0..<200 where await scan.callCount < 2 {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        await scan.release(CostUsageResult(models: [ModelUsage(name: "current-root")]))
-        for _ in 0..<200 where state.costIsLoading { try await Task.sleep(for: .milliseconds(5)) }
-        #expect(state.costModels.first?.name == "current-root")
-    }
-
-    @MainActor
-    @Test("Repeated cost timeouts cannot accumulate cancellation-ignoring scans")
-    func costTimeoutBoundsWorkers() async throws {
-        let restore = onlyClaudeSourcesForCostTest()
-        defer { restore() }
-        let scan = SuspendedCostScanner()
-        let completion = PollRecorder()
-        let state = AppState(
-            pipeline: UnusedPipeline(),
-            costUsageScanner: { _, _ in await scan.scan() }, costScanTimeoutSeconds: 0.05,
-            pollCompletionBarrier: { await completion.record() })
-        defer { state.stopPolling() }
-        state.startPolling()
-        for count in 1...4 {
-            try await Timeout.run(seconds: 2) { await completion.waitForPoll(count) }
-            for _ in 0..<200 where state.costIsLoading {
-                try await Task.sleep(for: .milliseconds(5))
-            }
-            #expect(state.costRefreshFailed)
-            #expect(await scan.callCount == 1)
-            if count < 4 { state.refreshNow() }
-        }
-        await scan.release(CostUsageResult(models: [ModelUsage(name: "too-late")]))
-        for _ in 0..<20 { await Task.yield() }
-        #expect(state.costModels.isEmpty)
-    }
-
-    @MainActor
-    @Test("Fatal and thrown Claude poll failures persist sanitized diagnostics")
-    func claudePollFailuresPersistSanitizedDiagnostics() async throws {
-        let defaults = UserDefaults.standard
-        let sourceKeys = [
-            AppSettings.statuslineSourceEnabledKey,
-            AppSettings.oauthSourceEnabledKey,
-            AppSettings.cursorSourceEnabledKey,
-            AppSettings.codexSourceEnabledKey,
-            AppSettings.grokSourceEnabledKey,
-        ]
-        let previousValues = sourceKeys.map { defaults.object(forKey: $0) }
-        defer {
-            for (key, value) in zip(sourceKeys, previousValues) {
-                if let value {
-                    defaults.set(value, forKey: key)
-                } else {
-                    defaults.removeObject(forKey: key)
-                }
-            }
-        }
-        AppSettings.statuslineSourceEnabled = true
-        AppSettings.oauthSourceEnabled = false
-        AppSettings.cursorSourceEnabled = false
-        AppSettings.codexSourceEnabled = false
-        AppSettings.grokSourceEnabled = false
-
-        let fatalMessage = "Bearer sk-ant-fatal at /Users/alice/private"
-        let thrownMessage = "access_token: oidc-thrown for person@example.com"
-        let cases: [(pipeline: any ClaudeMeterPipeline, message: String)] = [
-            (
-                FixedResultPipeline(
-                    result: ParseResult(
-                        snapshot: nil,
-                        warnings: [],
-                        errors: [ParseError(fatalMessage)],
-                        rawHash: "")),
-                fatalMessage
-            ),
-            (ThrowingPipeline(message: thrownMessage), thrownMessage),
-        ]
-
-        for testCase in cases {
-            let completion = PollRecorder()
-            let state = AppState(
-                pipeline: testCase.pipeline,
-                serviceStatusFetcher: { nil },
-                oauthEnrichmentFetcher: { _ in .unavailable(.notConnected) },
-                pollCompletionBarrier: { await completion.record() })
-            state.startPolling()
-            try await Timeout.run(seconds: 2) { await completion.waitForPoll() }
-
-            let expected = DiagnosticsSanitizer.sanitize(testCase.message)
-            #expect(state.lastError == expected)
-            #expect(state.persistedLastErrorForTesting()?.message == expected)
-            #expect(!expected.contains("sk-ant-fatal"))
-            #expect(!expected.contains("oidc-thrown"))
-
-            state.stopPolling()
-            state.pipeline = FixedSnapshotPipeline(
-                snapshot: ClaudeUsageSnapshot(
-                    parserVersion: "recovered",
-                    createdAt: Date(),
-                    lastSuccessfulPollAt: Date(),
-                    source: SourceInfo(cliPath: "/test", command: "success"),
-                    limits: LimitInfo(currentSession: LimitWindow(percentUsed: 20)),
-                    state: SnapshotState(status: .ok, severity: .normal)))
-            state.startPolling()
-            try await Timeout.run(seconds: 2) { await completion.waitForPoll(2) }
-
-            #expect(state.lastError == nil)
-            #expect(state.persistedLastErrorForTesting() == nil)
-            state.stopPolling()
-        }
-    }
-
-    @MainActor
-    @Test("Stale Claude polls cannot write or clear persisted errors")
-    func staleClaudePollCannotPersistError() async throws {
-        let defaults = UserDefaults.standard
-        let sourceKeys = [
-            AppSettings.statuslineSourceEnabledKey,
-            AppSettings.oauthSourceEnabledKey,
-            AppSettings.cursorSourceEnabledKey,
-            AppSettings.codexSourceEnabledKey,
-            AppSettings.grokSourceEnabledKey,
-        ]
-        let previousValues = sourceKeys.map { defaults.object(forKey: $0) }
-        defer {
-            for (key, value) in zip(sourceKeys, previousValues) {
-                if let value {
-                    defaults.set(value, forKey: key)
-                } else {
-                    defaults.removeObject(forKey: key)
-                }
-            }
-        }
-        AppSettings.statuslineSourceEnabled = true
-        AppSettings.oauthSourceEnabled = false
-        AppSettings.cursorSourceEnabled = false
-        AppSettings.codexSourceEnabled = false
-        AppSettings.grokSourceEnabled = false
-
-        let pipeline = SuspendedResultPipeline(
-            result: ParseResult(
-                snapshot: nil,
-                warnings: [],
-                errors: [ParseError("Bearer stale-secret")],
-                rawHash: ""))
-        let staleSuccessPipeline = SuspendedResultPipeline(
-            result: ParseResult(
-                snapshot: ClaudeUsageSnapshot(
-                    parserVersion: "stale-success",
-                    createdAt: Date(),
-                    lastSuccessfulPollAt: Date(),
-                    source: SourceInfo(cliPath: "/test", command: "stale-success"),
-                    limits: LimitInfo(currentSession: LimitWindow(percentUsed: 20)),
-                    state: SnapshotState(status: .ok, severity: .normal)),
-                warnings: [],
-                errors: [],
-                rawHash: ""))
-        let completion = PollRecorder()
-        let state = AppState(
-            pipeline: pipeline,
-            serviceStatusFetcher: { nil },
-            oauthEnrichmentFetcher: { _ in .unavailable(.notConnected) },
-            pollCompletionBarrier: { await completion.record() })
-        defer {
-            state.stopPolling()
-            Task {
-                await pipeline.release()
-                await staleSuccessPipeline.release()
-            }
-        }
-
-        state.startPolling()
-        try await Timeout.run(seconds: 2) { await pipeline.waitUntilStarted() }
-        state.stopPolling()
-        await pipeline.release()
-        try await Timeout.run(seconds: 2) { await completion.waitForPoll() }
-
-        #expect(state.lastError == nil)
-        #expect(state.persistedLastErrorForTesting() == nil)
-
-        let currentMessage = "access_token: oidc-current"
-        state.pipeline = FixedResultPipeline(
-            result: ParseResult(
-                snapshot: nil,
-                warnings: [],
-                errors: [ParseError(currentMessage)],
-                rawHash: ""))
-        state.startPolling()
-        try await Timeout.run(seconds: 2) { await completion.waitForPoll(2) }
-        let persistedMessage = DiagnosticsSanitizer.sanitize(currentMessage)
-        #expect(state.persistedLastErrorForTesting()?.message == persistedMessage)
-
-        state.stopPolling()
-        state.pipeline = staleSuccessPipeline
-        state.startPolling()
-        try await Timeout.run(seconds: 2) { await staleSuccessPipeline.waitUntilStarted() }
-        state.stopPolling()
-        await staleSuccessPipeline.release()
-        try await Timeout.run(seconds: 2) { await completion.waitForPoll(3) }
-
-        #expect(state.lastError == persistedMessage)
-        #expect(state.persistedLastErrorForTesting()?.message == persistedMessage)
-    }
-
-    @Test("Cost failures retain only same-scope data and preserve its scan time")
-    func costFailureRetainsOnlySameScope() {
-        let date = Date(timeIntervalSince1970: 100)
-        let value = CostUsageResult(models: [ModelUsage(name: "old")], sourcePaths: ["/a"])
-        let previous = ReadingState.current(value: value, polledAt: date)
-        let partial = AppState.updatedCostReading(
-            CostUsageResult(models: [], isPartialEstimate: true, sourcePaths: ["/a"]),
-            previous: previous, scannedAt: Date())
-        #expect(partial.value == value)
-        #expect(partial.lastPolledAt == date)
-        #expect(partial.isStale)
-        // Settings can be unchanged while a symlink or discovered root changes.
-        // A timeout cannot prove that the previous root scope is still current.
-        let timeout = AppState.updatedCostReading(nil, previous: previous, scannedAt: Date())
-        #expect(timeout.value == nil)
-        #expect(timeout.lastPolledAt == nil)
-        let changed = AppState.updatedCostReading(
-            CostUsageResult(models: [], isPartialEstimate: true, sourcePaths: ["/b"]),
-            previous: previous, scannedAt: Date())
-        #expect(changed.value == nil)
-        #expect(changed.lastPolledAt == nil)
-        let empty = AppState.updatedCostReading(.empty, previous: previous, scannedAt: date)
-        #expect(empty.value?.models == [])
-        #expect(!empty.isStale)
     }
 
     @Test("Friendly account labels normalize separators")
@@ -1434,50 +250,12 @@ struct AppLogicTests {
                 }
             }
         }
-        let state = AppState(pipeline: UnusedPipeline())
+        let state = AppState(usageStore: UsageStore(providers: []))
 
         state.setActive(false)
 
         #expect(!state.isActive)
         #expect(defaults.object(forKey: AppSettings.isActiveKey) as? NSNumber == savedActive)
-    }
-
-    @Test("Forecast menu-bar text pairs nearest energy with run-out time")
-    func forecastMenuBarText() {
-        let now = Date(timeIntervalSince1970: 1_782_269_456)
-        let limits = LimitInfo(
-            currentSession: LimitWindow(
-                percentUsed: 80,
-                resetsAt: now.addingTimeInterval(2.5 * 3600)))
-
-        #expect(
-            MenuBarText.forecast(
-                consideredLimits: [limits],
-                progression: .left,
-                now: now)
-                == "20% · out 38m")
-        #expect(
-            MenuBarText.forecast(
-                consideredLimits: [limits],
-                progression: .used,
-                now: now)
-                == "80% · out 38m")
-    }
-
-    @Test("Forecast menu-bar text falls back to nearest percentage")
-    func forecastMenuBarFallback() {
-        let now = Date(timeIntervalSince1970: 1_782_269_456)
-        let limits = LimitInfo(
-            currentSession: LimitWindow(
-                percentUsed: 20,
-                resetsAt: now.addingTimeInterval(2.5 * 3600)))
-
-        #expect(
-            MenuBarText.forecast(
-                consideredLimits: [limits],
-                progression: .left,
-                now: now)
-                == "80%")
     }
 
     @Test("Spoken menu-bar text names the window, progression, and overall severity")
@@ -1488,8 +266,8 @@ struct AppLogicTests {
             limits: LimitInfo(
                 currentSession: LimitWindow(percentUsed: 30),
                 currentWeekAllModels: LimitWindow(percentUsed: 96)), observedAt: now)
-        for progression in AppGroupConfig.ProgressionMode.allCases {
-            for selection in AppGroupConfig.MenuBarWindow.allCases {
+        for progression in MeterSettings.ProgressionMode.allCases {
+            for selection in MeterSettings.MenuBarWindow.allCases {
                 let text = MenuBarText.accessibilitySummary(
                     provider: .codex, reading: reading, progression: progression,
                     selection: selection, isActive: true, isStale: false, isLoading: false,
@@ -1510,6 +288,27 @@ struct AppLogicTests {
                 }
             }
         }
+    }
+
+    @Test("Menu-bar speech follows reported resets without predicting depletion")
+    func spokenMenuBarReportedReset() {
+        let now = Date(timeIntervalSince1970: 1_782_269_456)
+        let reset = now.addingTimeInterval(2.5 * 3600)
+        let reading = MainMeterReading(
+            provider: .claude, accountID: "test", accountLabel: "Test",
+            limits: LimitInfo(currentSession: LimitWindow(percentUsed: 80, resetsAt: reset)),
+            observedAt: now)
+        func summary(_ time: Date) -> String {
+            MenuBarText.accessibilitySummary(
+                provider: .claude, reading: reading, progression: .left, selection: .nearest,
+                isActive: true, isStale: false, isLoading: false, severity: .warning, now: time)
+        }
+        #expect(
+            summary(now)
+                == "Claude Meter. Claude. Session 20 percent left. Overall quota warning.")
+        #expect(
+            summary(reset)
+                == "Claude Meter. Claude. Session 100 percent left. Overall quota warning.")
     }
 
     @Test("Spoken menu-bar states never describe stale or paused usage as current")
@@ -1537,24 +336,6 @@ struct AppLogicTests {
             summary(value: reading, provider: .codex) == "Claude Meter. Codex. Usage unavailable.")
         #expect(summary(value: reading).contains("Weekly unavailable."))
         #expect(summary(loading: true, value: reading).hasSuffix("Refreshing."))
-    }
-
-    @Test("Spoken menu-bar forecast includes its meaning and clears an expired forecast")
-    func spokenMenuBarForecast() {
-        let now = Date(timeIntervalSince1970: 1_782_269_456)
-        let reset = now.addingTimeInterval(2.5 * 3600)
-        let reading = MainMeterReading(
-            provider: .claude, accountID: "test", accountLabel: "Test",
-            limits: LimitInfo(currentSession: LimitWindow(percentUsed: 80, resetsAt: reset)),
-            observedAt: now)
-        func summary(_ time: Date) -> String {
-            MenuBarText.accessibilitySummary(
-                provider: .claude, reading: reading, progression: .left, selection: .forecast,
-                isActive: true, isStale: false, isLoading: false, severity: .warning, now: time)
-        }
-        #expect(summary(now).contains("May run out in 38m."))
-        #expect(!summary(reset).contains("May run out"))
-        #expect(summary(reset).contains("Session 100 percent left."))
     }
 
     @Test("Native menu-bar accessibility updates without changing visible text")
@@ -1607,190 +388,69 @@ struct AppLogicTests {
         #expect(stale.lastPolledAt == date)
         #expect(stale.error == "offline")
         #expect(stale.isStale)
+
+        let failed = ReadingState<String>.failed(error: "unavailable", lastPolledAt: date)
+        #expect(failed.value == nil)
+        #expect(failed.lastPolledAt == date)
+        #expect(failed.error == "unavailable")
     }
 
-    @Test("Codex refresh failure is separate from observation age")
-    func codexRefreshFailureIsSeparateFromObservationAge() {
-        let suiteName = "CodexFreshness-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set(180.0, forKey: AppGroupConfig.staleAfterSecondsKey)
-        let success = Date(timeIntervalSince1970: 100)
-        let reading = CodexAccountReading(
-            account: CodexAccount(
-                home: URL(fileURLWithPath: "/tmp/codex"),
-                isImplicit: true,
-                customName: nil),
-            state: .stale(
-                value: codexUsage(accountEmail: nil),
-                polledAt: success,
-                error: "offline"),
-            lastAttemptAt: Date(timeIntervalSince1970: 110))
-
-        #expect(reading.latestAttemptFailed)
+    @Test("Visual severity uses configured usage thresholds and resolves expired windows")
+    func visualSeverityUsesThresholds() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let window = LimitWindow(percentUsed: 75, resetsAt: now.addingTimeInterval(600))
+        #expect(window.energyBand(thresholds: .default, asOf: now) == .full)
         #expect(
-            !reading.observationIsStale(
-                asOf: Date(timeIntervalSince1970: 200),
-                shared: nil,
-                defaults: defaults))
+            window.energyBand(thresholds: UsageThresholds(warning: 70, critical: 90), asOf: now)
+                == .low)
         #expect(
-            reading.observationIsStale(
-                asOf: Date(timeIntervalSince1970: 281),
-                shared: nil,
-                defaults: defaults))
+            window.energyBand(thresholds: UsageThresholds(warning: 60, critical: 70), asOf: now)
+                == .empty)
+        #expect(window.displayText(usage: true, asOf: now) == "75%")
+        #expect(window.displayText(usage: false, asOf: now) == "25%")
+        #expect(window.energyBand(thresholds: .default, asOf: now.addingTimeInterval(601)) == .full)
+        #expect(LimitWindow().energyBand(thresholds: .default, asOf: now) == .unknown)
     }
 
+    @Test("Normalized Codex accounts preserve labels, windows and reset credits")
     @MainActor
-    @Test("Codex last-good store survives relaunch without account email")
-    func codexLastGoodStore() {
-        let suiteName = "CodexReadingStore-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let store = CodexReadingStore(defaults: defaults)
-        let account = CodexAccount(
-            home: URL(fileURLWithPath: "/tmp/codex-work"),
-            isImplicit: false,
-            customName: "Work")
-        let success = Date(timeIntervalSince1970: 123)
-        var usage = codexUsage(accountEmail: "person@example.com")
-        usage.rateLimitResets = CodexRateLimitResets(
-            availableCount: 3,
-            credits: [
-                CodexRateLimitResetCredit(
-                    title: "Full reset", expiresAt: success.addingTimeInterval(86400))
-            ])
-        let reading = CodexAccountReading(
-            account: account,
-            state: .current(
-                value: usage,
-                polledAt: success),
-            lastAttemptAt: success, ownerID: "test-owner")
-
-        store.save([reading])
-        let restored = store.restore(
-            accounts: [account],
-            identities: [account.id: .init(ownerID: "test-owner", sourceFingerprint: "test")])
-
-        #expect(restored.count == 1)
-        #expect(restored.first?.lastSuccessfulAt == success)
-        #expect(restored.first?.lastAttemptAt == nil)
-        #expect(restored.first?.usage?.accountEmail == nil)
-        #expect(restored.first?.usage?.maskedAccountEmail == nil)
-        #expect(restored.first?.usage?.authMode == .chatGPT)
-        let card = restored.first.flatMap(PopoverView.codexAccountModel)
-        #expect(card?.rateLimitResets?.availableCount == 3)
-        #expect(card?.rateLimitResets?.credits == usage.rateLimitResets?.credits)
-    }
-
-    @MainActor
-    @Test("A corrupt archived Codex reset cannot reach ISO-8601 persistence")
-    func corruptCodexArchiveDateIsSanitized() throws {
-        let suiteName = "CodexReadingDateStore-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let store = CodexReadingStore(defaults: defaults)
-        let account = CodexAccount(
-            home: URL(fileURLWithPath: "/tmp/codex-date"),
-            isImplicit: true,
-            customName: nil)
-        let observedAt = Date(timeIntervalSince1970: 100)
-        let usage = CodexUsage(
-            primaryWindow: CodexLimitWindow(
-                kind: .primary,
-                usedPercent: 20,
-                resetAt: Date(timeIntervalSince1970: 200),
-                durationSeconds: 18_000,
-                rawLabel: nil),
-            secondaryWindow: nil,
-            usageCredits: nil,
-            accountEmail: nil,
-            plan: "plus",
-            source: .appServer,
-            updatedAt: observedAt)
-        store.save([
-            CodexAccountReading(
-                account: account,
-                state: .current(value: usage, polledAt: observedAt), ownerID: "test-owner")
-        ])
-
-        let key = "codexLastGoodReadings.v1"
-        let data = try #require(defaults.data(forKey: key))
-        var archive = try #require(
-            JSONSerialization.jsonObject(with: data) as? [String: Any])
-        var entries = try #require(archive["entries"] as? [String: Any])
-        var entry = try #require(entries[account.id] as? [String: Any])
-        var archivedUsage = try #require(entry["usage"] as? [String: Any])
-        var primary = try #require(archivedUsage["primaryWindow"] as? [String: Any])
-        primary["resetAt"] = 1e308
-        archivedUsage["primaryWindow"] = primary
-        entry["usage"] = archivedUsage
-        entries[account.id] = entry
-        archive["entries"] = entries
-        defaults.set(try JSONSerialization.data(withJSONObject: archive), forKey: key)
-
-        let restored = try #require(
-            store.restore(
-                accounts: [account],
-                identities: [account.id: .init(ownerID: "test-owner", sourceFingerprint: "test")]
-            ).first)
-        #expect(restored.usage?.primaryWindow?.resetAt == nil)
-        let mainMeter = try #require(AppState.codexMainMeterReading(restored))
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "CodexDatePersistence-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let snapshotStore = SnapshotStore(directory: directory)
-        try snapshotStore.writeMainMeter(mainMeter)
-        #expect(try snapshotStore.readMainMeter() == mainMeter)
-    }
-
-    @Test("Codex readings normalize into the shared main-meter model")
     func codexMainMeterMapping() throws {
-        let observedAt = Date(timeIntervalSince1970: 123)
-        let reading = CodexAccountReading(
-            account: CodexAccount(
-                home: URL(fileURLWithPath: "/tmp/codex-work"),
-                isImplicit: false,
-                customName: "Pi"),
-            state: .current(
-                value: codexUsage(accountEmail: "person@example.com"),
-                polledAt: observedAt))
-
-        let meter = try #require(AppState.codexMainMeterReading(reading))
-        #expect(meter.provider == .codex)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let account = ProviderAccountSnapshot(
+            id: "/test/work", label: "Pi", plan: "Plus",
+            windows: [
+                UsageWindow(
+                    id: "primary", title: "5h", kind: .session,
+                    usedPercent: 25, resetAt: now.addingTimeInterval(3600))
+            ],
+            balances: [
+                BalanceItem(
+                    id: "usage-resets", title: "Usage limit resets", value: 3,
+                    unit: "resets", details: [BalanceDetail(title: "Full reset", expiresAt: now)])
+            ],
+            observedAt: now)
+        let meter = try #require(MainMeterReading(account: account, provider: .codex, now: now))
         #expect(meter.accountLabel == "Pi")
         #expect(meter.plan == "Plus")
         #expect(meter.sessionLabel == "5h")
         #expect(meter.limits.currentSession.percentUsed == 25)
-        #expect(meter.observedAt == observedAt)
+        #expect(meter.observedAt == now)
+        let model = try #require(PopoverView.codexAccountModel(account))
+        #expect(model.rateLimitResets?.value == 3)
+        #expect(model.rateLimitResets?.details?.first?.expiresAt == now)
     }
 
-    @Test("A seven-day Codex primary window normalizes as weekly")
+    @Test("A normalized weekly primary window remains weekly")
     func codexWeeklyPrimaryMapping() throws {
-        let observedAt = Date(timeIntervalSince1970: 123)
-        let usage = CodexUsage(
-            primaryWindow: CodexLimitWindow(
-                kind: .primary,
-                usedPercent: 18,
-                resetAt: Date(timeIntervalSince1970: 456),
-                durationSeconds: 7 * 24 * 60 * 60,
-                rawLabel: nil),
-            secondaryWindow: nil,
-            usageCredits: nil,
-            accountEmail: nil,
-            plan: "prolite",
-            authMode: .chatGPT,
-            source: .directOAuth,
-            updatedAt: observedAt)
-        let reading = CodexAccountReading(
-            account: CodexAccount(
-                home: URL(fileURLWithPath: "/tmp/codex"),
-                isImplicit: true,
-                customName: nil),
-            state: .current(value: usage, polledAt: observedAt))
-
-        let meter = try #require(AppState.codexMainMeterReading(reading))
-
+        let now = Date()
+        let account = ProviderAccountSnapshot(
+            id: "home", label: "Codex",
+            windows: [
+                UsageWindow(
+                    id: "primary", title: "Weekly", kind: .weekly,
+                    usedPercent: 18, resetAt: now.addingTimeInterval(3600))
+            ], observedAt: now)
+        let meter = try #require(MainMeterReading(account: account, provider: .codex, now: now))
         #expect(meter.limits.currentSession.percentUsed == nil)
         #expect(meter.limits.currentWeekAllModels.percentUsed == 18)
         #expect(meter.weeklyLabel == "Weekly")
@@ -1821,69 +481,64 @@ struct AppLogicTests {
         #expect(PlanBadge.style(for: "Pro").text == "PRO")
     }
 
-    @Test("Startup compares the current selection with the persisted publication")
-    func startupMainMeterTransition() {
-        func reading(_ id: String) -> MainMeterReading {
-            MainMeterReading(
-                provider: .claude,
-                accountID: id,
-                accountLabel: id,
-                limits: LimitInfo(currentSession: LimitWindow(percentUsed: 20)),
-                observedAt: Date(timeIntervalSince1970: 100))
+    @MainActor
+    @Test("Claude selects an exact account pin or the nearest OAuth limit")
+    func claudeOAuthAccountSelection() async throws {
+        let defaults = UserDefaults.standard
+        let keys = [
+            MeterSettings.mainMeterProviderKey, MeterSettings.menuBarAccountKey,
+            MeterSettings.disabledAccountKeysKey, MeterSettings.accountPlansKey,
+            MeterSettings.accountNamesKey, AppSettings.oauthSourceEnabledKey,
+        ]
+        let saved = keys.map { defaults.object(forKey: $0) }
+        defer { for (key, value) in zip(keys, saved) { defaults.set(value, forKey: key) } }
+        defaults.set("claude", forKey: MeterSettings.mainMeterProviderKey)
+        defaults.set(true, forKey: AppSettings.oauthSourceEnabledKey)
+        defaults.set([], forKey: MeterSettings.disabledAccountKeysKey)
+        defaults.set([String: String](), forKey: MeterSettings.accountPlansKey)
+        defaults.set([String: String](), forKey: MeterSettings.accountNamesKey)
+        defaults.set("nearest", forKey: MeterSettings.menuBarAccountKey)
+        let now = Date()
+        let accounts = [("claude", 20.0, "Pro", false), ("claude-work", 90.0, "Max", true)].map {
+            id, used, plan, stale in
+            ProviderAccountSnapshot(
+                id: id, label: id, plan: plan,
+                windows: [
+                    UsageWindow(
+                        id: "session", title: "Session", kind: .session, usedPercent: used,
+                        resetAt: nil)
+                ],
+                observedAt: now, isStale: stale)
         }
-        let published = reading("before-reset")
-        let current = reading("after-reset")
-
-        let changed = AppState.startupMainMeterTransition(
-            previousPublished: published,
-            current: current)
-        #expect(changed.bumpRevision)
-        #expect(changed.reloadWidget)
-        #expect(!changed.allowsPersistedRecovery)
-
-        let unchanged = AppState.startupMainMeterTransition(
-            previousPublished: current,
-            current: current)
-        #expect(!unchanged.bumpRevision)
-        #expect(!unchanged.reloadWidget)
-        #expect(unchanged.allowsPersistedRecovery)
-    }
-
-    @Test("Notification baselines never cross main-meter identities")
-    func notificationBaselinesStayWithinIdentity() {
-        func reading(_ provider: MainMeterProvider, _ accountID: String) -> MainMeterReading {
-            MainMeterReading(
-                provider: provider,
-                accountID: accountID,
-                accountLabel: accountID,
-                limits: LimitInfo(currentSession: LimitWindow(percentUsed: 20)),
-                observedAt: Date(timeIntervalSince1970: 100))
-        }
-        let codex = reading(.codex, "codex")
-
-        let switched = NotificationPolicy.mainMeterBaselines(
-            reading: codex,
-            previous: codex,
-            notificationIdentity: nil,
-            allowsPersistedRecovery: false)
-        #expect(switched.escalation == nil)
-        #expect(switched.recovery == nil)
-
-        let relaunched = NotificationPolicy.mainMeterBaselines(
-            reading: codex,
-            previous: codex,
-            notificationIdentity: nil,
-            allowsPersistedRecovery: true)
-        #expect(relaunched.escalation == nil)
-        #expect(relaunched.recovery?.stableIdentity == codex.stableIdentity)
-
-        let continuing = NotificationPolicy.mainMeterBaselines(
-            reading: codex,
-            previous: codex,
-            notificationIdentity: codex.stableIdentity,
-            allowsPersistedRecovery: false)
-        #expect(continuing.escalation?.stableIdentity == codex.stableIdentity)
-        #expect(continuing.recovery?.stableIdentity == codex.stableIdentity)
+        let store = UsageStore(providers: [
+            CodexDisplayProvider(
+                snapshot: ProviderSnapshot(provider: .claude, accounts: accounts, fetchedAt: now))
+        ])
+        store.setEnabled(.claude, enabled: true)
+        let state = AppState(usageStore: store)
+        await store.refresh([.claude])
+        #expect(state.mainMeterReading?.accountID == "claude-work")
+        #expect(state.mainMeterReading?.plan == "Max")
+        #expect(state.mainMeterIsStale)
+        let normalized = try #require(state.normalizedSnapshots[.claude])
+        #expect(normalized.accounts.map(\.id) == ["claude", "claude-work"])
+        #expect(normalized.accounts[1].isStale)
+        #expect(normalized.fetchedAt == now)
+        #expect(
+            ProviderAccountSelection.primary(
+                from: normalized.accounts, pinnedAccountID: nil, asOf: now)?.id
+                == state.mainMeterReading?.accountID)
+        defaults.set("claude", forKey: MeterSettings.menuBarAccountKey)
+        #expect(state.mainMeterReading?.accountID == "claude")
+        #expect(!state.mainMeterIsStale)
+        defaults.set("missing", forKey: MeterSettings.menuBarAccountKey)
+        #expect(state.mainMeterReading == nil)
+        defaults.set("claude-work", forKey: MeterSettings.menuBarAccountKey)
+        defaults.set(["claude-work"], forKey: MeterSettings.disabledAccountKeysKey)
+        #expect(state.mainMeterReading == nil)
+        #expect(state.normalizedSnapshots[.claude]?.accounts.map(\.id) == ["claude"])
+        store.setEnabled(.claude, enabled: false)
+        #expect(state.normalizedSnapshots[.claude] == nil)
     }
 
     @Test("Disabling a Claude account preserves its exact main-meter pin")
@@ -1891,13 +546,13 @@ struct AppLogicTests {
         let suiteName = "AccountTracking-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set("claude-work", forKey: AppGroupConfig.menuBarAccountKey)
+        defaults.set("claude-work", forKey: MeterSettings.menuBarAccountKey)
 
         let disabled = AccountTrackingPolicy.updating(
             disabledKeys: [], accountID: "claude-work", enabled: false)
 
         #expect(disabled == ["claude-work"])
-        #expect(defaults.string(forKey: AppGroupConfig.menuBarAccountKey) == "claude-work")
+        #expect(defaults.string(forKey: MeterSettings.menuBarAccountKey) == "claude-work")
     }
 
     @Test("Account card style applies equally to Claude and Codex")
@@ -1990,48 +645,6 @@ struct AppLogicTests {
         #expect(PopoverView.secondaryProviderPlan(from: models, asOf: now) == nil)
     }
 
-    @Test("Claude account cards keep scoped limits with an active overlay")
-    func claudeAccountScopedLimitMapping() {
-        let accountScoped = [
-            ScopedLimitWindow(
-                id: "account",
-                window: LimitWindow(percentUsed: 40))
-        ]
-        let topLevelScoped = [
-            ScopedLimitWindow(
-                id: "top-level",
-                window: LimitWindow(percentUsed: 70))
-        ]
-        let active = AccountUsage(
-            id: "active",
-            label: "Active",
-            limits: LimitInfo(scopedWeekly: accountScoped),
-            severity: .normal,
-            isActive: true)
-        let inactive = AccountUsage(
-            id: "inactive",
-            label: "Inactive",
-            limits: LimitInfo(scopedWeekly: accountScoped),
-            severity: .normal,
-            isActive: false)
-
-        #expect(
-            PopoverView.scopedLimits(
-                for: active,
-                topLevel: LimitInfo(scopedWeekly: topLevelScoped)
-            ).map(\.id)
-                == ["top-level"])
-        #expect(
-            PopoverView.scopedLimits(for: active, topLevel: LimitInfo()).map(\.id)
-                == ["account"])
-        #expect(
-            PopoverView.scopedLimits(
-                for: inactive,
-                topLevel: LimitInfo(scopedWeekly: topLevelScoped)
-            ).map(\.id)
-                == ["account"])
-    }
-
     @Test("Color slider accessibility adjustments use its step and bounds")
     func colorSliderAccessibilityAdjustment() {
         #expect(
@@ -2086,259 +699,6 @@ struct AppLogicTests {
         #expect(Array(1...7).chunked(into: 3) == [[1, 2, 3], [4, 5, 6], [7]])
     }
 
-    @Test("Partial account OAuth success keeps other last-good readings")
-    func partialAccountOAuthSuccessKeepsCache() {
-        func reading(_ key: String, _ used: Double) -> OAuthAccountReading {
-            OAuthAccountReading(
-                accountKey: key,
-                label: key,
-                email: nil,
-                plan: nil,
-                organizationId: nil,
-                limits: LimitInfo(currentSession: LimitWindow(percentUsed: used)),
-                severity: .normal,
-                fetchedAt: Date(timeIntervalSince1970: used))
-        }
-
-        let merged = AppState.mergedCachedAccountReadings(
-            previous: [reading("a", 10), reading("b", 20), reading("removed", 30)],
-            successful: [reading("a", 80)],
-            validAccountKeys: ["a", "b"])
-
-        #expect(merged.map(\.accountKey) == ["a", "b"])
-        #expect(merged[0].limits.currentSession.percentUsed == 80)
-        #expect(merged[1].limits.currentSession.percentUsed == 20)
-    }
-
-    @Test("Disabled Claude accounts stay out of cached OAuth fallback")
-    func disabledClaudeAccountsStayOutOfCachedOAuthFallback() {
-        func reading(_ key: String) -> OAuthAccountReading {
-            OAuthAccountReading(
-                accountKey: key,
-                label: key,
-                email: nil,
-                plan: nil,
-                organizationId: nil,
-                limits: LimitInfo(),
-                severity: .normal,
-                fetchedAt: Date())
-        }
-
-        let filtered = AppState.enabledCachedAccountReadings(
-            [reading("claude"), reading("work"), reading("personal")],
-            disabledKeys: ["claude", "work"])
-
-        #expect(filtered.map(\.accountKey) == ["claude", "personal"])
-    }
-
-    @MainActor
-    @Test("Successful empty OAuth enrichment clears stale optional fields")
-    func emptyOAuthEnrichmentClearsStaleValues() {
-        var snapshot = ClaudeUsageSnapshot(
-            parserVersion: "test",
-            createdAt: Date(timeIntervalSince1970: 100),
-            source: SourceInfo(cliPath: "statusline", command: "read"),
-            account: AccountInfo(email: "person@example.com", plan: "Max"),
-            limits: LimitInfo(
-                currentWeekOpus: LimitWindow(percentUsed: 81),
-                scopedWeekly: [
-                    ScopedLimitWindow(
-                        id: "seven_day_sonnet", window: LimitWindow(percentUsed: 42))
-                ],
-                extraUsage: ExtraUsage(isEnabled: true, usedCredits: 500)
-            ),
-            state: SnapshotState(status: .ok, severity: .normal)
-        )
-        let enrichment = OAuthPipeline.OAuthEnrichment(
-            opus: nil,
-            scopedWeekly: nil,
-            extraUsage: nil,
-            plan: nil
-        )
-
-        AppState.apply(enrichment, to: &snapshot, sourceAccountKey: "claude")
-
-        #expect(snapshot.limits.currentWeekOpus == nil)
-        #expect(snapshot.limits.scopedWeekly == nil)
-        #expect(snapshot.limits.extraUsage == nil)
-        #expect(snapshot.account == AccountInfo(email: "person@example.com"))
-    }
-
-    @Test("Direct OAuth observation time uses the successful snapshot time")
-    func directOAuthDetailsObservationTime() {
-        let createdAt = Date(timeIntervalSince1970: 100)
-        let successfulAt = Date(timeIntervalSince1970: 200)
-        let snapshot = ClaudeUsageSnapshot(
-            parserVersion: "test",
-            createdAt: createdAt,
-            lastSuccessfulPollAt: successfulAt,
-            source: SourceInfo(cliPath: "api.anthropic.com", command: "usage"),
-            limits: LimitInfo(),
-            state: SnapshotState(status: .ok, severity: .normal))
-
-        #expect(
-            AppState.topLevelOAuthDetailsObservedAt(
-                for: snapshot,
-                enrichmentObservedAt: Date(timeIntervalSince1970: 300)) == successfulAt)
-
-        var snapshotWithoutSuccessTime = snapshot
-        snapshotWithoutSuccessTime.lastSuccessfulPollAt = nil
-        #expect(
-            AppState.topLevelOAuthDetailsObservedAt(
-                for: snapshotWithoutSuccessTime,
-                enrichmentObservedAt: nil) == createdAt)
-
-        var statuslineSnapshot = snapshot
-        statuslineSnapshot.source = SourceInfo(cliPath: "statusline", command: "read")
-        let enrichmentAt = Date(timeIntervalSince1970: 300)
-        #expect(
-            AppState.topLevelOAuthDetailsObservedAt(
-                for: statuslineSnapshot,
-                enrichmentObservedAt: enrichmentAt) == enrichmentAt)
-    }
-
-    @MainActor
-    @Test("OAuth enrichment keeps observation time across failure and recovery")
-    func oauthEnrichmentLifecycle() {
-        let firstObservation = Date(timeIntervalSince1970: 100)
-        let failedAttempt = Date(timeIntervalSince1970: 200)
-        let recoveredObservation = Date(timeIntervalSince1970: 300)
-        let initialValue = OAuthPipeline.OAuthEnrichment(
-            opus: LimitWindow(percentUsed: 81),
-            scopedWeekly: nil,
-            extraUsage: nil,
-            plan: "Max"
-        )
-        let recoveredValue = OAuthPipeline.OAuthEnrichment(
-            opus: nil,
-            scopedWeekly: nil,
-            extraUsage: nil,
-            plan: nil
-        )
-
-        let current = AppState.updatedOAuthEnrichmentReading(
-            previous: nil,
-            result: .success(initialValue),
-            now: firstObservation
-        )
-        #expect(current.value == initialValue)
-        #expect(current.lastPolledAt == firstObservation)
-        #expect(current.error == nil)
-        #expect(!current.isStale)
-
-        let stale = AppState.updatedOAuthEnrichmentReading(
-            previous: current,
-            result: .unavailable(.networkError),
-            now: failedAttempt
-        )
-        #expect(stale.value == initialValue)
-        #expect(stale.lastPolledAt == firstObservation)
-        #expect(stale.error == SourceAttempt.Reason.networkError.rawValue)
-        #expect(stale.isStale)
-
-        let recovered = AppState.updatedOAuthEnrichmentReading(
-            previous: stale,
-            result: .success(recoveredValue),
-            now: recoveredObservation
-        )
-        #expect(recovered.value == recoveredValue)
-        #expect(recovered.lastPolledAt == recoveredObservation)
-        #expect(recovered.error == nil)
-        #expect(!recovered.isStale)
-    }
-
-    @MainActor
-    @Test("OAuth enrichment failure without a cache is failed, not stale")
-    func oauthEnrichmentInitialFailure() {
-        let failed = AppState.updatedOAuthEnrichmentReading(
-            previous: nil,
-            result: .unavailable(.credentialsUnavailable),
-            now: Date(timeIntervalSince1970: 200)
-        )
-
-        #expect(failed.value == nil)
-        #expect(failed.lastPolledAt == nil)
-        #expect(failed.error == SourceAttempt.Reason.credentialsUnavailable.rawValue)
-        #expect(!failed.isStale)
-    }
-
-    @MainActor
-    @Test("Cached OAuth limits become unknown after their reset")
-    func cachedOAuthEnrichmentClearsExpiredLimits() {
-        let observedAt = Date(timeIntervalSince1970: 100)
-        let resetAt = Date(timeIntervalSince1970: 150)
-        let enrichment = OAuthPipeline.OAuthEnrichment(
-            opus: LimitWindow(percentUsed: 80, resetsAt: resetAt),
-            scopedWeekly: [
-                ScopedLimitWindow(
-                    id: "seven_day_sonnet",
-                    window: LimitWindow(percentUsed: 65, resetsAt: resetAt)),
-                ScopedLimitWindow(
-                    id: "seven_day_cowork",
-                    window: LimitWindow(
-                        percentUsed: 25,
-                        resetsAt: Date(timeIntervalSince1970: 300))),
-            ],
-            extraUsage: ExtraUsage(isEnabled: true, usedCredits: 500),
-            plan: "Max")
-        let cached: ReadingState<OAuthPipeline.OAuthEnrichment> = .stale(
-            value: enrichment,
-            polledAt: observedAt,
-            error: "offline")
-
-        let resolved = AppState.resolvedOAuthEnrichmentReading(
-            cached, asOf: Date(timeIntervalSince1970: 200))
-
-        #expect(resolved.value?.opus == nil)
-        #expect(resolved.value?.scopedWeekly?.map(\.id) == ["seven_day_cowork"])
-        #expect(resolved.value?.extraUsage == enrichment.extraUsage)
-        #expect(resolved.value?.plan == "Max")
-        #expect(resolved.lastPolledAt == observedAt)
-        #expect(resolved.isStale == true)
-    }
-
-    @MainActor
-    @Test(
-        "OAuth details require the same source account",
-        arguments: [nil, "claude", "claude-work"] as [String?])
-    func oauthEnrichmentRequiresMatchingAccount(sourceAccountKey: String?) {
-        let now = Date(timeIntervalSince1970: 200)
-        let limits = LimitInfo(
-            currentSession: LimitWindow(percentUsed: 30),
-            currentWeekOpus: LimitWindow(percentUsed: 20))
-        let account = AccountInfo(plan: "Pro")
-        var snapshot = ClaudeUsageSnapshot(
-            parserVersion: "statusline", createdAt: now, lastSuccessfulPollAt: now,
-            source: SourceInfo(cliPath: "statusline", command: "statusline"),
-            account: account, limits: limits,
-            state: SnapshotState(status: .ok, severity: .normal),
-            accounts: [
-                AccountUsage(
-                    id: "claude-work", label: "Work", account: account, limits: limits,
-                    lastSuccessfulPollAt: now, severity: .normal, isActive: true)
-            ])
-        let original = snapshot
-        let enrichment = OAuthPipeline.OAuthEnrichment(
-            opus: LimitWindow(percentUsed: 99), scopedWeekly: nil, extraUsage: nil, plan: "Max")
-        let applied = AppState.apply(
-            enrichment, to: &snapshot, sourceAccountKey: sourceAccountKey)
-        #expect(applied == (sourceAccountKey == "claude-work"))
-        if applied {
-            #expect(snapshot.limits.currentWeekOpus?.percentUsed == 99)
-            #expect(snapshot.account?.plan == "Max")
-        } else {
-            #expect(snapshot == original)
-        }
-    }
-
-    @Test("Energy bar pace marker stays centered and inside the track")
-    func energyBarPaceMarker() {
-        #expect(energyBarMarkerOffset(width: 100, expectedFraction: -1) == 0)
-        #expect(energyBarMarkerOffset(width: 100, expectedFraction: 0.5) == 49)
-        #expect(energyBarMarkerOffset(width: 100, expectedFraction: 2) == 98)
-        #expect(energyBarMarkerOffset(width: 1, expectedFraction: 0.5) == 0)
-    }
-
     @Test("Clipboard diagnostics sanitize the complete text")
     func clipboardDiagnosticsSanitization() {
         let text =
@@ -2349,697 +709,6 @@ struct AppLogicTests {
         #expect(!sanitized.contains("/Users/example/private"))
         #expect(!sanitized.contains("sessionKey=secret"))
         #expect(sanitized.contains("[redacted]"))
-    }
-
-    @Test("Notification observations require the same generation and meter revision")
-    func notificationTargetMustRemainCurrent() {
-        let expected = MainMeterReading(
-            provider: .claude,
-            accountID: "claude",
-            accountLabel: "Claude",
-            limits: LimitInfo(),
-            observedAt: Date(),
-            selectionRevision: 4)
-        var changedRevision = expected
-        changedRevision.selectionRevision = 5
-
-        #expect(
-            AppState.notificationTargetMatches(
-                expected: expected,
-                expectedGeneration: 8,
-                current: expected,
-                currentGeneration: 8))
-        #expect(
-            !AppState.notificationTargetMatches(
-                expected: expected,
-                expectedGeneration: 8,
-                current: changedRevision,
-                currentGeneration: 8))
-        #expect(
-            !AppState.notificationTargetMatches(
-                expected: expected,
-                expectedGeneration: 8,
-                current: expected,
-                currentGeneration: 9))
-    }
-
-    @Test("Invalidation retracts a notification whose add was suspended")
-    func notificationInvalidationRetractsSuspendedAdd() async {
-        let suiteName = "NotificationInvalidation-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
-        let delivery = SuspendedNotificationDelivery()
-        let engine = NotificationEngine(defaults: defaults, delivery: delivery)
-        let now = Date()
-        let resetAt = now.addingTimeInterval(3_600)
-
-        func reading(percentUsed: Double) -> MainMeterReading {
-            MainMeterReading(
-                provider: .codex,
-                accountID: "work",
-                accountLabel: "Work",
-                limits: LimitInfo(
-                    currentSession: LimitWindow(
-                        percentUsed: percentUsed,
-                        resetsAt: resetAt)),
-                observedAt: now,
-                selectionRevision: 7)
-        }
-
-        let task = Task {
-            let lease = engine.quotaLease()
-            await engine.process(
-                reading: reading(percentUsed: 85),
-                previous: reading(percentUsed: 70),
-                recoveryBaseline: nil,
-                isStale: false,
-                expectedRevision: lease)
-        }
-
-        await delivery.waitUntilAddStarts()
-        engine.pollFailed()
-        await delivery.finishAdd()
-        await task.value
-
-        let state = await delivery.state()
-        #expect(state.pending.isEmpty)
-        #expect(state.delivered.isEmpty)
-        #expect(state.pendingRemovals == 1)
-        #expect(state.deliveredRemovals == 1)
-        let persistedDefaults = UserDefaults(suiteName: suiteName)!
-        #expect(
-            (persistedDefaults.stringArray(forKey: "com.claudemeter.notif.firedKeys") ?? []).isEmpty
-        )
-    }
-
-    @Test("Old notification cleanup cannot remove a newer alert for the same quota cycle")
-    func oldNotificationCleanupKeepsNewerAlert() async {
-        let suiteName = "OverlappingNotifications-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
-        let delivery = ControlledNotificationDelivery()
-        let engine = NotificationEngine(defaults: defaults, delivery: delivery)
-        let now = Date()
-        let resetAt = now.addingTimeInterval(3_600)
-
-        func reading(percentUsed: Double) -> MainMeterReading {
-            MainMeterReading(
-                provider: .codex,
-                accountID: "work",
-                accountLabel: "Work",
-                limits: LimitInfo(
-                    currentSession: LimitWindow(percentUsed: percentUsed, resetsAt: resetAt)),
-                observedAt: now)
-        }
-
-        let oldLease = engine.quotaLease()
-        let oldTask = Task {
-            await engine.process(
-                reading: reading(percentUsed: 85), previous: reading(percentUsed: 70),
-                recoveryBaseline: nil, isStale: false, expectedRevision: oldLease)
-        }
-        let oldStarted = await delivery.waitForAdds(1)
-        #expect(oldStarted)
-        guard oldStarted else {
-            oldTask.cancel()
-            return
-        }
-        engine.notificationSettingsChanged()
-        let newLease = engine.quotaLease()
-        let newTask = Task {
-            await engine.process(
-                reading: reading(percentUsed: 85), previous: reading(percentUsed: 70),
-                recoveryBaseline: nil, isStale: false, expectedRevision: newLease)
-        }
-        let newStarted = await delivery.waitForAdds(2)
-        #expect(newStarted)
-        guard newStarted else {
-            newTask.cancel()
-            await delivery.finishAdd(0)
-            await oldTask.value
-            return
-        }
-        await delivery.finishAdd(1)
-        await newTask.value
-        await delivery.finishAdd(0)
-        await oldTask.value
-
-        let state = await delivery.state()
-        #expect(state.pending == [state.requests[1]])
-        #expect(state.delivered == [state.requests[1]])
-        let persistedDefaults = UserDefaults(suiteName: suiteName)!
-        #expect(
-            persistedDefaults.stringArray(forKey: "com.claudemeter.notif.firedKeys")?.count == 1)
-    }
-
-    @MainActor
-    @Test("Optional source changes revoke a suspended quota observation")
-    func optionalSourceChangeRevokesSuspendedQuotaObservation() async {
-        let suiteName = "OptionalSourceNotification-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
-        let delivery = ControlledNotificationDelivery()
-        let engine = NotificationEngine(defaults: defaults, delivery: delivery)
-        let state = AppState(
-            pipeline: UnusedPipeline(), notificationEngine: engine,
-            onboardingIsComplete: false)
-        let now = Date()
-        let resetAt = now.addingTimeInterval(3_600)
-        func reading(_ percentUsed: Double) -> MainMeterReading {
-            MainMeterReading(
-                provider: .claude, accountID: "claude", accountLabel: "Claude",
-                limits: LimitInfo(
-                    currentSession: LimitWindow(percentUsed: percentUsed, resetsAt: resetAt)),
-                observedAt: now)
-        }
-        let lease = engine.quotaLease()
-        let task = Task {
-            await engine.process(
-                reading: reading(85), previous: reading(70), recoveryBaseline: nil,
-                isStale: false, expectedRevision: lease)
-        }
-        let started = await delivery.waitForAdds(1)
-        #expect(started)
-        guard started else {
-            task.cancel()
-            return
-        }
-        state.setCursorSourceEnabled(false)
-        await delivery.finishAdd(0)
-        await task.value
-        let delivered = await delivery.state()
-        #expect(delivered.pending.isEmpty)
-        #expect(delivered.delivered.isEmpty)
-        let persistedDefaults = UserDefaults(suiteName: suiteName)!
-        #expect(
-            (persistedDefaults.stringArray(forKey: "com.claudemeter.notif.firedKeys") ?? [])
-                .isEmpty)
-    }
-
-    @Test("Notification thresholds come from the injected settings", arguments: [true, false])
-    func notificationThresholdsUseInjectedDefaults(shouldAlert: Bool) async {
-        let suiteName = "InjectedNotificationThresholds-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
-        defaults.set(shouldAlert ? 60.0 : 80.0, forKey: "warningThresholdPercent")
-        defaults.set(shouldAlert ? 70.0 : 95.0, forKey: "criticalThresholdPercent")
-        let delivery = ControlledNotificationDelivery(suspendsAdds: false)
-        let engine = NotificationEngine(defaults: defaults, delivery: delivery)
-        let now = Date()
-        let resetAt = now.addingTimeInterval(3_600)
-        func reading(_ percentUsed: Double) -> MainMeterReading {
-            MainMeterReading(
-                provider: .codex, accountID: "test", accountLabel: "Test",
-                limits: LimitInfo(
-                    currentSession: LimitWindow(percentUsed: percentUsed, resetsAt: resetAt)),
-                observedAt: now)
-        }
-        await engine.process(
-            reading: reading(75), previous: reading(55), recoveryBaseline: nil,
-            isStale: false, expectedRevision: engine.quotaLease())
-        let state = await delivery.state()
-        #expect(state.delivered.count == (shouldAlert ? 1 : 0))
-    }
-
-    @Test("Concurrent notification observations submit one alert per quota cycle")
-    func concurrentNotificationsSharePendingDelivery() async {
-        let suiteName = "ConcurrentNotifications-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
-        let delivery = ControlledNotificationDelivery()
-        let engine = NotificationEngine(defaults: defaults, delivery: delivery)
-        let now = Date()
-        let resetAt = now.addingTimeInterval(3_600)
-        func reading(_ percentUsed: Double) -> MainMeterReading {
-            MainMeterReading(
-                provider: .codex, accountID: "test", accountLabel: "Test",
-                limits: LimitInfo(
-                    currentSession: LimitWindow(percentUsed: percentUsed, resetsAt: resetAt)),
-                observedAt: now)
-        }
-        let lease = engine.quotaLease()
-        let first = Task {
-            await engine.process(
-                reading: reading(85), previous: reading(70), recoveryBaseline: nil,
-                isStale: false, expectedRevision: lease)
-        }
-        let started = await delivery.waitForAdds(1)
-        #expect(started)
-        guard started else {
-            first.cancel()
-            return
-        }
-        await engine.process(
-            reading: reading(85), previous: reading(70), recoveryBaseline: nil,
-            isStale: false, expectedRevision: lease)
-        await delivery.finishAdd(0)
-        await first.value
-        let state = await delivery.state()
-        #expect(state.requests.count == 1)
-        #expect(state.delivered.count == 1)
-    }
-
-    @MainActor
-    @Test("A meter selection change invalidates a suspended alert before publication")
-    func meterSelectionInvalidatesAlertBeforePublication() async {
-        let suiteName = "MeterSelectionInvalidation-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
-        let delivery = SuspendedNotificationDelivery()
-        let engine = NotificationEngine(defaults: defaults, delivery: delivery)
-        let publication = BlockingMainMeterPublication()
-        let state = AppState(
-            pipeline: UnusedPipeline(),
-            notificationEngine: engine,
-            mainMeterPublicationOperation: { reading, store in
-                publication.publish(reading, in: store)
-            })
-        let now = Date()
-        let resetAt = now.addingTimeInterval(3_600)
-
-        let currentReading = MainMeterReading(
-            provider: .codex,
-            accountID: "work",
-            accountLabel: "Work",
-            limits: LimitInfo(
-                currentSession: LimitWindow(percentUsed: 85, resetsAt: resetAt)),
-            observedAt: now,
-            selectionRevision: 7)
-        let previousReading = MainMeterReading(
-            provider: .codex,
-            accountID: "work",
-            accountLabel: "Work",
-            limits: LimitInfo(
-                currentSession: LimitWindow(percentUsed: 70, resetsAt: resetAt)),
-            observedAt: now,
-            selectionRevision: 7)
-        let lease = engine.quotaLease()
-        let notificationTask = Task.detached {
-            await engine.process(
-                reading: currentReading,
-                previous: previousReading,
-                recoveryBaseline: nil,
-                isStale: false,
-                expectedRevision: lease)
-        }
-        let didStartDelivery = await delivery.waitUntilAddStarts(for: .seconds(5))
-        #expect(didStartDelivery)
-        guard didStartDelivery else {
-            notificationTask.cancel()
-            return
-        }
-
-        let publicationFinisher = Task.detached {
-            let didEnterPublication = publication.waitUntilEntered(for: .seconds(5))
-            guard didEnterPublication else {
-                publication.finish()
-                await delivery.finishAdd()
-                notificationTask.cancel()
-                await notificationTask.value
-                return false
-            }
-            await delivery.finishAdd()
-            await notificationTask.value
-            publication.finish()
-            return true
-        }
-        state.mainMeterSelectionChanged()
-        let didEnterPublication = await publicationFinisher.value
-
-        #expect(didEnterPublication)
-        let deliveryState = await delivery.state()
-        #expect(deliveryState.pending.isEmpty)
-        #expect(deliveryState.delivered.isEmpty)
-        #expect(deliveryState.pendingRemovals == 1)
-        #expect(deliveryState.deliveredRemovals == 1)
-        let persistedDefaults = UserDefaults(suiteName: suiteName)!
-        #expect(
-            (persistedDefaults.stringArray(forKey: "com.claudemeter.notif.firedKeys") ?? [])
-                .isEmpty)
-    }
-
-    @MainActor
-    @Test("Disabling the selected Codex source invalidates an alert before publication")
-    func disablingSelectedCodexSourceInvalidatesAlertBeforePublication() async {
-        let defaults = UserDefaults.standard
-        let shared = AppGroupConfig.sharedDefaults
-        let providerKey = AppGroupConfig.mainMeterProviderKey
-        let revisionKey = AppGroupConfig.mainMeterRevisionKey
-        let previousProvider = defaults.object(forKey: providerKey)
-        let previousSharedProvider = shared?.object(forKey: providerKey)
-        let previousRevision = defaults.object(forKey: revisionKey)
-        let previousSharedRevision = shared?.object(forKey: revisionKey)
-        let previousCodexSource = defaults.object(forKey: AppSettings.codexSourceEnabledKey)
-        defer {
-            if let previousProvider {
-                defaults.set(previousProvider, forKey: providerKey)
-            } else {
-                defaults.removeObject(forKey: providerKey)
-            }
-            if let previousSharedProvider {
-                shared?.set(previousSharedProvider, forKey: providerKey)
-            } else {
-                shared?.removeObject(forKey: providerKey)
-            }
-            if let previousRevision {
-                defaults.set(previousRevision, forKey: revisionKey)
-            } else {
-                defaults.removeObject(forKey: revisionKey)
-            }
-            if let previousSharedRevision {
-                shared?.set(previousSharedRevision, forKey: revisionKey)
-            } else {
-                shared?.removeObject(forKey: revisionKey)
-            }
-            if let previousCodexSource {
-                defaults.set(previousCodexSource, forKey: AppSettings.codexSourceEnabledKey)
-            } else {
-                defaults.removeObject(forKey: AppSettings.codexSourceEnabledKey)
-            }
-        }
-        defaults.set(MainMeterProvider.codex.rawValue, forKey: providerKey)
-        shared?.set(MainMeterProvider.codex.rawValue, forKey: providerKey)
-        AppSettings.codexSourceEnabled = false
-
-        let suiteName = "CodexDisableInvalidation-\(UUID().uuidString)"
-        let notificationDefaults = UserDefaults(suiteName: suiteName)!
-        defer {
-            UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
-        }
-        notificationDefaults.set(true, forKey: "enableNotifications")
-        let delivery = SuspendedNotificationDelivery()
-        let engine = NotificationEngine(defaults: notificationDefaults, delivery: delivery)
-        let publication = BlockingMainMeterPublication()
-        let state = AppState(
-            pipeline: UnusedPipeline(),
-            notificationEngine: engine,
-            mainMeterPublicationOperation: { reading, store in
-                publication.publish(reading, in: store)
-            })
-        let now = Date()
-        let resetAt = now.addingTimeInterval(3_600)
-        let currentReading = MainMeterReading(
-            provider: .codex,
-            accountID: "work",
-            accountLabel: "Work",
-            limits: LimitInfo(
-                currentSession: LimitWindow(percentUsed: 85, resetsAt: resetAt)),
-            observedAt: now,
-            selectionRevision: 7)
-        let previousReading = MainMeterReading(
-            provider: .codex,
-            accountID: "work",
-            accountLabel: "Work",
-            limits: LimitInfo(
-                currentSession: LimitWindow(percentUsed: 70, resetsAt: resetAt)),
-            observedAt: now,
-            selectionRevision: 7)
-        let lease = engine.quotaLease()
-        let notificationTask = Task.detached {
-            await engine.process(
-                reading: currentReading,
-                previous: previousReading,
-                recoveryBaseline: nil,
-                isStale: false,
-                expectedRevision: lease)
-        }
-        let didStartDelivery = await delivery.waitUntilAddStarts(for: .seconds(5))
-        #expect(didStartDelivery)
-        guard didStartDelivery else {
-            notificationTask.cancel()
-            return
-        }
-
-        let publicationFinisher = Task.detached {
-            let didEnterPublication = publication.waitUntilEntered(for: .seconds(5))
-            guard didEnterPublication else {
-                publication.finish()
-                await delivery.finishAdd()
-                notificationTask.cancel()
-                await notificationTask.value
-                return false
-            }
-            await delivery.finishAdd()
-            await notificationTask.value
-            publication.finish()
-            return true
-        }
-        state.setCodexSourceEnabled(false)
-        let didEnterPublication = await publicationFinisher.value
-
-        #expect(didEnterPublication)
-        let deliveryState = await delivery.state()
-        #expect(deliveryState.pending.isEmpty)
-        #expect(deliveryState.delivered.isEmpty)
-        #expect(deliveryState.pendingRemovals == 1)
-        #expect(deliveryState.deliveredRemovals == 1)
-    }
-
-    @Test("A queued quota alert keeps its original observation revision")
-    func queuedQuotaAlertCannotAdoptANewerRevision() async {
-        let delivery = SuspendedNotificationDelivery()
-        let engine = NotificationEngine(delivery: delivery)
-        let resetAt = Date().addingTimeInterval(3_600)
-
-        func reading(percentUsed: Double) -> MainMeterReading {
-            MainMeterReading(
-                provider: .claude,
-                accountID: "claude",
-                accountLabel: "Claude",
-                limits: LimitInfo(
-                    currentSession: LimitWindow(
-                        percentUsed: percentUsed,
-                        resetsAt: resetAt)),
-                observedAt: Date(),
-                selectionRevision: 1)
-        }
-
-        let lease = engine.quotaLease()
-        // The selected meter changes before the queued actor call starts.
-        engine.pollFailed()
-        await engine.process(
-            reading: reading(percentUsed: 85),
-            previous: reading(percentUsed: 70),
-            recoveryBaseline: nil,
-            isStale: false,
-            expectedRevision: lease)
-
-        let state = await delivery.state()
-        #expect(!state.addStarted)
-        #expect(state.pending.isEmpty)
-        #expect(state.delivered.isEmpty)
-    }
-
-    @Test("A quota poll failure does not retract a suspended update alert")
-    func quotaPollFailureKeepsSuspendedUpdateAlert() async {
-        let suiteName = "QuotaFailureUpdate-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer {
-            UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
-        }
-        defaults.set(true, forKey: "enableNotifications")
-        let delivery = SuspendedNotificationDelivery()
-        let engine = NotificationEngine(defaults: defaults, delivery: delivery)
-        let task = Task {
-            await engine.postUpdateAvailable(version: "99.1")
-        }
-
-        let didStart = await delivery.waitUntilAddStarts(for: .seconds(5))
-        #expect(didStart)
-        guard didStart else { return }
-        engine.pollFailed()
-        await delivery.finishAdd()
-        await task.value
-
-        let state = await delivery.state()
-        #expect(state.pending.count == 1)
-        #expect(state.pending.first?.hasPrefix("com.claudemeter.update.99.1.") == true)
-        #expect(state.delivered == state.pending)
-        #expect(state.pendingRemovals == 0)
-        #expect(state.deliveredRemovals == 0)
-    }
-
-    @Test("A notification setting change retracts a suspended update alert")
-    func notificationSettingChangeRetractsSuspendedUpdateAlert() async {
-        let suiteName = "SettingsChangeUpdate-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer {
-            UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
-        }
-        defaults.set(true, forKey: "enableNotifications")
-        let delivery = SuspendedNotificationDelivery()
-        let engine = NotificationEngine(defaults: defaults, delivery: delivery)
-        let task = Task {
-            await engine.postUpdateAvailable(version: "99.2")
-        }
-
-        let didStart = await delivery.waitUntilAddStarts(for: .seconds(5))
-        #expect(didStart)
-        guard didStart else { return }
-        engine.notificationSettingsChanged()
-        await delivery.finishAdd()
-        await task.value
-
-        let state = await delivery.state()
-        #expect(state.pending.isEmpty)
-        #expect(state.delivered.isEmpty)
-        #expect(state.pendingRemovals == 1)
-        #expect(state.deliveredRemovals == 1)
-    }
-
-    @Test("An attention notification preserves the Herdr pane through delivery and click decoding")
-    func attentionNotificationPreservesHerdrTarget() async throws {
-        let delivery = ControlledNotificationDelivery(suspendsAdds: false)
-        let suiteName = "HerdrNotification-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defer { UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName) }
-        let engine = NotificationEngine(defaults: defaults, delivery: delivery)
-        let herdr = try #require(
-            TerminalRoute.Herdr(
-                socketPath: "/tmp/test-herdr.sock", paneID: "w2:p3", startupCWD: "/tmp/outer"))
-        let event = SessionEvent(
-            kind: .stop, accountKey: "claude", sessionId: "session", cwd: "/tmp/project",
-            message: nil,
-            terminalRoute: TerminalRoute(
-                client: .ghostty, tty: "ttys003", identifier: nil, herdr: herdr),
-            capturedAt: Date())
-        await engine.postAttention(
-            event: event, accountLabel: "Default", expectedRevision: engine.attentionLease())
-        let request = try #require(await delivery.lastRequest())
-        let clicked = try #require(AttentionNotificationRoute(userInfo: request.userInfo))
-        #expect(clicked.route.herdr == herdr)
-        #expect(clicked.cwd == "/tmp/project")
-
-        var commands: [TerminalFocusRouter.Command] = []
-        let focused = TerminalFocusRouter.focusPrecisely(
-            clicked, herdrExecutable: "/test/bin/herdr",
-            execute: { command in
-                commands.append(command)
-                return true
-            })
-        #expect(focused)
-        #expect(commands.count == 2)
-        let inner = try #require(commands.first)
-        #expect(inner.executable == "/test/bin/herdr")
-        #expect(inner.arguments == ["agent", "focus", "w2:p3"])
-        #expect(inner.environment == ["HERDR_SOCKET_PATH": "/tmp/test-herdr.sock"])
-        let outer = try #require(commands.last)
-        #expect(outer.executable == "/usr/bin/osascript")
-        let script = try #require(outer.arguments.last)
-        #expect(script.contains("set targetDirectory to \"/tmp/outer\""))
-        #expect(!script.contains("/tmp/project"))
-        #expect(script.contains("if application \"Ghostty\" is running then"))
-        #expect(
-            script.split(separator: "\n").contains {
-                $0.trimmingCharacters(in: .whitespaces) == "activate"
-            })
-    }
-
-    @Test("A closed Herdr session still permits Ghostty focus")
-    func herdrFocusFailureStillFocusesOuterTerminal() throws {
-        let herdr = try #require(
-            TerminalRoute.Herdr(
-                socketPath: "/tmp/closed-herdr.sock", paneID: "w2:p3", startupCWD: "/tmp/outer"))
-        let target = AttentionNotificationRoute(
-            route: TerminalRoute(client: .ghostty, tty: nil, identifier: nil, herdr: herdr),
-            cwd: "/tmp/project")
-        var commands: [TerminalFocusRouter.Command] = []
-        let focused = TerminalFocusRouter.focusPrecisely(
-            target, herdrExecutable: "/test/bin/herdr",
-            execute: { command in
-                commands.append(command)
-                return command.executable == "/usr/bin/osascript"
-            })
-        #expect(!focused)
-        #expect(commands.map(\.executable) == ["/test/bin/herdr", "/usr/bin/osascript"])
-        #expect(commands.first?.environment["HERDR_SOCKET_PATH"] == "/tmp/closed-herdr.sock")
-    }
-
-    @Test("Herdr does not substitute the inner folder or TTY for an outer terminal target")
-    func herdrDoesNotUseInnerTerminalLocators() throws {
-        let herdr = try #require(
-            TerminalRoute.Herdr(socketPath: "/tmp/herdr.sock", paneID: "w2:p3", startupCWD: nil))
-        for client in [TerminalRoute.Client.ghostty, .terminal, .iTerm2] {
-            let target = AttentionNotificationRoute(
-                route: TerminalRoute(client: client, tty: "ttys003", identifier: nil, herdr: herdr),
-                cwd: "/tmp/project")
-            var commands: [TerminalFocusRouter.Command] = []
-            _ = TerminalFocusRouter.focusPrecisely(
-                target, herdrExecutable: "/test/bin/herdr",
-                execute: { command in
-                    commands.append(command)
-                    return true
-                })
-            #expect(commands.count == 1)
-            #expect(commands.first?.arguments == ["agent", "focus", "w2:p3"])
-        }
-    }
-
-    @Test("The terminal helper passes a captured socket as a literal environment value")
-    func terminalFocusCommandPassesEnvironmentLiterally() {
-        let socket = "/tmp/herdr socket ' $(exit 1).sock"
-        let command = TerminalFocusRouter.Command(
-            executable: "/bin/sh",
-            arguments: ["-c", #"test "$HERDR_SOCKET_PATH" = "$1""#, "test-helper", socket],
-            environment: ["HERDR_SOCKET_PATH": socket])
-        #expect(TerminalFocusRouter.run(command))
-    }
-
-    @Test("Attention setting invalidation retracts a suspended alert")
-    func attentionInvalidationRetractsSuspendedAdd() async {
-        let delivery = SuspendedNotificationDelivery()
-        let engine = NotificationEngine(delivery: delivery)
-        let event = SessionEvent(
-            kind: .stop,
-            accountKey: "claude",
-            sessionId: "session",
-            cwd: "/tmp/project",
-            message: nil,
-            capturedAt: Date())
-        let lease = engine.attentionLease()
-        let task = Task {
-            await engine.postAttention(
-                event: event,
-                accountLabel: "Default",
-                expectedRevision: lease)
-        }
-
-        await delivery.waitUntilAddStarts()
-        engine.attentionSettingsChanged()
-        await delivery.finishAdd()
-        await task.value
-
-        let state = await delivery.state()
-        #expect(state.pending.isEmpty)
-        #expect(state.delivered.isEmpty)
-        #expect(state.pendingRemovals == 1)
-        #expect(state.deliveredRemovals == 1)
-    }
-
-    @Test("A queued attention alert keeps its original setting revision")
-    func queuedAttentionAlertCannotAdoptANewerRevision() async {
-        let delivery = SuspendedNotificationDelivery()
-        let engine = NotificationEngine(delivery: delivery)
-        let event = SessionEvent(
-            kind: .notification,
-            accountKey: "claude",
-            sessionId: "session",
-            cwd: "/tmp/project",
-            message: "Waiting",
-            capturedAt: Date())
-        let lease = engine.attentionLease()
-
-        // The setting changes before the queued actor call starts.
-        engine.attentionSettingsChanged()
-        await engine.postAttention(
-            event: event,
-            accountLabel: "Default",
-            expectedRevision: lease)
-
-        let state = await delivery.state()
-        #expect(!state.addStarted)
-        #expect(state.pending.isEmpty)
-        #expect(state.delivered.isEmpty)
     }
 
     @MainActor
@@ -3205,7 +874,9 @@ struct AppLogicTests {
             CorrelatedBodyMeasurement(
                 disclosure: [], renderSequence: sequence, height: 400))
         #expect(coordinator.presentation.bodyHeight == 400)
-        for _ in 0..<10 where adapter.animations.isEmpty { await Task.yield() }
+        for _ in 0..<100 where adapter.animations.isEmpty {
+            try await Task.sleep(for: .milliseconds(1))
+        }
 
         let animation = try #require(adapter.animations.first)
         #expect(animation.source.maxY == animation.target.maxY)
@@ -3699,762 +1370,43 @@ struct AppLogicTests {
     }
 
     @MainActor
-    @Test("Memory pressure invokes rebuildable cache trimming")
-    func memoryPressureTrimsCaches() {
-        var trimCalls = 0
-        let expected = MemoryPressureTrimSummary(costEntries: 12, activityEntries: 7)
-        let monitor = MemoryPressureMonitor(
-            trimCaches: {
-                trimCalls += 1
-                return expected
-            },
-            releaseFreeMallocPages: {})
-
-        let result = monitor.handleMemoryPressureForTesting()
-
-        #expect(trimCalls == 1)
-        #expect(result == expected)
-        #expect(result.total == 19)
+    @Test("Window attachment does not publish during the view update")
+    func popoverWindowCaptureDefersPublication() async {
+        let view = PopoverWindowCaptureView()
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 360, height: 200),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        var received: [ObjectIdentifier?] = []
+        view.windowChanged = { received.append($0.map(ObjectIdentifier.init)) }
+        window.contentView?.addSubview(view)
+        #expect(received.isEmpty)
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        #expect(received == [ObjectIdentifier(window)])
+        view.removeFromSuperview()
     }
 
     @MainActor
-    @Test("Advisory service refresh is coalesced and publishes independently")
-    func serviceStatusRefreshIsIndependent() async {
-        let fetcher = SuspendedStatusFetcher()
-        let state = AppState(
-            pipeline: UnusedPipeline(),
-            serviceStatusFetcher: { await fetcher.fetch() }
-        )
-
-        state.scheduleServiceStatusRefresh(generation: 0)
-        state.scheduleServiceStatusRefresh(generation: 0)
-
-        for _ in 0..<100 {
-            if await fetcher.callCount > 0 { break }
-            try? await Task.sleep(for: .milliseconds(1))
+    @Test("Deferred window capture uses the latest attachment and callback")
+    func popoverWindowCaptureRejectsOldAttachment() async {
+        let view = PopoverWindowCaptureView()
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 360, height: 200),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        var oldCalls = 0
+        var received: [ObjectIdentifier?] = []
+        view.windowChanged = { _ in oldCalls += 1 }
+        window.contentView?.addSubview(view)
+        view.removeFromSuperview()
+        view.windowChanged = { received.append($0.map(ObjectIdentifier.init)) }
+        #expect(oldCalls == 0)
+        #expect(received.isEmpty)
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
         }
-        #expect(await fetcher.callCount == 1)
-        #expect(state.serviceStatus == nil)
-
-        let expected = ServiceStatus(level: .major, description: "Partial outage")
-        await fetcher.finish(with: expected)
-        for _ in 0..<100 {
-            if state.serviceStatus != nil { break }
-            try? await Task.sleep(for: .milliseconds(1))
-        }
-        #expect(state.serviceStatus == expected)
+        #expect(oldCalls == 0)
+        #expect(received == [nil])
     }
 
-    @MainActor
-    @Test("Bridge refresh requests keep one running task and one rerun")
-    func bridgeRefreshIsBoundedlyCoalesced() async {
-        let refresher = SuspendedConfigBridgeRefresher()
-        let state = AppState(
-            pipeline: UnusedPipeline(),
-            systemIntegrationEnabled: true,
-            configBridgeRefreshOperation: { request in
-                await refresher.refresh(request)
-            })
-
-        for _ in 0..<20 { state.refreshConfigBridgesForTesting() }
-        await refresher.waitForCalls(1)
-        #expect(state.configRefreshOperationCount == 1)
-
-        await refresher.releaseNext()
-        await refresher.waitForCalls(2)
-        #expect(state.configRefreshOperationCount == 2)
-
-        for _ in 0..<20 { state.refreshConfigBridgesForTesting() }
-        #expect(state.configRefreshOperationCount == 2)
-        await refresher.releaseNext()
-        await refresher.waitForCalls(3)
-        #expect(state.configRefreshOperationCount == 3)
-        await refresher.releaseNext()
-    }
-
-    private final class CodexIdentityFixture: @unchecked Sendable {
-        private let lock = NSLock()
-        private var value: CodexCredentialIdentity
-        init(_ value: CodexCredentialIdentity) { self.value = value }
-        func read() -> CodexCredentialIdentity { lock.withLock { value } }
-        func replace(_ value: CodexCredentialIdentity) { lock.withLock { self.value = value } }
-    }
-
-    private final class BlockedCodexIdentity: @unchecked Sendable {
-        private let lock = NSLock()
-        private let release = DispatchSemaphore(value: 0)
-        private var calls = 0
-        var callCount: Int { lock.withLock { calls } }
-        func read() -> CodexCredentialIdentity {
-            lock.withLock { calls += 1 }
-            release.wait()
-            return .unavailable
-        }
-        func finish() { release.signal() }
-    }
-
-    @Test("A blocked Codex identity cannot discard healthy homes or accumulate workers")
-    func codexBlockedIdentityIsIsolated() async {
-        let accounts = ["blocked", "healthy"].map {
-            CodexAccount(
-                home: URL(fileURLWithPath: "/test/\($0)"), isImplicit: false, customName: nil)
-        }
-        let blocked = BlockedCodexIdentity()
-        defer { blocked.finish() }
-        let gate = CodexIdentityReadGate()
-        let usage = codexUsage(accountEmail: nil)
-        var previous: [String: CodexAccountReading] = [:]
-        for attempt in 0..<4 {
-            let result = await AppState.fetchOwnedCodexAccountReadings(
-                accounts: accounts, previous: previous, mode: .auto, now: Date(),
-                perAccountTimeoutSeconds: 0.1, totalTimeoutSeconds: 0.4, budget: .init(limit: 3),
-                identityLoader: { account in
-                    if account.id == accounts[0].id { return blocked.read() }
-                    return .init(ownerID: "healthy-owner", sourceFingerprint: "stable")
-                },
-                identityGate: gate,
-                fetch: { _, _, _ in
-                    if attempt > 0 { throw URLError(.notConnectedToInternet) }
-                    return usage
-                })
-            let healthy = result.first { $0.id == accounts[1].id }
-            #expect(healthy?.usage == usage)
-            #expect(healthy?.ownerID == "healthy-owner")
-            #expect(healthy?.state.isStale == (attempt > 0))
-            #expect(result.first { $0.id == accounts[0].id }?.usage == nil)
-            #expect(blocked.callCount == 1)
-            previous = Dictionary(uniqueKeysWithValues: result.map { ($0.id, $0) })
-        }
-    }
-
-    @Test("An unchanged unknown Codex owner can display current usage")
-    func codexUnknownOwnerCanDisplayCurrentUsage() async {
-        let account = CodexAccount(
-            home: URL(fileURLWithPath: "/test/unknown"), isImplicit: true, customName: nil)
-        let usage = codexUsage(accountEmail: nil)
-        let result = await AppState.fetchOwnedCodexAccountReadings(
-            accounts: [account], previous: [:], mode: .auto, now: Date(),
-            perAccountTimeoutSeconds: 1, totalTimeoutSeconds: 2, budget: .init(limit: 1),
-            identityLoader: { _ in .init(ownerID: nil, sourceFingerprint: "unchanged") },
-            fetch: { _, _, _ in usage })
-        #expect(result.first?.usage == usage)
-        #expect(result.first?.ownerID == nil)
-    }
-
-    @MainActor
-    @Test("A late Codex success or failure cannot cross a login change", arguments: [false, true])
-    func codexLateCompletionRejectsChangedOwner(fails: Bool) async {
-        let account = CodexAccount(
-            home: URL(fileURLWithPath: "/test/codex"), isImplicit: true, customName: nil)
-        let usage = codexUsage(accountEmail: nil)
-        let prior = CodexAccountReading(
-            account: account, state: .current(value: usage, polledAt: Date()), ownerID: "owner-a")
-        let identity = CodexIdentityFixture(.init(ownerID: "owner-a", sourceFingerprint: "before"))
-        let gate = SuspendedCodexFetcher()
-        var validatedOwners: [String?] = []
-        let task = Task {
-            await AppState.fetchOwnedCodexAccountReadings(
-                accounts: [account], previous: [account.id: prior], mode: .auto, now: Date(),
-                perAccountTimeoutSeconds: 2, totalTimeoutSeconds: 3, budget: .init(limit: 1),
-                identityLoader: { _ in identity.read() },
-                validatedPrevious: { validatedOwners = $0.map(\.ownerID) }
-            ) { _, _, _ in
-                await gate.suspend()
-                if fails { throw URLError(.notConnectedToInternet) }
-                return usage
-            }
-        }
-        await gate.waitForCalls(1)
-        #expect(validatedOwners == ["owner-a"])
-        identity.replace(.init(ownerID: "owner-b", sourceFingerprint: "after"))
-        await gate.releaseAll()
-        let result = await task.value
-        #expect(result.first?.usage == nil)
-        #expect(result.first?.ownerID == nil)
-        #expect(result.first?.error?.contains("sign-in changed") == true)
-    }
-
-    @MainActor
-    @Test("A known new Codex login clears the old reading before the fetch completes")
-    func codexChangedOwnerClearsBeforeFetch() async {
-        let account = CodexAccount(
-            home: URL(fileURLWithPath: "/test/codex"), isImplicit: true, customName: nil)
-        let usage = codexUsage(accountEmail: nil)
-        let prior = CodexAccountReading(
-            account: account, state: .current(value: usage, polledAt: Date()), ownerID: "owner-a")
-        var validatedCount: Int?
-        let gate = SuspendedCodexFetcher()
-        let task = Task {
-            await AppState.fetchOwnedCodexAccountReadings(
-                accounts: [account], previous: [account.id: prior], mode: .auto, now: Date(),
-                perAccountTimeoutSeconds: 2, totalTimeoutSeconds: 3, budget: .init(limit: 1),
-                identityLoader: { _ in .init(ownerID: "owner-b", sourceFingerprint: "new") },
-                validatedPrevious: { validatedCount = $0.count }
-            ) { _, _, _ in
-                await gate.suspend()
-                throw URLError(.notConnectedToInternet)
-            }
-        }
-        await gate.waitForCalls(1)
-        #expect(validatedCount == 0)
-        await gate.releaseAll()
-        #expect(await task.value.first?.usage == nil)
-    }
-
-    @Test("Codex token rotation preserves a same-owner offline reading")
-    func codexRotationRetainsOfflineReading() async {
-        let account = CodexAccount(
-            home: URL(fileURLWithPath: "/test/codex"), isImplicit: true, customName: nil)
-        let prior = CodexAccountReading(
-            account: account,
-            state: .current(value: codexUsage(accountEmail: nil), polledAt: Date()),
-            ownerID: "owner-a")
-        let identity = CodexIdentityFixture(.init(ownerID: "owner-a", sourceFingerprint: "before"))
-        let result = await AppState.fetchOwnedCodexAccountReadings(
-            accounts: [account], previous: [account.id: prior], mode: .auto, now: Date(),
-            perAccountTimeoutSeconds: 1, totalTimeoutSeconds: 2, budget: .init(limit: 1),
-            identityLoader: { _ in identity.read() },
-            fetch: { _, _, _ in
-                identity.replace(.init(ownerID: "owner-a", sourceFingerprint: "rotated"))
-                throw URLError(.notConnectedToInternet)
-            })
-        #expect(result.first?.state.isStale == true)
-        #expect(result.first?.ownerID == "owner-a")
-        #expect(result.first?.lastSuccessfulAt == prior.lastSuccessfulAt)
-    }
-
-    @MainActor
-    @Test("Codex cache restoration rejects another owner and legacy archives")
-    func codexCacheOwnerValidation() throws {
-        let suite = "CodexOwnerStore-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let store = CodexReadingStore(defaults: defaults)
-        let account = CodexAccount(
-            home: URL(fileURLWithPath: "/test/codex"), isImplicit: true, customName: nil)
-        let reading = CodexAccountReading(
-            account: account,
-            state: .current(value: codexUsage(accountEmail: "test@example.com"), polledAt: Date()),
-            ownerID: "owner-a")
-        store.save([reading])
-        #expect(
-            store.restore(
-                accounts: [account],
-                identities: [account.id: .init(ownerID: "owner-b", sourceFingerprint: "new")]
-            ).isEmpty)
-        #expect(store.restore(accounts: [account], identities: [:]).isEmpty)
-        #expect(
-            store.restore(
-                accounts: [account],
-                identities: [account.id: .init(ownerID: "owner-a", sourceFingerprint: "rotated")]
-            ).count == 1)
-        let data = try #require(defaults.data(forKey: "codexLastGoodReadings.v1"))
-        #expect(!String(decoding: data, as: UTF8.self).contains("test@example.com"))
-        var legacy = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        legacy["schemaVersion"] = 1
-        defaults.set(
-            try JSONSerialization.data(withJSONObject: legacy), forKey: "codexLastGoodReadings.v1")
-        #expect(store.candidates(accounts: [account]).isEmpty)
-        store.save([CodexAccountReading(account: account, state: reading.state)])
-        #expect(store.candidates(accounts: [account]).isEmpty)
-    }
-
-    @Test("Codex account polling has one total deadline")
-    func codexAccountsUseOneTotalDeadline() async {
-        let accounts = (0..<4).map { index in
-            CodexAccount(
-                home: URL(fileURLWithPath: "/tmp/codex-\(index)"),
-                isImplicit: index == 0,
-                customName: nil)
-        }
-        let priorDate = Date(timeIntervalSince1970: 100)
-        let prior = CodexAccountReading(
-            account: accounts[0],
-            state: .current(
-                value: codexUsage(accountEmail: nil),
-                polledAt: priorDate))
-        let fetcher = SuspendedCodexFetcher()
-        let budget = Timeout.TaskBudget(limit: 3)
-        let startedAt = Date()
-        let task = Task {
-            await AppState.fetchCodexAccountReadings(
-                accounts: accounts,
-                previous: [accounts[0].id: prior],
-                mode: .auto,
-                now: Date(),
-                perAccountTimeoutSeconds: 1,
-                totalTimeoutSeconds: 0.05,
-                budget: budget
-            ) { _, _, _ in
-                await fetcher.suspend()
-                return CodexUsage(
-                    primaryWindow: nil,
-                    secondaryWindow: nil,
-                    usageCredits: CodexCredits(remaining: 1),
-                    accountEmail: nil,
-                    plan: nil,
-                    source: .appServer,
-                    updatedAt: Date())
-            }
-        }
-
-        await fetcher.waitForCalls(3)
-        let readings = await task.value
-        let elapsed = Date().timeIntervalSince(startedAt)
-
-        #expect(readings.count == 4)
-        #expect(await fetcher.calls == 3)
-        #expect(elapsed < 0.5)
-        #expect(readings[0].state.isStale)
-        #expect(readings[0].lastSuccessfulAt == priorDate)
-        #expect(readings.dropFirst().allSatisfy { $0.usage == nil })
-        #expect(readings.allSatisfy { $0.error?.contains("Timed out") == true })
-        await fetcher.releaseAll()
-    }
-
-    private func codexUsage(accountEmail: String?) -> CodexUsage {
-        CodexUsage(
-            primaryWindow: CodexLimitWindow(
-                kind: .primary,
-                usedPercent: 25,
-                resetAt: nil,
-                durationSeconds: 18_000,
-                rawLabel: nil),
-            secondaryWindow: nil,
-            usageCredits: nil,
-            accountEmail: accountEmail,
-            plan: "plus",
-            authMode: .chatGPT,
-            source: .appServer,
-            updatedAt: Date(timeIntervalSince1970: 100))
-    }
-}
-
-@Suite("Usage & Spend scan lifecycle")
-struct SpendBreakdownLoadingTests {
-    private actor ControlledScanner {
-        private var requests: [SpendBreakdownRequest] = []
-        private var pending: CheckedContinuation<CostUsageResult, any Error>?
-
-        func scan(_ request: SpendBreakdownRequest) async throws -> CostUsageResult {
-            requests.append(request)
-            return try await withCheckedThrowingContinuation { pending = $0 }
-        }
-
-        func waitForCalls(_ count: Int) async -> Bool {
-            let clock = ContinuousClock()
-            let deadline = clock.now.advanced(by: .seconds(5))
-            while requests.count < count, clock.now < deadline {
-                try? await Task.sleep(for: .milliseconds(5))
-            }
-            return requests.count >= count
-        }
-
-        func ranges() -> [Int] { requests.map(\.rangeDays) }
-
-        func finish(_ result: Result<CostUsageResult, any Error>) {
-            let continuation = pending
-            pending = nil
-            continuation?.resume(with: result)
-        }
-    }
-
-    @MainActor
-    private func waitForCompletion(_ state: AppState) async throws {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(5))
-        while state.spendBreakdownLoading, clock.now < deadline {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        try #require(!state.spendBreakdownLoading)
-    }
-
-    @MainActor
-    @Test("A range switch clears old bars and exports through failure and retry")
-    func rangeSwitchCannotReusePreviousScan() async throws {
-        let scanner = ControlledScanner()
-        let state = AppState(
-            pipeline: ThrowingPipeline(message: "Unused"),
-            spendBreakdownScanner: {
-                let usage = try await scanner.scan($0)
-                return SpendScanResult(providers: [ProviderSpend(provider: .claude, usage: usage)])
-            })
-        defer { state.cancelSpendBreakdownLoad() }
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(identifier: "Asia/Kuala_Lumpur"))
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let result = CostUsageResult(
-            models: [ModelUsage(name: "m", inputTokens: 100, costUsd: 1)],
-            daily: [
-                DailyModelUsage(
-                    day: JournalReader.dayString(from: now, calendar: calendar),
-                    model: "m", inputTokens: 100, costUsd: 1)
-            ],
-            isPartialEstimate: false)
-
-        state.loadSpendBreakdown(daysBack: 7, now: now, calendar: calendar)
-        try #require(await scanner.waitForCalls(1))
-        await scanner.finish(.success(result))
-        try await waitForCompletion(state)
-        let first = try #require(state.spendBreakdown)
-        #expect(first.rangeDays == 7)
-        #expect(first.scannedAt == now)
-        #expect(first.calendar == calendar)
-        #expect(SpendBreakdownFormat.expectedDays(first)?.count == 7)
-
-        let nextDay = now.addingTimeInterval(86_400)
-        state.loadSpendBreakdown(daysBack: 30, now: nextDay, calendar: calendar)
-        #expect(state.spendBreakdown == nil)
-        #expect(state.spendBreakdownLoading)
-        try #require(await scanner.waitForCalls(2))
-        await scanner.finish(.failure(TimeoutError(seconds: 30)))
-        try await waitForCompletion(state)
-        #expect(state.spendBreakdown == nil)
-        #expect(state.spendBreakdownError == "The scan did not finish.")
-
-        state.loadSpendBreakdown(daysBack: 30, now: nextDay, calendar: calendar)
-        #expect(state.spendBreakdownError == nil)
-        try #require(await scanner.waitForCalls(3))
-        await scanner.finish(.success(result))
-        try await waitForCompletion(state)
-        let completed = try #require(state.spendBreakdown)
-        #expect(completed.rangeDays == 30)
-        #expect(completed.scannedAt == nextDay)
-        let days = try #require(SpendBreakdownFormat.expectedDays(completed))
-        #expect(days.count == 30)
-        #expect(days.last == JournalReader.dayString(from: nextDay, calendar: calendar))
-        #expect(state.spendBreakdownError == nil)
-    }
-
-    @MainActor
-    @Test("Only the latest range starts after canceled work releases the scan slot")
-    func canceledWorkDoesNotBlockReplacement() async throws {
-        let scanner = ControlledScanner()
-        let state = AppState(
-            pipeline: ThrowingPipeline(message: "Unused"),
-            spendBreakdownScanner: {
-                let usage = try await scanner.scan($0)
-                return SpendScanResult(providers: [ProviderSpend(provider: .claude, usage: usage)])
-            })
-        defer { state.cancelSpendBreakdownLoad() }
-        state.loadSpendBreakdown(daysBack: 7)
-        try #require(await scanner.waitForCalls(1))
-        // The injected scanner ignores cancellation while its continuation is held.
-        state.loadSpendBreakdown(daysBack: 30)
-        state.loadSpendBreakdown(daysBack: 7)
-        state.loadSpendBreakdown(daysBack: 30)
-        try await Task.sleep(for: .milliseconds(200))
-        #expect(state.spendBreakdownLoading)
-        #expect(state.spendBreakdownError == nil)
-        #expect(await scanner.ranges() == [7])
-        await scanner.finish(
-            .success(CostUsageResult(models: [ModelUsage(name: "old", costUsd: 9)])))
-        try #require(await scanner.waitForCalls(2))
-        #expect(state.spendBreakdown == nil)
-        await scanner.finish(
-            .success(CostUsageResult(models: [ModelUsage(name: "new", costUsd: 2)])))
-        try await waitForCompletion(state)
-        #expect(await scanner.ranges() == [7, 30])
-        #expect(state.spendBreakdown?.rangeDays == 30)
-        #expect(state.spendBreakdown?.result.knownCostUsd == 2)
-        #expect(state.spendBreakdownError == nil)
-    }
-
-}
-
-@Suite("Usage & Spend presentation")
-struct SpendBreakdownFormatTests {
-    private func row(
-        day: String, model: String, input: Int = 0, cost: Double
-    ) -> DailyModelUsage {
-        DailyModelUsage(day: day, model: model, inputTokens: input, costUsd: cost)
-    }
-
-    @Test("Day bars sum every model and stay in ascending day order")
-    func dailyTotalsSumModelsInDayOrder() {
-        let totals = SpendBreakdownFormat.dailyTotals([
-            row(day: "2026-09-02", model: "claude-opus-4-8", cost: 2),
-            row(day: "2026-09-01", model: "claude-opus-4-8", cost: 1),
-            row(day: "2026-09-01", model: "claude-sonnet-4-6", cost: 0.5),
-        ])
-
-        #expect(totals.map(\.day) == ["2026-09-01", "2026-09-02"])
-        #expect(totals[0].cost == 1.5)
-        #expect(totals[1].cost == 2)
-    }
-
-    @Test("A truncated scan leaves an unread day absent, not a zero bar")
-    func missingDayIsAbsentWhenScanWasTruncated() {
-        // With no expected days the scan was partial, so a gap means "not read".
-        // A zero bar would assert the user spent nothing that day.
-        let totals = SpendBreakdownFormat.dailyTotals([
-            row(day: "2026-09-01", model: "m", cost: 1),
-            row(day: "2026-09-03", model: "m", cost: 1),
-        ])
-
-        #expect(totals.map(\.day) == ["2026-09-01", "2026-09-03"])
-    }
-
-    @Test("A complete scan fills a quiet day, so the axis stays proportional")
-    func quietDayBecomesZeroWhenScanWasComplete() {
-        // A complete scan read every day in the window, so a day with no rows is
-        // a real zero. Hiding it would make the bars lie about elapsed time.
-        let totals = SpendBreakdownFormat.dailyTotals(
-            [
-                row(day: "2026-09-01", model: "m", cost: 1),
-                row(day: "2026-09-03", model: "m", cost: 2),
-            ],
-            expectedDays: ["2026-09-01", "2026-09-02", "2026-09-03"])
-
-        #expect(totals.map(\.day) == ["2026-09-01", "2026-09-02", "2026-09-03"])
-        #expect(totals[1].cost == 0)
-    }
-
-    @Test("Day keys cover the range, end today, and stay sorted")
-    func dayKeysCoverTheRange() {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try! #require(TimeZone(identifier: "Asia/Kuala_Lumpur"))
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-
-        let keys = SpendBreakdownFormat.dayKeys(rangeDays: 7, now: now, calendar: calendar)
-
-        #expect(keys.count == 7)
-        #expect(keys == keys.sorted())
-        // Inclusive of today, matching the scanner's own window.
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "yyyy-MM-dd"
-        #expect(keys.last == formatter.string(from: now))
-    }
-
-    @Test("Chart and export keep the completed range and date after midnight")
-    func completedWindowDoesNotFollowExportTime() throws {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(identifier: "Asia/Kuala_Lumpur"))
-        let scannedAt = Date(timeIntervalSince1970: 1_800_000_000)
-        let breakdown = SpendBreakdown(
-            result: SpendScanResult(providers: [ProviderSpend(provider: .claude, usage: .empty)]),
-            rangeDays: 7, scannedAt: scannedAt, calendar: calendar)
-        let keys = try #require(SpendBreakdownFormat.expectedDays(breakdown))
-        #expect(keys.count == 7)
-        #expect(keys.last == JournalReader.dayString(from: scannedAt, calendar: calendar))
-
-        let exportedAt = scannedAt.addingTimeInterval(86_400)
-        let json = try #require(
-            SpendBreakdownFormat.exportJSON(breakdown, generatedAt: exportedAt))
-        let payload = try #require(
-            JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
-        #expect(payload["rangeDays"] as? Int == 7)
-        #expect(payload["scannedAt"] as? String == ISO8601DateFormatter().string(from: scannedAt))
-        #expect(
-            payload["generatedAt"] as? String == ISO8601DateFormatter().string(from: exportedAt))
-
-        let partial = SpendBreakdown(
-            result: SpendScanResult(providers: [
-                ProviderSpend(
-                    provider: .claude, usage: CostUsageResult(models: [], isPartialEstimate: true))
-            ]),
-            rangeDays: 30, scannedAt: scannedAt, calendar: calendar)
-        #expect(SpendBreakdownFormat.expectedDays(partial) == nil)
-    }
-
-    @Test("A non-finite cost cannot poison a day total")
-    func nonFiniteCostIsSkipped() {
-        let totals = SpendBreakdownFormat.dailyTotals([
-            row(day: "2026-09-01", model: "m", cost: 1),
-            row(day: "2026-09-01", model: "bad", cost: .nan),
-        ])
-
-        #expect(totals.count == 1)
-        #expect(totals[0].cost == 1)
-    }
-
-    @Test("Money copy marks a tiny amount instead of rounding it to zero")
-    func moneyFormatsSmallAndInvalidValues() {
-        #expect(SpendBreakdownFormat.money(0) == "$0.00")
-        #expect(SpendBreakdownFormat.money(0.004) == "<$0.01")
-        #expect(SpendBreakdownFormat.money(12.345) == "$12.35")
-        #expect(SpendBreakdownFormat.money(.nan) == "—")
-        #expect(SpendBreakdownFormat.money(.infinity) == "—")
-    }
-
-    @Test("Compact token counts promote at the rounding boundary")
-    func compactPromotesAtRoundedBoundary() {
-        // 999,500 would render as "1000.0K" with a naive threshold.
-        #expect(SpendBreakdownFormat.compact(999) == "999")
-        #expect(SpendBreakdownFormat.compact(1000) == "1.0K")
-        #expect(SpendBreakdownFormat.compact(999_499) == "999.5K")
-        #expect(SpendBreakdownFormat.compact(999_500) == "1.0M")
-        #expect(SpendBreakdownFormat.compact(999_500_000) == "1.0B")
-        // Uses the unsigned magnitude, so this cannot overflow on negation.
-        #expect(SpendBreakdownFormat.compact(Int.min).hasSuffix("B"))
-    }
-
-    @Test("Rows with no tokens and no cost are not listed")
-    func billableModelsDropsEmptyPseudoModels() {
-        // Claude Code records `<synthetic>` with nothing attached. It is a real
-        // record, so the scan keeps it, but listing a row of zeros pushes real
-        // models down and tells the reader nothing.
-        let models = [
-            ModelUsage(name: "claude-opus-5", inputTokens: 10, costUsd: 1),
-            ModelUsage(name: "<synthetic>", inputTokens: 0, costUsd: 0),
-            ModelUsage(name: "cache-only", cacheReadTokens: 5, costUsd: 0),
-        ]
-
-        let listed = SpendBreakdownFormat.billableModels(models).map(\.name)
-
-        #expect(listed == ["claude-opus-5", "cache-only"])
-    }
-
-    @Test("A day key shortens without being parsed back into a date")
-    func shortDayTrimsTheYear() {
-        #expect(SpendBreakdownFormat.shortDay("2026-09-13") == "09-13")
-        // Anything unexpected passes through rather than being mangled.
-        #expect(SpendBreakdownFormat.shortDay("2026-09") == "2026-09")
-    }
-
-    @Test("The export carries the rows and the partial flag, never a path")
-    func exportOmitsPathsAndKeepsPartialFlag() throws {
-        let result = CostUsageResult(
-            models: [ModelUsage(name: "claude-opus-4-8", costUsd: 3)],
-            daily: [row(day: "2026-09-01", model: "claude-opus-4-8", input: 10, cost: 3)],
-            isPartialEstimate: true,
-            sourcePaths: ["/Users/someone/.claude/projects"])
-
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let breakdown = SpendBreakdown(
-            result: SpendScanResult(providers: [ProviderSpend(provider: .claude, usage: result)]),
-            rangeDays: 30, scannedAt: now, calendar: .current)
-        let json = try #require(SpendBreakdownFormat.exportJSON(breakdown, generatedAt: now))
-
-        // A user pasting this into an issue must not publish their directory layout.
-        #expect(!json.contains("/Users/"))
-        #expect(!json.contains("sourcePaths"))
-        // A reader must not mistake a truncated range for a complete one.
-        #expect(json.contains("\"isPartialEstimate\" : true"))
-        #expect(json.contains("\"rangeDays\" : 30"))
-        #expect(json.contains("\"day\" : \"2026-09-01\""))
-
-        let parsed = try #require(
-            try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
-        let providers = try #require(parsed["providers"] as? [[String: Any]])
-        let daily = try #require(providers.first?["daily"] as? [[String: Any]])
-        #expect(daily.count == 1)
-        #expect((daily[0]["estimatedCostUsd"] as? NSNumber)?.doubleValue == 3)
-    }
-}
-
-@Suite("Combined provider spend")
-struct CombinedProviderSpendTests {
-    @Test("Combined amounts retain provider totals and missing-cost state")
-    func combinedKnownCost() throws {
-        let claude = ProviderSpend(
-            provider: .claude,
-            usage: CostUsageResult(models: [
-                ModelUsage(name: "claude-sonnet-4-6", inputTokens: 10, costUsd: 3)
-            ]))
-        let codex = ProviderSpend(
-            provider: .codex,
-            usage: CostUsageResult(models: [
-                ModelUsage(name: "gpt-6-astra", inputTokens: 20, costUsd: nil)
-            ]), knownCostUsd: 2, hasUnknownCosts: true)
-        let combined = SpendScanResult(providers: [claude, codex])
-        #expect(combined.knownCostUsd == 5)
-        #expect(combined.isLowerBound)
-        #expect(!combined.isPartialEstimate)
-        #expect(SpendBreakdownFormat.total(combined) == "Combined at least $5.00 estimated")
-        #expect(SpendBreakdownFormat.amount(claude) == "about $3.00 estimated")
-        #expect(SpendBreakdownFormat.amount(codex) == "at least $2.00 estimated")
-    }
-
-    @Test("An entirely unpriced provider is unknown, with no false zero")
-    func unknownCosts() {
-        let provider = ProviderSpend(
-            provider: .codex,
-            usage: CostUsageResult(
-                models: [ModelUsage(name: "unknown", inputTokens: 30)],
-                daily: [DailyModelUsage(day: "2026-09-13", model: "unknown", inputTokens: 30)]))
-        let combined = SpendScanResult(providers: [provider])
-        #expect(SpendBreakdownFormat.total(combined) == "Combined cost unknown")
-        #expect(SpendBreakdownFormat.amount(provider) == "Cost unknown")
-        let days = SpendBreakdownFormat.dailyTotals(provider.usage.daily)
-        #expect(days.count == 1)
-        #expect(days[0].isIncomplete)
-        #expect(days[0].cost == 0)
-        let breakdown = SpendBreakdown(
-            result: combined, rangeDays: 7, scannedAt: Date(), calendar: .current)
-        #expect(SpendBreakdownFormat.expectedDays(breakdown, provider: provider) == nil)
-    }
-
-    @Test("Known daily subtotals survive mixed priced and unpriced requests")
-    func knownDailySubtotal() {
-        let days = SpendBreakdownFormat.dailyTotals(
-            [DailyModelUsage(day: "2026-09-13", model: "gpt-6-astra", inputTokens: 500)],
-            knownDailyCosts: ["2026-09-13": 2], unknownCostDays: ["2026-09-13"])
-        #expect(days.count == 1)
-        #expect(days[0].cost == 2)
-        #expect(days[0].isIncomplete)
-    }
-
-    @Test("A missing service tier gives a lower bound without losing known quiet days")
-    func standardTierAssumption() {
-        let provider = ProviderSpend(
-            provider: .codex,
-            usage: CostUsageResult(models: [
-                ModelUsage(name: "gpt-5.6-sol", inputTokens: 20, costUsd: 1)
-            ]), usesStandardTierAssumption: true)
-        let combined = SpendScanResult(providers: [provider])
-        #expect(combined.isLowerBound)
-        #expect(!combined.isPartialEstimate)
-        let breakdown = SpendBreakdown(
-            result: combined, rangeDays: 7, scannedAt: Date(), calendar: .current)
-        #expect(SpendBreakdownFormat.expectedDays(breakdown, provider: provider)?.count == 7)
-    }
-
-    @Test("Day labels distinguish zero, unknown, and known lower bounds")
-    func dayCostLabels() {
-        #expect(
-            SpendBreakdownFormat.dayAmount(cost: 0, isIncomplete: false, isLowerBound: false)
-                == "$0.00")
-        #expect(
-            SpendBreakdownFormat.dayAmount(cost: 0, isIncomplete: true, isLowerBound: true)
-                == "Cost unknown")
-        #expect(
-            SpendBreakdownFormat.dayAmount(cost: 2, isIncomplete: true, isLowerBound: false)
-                == "at least $2.00")
-        #expect(
-            SpendBreakdownFormat.dayAmount(cost: 2, isIncomplete: false, isLowerBound: true)
-                == "at least $2.00")
-    }
-
-    @Test("Export names both providers and preserves null costs without paths")
-    func providerExport() throws {
-        let provider = ProviderSpend(
-            provider: .codex,
-            usage: CostUsageResult(
-                models: [ModelUsage(name: "gpt-6-astra", inputTokens: 500)],
-                daily: [DailyModelUsage(day: "2026-09-13", model: "gpt-6-astra", inputTokens: 500)],
-                sourcePaths: ["/Users/private/.codex"]),
-            knownCostUsd: 2, hasUnknownCosts: true, usesStandardTierAssumption: true,
-            knownDailyCosts: ["2026-09-13": 2])
-        let result = SpendScanResult(providers: [
-            ProviderSpend(provider: .claude, usage: .empty), provider,
-        ])
-        let breakdown = SpendBreakdown(
-            result: result, rangeDays: 7, scannedAt: Date(), calendar: .current)
-        let json = try #require(SpendBreakdownFormat.exportJSON(breakdown))
-        #expect(!json.contains("/Users"))
-        #expect(!json.contains("sourcePaths"))
-        let object = try #require(
-            JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
-        #expect(object["schemaVersion"] as? Int == 2)
-        #expect(object["knownEstimatedCostUsd"] as? Double == 2)
-        let providers = try #require(object["providers"] as? [[String: Any]])
-        #expect(providers.map { $0["provider"] as? String } == ["claude", "codex"])
-        #expect(providers[1]["hasUnknownCosts"] as? Bool == true)
-        #expect(providers[1]["usesStandardTierAssumption"] as? Bool == true)
-        let daily = try #require(providers[1]["daily"] as? [[String: Any]])
-        #expect(daily[0]["estimatedCostUsd"] is NSNull)
-    }
 }

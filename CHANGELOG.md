@@ -11,6 +11,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Release validation
+
+- Sign and notarize the distribution DMG before Sparkle signs the update archive.
+- Add a private candidate preparation mode that stops before publication.
+- Defer popover window attachment updates until SwiftUI finishes the current view update.
+- Correct Settings text for Claude account selection.
+
+- Claude usage now comes only from OAuth. Removed statusline capture, bridge repair,
+  activity-based account selection, live-session indicators, and duplicate OAuth enrichment.
+- Upgrades remove five exact historical statusline snippets and captured files. User
+  commands and refresh intervals are preserved. Failed cleanup retries at the next launch.
+- Upgrades remove obsolete cost/pricing caches, widget data, and usage history after
+  required compatibility migrations complete. The old App Group snapshot is removed
+  only after a successful import check. Cleanup failures retry on a later launch;
+  current usage data, settings, credentials, and unrelated files are preserved.
+
+### Removed
+
+- Cursor credential subprocesses and the database-change detection cache.
+
+- Resident Codex App Server processes and the Codex source-mode picker.
+
+- Optional Claude web reset offers and their separate web sign-in. Quota reset countdowns remain.
+
+- The desktop widget, its extension, and App Group settings sync.
+- Anthropic service-status polling and incident banners.
+- Usage pace markers, depletion predictions, and the menu-bar forecast option.
+- The Usage & Spend window, local Claude and Codex cost estimates, and activity heatmap.
+- Transcript scans, pricing downloads, analytics caches, and their memory-pressure monitor.
+- Native quota, recovery, predictive, update, and Claude Code attention notifications.
+- The Notifications tab, attention hooks, event polling, and terminal focus actions.
+
+### Changed
+
+- Cursor reads credentials directly through system SQLite in read-only mode. Busy
+  databases retain stale usage; Keychain fallback and token refresh remain available.
+
+- Codex now tries direct OAuth first. Only credential/auth failures use a temporary App
+  Server recovery process. Network and server failures retain stale data without a process.
+  Codex keeps ownership of credential refresh and writes. API-key sign-ins show unavailable
+  subscription quota. Direct quota reads keep reset-credit totals; detailed reset-credit
+  expiry rows are available only when recovery supplies them.
+
+- Background usage refresh now runs every five minutes for all enabled providers.
+  Opening the popover refreshes only missing, failed, stale or at least one-minute-old data.
+  Countdown updates stay local. The UI age threshold is now ten minutes.
+- Display sleep parks refresh work. Wake checks freshness before requesting data.
+  Removed battery-dependent intervals and network-reconnect refreshes. Provider settings
+  changes refresh only the affected provider without restarting the background timer.
+
+- Claude now uses the same usage-state owner as Codex, Cursor and Grok. Each account keeps
+  its own freshness and errors. Existing account selection, OAuth behavior and reset displays
+  remain. Accepted Claude snapshots are saved in order without blocking the UI.
+
+- Codex now uses the same usage-state owner as Cursor and Grok. Multiple homes retain
+  separate errors and last-good readings. Sign-in checks and late-result protection also
+  guard saved readings. Account names, credits, resets and source options remain unchanged.
+
+- Cursor and Grok now share one usage-state owner. Their cards keep the same data and layout; cancelled or disabled refreshes cannot publish late results.
+
+- Added a shared provider account, quota-window and balance model. Existing displays, refresh behavior and stored readings remain unchanged.
+
+- Claude snapshots now use Application Support. Upgrades import a newer last-good snapshot from the former App Group. Existing app settings remain in standard defaults.
+- The removed menu-bar forecast setting now falls back to nearest-limit percentage.
+- Visual warning and critical thresholds are now in Appearance settings.
+
 ## [2.18] - 2026-09-14
 
 ### Added
@@ -31,8 +97,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Attention notifications can focus the correct Herdr pane inside Ghostty.
 
 ### Security
-
-- Local statusline and attention-event files restrict access to their owner.
 
 ## [2.17] - 2026-09-08
 
@@ -279,11 +343,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Turning off the Statusline source now uninstalls its bridge.** Previously
-  the snippet stayed in every account's `settings.json` and Claude Code kept
-  writing session files indefinitely, with no way to undo it from the app.
-  Disabling the source now removes the snippet and clears the captured session
-  data; your own statusline command is preserved.
 - **A Cursor problem no longer affects the Claude reading.** An expired Cursor
   token used to blank the menu-bar percentage and grey the status dot, even
   though Claude data was arriving normally. Cursor issues now stay on Cursor's
@@ -323,8 +382,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Anthropic's standard ratios.
 - **Rate-limit backoff could end early**, letting the app retry sooner than the
   API asked. `Retry-After` deadlines expressed as a date are now honored too.
-- A Claude account reached through a non-default config directory now keeps the
-  display name and plan you assigned it when there's no live session.
 - Cursor credentials are read through the system Keychain API instead of a
   command-line helper, so the read can no longer trigger a blocking permission
   dialog.
@@ -346,15 +403,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clicking a Claude Attention notification now returns to its originating
   Ghostty, Terminal, iTerm2, or WezTerm tab when possible, with a safe app-focus
   fallback for Warp and stale routes.
-- Diagnostics now show a bounded, non-sensitive statusline, OAuth, and cache
-  attempt trail.
 - Optional predictive alerts warn when a fresh two-poll forecast says session or
   weekly energy may run out before reset.
 - Codex can monitor multiple accounts through separate `CODEX_HOME` directories.
   Each account gets its own card, display name, polling state, and retained last
   reading when another account fails.
-- Scoped weekly limits the OAuth API reports beyond Opus (Sonnet, Cowork, …)
-  now show as extra rows on the active account's card.
 - Codex usage keeps working with newer app-servers that report windows by limit
   id instead of the positional session/weekly pair.
 
@@ -380,9 +433,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Predictive alerts keep their two-poll confirmation across source-tier
   switches and reset-time jitter, break the streak when a poll fails, and use
   the same duration wording as the popover's forecast line.
-- Diagnostics source-attempt labels are truthful: "not connected" is no longer
-  reported as "disabled", and a bridge that never produced data is no longer
-  reported as "stale".
+- Diagnostics distinguish missing connections from provider errors.
 - Connecting Claude Code in Settings no longer risks freezing the UI while
   macOS shows a Keychain permission prompt.
 
@@ -393,9 +444,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Richer provider cards.** Cursor now shows its plan and Auto + Composer/API
   split. Codex now shows its plan, available usage resets, and the nearest reset
   expiry when Codex provides the detail.
-- **Live session indicator.** The active Claude account shows a pulsing green dot
-  while its statusline bridge is fresh. Reduce Motion keeps the dot static.
-
 ### Changed
 
 - **More complete local usage estimates.** Cost totals and activity now include
@@ -484,13 +532,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- The **Claude.ai web-session source** (Settings → Data) and its "Import from
-  browser" cookie import. Claude Meter now collects usage from the **Statusline
-  Bridge** and **Claude Code OAuth** only — trimming the app's most fragile and
-  privacy-sensitive code (reading browser cookies). If you used only the
-  claude.ai source, connect via the statusline bridge (just run Claude Code) or
-  Claude Code OAuth.
-
 ## [2.2] - 2026-06-29
 
 ### Added
@@ -562,17 +603,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The widget adopts the activity-ring look and adapts to light and dark.
 - Cursor usage requests now use the shared redirect-guarded provider transport,
   matching the credential-leak protections used by Claude sources.
-- OAuth-only enrichment for statusline/claude.ai snapshots is cached and
-  throttled to reduce redundant usage API calls while keeping Opus/extra/plan
-  fields visible between refreshes.
-
 ### Fixed
 
-- Multi-account notifications now diff each account against its _own_ previous
-  reading, so an active-account switch never fabricates a false threshold crossing
-  nor skips a real one (switching to an already-critical account surfaces it once).
-  A "refueled" alert still won't trigger from a stale/persisted reading on first
-  launch or the first OAuth Opus enrichment.
 - Disabling an account now clears any menu-bar pin to it (and the Appearance
   picker no longer lists disabled accounts); a lone non-default config dir shows
   its custom display name and plan badge in the popover.
@@ -582,8 +614,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OAuth refreshed-token cache is now scoped to the selected mode (`auto` vs
   `manual`) and cleared on disconnect, preventing tokens from crossing source
   modes inside one app session.
-- Stale statusline/cache snapshots now mark the menu bar and popover as stale
-  immediately instead of waiting for the age-based stale threshold.
 - Medium widget now shows the Opus weekly window when available, matching the
   large widget and menu-bar severity.
 
@@ -598,8 +628,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   severity and notifications. For Max plans this is often the limit you hit first.
 - Pay-as-you-go "Extra usage" overage spend (with a progress bar) is surfaced in
   the popover, including when overage billing is paused.
-- Opus weekly, extra-usage spend, and plan now appear even on the statusline
-  source: when OAuth is connected, those OAuth-only fields enrich the snapshot.
 - Per-model token and estimated-cost breakdown for the last 7 days, scanned from
   local Claude Code transcripts and shown in the popover.
 - Anthropic service-status banner in the popover during incidents, so an outage is
@@ -631,8 +659,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- OAuth enrichment now shares the same 429 backoff as the main OAuth pipeline, so
-  statusline-primary users no longer hammer the usage API after a rate limit.
 - Plan badge no longer disappears after an in-session OAuth token refresh
   (`subscriptionType` is preserved).
 - Menu-bar usage percent now reflects the binding limit (including Opus weekly),
@@ -645,7 +671,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clamping to misleading hot/cold readings.
 - PowerMonitor no longer parks polling on `willSleep` (cancelled sleep could
   stall refreshes for up to 5 minutes).
-- Poll and cursor errors shown in the UI are sanitized like bridge diagnostics.
+- Poll and cursor errors shown in the UI are sanitized before display.
 - Service-status fetch runs concurrently with usage polling (no longer blocks the
   primary refresh).
 - Widget shows Opus weekly when available; release script tags the release commit
@@ -665,7 +691,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Statusline bridge and OAuth usage API as primary data sources.
 - Per-source toggles and active-state handling.
 - App icon, plus onboarding and settings polish.
 
@@ -686,7 +711,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Menu bar usage meter for Claude Code with five-hour and weekly rate-limit windows.
-- Data-source fallback: statusline bridge → OAuth usage API → claude.ai API → cached snapshot.
 - Local notifications with threshold deduplication.
 - WidgetKit widget sharing snapshots via an App Group.
 - Settings panel and diagnostics view.

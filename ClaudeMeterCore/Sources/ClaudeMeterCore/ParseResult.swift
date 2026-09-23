@@ -3,7 +3,6 @@ import Foundation
 /// One bounded, non-sensitive step in the Claude source fallback chain.
 public struct SourceAttempt: Equatable, Sendable {
     public enum Source: String, Equatable, Sendable {
-        case statusline
         case oauth
         case cache
     }
@@ -16,11 +15,7 @@ public struct SourceAttempt: Equatable, Sendable {
 
     public enum Reason: String, Equatable, Sendable {
         case freshData
-        case sourceDisabled
         case notConnected
-        case staleData
-        case noData
-        case cooldown
         case rateLimited
         case credentialsMissing
         case credentialsUnavailable
@@ -56,7 +51,8 @@ public struct ParseResult: Sendable {
     public let snapshot: ClaudeUsageSnapshot?
     public let warnings: [ParseWarning]
     public let errors: [ParseError]
-    public let rawHash: String
+    /// Account attempted by the primary OAuth request, including failed requests.
+    public var oauthAccountKey: String?
     public let parserVersion: String
     public let sourceAttempts: [SourceAttempt]
 
@@ -68,14 +64,14 @@ public struct ParseResult: Sendable {
         snapshot: ClaudeUsageSnapshot?,
         warnings: [ParseWarning],
         errors: [ParseError],
-        rawHash: String,
+        oauthAccountKey: String? = nil,
         parserVersion: String = "unknown",
         sourceAttempts: [SourceAttempt] = []
     ) {
         self.snapshot = snapshot
         self.warnings = warnings
         self.errors = errors
-        self.rawHash = rawHash
+        self.oauthAccountKey = oauthAccountKey
         self.parserVersion = parserVersion
         self.sourceAttempts = sourceAttempts
     }
@@ -85,7 +81,7 @@ public struct ParseResult: Sendable {
             snapshot: snapshot,
             warnings: warnings,
             errors: errors,
-            rawHash: rawHash,
+            oauthAccountKey: oauthAccountKey,
             parserVersion: parserVersion,
             sourceAttempts: [attempt] + sourceAttempts
         )

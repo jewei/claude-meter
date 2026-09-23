@@ -1,16 +1,15 @@
 import ClaudeMeterCore
+import CoreFoundation
 import CryptoKit
 import Foundation
 
 public struct CodexOAuthCredentials: Sendable, Equatable {
     public let accessToken: String
-    public let refreshToken: String?
     public let idToken: String?
     public let accountId: String?
 
-    public init(accessToken: String, refreshToken: String?, idToken: String?, accountId: String?) {
+    public init(accessToken: String, idToken: String?, accountId: String?) {
         self.accessToken = accessToken
-        self.refreshToken = refreshToken
         self.idToken = idToken
         self.accountId = accountId
     }
@@ -22,19 +21,22 @@ public enum CodexOAuthCredentialsError: Error, LocalizedError, Equatable {
     case missingTokens
     case decodeFailed
     case unreadable
+    case expiredAccessToken
 
     public var errorDescription: String? {
         switch self {
         case .notFound:
             "Codex auth file not found; using Codex CLI if available."
         case .apiKeyOnly:
-            "Codex is using API key auth; direct OAuth usage is unavailable."
+            "Codex API-key auth has no ChatGPT subscription quota. Sign in with ChatGPT in Codex."
         case .missingTokens:
             "Codex auth file has no ChatGPT OAuth tokens."
         case .decodeFailed:
             "Could not decode Codex auth file."
         case .unreadable:
             "Could not read Codex auth file."
+        case .expiredAccessToken:
+            "Codex access token needs renewal by Codex."
         }
     }
 }
@@ -87,7 +89,7 @@ public enum CodexOAuthCredentialsStore {
     }
 
     private static func claims(_ token: String?) -> [String: Any] {
-        guard let token else { return [:] }
+        guard let token, token.utf8.count <= 64 * 1_024 else { return [:] }
         let parts = token.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 3 else { return [:] }
         var payload = String(parts[1]).replacingOccurrences(of: "-", with: "+")
@@ -98,6 +100,16 @@ public enum CodexOAuthCredentialsStore {
         else { return [:] }
         // Claims are an account-change signal, never proof of authentication.
         return value
+    }
+
+    /// Unverified JWT expiry is only a hint to ask Codex to recover, never auth proof.
+    /// Unknown/malformed expiry permits the ordinary direct request.
+    static func accessTokenNeedsRecovery(_ token: String, now: Date) -> Bool {
+        guard let expiry = claims(token)["exp"] as? NSNumber,
+            CFGetTypeID(expiry) != CFBooleanGetTypeID(),
+            PersistedDateBounds.contains(timeIntervalSince1970: expiry.doubleValue)
+        else { return false }
+        return expiry.doubleValue <= now.timeIntervalSince1970 + 60
     }
 
     private static func digest(_ data: Data) -> String {
@@ -139,6 +151,9 @@ public enum CodexOAuthCredentialsStore {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw CodexOAuthCredentialsError.decodeFailed
         }
+        if let mode = json["auth_mode"] as? String, ["apikey", "api_key"].contains(mode) {
+            throw CodexOAuthCredentialsError.apiKeyOnly
+        }
         if let apiKey = json["OPENAI_API_KEY"] as? String,
             !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
@@ -152,7 +167,6 @@ public enum CodexOAuthCredentialsStore {
         }
         return CodexOAuthCredentials(
             accessToken: accessToken,
-            refreshToken: string(tokens["refresh_token"]) ?? string(tokens["refreshToken"]),
             idToken: string(tokens["id_token"]) ?? string(tokens["idToken"]),
             accountId: string(tokens["account_id"]) ?? string(tokens["accountId"]))
     }

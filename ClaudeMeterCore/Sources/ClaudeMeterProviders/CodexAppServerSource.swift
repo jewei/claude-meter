@@ -72,9 +72,8 @@ public final class CodexAppServerSource: CodexUsageSourceFetching, @unchecked Se
     private let startupTimeout: TimeInterval
     private let requestTimeout: TimeInterval
     private let resolver: @Sendable ([String: String]) -> String?
-    private let pool: CodexAppServerClientPool
 
-    public convenience init(
+    public init(
         env: [String: String] = ProcessInfo.processInfo.environment,
         startupTimeout: TimeInterval = 5,
         requestTimeout: TimeInterval = 5,
@@ -82,45 +81,30 @@ public final class CodexAppServerSource: CodexUsageSourceFetching, @unchecked Se
             CodexCLILocator.resolve(env: $0)
         }
     ) {
-        self.init(
-            env: env, startupTimeout: startupTimeout, requestTimeout: requestTimeout,
-            resolver: resolver, pool: .shared)
-    }
-
-    /// Tests inject their own pool so one case cannot reuse another's process.
-    init(
-        env: [String: String],
-        startupTimeout: TimeInterval,
-        requestTimeout: TimeInterval,
-        resolver: @escaping @Sendable ([String: String]) -> String?,
-        pool: CodexAppServerClientPool
-    ) {
         self.env = env
         self.startupTimeout = startupTimeout
         self.requestTimeout = requestTimeout
         self.resolver = resolver
-        self.pool = pool
     }
 
     public func fetchUsage(now: Date = Date()) async throws -> CodexUsage {
         try Task.checkCancellation()
         guard let executable = resolver(env) else { throw CodexUsageError.cliNotFound }
         try Task.checkCancellation()
-        // The home keys the pooled process. `CODEX_HOME` is set per account by
-        // `CodexUsageProvider`; an unset value means the CLI's own default home.
-        let home = env["CODEX_HOME"] ?? ""
-        let credentialIdentity = CodexOAuthCredentialsStore.identity(
-            codexHome: URL(fileURLWithPath: home.isEmpty ? NSHomeDirectory() : home))
-        try Task.checkCancellation()
-        return try await pool.withClient(
-            home: home,
-            executable: executable,
-            env: env,
-            startupTimeout: startupTimeout,
-            requestTimeout: requestTimeout,
-            credentialIdentity: credentialIdentity
-        ) { client in
-            try await self.fetchUsage(client: client, now: now)
+        let client = try CodexAppServerClient(
+            executable: executable, env: env,
+            startupTimeout: startupTimeout, requestTimeout: requestTimeout)
+        do {
+            try Task.checkCancellation()
+            try await client.initialize()
+            let usage = try await fetchUsage(client: client, now: now)
+            await client.shutdown()
+            try Task.checkCancellation()
+            return usage
+        } catch {
+            // Structured cleanup also awaits TERM/KILL and reaping after cancellation.
+            await client.shutdown()
+            throw error
         }
     }
 
@@ -134,6 +118,7 @@ public final class CodexAppServerSource: CodexUsageSourceFetching, @unchecked Se
         } catch {
             account = nil
         }
+        if account?.authMode == .apiKey { throw CodexOAuthCredentialsError.apiKeyOnly }
         // Account metadata is optional, but cancellation is not. Do not start a
         // rate-limit request after the caller cancels an account request.
         try Task.checkCancellation()
@@ -199,10 +184,8 @@ final class CodexAppServerClient: @unchecked Sendable {
         // account/provider than the local login.
         process.environment = AuthEnv.scrubbed(env)
         process.standardInput = stdinPipe
-        // A pooled client outlives one poll, so the child can exit between
-        // requests. Without this, the next write raises SIGPIPE and ends the whole
-        // app. `F_SETNOSIGPIPE` turns that into an ordinary `EPIPE` error, which
-        // `sendPayload` reports and the pool treats as a dead client.
+        // The child can exit between handshake requests. Report EPIPE instead of
+        // allowing a write to a dead child to terminate the app with SIGPIPE.
         _ = Darwin.fcntl(stdinPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
@@ -211,12 +194,6 @@ final class CodexAppServerClient: @unchecked Sendable {
 
         try process.run()
         installReaders()
-    }
-
-    /// Whether the child is still running. A pooled client that died while idle
-    /// must be replaced, not reused.
-    var isAlive: Bool {
-        shutdownLock.withLock { !shutdownStarted } && process.isRunning
     }
 
     func initialize() async throws {
@@ -229,7 +206,10 @@ final class CodexAppServerClient: @unchecked Sendable {
     }
 
     func fetchAccount() async throws -> CodexAppServerAccountResponse {
-        try await decodeResult(from: request(method: "account/read", timeout: requestTimeout))
+        // Codex owns the refresh token and the write to its configured credential backend.
+        try await decodeResult(
+            from: request(
+                method: "account/read", params: ["refreshToken": true], timeout: requestTimeout))
     }
 
     func fetchRateLimits() async throws -> CodexAppServerRateLimitsResponse {

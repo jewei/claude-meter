@@ -66,21 +66,12 @@ struct EnergyDot: View {
 
 /// A chunky horizontal energy bar (fills or depletes depending on the fraction
 /// passed) with an inner top gloss.
-func energyBarMarkerOffset(width: CGFloat, expectedFraction: Double) -> CGFloat {
-    let markerWidth: CGFloat = 2
-    let trackWidth = max(0, width)
-    let fraction = min(1, max(0, expectedFraction))
-    return min(max(0, trackWidth - markerWidth), max(0, trackWidth * fraction - markerWidth / 2))
-}
-
 struct EnergyBar: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var fraction: Double
     var color: Color
     var height: CGFloat = 14
-    /// Neutral reference showing where the fill would sit if usage matched time elapsed.
-    var expectedFraction: Double? = nil
 
     var body: some View {
         GeometryReader { geo in
@@ -93,23 +84,10 @@ struct EnergyBar: View {
                         Capsule().fill(Color.white.opacity(0.45))
                             .frame(height: 2).padding(.horizontal, 3).padding(.top, 2)
                     }
-                if let expectedFraction {
-                    Capsule()
-                        .fill(Color.pfInkMuted)
-                        .frame(width: 2, height: height + 4)
-                        .offset(
-                            x: energyBarMarkerOffset(
-                                width: geo.size.width,
-                                expectedFraction: expectedFraction
-                            )
-                        )
-                        .accessibilityHidden(true)
-                }
             }
         }
         .frame(height: height)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.5), value: fraction)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.5), value: expectedFraction)
     }
 }
 
@@ -240,9 +218,8 @@ struct RingLegend: View {
 
 // MARK: - Per-account card model
 //
-// Unified shape the popover builds from either `snapshot.accounts` (multi) or the
-// top-level snapshot (single). Email/plan/opus are present only for the active
-// OAuth account; the card degrades gracefully when they're nil.
+// Card fields come from normalized provider accounts. Unknown identity and quota
+// values remain absent. There is no selected-account mirror in provider state.
 
 struct AccountCardModel: Identifiable {
     var id: String
@@ -253,19 +230,14 @@ struct AccountCardModel: Identifiable {
     var week: LimitWindow
     var opus: LimitWindow?
     /// Popover-only Codex details, kept outside the persisted main-meter model.
-    var rateLimitResets: CodexRateLimitResets? = nil
-    var claudeLimitResets: ClaudeLimitResets? = nil
+    var rateLimitResets: BalanceItem? = nil
     /// Scoped weekly windows (`seven_day_sonnet`, …) — display-only rows below
     /// Opus; they don't influence the card's band or the reset summary.
     var scoped: [ScopedLimitWindow] = []
     /// Another account shares this one's organization id — same login, one
-    /// quota shown twice (see `MultiAccountOAuth.duplicateOrgAccountKeys`).
+    /// quota shown twice, as reported by Claude provider diagnostics.
     var isDuplicateLogin: Bool = false
-    /// A Claude Code session is open for this account right now (fresh
-    /// statusline bridge + active account). "Open", not "burning tokens" —
-    /// the bridge rewrites session files once a second even while idle.
-    var isLive: Bool = false
-
+    var lastError: String? = nil
     var avatarLetter: String {
         let trimmed = label.drop(while: { !$0.isLetter && !$0.isNumber })
         return String(trimmed.first ?? Character("C")).uppercased()
@@ -339,35 +311,6 @@ extension EnvironmentValues {
     }
 }
 
-/// Pulsing "session open now" marker on the active account's card; static when
-/// Reduce Motion is on.
-struct LiveDot: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.popoverIsVisible) private var popoverIsVisible
-
-    var body: some View {
-        Group {
-            if reduceMotion {
-                Circle().fill(Color.pfEnergyFull).frame(width: 7, height: 7)
-            } else {
-                // 12 fps is plenty for a 1.6 s opacity pulse; paused entirely
-                // while the popover window is hidden.
-                TimelineView(.animation(minimumInterval: 1 / 12, paused: !popoverIsVisible)) {
-                    context in
-                    let t = context.date.timeIntervalSinceReferenceDate
-                    let phase = (sin(t * 2 * .pi / 1.6) + 1) / 2  // 0…1 over 1.6s
-                    Circle()
-                        .fill(Color.pfEnergyFull)
-                        .frame(width: 7, height: 7)
-                        .opacity(0.55 + 0.45 * phase)
-                }
-            }
-        }
-        .accessibilityLabel("Session open")
-        .help("A Claude Code session is open for this account right now.")
-    }
-}
-
 /// Chip flagging that two config dirs are logged into the same Claude account
 /// (their windows are one shared quota rendered twice).
 struct DuplicateLoginBadge: View {
@@ -409,7 +352,6 @@ struct AccountRingCard: View {
                             .font(PFont.display(15, .semibold))
                             .foregroundStyle(Color.pfInk)
                             .lineLimit(1)
-                        if model.isLive { LiveDot() }
                         Spacer(minLength: 4)
                         if model.isDuplicateLogin { DuplicateLoginBadge() }
                         if let plan = model.plan { PlanBadge(plan: plan) }
@@ -420,8 +362,8 @@ struct AccountRingCard: View {
                             .foregroundStyle(Color.pfInkMuted)
                             .lineLimit(1)
                     }
-                    metricRow("5-hr", window: model.session, band: sBand, paceKind: .session)
-                    metricRow("week", window: model.week, band: wBand, paceKind: .weekly)
+                    metricRow("5-hr", window: model.session, band: sBand)
+                    metricRow("week", window: model.week, band: wBand)
                     if let opus = model.opus {
                         let oBand = opus.energyBand(thresholds: thresholds, asOf: now)
                         metricRow("opus", window: opus, band: oBand)
@@ -438,8 +380,8 @@ struct AccountRingCard: View {
             if let resets = model.rateLimitResets {
                 CodexUsageResetsView(resets: resets, now: now)
             }
-            if let resets = model.claudeLimitResets {
-                ClaudeUsageResetsView(resets: resets, now: now)
+            if let error = model.lastError {
+                Text(error).font(PFont.body(11, .semibold)).foregroundStyle(Color.pfEnergyLow)
             }
         }
         .padding(.horizontal, 14)
@@ -454,47 +396,26 @@ struct AccountRingCard: View {
 
     @ViewBuilder
     private func metricRow(
-        _ label: String, window: LimitWindow, band: EnergyBand,
-        paceKind: LimitWindowKind? = nil
+        _ label: String, window: LimitWindow, band: EnergyBand
     ) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 6) {
-                EnergyDot(color: band.color)
-                Text(label)
-                    .font(PFont.body(11, .bold))
-                    .foregroundStyle(Color.pfInk)
-                Text(window.displayText(usage: usage, asOf: now) ?? "—")
-                    .font(PFont.display(11, .heavy))
-                    .foregroundStyle(
-                        window.percentLeft(asOf: now) == nil ? Color.pfInkMuted : band.color
-                    )
+        HStack(spacing: 6) {
+            EnergyDot(color: band.color)
+            Text(label)
+                .font(PFont.body(11, .bold))
+                .foregroundStyle(Color.pfInk)
+            Text(window.displayText(usage: usage, asOf: now) ?? "—")
+                .font(PFont.display(11, .heavy))
+                .foregroundStyle(
+                    window.percentLeft(asOf: now) == nil ? Color.pfInkMuted : band.color
+                )
+                .monospacedDigit()
+            if let detail = resetDetail(window) {
+                Text("· \(detail)")
+                    .font(PFont.body(11, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
                     .monospacedDigit()
-                if let detail = resetDetail(window) {
-                    Text("· \(detail)")
-                        .font(PFont.body(11, .semibold))
-                        .foregroundStyle(Color.pfInkMuted)
-                        .monospacedDigit()
-                }
-                Spacer(minLength: 0)
             }
-            if let paceKind {
-                let resolved = window.resolved(asOf: now)
-                let forecast = RunsOutPhrase.spoken(
-                    resolved.runsOutEstimate(kind: paceKind, asOf: now))
-                if let forecast {
-                    Text(forecast)
-                        .font(PFont.body(10, .bold))
-                        .foregroundStyle(Color.pfInkMuted)
-                        .padding(.leading, 15)
-                        .lineLimit(1)
-                } else if let insight = resolved.paceInsight(kind: paceKind, asOf: now) {
-                    Text(insight.displayText)
-                        .font(PFont.body(10, .bold))
-                        .foregroundStyle(Color.pfInkMuted)
-                        .padding(.leading, 15)
-                        .lineLimit(1)
-                }
-            }
+            Spacer(minLength: 0)
         }
     }
 
@@ -508,9 +429,9 @@ struct AccountRingCard: View {
     private var accessibilityText: String {
         var windows = [
             accessibilityWindow(
-                "5-hour", window: model.session, kind: .session),
+                "5-hour", window: model.session),
             accessibilityWindow(
-                "weekly", window: model.week, kind: .weekly),
+                "weekly", window: model.week),
         ]
         if let opus = model.opus {
             windows.append(accessibilityWindow("weekly Opus", window: opus))
@@ -522,7 +443,7 @@ struct AccountRingCard: View {
     }
 
     private func accessibilityWindow(
-        _ scope: String, window: LimitWindow, kind: LimitWindowKind? = nil
+        _ scope: String, window: LimitWindow
     ) -> String {
         let resolved = window.resolved(asOf: now)
         let percentText: String
@@ -535,25 +456,21 @@ struct AccountRingCard: View {
         }
         let usablePercent = resolved.percentUsed.flatMap { $0.isFinite ? $0 : nil }
         let band = EnergyBand(severity: thresholds.severity(for: usablePercent))
-        let pace = kind.map { accessibilityPace(window, kind: $0) } ?? ""
-        return "\(scope): \(percentText), \(accessibilityEnergyBand(band))\(pace)"
+        return "\(scope): \(percentText), \(accessibilityEnergyBand(band))"
     }
 
-    private func accessibilityPace(_ window: LimitWindow, kind: LimitWindowKind) -> String {
-        let resolved = window.resolved(asOf: now)
-        let estimate = resolved.runsOutEstimate(kind: kind, asOf: now)
-        if let forecast = RunsOutPhrase.spoken(estimate) { return ", \(forecast)" }
-        guard let insight = resolved.paceInsight(kind: kind, asOf: now) else { return "" }
-        return ", \(insight.displayText)"
-    }
 }
 
 struct CodexUsageResetsView: View {
-    let resets: CodexRateLimitResets
+    let resets: BalanceItem
     let now: Date
 
-    private var credits: [CodexRateLimitResetCredit] {
-        (resets.credits ?? []).sorted {
+    private var availableCount: Int {
+        resets.value.map { NSDecimalNumber(decimal: $0).intValue } ?? 0
+    }
+
+    private var credits: [BalanceDetail] {
+        (resets.details ?? []).sorted {
             ($0.expiresAt ?? .distantFuture) < ($1.expiresAt ?? .distantFuture)
         }
     }
@@ -565,14 +482,14 @@ struct CodexUsageResetsView: View {
                 Text("Usage limit resets")
                     .font(PFont.body(11, .bold))
                 Spacer(minLength: 4)
-                Text("\(resets.availableCount) available")
+                Text("\(availableCount) available")
                     .font(PFont.body(11, .bold))
                     .monospacedDigit()
             }
             .foregroundStyle(Color.pfInk)
             .accessibilityElement(children: .combine)
 
-            if resets.availableCount > 0 {
+            if availableCount > 0 {
                 ForEach(Array(credits.enumerated()), id: \.offset) { _, credit in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(Self.title(for: credit))
@@ -594,9 +511,9 @@ struct CodexUsageResetsView: View {
                     Text("Expiry details unavailable")
                         .font(PFont.body(10, .semibold))
                         .foregroundStyle(Color.pfInkMuted)
-                } else if credits.count < resets.availableCount {
+                } else if credits.count < availableCount {
                     Text(
-                        "Expiry details shown for \(credits.count) of \(resets.availableCount) resets"
+                        "Expiry details shown for \(credits.count) of \(availableCount) resets"
                     )
                     .font(PFont.body(10, .semibold))
                     .foregroundStyle(Color.pfInkMuted)
@@ -605,66 +522,12 @@ struct CodexUsageResetsView: View {
         }
     }
 
-    private static func title(for credit: CodexRateLimitResetCredit) -> String {
-        let title = credit.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return title.isEmpty ? "Usage reset" : title
-    }
+    private static func title(for credit: BalanceDetail) -> String { credit.title }
 
-    private static func expirationText(for credit: CodexRateLimitResetCredit, asOf now: Date)
+    private static func expirationText(for credit: BalanceDetail, asOf now: Date)
         -> String
     {
         guard let expiresAt = credit.expiresAt else { return "Expiry date not provided" }
-        guard let phrase = ResetPhrase.spoken(until: expiresAt, asOf: now) else { return "Expired" }
-        return "Expires \(phrase)"
-    }
-}
-
-struct ClaudeUsageResetsView: View {
-    let resets: ClaudeLimitResets
-    let now: Date
-
-    var body: some View {
-        let offers = resets.availableOffers(asOf: now)
-        return VStack(alignment: .leading, spacing: 6) {
-            Divider().overlay(Color.pfCardBorder)
-            HStack {
-                Text("Usage limit resets")
-                    .font(PFont.body(11, .bold))
-                Spacer(minLength: 4)
-                Text("\(resets.availableCount(asOf: now)) available")
-                    .font(PFont.body(11, .bold))
-                    .monospacedDigit()
-            }
-            .foregroundStyle(Color.pfInk)
-            .accessibilityElement(children: .combine)
-
-            ForEach(Array(offers.enumerated()), id: \.offset) { _, offer in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(offer.title)
-                        .lineLimit(2)
-                    Spacer(minLength: 0)
-                    Text(expirationText(for: offer))
-                        .monospacedDigit()
-                        .multilineTextAlignment(.trailing)
-                }
-                .font(PFont.body(11, .semibold))
-                .foregroundStyle(Color.pfInkMuted)
-                .accessibilityElement(children: .combine)
-                .help(
-                    offer.expiresAt.map {
-                        "Expires \($0.formatted(date: .abbreviated, time: .shortened))"
-                    } ?? "Expiry date not provided")
-            }
-            Link(
-                "Open Claude to use a reset",
-                destination: URL(string: "https://claude.ai/settings/usage")!
-            )
-            .font(PFont.body(11, .semibold))
-        }
-    }
-
-    private func expirationText(for offer: ClaudeLimitResetOffer) -> String {
-        guard let expiresAt = offer.expiresAt else { return "Expiry date not provided" }
         guard let phrase = ResetPhrase.spoken(until: expiresAt, asOf: now) else { return "Expired" }
         return "Expires \(phrase)"
     }
@@ -689,7 +552,6 @@ struct AccountBarCard: View {
                         Text(model.label)
                             .font(PFont.display(15, .semibold)).foregroundStyle(Color.pfInk)
                             .lineLimit(1)
-                        if model.isLive { LiveDot() }
                     }
                     if let subtitle = model.subtitle {
                         Text(subtitle)
@@ -711,8 +573,8 @@ struct AccountBarCard: View {
                     "Weekly \(scoped.displayName)", icon: "📊", window: scoped.window,
                     kind: .weekly)
             }
-            if let resets = model.claudeLimitResets {
-                ClaudeUsageResetsView(resets: resets, now: now)
+            if let error = model.lastError {
+                Text(error).font(PFont.body(11, .semibold)).foregroundStyle(Color.pfEnergyLow)
             }
         }
         .padding(.horizontal, 14)
@@ -723,13 +585,9 @@ struct AccountBarCard: View {
 
     @ViewBuilder
     private func barSection(
-        _ label: String, icon: String, window: LimitWindow, kind: LimitWindowKind
+        _ label: String, icon: String, window: LimitWindow, kind: LimitWindowScope
     ) -> some View {
         let band = window.energyBand(thresholds: thresholds, asOf: now)
-        let resolved = window.resolved(asOf: now)
-        let insight = resolved.paceInsight(kind: kind, asOf: now)
-        let forecast = RunsOutPhrase.spoken(
-            resolved.runsOutEstimate(kind: kind, asOf: now))
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 7) {
                 Text(icon).font(.system(size: 13))
@@ -742,17 +600,10 @@ struct AccountBarCard: View {
             }
             EnergyBar(
                 fraction: window.displayFraction(usage: usage, asOf: now),
-                color: band.color,
-                expectedFraction: insight?.expectedDisplayFraction(usage: usage)
+                color: band.color
             )
             HStack {
-                if let forecast {
-                    Text(forecast)
-                        .font(PFont.body(11, .bold)).foregroundStyle(Color.pfInkMuted)
-                } else if let insight {
-                    Text(insight.displayText)
-                        .font(PFont.body(11, .bold)).foregroundStyle(Color.pfInkMuted)
-                } else if let left = window.percentLeft(asOf: now) {
+                if let left = window.percentLeft(asOf: now) {
                     Text(energyPhrase(left: left, kind: kind))
                         .font(PFont.body(11, .bold)).foregroundStyle(band.color)
                 } else {
@@ -769,7 +620,7 @@ struct AccountBarCard: View {
         }
     }
 
-    private func resetText(_ window: LimitWindow, kind: LimitWindowKind) -> String? {
+    private func resetText(_ window: LimitWindow, kind: LimitWindowScope) -> String? {
         guard let date = window.resolved(asOf: now).resetsAt,
             let phrase = ResetPhrase.spoken(until: date, asOf: now)
         else { return nil }
@@ -970,65 +821,4 @@ private func accessibilityEnergyBand(_ band: EnergyBand) -> String {
 /// "in 3h 12m" / "in 36h" / "in 6d 7h" — the app-wide `ResetPhrase` rule.
 func describeReset(_ date: Date, now: Date) -> String {
     ResetPhrase.spoken(until: date, asOf: now) ?? "soon"
-}
-
-// MARK: - Activity heatmap grid (GitHub-style punchcard)
-
-/// A 7×24 grid (Mon–Sun rows × hour-of-day columns) shaded by message volume,
-/// relative to the busiest cell. Cells stretch to fill the popover width.
-struct ActivityHeatmapGrid: View {
-    let map: ActivityHeatmap
-
-    private static let weekdayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    private static let labelWidth: CGFloat = 22
-    private static let cellSpacing: CGFloat = 2
-    private static let cellHeight: CGFloat = 12
-
-    var body: some View {
-        let peak = max(map.peak, 1)
-        VStack(spacing: Self.cellSpacing) {
-            ForEach(0..<7, id: \.self) { day in
-                HStack(spacing: Self.cellSpacing) {
-                    Text(Self.weekdayLabels[day])
-                        .font(PFont.body(9, .bold))
-                        .foregroundStyle(Color.pfInkMuted)
-                        .frame(width: Self.labelWidth, alignment: .leading)
-                    ForEach(0..<24, id: \.self) { hour in
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(Self.color(for: map.counts[day][hour], peak: peak))
-                            .frame(maxWidth: .infinity)
-                            .frame(height: Self.cellHeight)
-                    }
-                }
-            }
-            // Hour axis: label every 6 hours.
-            HStack(spacing: Self.cellSpacing) {
-                Spacer().frame(width: Self.labelWidth)
-                ForEach(0..<24, id: \.self) { hour in
-                    Text(hour % 6 == 0 ? "\(hour)" : "")
-                        .font(PFont.body(8, .semibold))
-                        .foregroundStyle(Color.pfInkMuted)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-        }
-    }
-
-    /// Shade for an absolute count, bucketed into 5 levels relative to `peak`.
-    static func color(for count: Int, peak: Int) -> Color {
-        guard count > 0 else { return color(forLevel: 0) }
-        let frac = Double(count) / Double(max(peak, 1))
-        let level = frac >= 0.75 ? 4 : frac >= 0.5 ? 3 : frac >= 0.25 ? 2 : 1
-        return color(forLevel: level)
-    }
-
-    static func color(forLevel level: Int) -> Color {
-        switch level {
-        case 0: return Color.pfTrack
-        case 1: return Color.pfEnergyFull.opacity(0.28)
-        case 2: return Color.pfEnergyFull.opacity(0.5)
-        case 3: return Color.pfEnergyFull.opacity(0.75)
-        default: return Color.pfEnergyFull
-        }
-    }
 }

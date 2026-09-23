@@ -22,16 +22,6 @@ public enum ResetPhrase {
         duration(until: reset, asOf: now).map { "in \($0)" }
     }
 
-    /// "42m" | "36h" | "6d 7h" — for tight spaces (widget rows).
-    public static func compact(until reset: Date, asOf now: Date) -> String? {
-        switch parts(until: reset, asOf: now) {
-        case .none: return nil
-        case .minutes(let m): return "\(m)m"
-        case .hoursMinutes(let h, _), .hours(let h): return "\(h)h"
-        case .daysHours(let d, let h): return h > 0 ? "\(d)d \(h)h" : "\(d)d"
-        }
-    }
-
     private enum Parts {
         case none
         case minutes(Int)

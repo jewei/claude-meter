@@ -28,43 +28,43 @@ public final class CodexUsageProvider: @unchecked Sendable {
             }))
     }
 
-    public func fetchUsage(mode: CodexSourceMode = .auto, now: Date = Date()) async throws
-        -> CodexUsage
-    {
+    public func fetchUsage(now: Date = Date()) async throws -> CodexUsage {
         try Task.checkCancellation()
-        switch mode {
-        case .appServer:
-            let usage = try await appServerSource.fetchUsage(now: now)
-            try Task.checkCancellation()
-            return usage
-        case .directOAuth:
+        do {
             let usage = try await oauthSource.fetchUsage(now: now)
             try Task.checkCancellation()
             return usage
-        case .auto:
+        } catch {
+            try Task.checkCancellation()
+            guard Self.canRecoverWithAppServer(error) else { throw error }
+            let directError = error
             do {
                 let usage = try await appServerSource.fetchUsage(now: now)
                 try Task.checkCancellation()
                 return usage
             } catch is CancellationError {
                 throw CancellationError()
-            } catch {
-                let appServerError = error
+            } catch let error as CodexOAuthCredentialsError where error == .apiKeyOnly {
                 try Task.checkCancellation()
-                do {
-                    let usage = try await oauthSource.fetchUsage(now: now)
-                    try Task.checkCancellation()
-                    return usage
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    try Task.checkCancellation()
-                    throw Self.combinedFailure(
-                        appServer: appServerError,
-                        directOAuth: error)
-                }
+                throw error
+            } catch {
+                try Task.checkCancellation()
+                throw Self.combinedFailure(appServer: error, directOAuth: directError)
             }
         }
+    }
+
+    /// Recovery belongs to Codex. Transport/server failures cannot repair credentials.
+    static func canRecoverWithAppServer(_ error: Error) -> Bool {
+        if let credentialError = error as? CodexOAuthCredentialsError {
+            switch credentialError {
+            case .notFound, .missingTokens, .decodeFailed, .unreadable, .expiredAccessToken:
+                return true
+            case .apiKeyOnly:
+                return false
+            }
+        }
+        return (error as? CodexUsageError) == .loginRequired
     }
 
     private static func combinedFailure(appServer: Error, directOAuth: Error) -> CodexUsageError {

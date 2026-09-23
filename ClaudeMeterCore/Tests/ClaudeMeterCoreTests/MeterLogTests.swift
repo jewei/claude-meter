@@ -75,11 +75,11 @@ struct MeterLogTests {
         let sink = MeterLogFileSink(directoryURL: directory)
 
         sink.setEnabled(true)
-        sink.append(level: .warning, category: .cost, message: "scan timed out")
+        sink.append(level: .warning, category: .poll, message: "poll timed out")
         try sink.drainForTesting()
 
         let contents = try String(contentsOf: sink.fileURL, encoding: .utf8)
-        #expect(contents.contains("[warning] cost: scan timed out"))
+        #expect(contents.contains("[warning] poll: poll timed out"))
         let attributes = try FileManager.default.attributesOfItem(atPath: sink.fileURL.path)
         let mode = try #require(attributes[.posixPermissions] as? NSNumber)
         #expect(mode.intValue & 0o777 == 0o600)
@@ -92,8 +92,8 @@ struct MeterLogTests {
     @Test("One formatted line names its level and category")
     func lineFormatNamesLevelAndCategory() {
         let line = MeterLogFileSink.line(
-            level: .error, category: .bridge, message: "install failed\nsecond line")
-        #expect(line.contains("[error] bridge: install failed second line"))
+            level: .error, category: .app, message: "migration failed\nsecond line")
+        #expect(line.contains("[error] app: migration failed second line"))
         #expect(line.hasSuffix("\n"))
     }
 }

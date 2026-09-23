@@ -11,9 +11,8 @@ APP_PATH="$1"
 DMG_PATH="$2"
 APPCAST_PATH="$3"
 SYMBOLS_PATH="$4"
-WIDGET_PATH="$APP_PATH/Contents/PlugIns/ClaudeMeterWidgetExtension.appex"
 
-for path in "$APP_PATH" "$DMG_PATH" "$APPCAST_PATH" "$WIDGET_PATH" "$SYMBOLS_PATH"; do
+for path in "$APP_PATH" "$DMG_PATH" "$APPCAST_PATH" "$SYMBOLS_PATH"; do
     if [[ ! -e "$path" ]]; then
         echo "error: missing release artifact: $path" >&2
         exit 1
@@ -21,16 +20,18 @@ for path in "$APP_PATH" "$DMG_PATH" "$APPCAST_PATH" "$WIDGET_PATH" "$SYMBOLS_PAT
 done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-echo "▶ Verifying retained app and widget symbols"
+echo "▶ Verifying retained app symbols"
 "$SCRIPT_DIR/release-symbols.sh" verify "$APP_PATH" "$SYMBOLS_PATH"
 
 echo "▶ Verifying signatures and notarization"
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-codesign --verify --strict --verbose=2 "$WIDGET_PATH"
 xcrun stapler validate "$APP_PATH"
 spctl --assess --type execute --verbose=2 "$APP_PATH"
 
 echo "▶ Verifying DMG integrity and mounted app"
+codesign --verify --strict --verbose=2 "$DMG_PATH"
+xcrun stapler validate "$DMG_PATH"
+spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG_PATH"
 hdiutil verify "$DMG_PATH"
 MOUNT_DIR="$(mktemp -d)"
 MOUNTED=0

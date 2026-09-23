@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Usage: scripts/release.sh [version] [build]
+# Usage: scripts/release.sh [version] [build] [--prepare-only]
 #   version  e.g. 1.1   (default: reads MARKETING_VERSION from project)
 #   build    e.g. 2     (default: git commit count — `git rev-list --count HEAD`)
+#   --prepare-only     Build and validate privately; do not commit or publish.
 #
 # Prerequisites:
 #   • Xcode with a valid Developer ID signing identity
@@ -57,6 +58,14 @@ fi
 if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}$ || ! "$BUILD" =~ ^[1-9][0-9]*$ ]]; then
     echo "error: releases require a numeric version and a positive integer build." >&2
     exit 1
+fi
+
+PREPARE_ONLY=0
+if [[ "${3:-}" == "--prepare-only" && $# -eq 3 ]]; then
+    PREPARE_ONLY=1
+elif [[ $# -gt 2 ]]; then
+    echo "error: usage: release.sh [version] [build] [--prepare-only]" >&2
+    exit 2
 fi
 
 DMG_NAME="$APP_NAME-$VERSION.dmg"
@@ -118,6 +127,10 @@ ZIP_PATH="$BUILD_DIR/$APP_NAME-notarize.zip"
 DMG_PATH="$BUILD_DIR/$DMG_NAME"
 SYMBOLS_PATH="$BUILD_DIR/$APP_NAME-$VERSION-$BUILD.dSYMs.zip"
 EXPORT_OPTIONS="$BUILD_DIR/ExportOptions.plist"
+APPCAST_PATH="$PROJECT_DIR/appcast.xml"
+if [[ "$PREPARE_ONLY" == "1" ]]; then
+    APPCAST_PATH="$BUILD_DIR/appcast.xml"
+fi
 
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
@@ -201,6 +214,16 @@ hdiutil create \
     -ov -format UDZO \
     "$DMG_PATH"
 
+# The user downloads the disk image. Sign and notarize that container as well as
+# the app inside it. Use the exported app's identity, then staple before Sparkle
+# signs the final bytes.
+echo "▶ Signing and notarizing DMG…"
+codesign -d --extract-certificates="$BUILD_DIR/signing-cert-" "$APP_PATH"
+SIGNING_IDENTITY="$(shasum -a 1 "$BUILD_DIR/signing-cert-0" | awk '{print $1}')"
+codesign --sign "$SIGNING_IDENTITY" --timestamp "$DMG_PATH"
+xcrun notarytool submit "$DMG_PATH" "${NOTARY_ARGS[@]}" --wait
+xcrun stapler staple "$DMG_PATH"
+
 # ── Sign for Sparkle ──────────────────────────────────────────────────────────
 
 echo "▶ Signing DMG for Sparkle…"
@@ -217,7 +240,7 @@ echo "▶ Updating appcast.xml…"
 PUBDATE=$(date -u '+%a, %d %b %Y %H:%M:%S +0000')
 DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/$TAG/$DMG_NAME"
 
-cat > "$PROJECT_DIR/appcast.xml" <<XML
+cat > "$APPCAST_PATH" <<XML
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
     <channel>
@@ -245,7 +268,13 @@ XML
 # Fail before changing git state or publishing anything if the signed artifacts,
 # mounted DMG, or appcast metadata do not agree.
 "$SCRIPT_DIR/release-symbols.sh" package "$APP_PATH" "$ARCHIVE_PATH/dSYMs" "$SYMBOLS_PATH"
-"$SCRIPT_DIR/validate-release.sh" "$APP_PATH" "$DMG_PATH" "$PROJECT_DIR/appcast.xml" "$SYMBOLS_PATH"
+"$SCRIPT_DIR/validate-release.sh" "$APP_PATH" "$DMG_PATH" "$APPCAST_PATH" "$SYMBOLS_PATH"
+
+# ── Stop after private preparation ───────────────────────────────────────────
+if [[ "$PREPARE_ONLY" == "1" ]]; then
+    echo "✓ Private candidate validated in $BUILD_DIR. No publication performed."
+    exit 0
+fi
 
 # ── Persist version + promote changelog + commit ──────────────────────────────
 # Bump project.pbxproj only after a successful build. Commit before creating the

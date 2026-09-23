@@ -1,15 +1,6 @@
 import Foundation
 
 extension Date {
-    /// Whole Unix epoch seconds when the value fits the platform integer type.
-    /// Provider and persisted dates are external input, so callers must not use
-    /// a trapping floating-point-to-integer conversion.
-    public var boundedUnixEpochSecond: Int? {
-        let seconds = timeIntervalSince1970
-        guard seconds.isFinite else { return nil }
-        return Int(exactly: seconds.rounded(.towardZero))
-    }
-
     /// Whole elapsed seconds, clamped to the range of `Int`.
     ///
     /// Persisted dates are external input. A future or `NaN` date behaves like
@@ -32,19 +23,10 @@ public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
     public var lastSuccessfulPollAt: Date?
     public var source: SourceInfo
     public var account: AccountInfo?
-    public var session: SessionInfo?
     public var limits: LimitInfo
-    public var models: [ModelUsage]
-    /// Cost freshness is independent of the quota observation.
-    public var costObservation: CostObservation?
-    public var mcp: MCPStatus?
-    public var settingSources: String?
     public var state: SnapshotState
-    /// Per-account usage when more than one Claude config dir (`CLAUDE_CONFIG_DIR`)
-    /// is active. The top-level `limits`/`account`/`session`/`state` always mirror
-    /// the *active* account (most-recently-used), so single-account consumers are
-    /// unaffected. `nil` only for a lone default `claude` account; a lone non-default
-    /// account remains a one-element list so its stable key can drive overrides.
+    /// OAuth accounts. The first account supplies the top-level compatibility
+    /// fields. Menu-bar selection uses an explicit pin or the nearest limit.
     public var accounts: [AccountUsage]?
 
     public init(
@@ -54,12 +36,7 @@ public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
         lastSuccessfulPollAt: Date? = nil,
         source: SourceInfo,
         account: AccountInfo? = nil,
-        session: SessionInfo? = nil,
         limits: LimitInfo,
-        models: [ModelUsage] = [],
-        costObservation: CostObservation? = nil,
-        mcp: MCPStatus? = nil,
-        settingSources: String? = nil,
         state: SnapshotState,
         accounts: [AccountUsage]? = nil
     ) {
@@ -69,148 +46,60 @@ public struct ClaudeUsageSnapshot: Codable, Equatable, Sendable {
         self.lastSuccessfulPollAt = lastSuccessfulPollAt
         self.source = source
         self.account = account
-        self.session = session
         self.limits = limits
-        self.models = models
-        self.costObservation = costObservation
-        self.mcp = mcp
-        self.settingSources = settingSources
         self.state = state
         self.accounts = accounts
     }
 
-    /// Stable identity of the account mirrored into the top-level fields.
-    public var activeAccountID: String? {
-        accounts?.first(where: \.isActive)?.id
-    }
-
-    /// Returns `snapshot`'s limits for the account currently active in `self`.
-    /// This hides the persisted top-level/account-list mirroring scheme from policies
-    /// that compare snapshots across an active-account switch.
-    public func limitsForActiveAccount(in snapshot: ClaudeUsageSnapshot?) -> LimitInfo? {
-        guard let activeAccountID else { return snapshot?.limits }
-        return snapshot?.accounts?.first(where: { $0.id == activeAccountID })?.limits
-    }
-}
-
-/// Metadata for the local cost totals mirrored in `ClaudeUsageSnapshot.models`.
-public struct CostObservation: Codable, Equatable, Sendable {
-    public let scannedAt: Date
-    public let isPartial: Bool
-
-    public init(scannedAt: Date, isPartial: Bool) {
-        self.scannedAt = scannedAt
-        self.isPartial = isPartial
-    }
 }
 
 // MARK: - Per-account usage
 
-/// A Claude web offer that can restore one or more usage limit windows.
-public struct ClaudeLimitResetOffer: Codable, Equatable, Sendable {
-    public let title: String
-    public let remainingCount: Int
-    public let startsAt: Date?
-    public let expiresAt: Date?
-
-    public init(title: String, remainingCount: Int, startsAt: Date?, expiresAt: Date?) {
-        self.title = title
-        self.remainingCount = remainingCount
-        self.startsAt = startsAt
-        self.expiresAt = expiresAt
-    }
-
-    public func isAvailable(asOf now: Date) -> Bool {
-        remainingCount > 0 && (startsAt.map { $0 <= now } ?? true)
-            && (expiresAt.map { $0 > now } ?? true)
-    }
-}
-
-/// Reset offers observed for one exact Claude web organization.
-public struct ClaudeLimitResets: Codable, Equatable, Sendable {
-    public let offers: [ClaudeLimitResetOffer]
-
-    public init(offers: [ClaudeLimitResetOffer]) {
-        self.offers = offers
-    }
-
-    public func availableOffers(asOf now: Date) -> [ClaudeLimitResetOffer] {
-        offers.filter { $0.isAvailable(asOf: now) }
-            .sorted { ($0.expiresAt ?? .distantFuture) < ($1.expiresAt ?? .distantFuture) }
-    }
-
-    public func availableCount(asOf now: Date) -> Int {
-        availableOffers(asOf: now).reduce(0) { $0 + $1.remainingCount }
-    }
-}
-
-/// A single account's rate-limit usage, for the popover's multi-account list.
-///
-/// Flat display value type (no nested snapshot) so it persists cleanly inside the
-/// widget-readable `current.json`. The active account is also mirrored into the
-/// snapshot's top-level fields; every account's plan/email/org/Opus can be filled
-/// by the multi-account OAuth tier (see `MultiAccountOAuth.merge`).
+/// One OAuth account and its last observed quota.
 public struct AccountUsage: Codable, Equatable, Sendable, Identifiable {
     /// Account key (see `ConfigDirDiscovery.accountKey`).
     public var id: String
     /// Human-facing label (`default`, `it-oneone`, …).
     public var label: String
     public var account: AccountInfo?
-    public var session: SessionInfo?
     public var limits: LimitInfo
     public var lastSuccessfulPollAt: Date?
     public var severity: UsageSeverity
-    /// `true` for the account currently mirrored into the snapshot's top-level fields.
-    public var isActive: Bool
+    /// Absent in old snapshots. A failed refresh retains the last observation.
+    public var isStale: Bool?
 
     public init(
         id: String,
         label: String,
         account: AccountInfo? = nil,
-        session: SessionInfo? = nil,
         limits: LimitInfo,
         lastSuccessfulPollAt: Date? = nil,
         severity: UsageSeverity,
-        isActive: Bool
+        isStale: Bool = false
     ) {
         self.id = id
         self.label = label
         self.account = account
-        self.session = session
         self.limits = limits
         self.lastSuccessfulPollAt = lastSuccessfulPollAt
         self.severity = severity
-        self.isActive = isActive
+        self.isStale = isStale
     }
 }
 
 // MARK: - Source
 
 public struct SourceInfo: Codable, Equatable, Sendable {
-    /// Executable path for CLI sources, or origin/host for network sources.
+    /// Network origin. The persisted key remains compatible with older snapshots.
     public var cliPath: String
-    public var cliVersion: String?
-    /// CLI command or network operation used to obtain the snapshot.
+    /// Network operation used to obtain the snapshot.
     public var command: String
 
-    public init(cliPath: String, cliVersion: String? = nil, command: String) {
+    public init(cliPath: String, command: String) {
         self.cliPath = cliPath
-        self.cliVersion = cliVersion
         self.command = command
     }
 
-    /// Source-neutral alias for new callers. `cliPath` remains persisted for schema
-    /// compatibility with existing snapshots.
-    public var endpoint: String {
-        get { cliPath }
-        set { cliPath = newValue }
-    }
-
-    /// Source-neutral alias for new callers.
-    public var operation: String {
-        get { command }
-        set { command = newValue }
-    }
 }
 
 // MARK: - Account
@@ -237,40 +126,6 @@ public struct AccountInfo: Codable, Equatable, Sendable {
     public var isEmpty: Bool {
         loginMethod == nil && organization == nil && email == nil && plan == nil
     }
-}
-
-// MARK: - Session
-
-public struct SessionInfo: Codable, Equatable, Sendable {
-    public var id: String?
-    public var name: String?
-    public var cwd: String?
-    public var activeModel: String?
-    public var totalCostUsd: Double?
-    public var totalApiDurationSeconds: Int?
-    public var codeLinesAdded: Int?
-    public var codeLinesRemoved: Int?
-
-    public init(
-        id: String? = nil,
-        name: String? = nil,
-        cwd: String? = nil,
-        activeModel: String? = nil,
-        totalCostUsd: Double? = nil,
-        totalApiDurationSeconds: Int? = nil,
-        codeLinesAdded: Int? = nil,
-        codeLinesRemoved: Int? = nil
-    ) {
-        self.id = id
-        self.name = name
-        self.cwd = cwd
-        self.activeModel = activeModel
-        self.totalCostUsd = totalCostUsd
-        self.totalApiDurationSeconds = totalApiDurationSeconds
-        self.codeLinesAdded = codeLinesAdded
-        self.codeLinesRemoved = codeLinesRemoved
-    }
-
 }
 
 // MARK: - Limits
@@ -321,7 +176,7 @@ public struct LimitInfo: Codable, Equatable, Sendable {
     public var currentWeekOpus: LimitWindow?
     /// Other scoped weekly windows the OAuth API reports as `seven_day_<scope>`
     /// (e.g. `seven_day_sonnet`, `seven_day_cowork`). Display-only: they do not
-    /// feed severity, the menu bar, or notifications. `nil` on older snapshots.
+    /// feed severity or the menu bar. `nil` on older snapshots.
     public var scopedWeekly: [ScopedLimitWindow]?
     /// Monthly pay-as-you-go overage spend (`extra_usage`), when enabled on the plan.
     public var extraUsage: ExtraUsage?
@@ -340,7 +195,7 @@ public struct LimitInfo: Codable, Equatable, Sendable {
         self.extraUsage = extraUsage
     }
 
-    /// Windows that participate in severity, menu-bar binding, and notifications.
+    /// Windows that participate in severity and menu-bar binding.
     /// Display-only dynamic scopes are intentionally excluded.
     public var bindingWindows: [LimitWindowDescriptor] {
         var result = [
@@ -351,14 +206,6 @@ public struct LimitInfo: Codable, Equatable, Sendable {
             result.append(LimitWindowDescriptor(scope: .weeklyOpus, window: currentWeekOpus))
         }
         return result
-    }
-
-    public func window(for scope: LimitWindowScope) -> LimitWindow? {
-        switch scope {
-        case .session: currentSession
-        case .weekly: currentWeekAllModels
-        case .weeklyOpus: currentWeekOpus
-        }
     }
 
     /// Display percent for the window with the highest resolved usage — matches
@@ -540,11 +387,14 @@ public struct LimitWindow: Codable, Equatable, Sendable {
     /// Returns the window as it should be interpreted at `now`. Claude's
     /// rate-limit windows are *rolling*, so once `resetsAt` has passed the window
     /// has reset: usage returns to 0% and the (unpredictable) next reset time is
-    /// dropped. This guards against open-but-idle Claude Code sessions and cached
-    /// snapshots surfacing a stale percentage hours after the window actually
-    /// reset. Windows with no usage value or no reset time are returned unchanged.
-    public func resolved(asOf now: Date) -> LimitWindow {
-        guard percentUsed != nil, let reset = resetsAt, reset <= now else { return self }
+    /// dropped. This guards against cached
+    /// observations showing a percentage hours after the window actually
+    /// reset. Stale observations clear expired usage to unknown instead. Current
+    /// windows with no usage value, and windows with no reset time, stay unchanged.
+    public func resolved(asOf now: Date, isStale: Bool = false) -> LimitWindow {
+        guard let reset = resetsAt, reset <= now else { return self }
+        if isStale { return LimitWindow() }
+        guard percentUsed != nil else { return self }
         return LimitWindow(
             percentUsed: 0, resetsAt: nil, rawResetText: nil, rawValueText: rawValueText)
     }
@@ -552,8 +402,7 @@ public struct LimitWindow: Codable, Equatable, Sendable {
     public var isOverLimit: Bool { (percentUsed ?? 0) > 100 }
 
     /// Energy remaining (0–100) — the inverse of usage. A rolling window past its
-    /// reset reads 100 (it refilled), via `resolved(asOf:)`. Lives in Core so the
-    /// notification engine doesn't depend on the UI layer for it.
+    /// reset reads 100 (it refilled), via `resolved(asOf:)`.
     public func percentLeft(asOf now: Date) -> Double? {
         guard let used = resolved(asOf: now).clampedPercent else { return nil }
         return 100 - used
@@ -568,93 +417,6 @@ public struct LimitWindow: Codable, Equatable, Sendable {
             return "\(Int(rounded))%"
         }
         return String(format: "%.1f%%", rounded)
-    }
-}
-
-// MARK: - Model usage
-
-/// One local day's usage for one model.
-///
-/// The scanner already groups by day and model before it collapses to per-model
-/// totals, so keeping this costs no extra parsing. `day` is a local-time
-/// `yyyy-MM-dd` key, matching the scanner's bucketing; a consumer must not parse
-/// it back into a `Date` for arithmetic across a time-zone change.
-public struct DailyModelUsage: Codable, Equatable, Sendable {
-    public var day: String
-    public var model: String
-    public var inputTokens: Int?
-    public var outputTokens: Int?
-    public var cacheReadTokens: Int?
-    public var cacheWriteTokens: Int?
-    public var costUsd: Double?
-
-    public init(
-        day: String,
-        model: String,
-        inputTokens: Int? = nil,
-        outputTokens: Int? = nil,
-        cacheReadTokens: Int? = nil,
-        cacheWriteTokens: Int? = nil,
-        costUsd: Double? = nil
-    ) {
-        self.day = day
-        self.model = model
-        self.inputTokens = inputTokens
-        self.outputTokens = outputTokens
-        self.cacheReadTokens = cacheReadTokens
-        self.cacheWriteTokens = cacheWriteTokens
-        self.costUsd = costUsd
-    }
-}
-
-public struct ModelUsage: Codable, Equatable, Sendable {
-    public var name: String
-    public var inputTokens: Int?
-    public var outputTokens: Int?
-    public var cacheReadTokens: Int?
-    public var cacheWriteTokens: Int?
-    public var costUsd: Double?
-
-    public init(
-        name: String,
-        inputTokens: Int? = nil,
-        outputTokens: Int? = nil,
-        cacheReadTokens: Int? = nil,
-        cacheWriteTokens: Int? = nil,
-        costUsd: Double? = nil
-    ) {
-        self.name = name
-        self.inputTokens = inputTokens
-        self.outputTokens = outputTokens
-        self.cacheReadTokens = cacheReadTokens
-        self.cacheWriteTokens = cacheWriteTokens
-        self.costUsd = costUsd
-    }
-
-    /// Friendly label for the model id: `claude-opus-4-8` → `Opus 4.8`,
-    /// `claude-3-5-sonnet-20241022` → `Sonnet 3.5`. Unknown families return the
-    /// raw id. Version = short (1–2 digit) numeric tokens; date-like tokens skipped.
-    public var displayName: String {
-        let lower = name.lowercased()
-        let family: String
-        if lower.contains("opus") {
-            family = "Opus"
-        } else if lower.contains("sonnet") {
-            family = "Sonnet"
-        } else if lower.contains("haiku") {
-            family = "Haiku"
-        } else if lower.contains("fable") {
-            family = "Fable"
-        } else {
-            return name
-        }
-        let separators: Set<Character> = ["-", ".", "_"]
-        let tokens: [Substring] = name.split { separators.contains($0) }
-        let versionParts: [String] =
-            tokens
-            .filter { $0.allSatisfy(\.isNumber) && $0.count <= 2 }
-            .map(String.init)
-        return versionParts.isEmpty ? family : "\(family) \(versionParts.joined(separator: "."))"
     }
 }
 
@@ -674,30 +436,21 @@ public enum MainMeterProvider: String, Codable, Equatable, Sendable, CaseIterabl
     }
 }
 
-/// Provider-neutral quota reading shared by the app, notification policy, and widget.
-/// Provider wire models stay in `ClaudeMeterProviders`; this is the durable Core model.
-public struct MainMeterReading: Codable, Equatable, Sendable {
-    public var schemaVersion: Int
+/// Selected provider quota data for the menu bar and popover.
+public struct MainMeterReading: Equatable, Sendable {
     public var provider: MainMeterProvider
     public var accountID: String
     public var accountLabel: String
-    /// Optional opaque owner within a configured account location. Account pins
-    /// still use accountID; notification baselines also include this owner.
-    public var observationOwnerID: String?
     public var plan: String?
     public var limits: LimitInfo
     public var sessionLabel: String
     public var weeklyLabel: String
     public var observedAt: Date
-    /// Monotonic selection generation mirrored through the App Group. The widget
-    /// rejects an older file after provider/account/source settings change.
-    public var selectionRevision: Int
     /// A source can explicitly mark an otherwise recent observation stale, such as
     /// Claude's cached-snapshot fallback. Age-based staleness is computed by consumers.
     public var sourceMarkedStale: Bool
 
     public init(
-        schemaVersion: Int = 1,
         provider: MainMeterProvider,
         accountID: String,
         accountLabel: String,
@@ -706,11 +459,8 @@ public struct MainMeterReading: Codable, Equatable, Sendable {
         sessionLabel: String = "5-hr",
         weeklyLabel: String = "week",
         observedAt: Date,
-        selectionRevision: Int = 0,
-        sourceMarkedStale: Bool = false,
-        observationOwnerID: String? = nil
+        sourceMarkedStale: Bool = false
     ) {
-        self.schemaVersion = schemaVersion
         self.provider = provider
         self.accountID = accountID
         self.accountLabel = accountLabel
@@ -719,14 +469,7 @@ public struct MainMeterReading: Codable, Equatable, Sendable {
         self.sessionLabel = sessionLabel
         self.weeklyLabel = weeklyLabel
         self.observedAt = observedAt
-        self.selectionRevision = selectionRevision
         self.sourceMarkedStale = sourceMarkedStale
-        self.observationOwnerID = observationOwnerID
-    }
-
-    public var stableIdentity: String {
-        let account = "\(provider.rawValue):\(accountID)"
-        return observationOwnerID.map { "\(account):owner:\($0)" } ?? account
     }
 
     public func severity(
@@ -741,7 +484,7 @@ public struct MainMeterReading: Codable, Equatable, Sendable {
     }
 }
 
-/// Account selection policy shared by app presentation, widget publication, and tests.
+/// Exact account pins and nearest-limit selection for app presentation.
 public enum MainMeterPolicy {
     /// A configured pin is exact: a missing pinned reading returns nil rather than
     /// changing the percentage's account. Without a pin, the account nearest its
@@ -775,36 +518,6 @@ public enum MainMeterPolicy {
         return readings.first { $0.accountID == pinnedAccountID }.map { [$0] } ?? []
     }
 
-    public static func acceptsPublished(
-        _ reading: MainMeterReading,
-        provider: MainMeterProvider,
-        pinnedAccountID: String?,
-        selectionRevision: Int
-    ) -> Bool {
-        guard reading.provider != .codex || reading.observationOwnerID != nil,
-            reading.provider == provider,
-            reading.selectionRevision == selectionRevision
-        else { return false }
-        return pinnedAccountID == nil || reading.accountID == pinnedAccountID
-    }
-
-    public static func shouldBumpSelectionRevision(
-        previous: MainMeterReading?,
-        current: MainMeterReading?,
-        configurationChanged: Bool
-    ) -> Bool {
-        configurationChanged || previous?.stableIdentity != current?.stableIdentity
-    }
-
-    public static func shouldReloadWidget(
-        previous: MainMeterReading?,
-        current: MainMeterReading?
-    ) -> Bool {
-        guard var previous, let current else { return previous != current }
-        previous.observedAt = current.observedAt
-        return previous != current
-    }
-
     private static func bindingUsage(_ reading: MainMeterReading, asOf now: Date) -> Double {
         reading.limits.bindingWindows.compactMap {
             $0.window.resolved(asOf: now).percentUsed
@@ -812,27 +525,9 @@ public enum MainMeterPolicy {
     }
 }
 
-// MARK: - MCP
-
-/// Legacy snapshot compatibility for statusline fields no current UI consumes.
-/// Keep this shape decodable until the persisted snapshot schema is version-migrated.
-public struct MCPStatus: Codable, Equatable, Sendable {
-    public var connected: Int?
-    public var needsAuth: Int?
-    public var failed: Int?
-    public var raw: String
-
-    public init(connected: Int? = nil, needsAuth: Int? = nil, failed: Int? = nil, raw: String) {
-        self.connected = connected
-        self.needsAuth = needsAuth
-        self.failed = failed
-        self.raw = raw
-    }
-}
-
 // MARK: - State
 
-/// Persisted source state. `severity` is retained for widget/backward compatibility;
+/// Persisted source state. `severity` records the source evaluation;
 /// live app policy recomputes severity from resolved limits and current thresholds.
 public struct SnapshotState: Codable, Equatable, Sendable {
     public var status: SnapshotStatus
@@ -863,7 +558,7 @@ public enum SnapshotStatus: String, Codable, Equatable, Sendable {
     case unknownError
 }
 
-/// Configurable warning/critical bands for usage severity and notifications.
+/// Configurable warning/critical bands for usage severity.
 public struct UsageThresholds: Sendable, Equatable {
     public var warning: Double
     public var critical: Double

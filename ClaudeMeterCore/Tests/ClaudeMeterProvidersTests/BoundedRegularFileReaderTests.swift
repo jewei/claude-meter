@@ -83,43 +83,20 @@ struct BoundedRegularFileReaderTests {
         }
     }
 
-    @Test func anchoredUnlinkKeepsFileChangedAfterRead() throws {
+    @Test func anchoredUnlinkKeepsFileChangedAfterInspection() throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let fileURL = directory.appendingPathComponent("event.json")
         try Data("old".utf8).write(to: fileURL)
 
         let anchored = try BoundedRegularFileReader.AnchoredDirectory(opening: directory)
-        let file = try anchored.readFile(named: "event.json", maximumByteCount: 64)
+        let entry = try anchored.entry(named: "event.json")
         // This truncates and updates the same inode. Identity-only checks would
         // remove the new bytes even though they were never parsed.
         try Data("replacement".utf8).write(to: fileURL)
 
-        #expect(!anchored.unlinkFile(named: "event.json", ifUnchangedSince: file))
+        #expect(!anchored.unlinkEntry(named: "event.json", ifUnchangedSince: entry))
         #expect(try Data(contentsOf: fileURL) == Data("replacement".utf8))
-    }
-
-    @Test func atomicPathReplacementDoesNotInvalidateCoherentOpenFile() throws {
-        let directory = try makeDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let fileURL = directory.appendingPathComponent("session.json")
-        let oldData = Data("old payload".utf8)
-        let replacement = Data("new payload".utf8)
-        try oldData.write(to: fileURL)
-
-        let anchored = try BoundedRegularFileReader.AnchoredDirectory(opening: directory)
-        let file = try anchored.readFile(
-            named: "session.json",
-            maximumByteCount: 64,
-            afterRead: {
-                try? replacement.write(to: fileURL, options: .atomic)
-            })
-
-        // Atomic statusline writes unlink the old inode and update its ctime. The
-        // open descriptor still has one coherent payload and must remain usable.
-        #expect(file.data == oldData)
-        #expect(!anchored.unlinkFile(named: "session.json", ifUnchangedSince: file))
-        #expect(try Data(contentsOf: fileURL) == replacement)
     }
 
 }

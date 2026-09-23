@@ -199,18 +199,6 @@ struct CodexUsageTests {
         #expect(errno == ESRCH)
     }
 
-    @Test func boundedProcessCaptureRejectsOverflowInsteadOfReturningATruncatedPrefix() {
-        let capture = BoundedProcessOutputCapture(maxBytes: 4)
-        capture.append(Data("ab".utf8))
-        #expect(capture.data == Data("ab".utf8))
-
-        capture.append(Data("cde".utf8))
-        #expect(capture.data == nil)
-
-        capture.append(Data("f".utf8))
-        #expect(capture.data == nil)
-    }
-
     @Test func boundedLineBufferHandlesSplitLinesAndRejectsAnOversizedTail() {
         let buffer = BoundedProcessLineBuffer(maxBytes: 4)
         let first = buffer.appendAndDrainLines(Data("ab\nc".utf8))
@@ -614,153 +602,143 @@ struct CodexUsageTests {
         #expect(start.duration(to: clock.now) < .seconds(1))
     }
 
-    @Test func sourceModeDefaultsToAutoForUnknownStoredValue() {
-        #expect(CodexSourceMode(rawValue: "appServer") == .appServer)
-        #expect(CodexSourceMode(rawValue: "directOAuth") == .directOAuth)
-        #expect(CodexSourceMode.normalized("bad-value") == .auto)
-    }
-
-    @Test func providerAutoPrefersAppServer() async throws {
-        let appServer = StubCodexSource(
-            usage: Self.usage(source: .appServer),
-            availability: true)
-        let oauth = StubCodexSource(
-            usage: Self.usage(source: .directOAuth),
-            availability: true)
+    @Test func directSuccessNeverInvokesAppServer() async throws {
+        let appServer = StubCodexSource(usage: Self.usage(source: .appServer), availability: true)
+        let oauth = StubCodexSource(usage: Self.usage(source: .directOAuth), availability: true)
         let provider = CodexUsageProvider(appServerSource: appServer, oauthSource: oauth)
-
-        let usage = try await provider.fetchUsage(mode: .auto)
-
-        #expect(usage.source == .appServer)
-        #expect(appServer.fetchCount == 1)
-        #expect(oauth.fetchCount == 0)
-    }
-
-    @Test func providerAutoFallsBackToOAuthWhenAppServerUnavailable() async throws {
-        let appServer = StubCodexSource(
-            usage: Self.usage(source: .appServer),
-            availability: false)
-        let oauth = StubCodexSource(
-            usage: Self.usage(source: .directOAuth),
-            availability: true)
-        let provider = CodexUsageProvider(appServerSource: appServer, oauthSource: oauth)
-
-        let usage = try await provider.fetchUsage(mode: .auto)
-
-        #expect(usage.source == .directOAuth)
-        #expect(appServer.fetchCount == 1)
-        #expect(oauth.fetchCount == 1)
-    }
-
-    @Test func providerDirectOAuthModeSkipsAppServer() async throws {
-        let appServer = StubCodexSource(
-            usage: Self.usage(source: .appServer),
-            availability: true)
-        let oauth = StubCodexSource(
-            usage: Self.usage(source: .directOAuth),
-            availability: true)
-        let provider = CodexUsageProvider(appServerSource: appServer, oauthSource: oauth)
-
-        let usage = try await provider.fetchUsage(mode: .directOAuth)
-
-        #expect(usage.source == .directOAuth)
+        for _ in 0..<2 {
+            #expect(try await provider.fetchUsage().source == .directOAuth)
+        }
         #expect(appServer.fetchCount == 0)
-        #expect(oauth.fetchCount == 1)
+        #expect(oauth.fetchCount == 2)
     }
 
-    /// The app-server fetch begins but its RPC fails. This is the common
-    /// real-world failure — a codex build whose `app-server`
-    /// subcommand is missing or slow — and it must still reach the OAuth source,
-    /// which reads `auth.json` over HTTPS and is unaffected by the CLI.
-    @Test func providerAutoFallsBackWhenAppServerFailsMidFetch() async throws {
-        let appServer = StubCodexSource(
-            usage: Self.usage(source: .appServer),
-            availability: true,
-            fetchError: CodexUsageError.rpcTimedOut("initialize"))
+    @Test(arguments: [
+        CodexOAuthCredentialsError.notFound, .missingTokens, .decodeFailed, .unreadable,
+        .expiredAccessToken,
+    ])
+    func credentialFailuresPermitOneRecovery(failure: CodexOAuthCredentialsError) async throws {
+        let appServer = StubCodexSource(usage: Self.usage(source: .appServer), availability: true)
         let oauth = StubCodexSource(
-            usage: Self.usage(source: .directOAuth),
-            availability: true)
+            usage: Self.usage(source: .directOAuth), availability: true, fetchError: failure)
         let provider = CodexUsageProvider(appServerSource: appServer, oauthSource: oauth)
-
-        let usage = try await provider.fetchUsage(mode: .auto)
-
-        #expect(usage.source == .directOAuth)
+        #expect(try await provider.fetchUsage().source == .appServer)
         #expect(appServer.fetchCount == 1)
         #expect(oauth.fetchCount == 1)
     }
 
-    @Test func providerAutoDoesNotFallbackAfterAppServerCancellation() async {
-        let appServer = StubCodexSource(
-            usage: Self.usage(source: .appServer),
-            availability: true,
+    @Test(arguments: [401, 403, 429, 500, 502, 503])
+    func httpFailureClassification(status: Int) async throws {
+        let appServer = StubCodexSource(usage: Self.usage(source: .appServer), availability: true)
+        let oauth = CodexDirectOAuthSource(
+            transport: RecordingTransport(data: Data(), status: status),
+            credentialsLoader: {
+                CodexOAuthCredentials(accessToken: "opaque", idToken: nil, accountId: nil)
+            })
+        let provider = CodexUsageProvider(appServerSource: appServer, oauthSource: oauth)
+        if status == 401 || status == 403 {
+            #expect(try await provider.fetchUsage().source == .appServer)
+            #expect(appServer.fetchCount == 1)
+        } else {
+            await #expect(throws: CodexUsageError.httpError(status)) {
+                try await provider.fetchUsage()
+            }
+            #expect(appServer.fetchCount == 0)
+        }
+    }
+
+    @Test func otherFailuresNeverStartRecovery() async {
+        let failures: [any Error] = [
+            URLError(.notConnectedToInternet), URLError(.cannotFindHost), URLError(.timedOut),
+            CancellationError(), CodexOAuthCredentialsError.apiKeyOnly, CodexUsageError.noUsageData,
+            DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Invalid usage")),
+        ]
+        for failure in failures {
+            let appServer = StubCodexSource(
+                usage: Self.usage(source: .appServer), availability: true)
+            let oauth = StubCodexSource(
+                usage: Self.usage(source: .directOAuth), availability: true, fetchError: failure)
+            let provider = CodexUsageProvider(appServerSource: appServer, oauthSource: oauth)
+            await #expect(throws: (any Error).self) { try await provider.fetchUsage() }
+            #expect(appServer.fetchCount == 0)
+        }
+    }
+
+    @Test func recoveryFailureRetainsBothErrorsAndCancellation() async {
+        let oauth = StubCodexSource(
+            usage: Self.usage(source: .directOAuth), availability: true,
+            fetchError: CodexOAuthCredentialsError.notFound)
+        for error in [CodexUsageError.cliNotFound, .rpcFailed("boom")] {
+            let recovery = StubCodexSource(
+                usage: Self.usage(source: .appServer), availability: true, fetchError: error)
+            let provider = CodexUsageProvider(appServerSource: recovery, oauthSource: oauth)
+            await #expect(
+                throws: CodexUsageError.allSourcesFailed(
+                    appServer: error.localizedDescription,
+                    directOAuth: CodexOAuthCredentialsError.notFound.localizedDescription)
+            ) {
+                try await provider.fetchUsage()
+            }
+            #expect(recovery.fetchCount == 1)
+        }
+        let cancelled = StubCodexSource(
+            usage: Self.usage(source: .appServer), availability: true,
             fetchError: CancellationError())
-        let oauth = StubCodexSource(
-            usage: Self.usage(source: .directOAuth),
-            availability: true)
-        let provider = CodexUsageProvider(appServerSource: appServer, oauthSource: oauth)
-
         await #expect(throws: CancellationError.self) {
-            try await provider.fetchUsage(mode: .auto)
-        }
-        #expect(appServer.fetchCount == 1)
-        #expect(oauth.fetchCount == 0)
-    }
-
-    @Test func providerAutoPreservesOAuthCancellation() async {
-        let appServer = StubCodexSource(
-            usage: Self.usage(source: .appServer),
-            availability: true,
-            fetchError: CodexUsageError.rpcFailed("boom"))
-        let oauth = StubCodexSource(
-            usage: Self.usage(source: .directOAuth),
-            availability: true,
-            fetchError: CancellationError())
-        let provider = CodexUsageProvider(appServerSource: appServer, oauthSource: oauth)
-
-        await #expect(throws: CancellationError.self) {
-            try await provider.fetchUsage(mode: .auto)
-        }
-        #expect(appServer.fetchCount == 1)
-        #expect(oauth.fetchCount == 1)
-    }
-
-    @Test func providerReportsBothErrorsWhenOAuthAlsoFails() async {
-        let appServer = StubCodexSource(
-            usage: Self.usage(source: .appServer),
-            availability: true,
-            fetchError: CodexUsageError.rpcFailed("boom"))
-        let oauth = StubCodexSource(
-            usage: Self.usage(source: .directOAuth),
-            availability: false,
-            unavailableError: CodexOAuthCredentialsError.notFound)
-        let provider = CodexUsageProvider(appServerSource: appServer, oauthSource: oauth)
-
-        await #expect(
-            throws: CodexUsageError.allSourcesFailed(
-                appServer: "Codex CLI request failed: boom",
-                directOAuth: "Codex auth file not found; using Codex CLI if available.")
-        ) {
-            try await provider.fetchUsage(mode: .auto)
+            try await CodexUsageProvider(appServerSource: cancelled, oauthSource: oauth)
+                .fetchUsage()
         }
     }
 
-    @Test func providerReportsBothSourcesUnavailable() async {
-        let appServer = StubCodexSource(
-            usage: Self.usage(source: .appServer),
-            availability: false,
-            unavailableError: CodexUsageError.cliNotFound)
-        let oauth = StubCodexSource(
-            usage: Self.usage(source: .directOAuth),
-            availability: false,
-            unavailableError: CodexOAuthCredentialsError.notFound)
-        let provider = CodexUsageProvider(appServerSource: appServer, oauthSource: oauth)
+    @Test(arguments: [
+        "0", "1800000000", "1800000060", "1800000061", "null", "true", "\"expired\"", "1e300", "-1",
+    ])
+    func jwtExpiryRecovery(exp: String) async throws {
+        let payload = Data("{\"exp\":\(exp)}".utf8).base64EncodedString()
+        let token = "header.\(payload).signature"
+        let transport = RecordingTransport(
+            data: Data(#"{"rate_limit":{"primary_window":{"used_percent":12}}}"#.utf8), status: 200)
+        let source = CodexDirectOAuthSource(
+            transport: transport,
+            credentialsLoader: {
+                CodexOAuthCredentials(accessToken: token, idToken: nil, accountId: nil)
+            })
+        let recovery = StubCodexSource(usage: Self.usage(source: .appServer), availability: true)
+        let provider = CodexUsageProvider(appServerSource: recovery, oauthSource: source)
+        let usage = try await provider.fetchUsage(now: Date(timeIntervalSince1970: 1_800_000_000))
+        let expired = ["0", "1800000000", "1800000060"].contains(exp)
+        #expect(usage.source == (expired ? .appServer : .directOAuth))
+        #expect(recovery.fetchCount == (expired ? 1 : 0))
+        #expect((transport.lastRequest == nil) == expired)
+    }
 
-        await #expect(
-            throws: CodexUsageError.allSourcesFailed(
-                appServer: "Codex CLI not found. Install Codex or set the Codex CLI path.",
-                directOAuth: "Codex auth file not found; using Codex CLI if available.")
-        ) {
-            try await provider.fetchUsage(mode: .auto)
+    @Test func malformedResetMetadataDoesNotDiscardDirectQuota() throws {
+        let json =
+            #"{"rate_limit":{"primary_window":{"used_percent":12}},"rate_limit_reset_credits":{"available_count":"bad"}}"#
+        let response = try JSONDecoder().decode(CodexOAuthUsageResponse.self, from: Data(json.utf8))
+        let usage = try response.usage(accountEmail: nil, now: Date(), source: .directOAuth)
+        #expect(usage.primaryWindow?.usedPercent == 12)
+        #expect(usage.rateLimitResets == nil)
+    }
+
+    @Test func apiKeyRecoveryIsUnavailable() async {
+        let recovery = StubCodexSource(
+            usage: Self.usage(source: .appServer), availability: true,
+            fetchError: CodexOAuthCredentialsError.apiKeyOnly)
+        let oauth = StubCodexSource(
+            usage: Self.usage(source: .directOAuth), availability: true,
+            fetchError: CodexOAuthCredentialsError.notFound)
+        await #expect(throws: CodexOAuthCredentialsError.apiKeyOnly) {
+            try await CodexUsageProvider(appServerSource: recovery, oauthSource: oauth).fetchUsage()
+        }
+    }
+
+    @Test func malformedOrOversizeJWTExpiryIsUnknown() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        for token in [
+            "opaque", "a.invalid.c", "a.b", "a." + String(repeating: "a", count: 70_000) + ".c",
+        ] {
+            #expect(!CodexOAuthCredentialsStore.accessTokenNeedsRecovery(token, now: now))
         }
     }
 
@@ -810,7 +788,8 @@ struct CodexUsageTests {
                   "limit_window_seconds": 18000
                 }
               },
-              "credits": { "balance": "5" }
+              "credits": { "balance": "5" },
+              "rate_limit_reset_credits": { "available_count": 3 }
             }
             """
         let transport = RecordingTransport(data: Data(json.utf8), status: 200)
@@ -819,13 +798,14 @@ struct CodexUsageTests {
             credentialsLoader: {
                 CodexOAuthCredentials(
                     accessToken: "access-token",
-                    refreshToken: "refresh-token",
                     idToken: nil,
                     accountId: "account-id")
             })
 
         let usage = try await source.fetchUsage(now: Date(timeIntervalSince1970: 1_700_000_000))
 
+        #expect(usage.rateLimitResets?.availableCount == 3)
+        #expect(usage.rateLimitResets?.credits == nil)
         #expect(usage.source == .directOAuth)
         #expect(usage.authMode == .chatGPT)
         #expect(usage.primaryWindow?.usedPercent == 12)

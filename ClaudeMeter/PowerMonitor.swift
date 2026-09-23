@@ -1,14 +1,7 @@
 import AppKit
-import IOKit.ps
 
-/// Energy-awareness source for the background poll loop. Tracks display/system
-/// sleep so the loop can pause while the user is away — no poll, no network, no
-/// disk scan — and refresh immediately on wake, and reports battery power so the
-/// loop can stretch its cadence to reduce drain while unplugged.
-///
-/// `@MainActor` because it feeds `AppState`'s loop and mutates `isDisplayAsleep`
-/// from main-thread `NSWorkspace` notifications. AppKit/IOKit live here in the
-/// app target, never in `ClaudeMeterCore` (which forbids AppKit).
+/// Tracks display/system sleep and wake for RefreshScheduler.
+/// AppKit notifications and scheduler callbacks run on MainActor.
 @MainActor
 final class PowerMonitor {
     /// Whether the display (or whole system) is currently asleep. While `true`
@@ -18,8 +11,7 @@ final class PowerMonitor {
     private(set) var isDisplayAsleep = false
 
     /// Invoked on the main actor when the display/system wakes from sleep, so the
-    /// loop can refresh the menu-bar number promptly instead of waiting out the
-    /// remaining interval.
+    /// scheduler can check freshness and resume its timer.
     var onWake: (() -> Void)?
 
     /// Invoked on the main actor when the display goes to sleep. The poll loop
@@ -49,17 +41,6 @@ final class PowerMonitor {
                     MainActor.assumeIsolated { self?.handleWake() }
                 })
         }
-    }
-
-    /// Whether the machine is currently running on battery power. Read on demand
-    /// (the read is cheap and there is no AC/battery notification to observe).
-    var isOnBattery: Bool {
-        guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
-            let sourceType = IOPSGetProvidingPowerSourceType(snapshot)?.takeUnretainedValue()
-        else {
-            return false
-        }
-        return (sourceType as String) == kIOPSBatteryPowerValue
     }
 
     private func handleWake() {

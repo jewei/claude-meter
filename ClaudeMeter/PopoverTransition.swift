@@ -209,12 +209,25 @@ private final class AppKitPopoverWindowAdapter: NSObject, PopoverWindowAdapter,
 }
 
 @MainActor
-private final class PopoverWindowCaptureView: NSView {
+final class PopoverWindowCaptureView: NSView {
     var windowChanged: (@MainActor (NSWindow?) -> Void)?
+    private var notificationPending = false
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        windowChanged?(window)
+        scheduleWindowNotification()
+    }
+
+    func scheduleWindowNotification() {
+        guard !notificationPending else { return }
+        notificationPending = true
+        // AppKit attachment and updateNSView can run inside a SwiftUI update.
+        // Publish afterward, using the latest window and callback if either changed.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            notificationPending = false
+            windowChanged?(window)
+        }
     }
 }
 
@@ -229,7 +242,7 @@ private struct PopoverWindowCapture: NSViewRepresentable {
 
     func updateNSView(_ view: PopoverWindowCaptureView, context _: Context) {
         view.windowChanged = windowChanged
-        if view.window != nil { windowChanged(view.window) }
+        if view.window != nil { view.scheduleWindowNotification() }
     }
 }
 

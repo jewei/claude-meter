@@ -53,16 +53,11 @@ struct DataSourceCard<Content: View>: View {
 struct DataSettingsTab: View {
     let appState: AppState
 
-    @AppStorage(AppSettings.statuslineSourceEnabledKey) private var statuslineSourceEnabled = true
     @AppStorage(AppSettings.oauthSourceEnabledKey) private var oauthSourceEnabled = true
-    @AppStorage(AppSettings.claudeWebResetsEnabledKey)
-    private var claudeWebResetsEnabled = false
     @AppStorage(AppSettings.oauthModeKey) private var oauthMode = ""
     @AppStorage(AppSettings.cursorSourceEnabledKey) private var cursorSourceEnabled = false
     @AppStorage(AppSettings.codexSourceEnabledKey) private var codexSourceEnabled = false
     @AppStorage(AppSettings.grokSourceEnabledKey) private var grokSourceEnabled = false
-    @AppStorage(AppSettings.codexSourceModeKey) private var codexSourceMode = CodexSourceMode.auto
-        .rawValue
 
     @State private var cursorStatus = ""
     @State private var cursorStatusGeneration = 0
@@ -73,7 +68,6 @@ struct DataSettingsTab: View {
     @State private var grokStatus = ""
     @State private var grokStatusGeneration = 0
     @State private var grokStatusTask: Task<Void, Never>?
-    @State private var showingClaudeWebSignIn = false
 
     private var oauthSubtitle: String {
         guard !oauthMode.isEmpty else {
@@ -94,7 +88,7 @@ struct DataSettingsTab: View {
                         .font(PFont.display(26, .bold))
                         .foregroundStyle(Color.pfInk)
                     Text(
-                        "Configure how Claude Meter collects your usage data. Enable multiple sources for redundancy."
+                        "Choose the providers that supply your usage data."
                     )
                     .font(PFont.body(13, .semibold))
                     .foregroundStyle(Color.pfInkMuted)
@@ -102,64 +96,15 @@ struct DataSettingsTab: View {
                 }
 
                 DataSourceCard(
-                    icon: "terminal",
-                    iconColor: Color(hex: "4FC51C"),
-                    title: "Statusline Bridge",
-                    subtitle: "Checks your statusline once per minute.",
-                    isEnabled: $statuslineSourceEnabled,
-                    contentLeading: 0
-                ) {
-                    if statuslineSourceEnabled {
-                        ConfigDirAccountsSection(appState: appState)
-                    }
-                }
-
-                DataSourceCard(
                     icon: "key.fill",
                     iconColor: Color(hex: "F4B400"),
-                    title: "Claude Code OAuth",
+                    title: "Claude OAuth",
                     subtitle: oauthSubtitle,
                     isEnabled: $oauthSourceEnabled
                 ) {
                     OAuthConnectionSection(appState: appState)
-                }
-
-                DataSourceCard(
-                    icon: "arrow.clockwise.circle",
-                    iconColor: Color(hex: "C77DFF"),
-                    title: "Claude limit resets",
-                    subtitle: "Read reset count and expiry from Claude on the web.",
-                    isEnabled: $claudeWebResetsEnabled
-                ) {
-                    if claudeWebResetsEnabled {
-                        VStack(alignment: .leading, spacing: 7) {
-                            HStack(spacing: 10) {
-                                Button("Sign in to Claude") {
-                                    showingClaudeWebSignIn = true
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                Button("Sign out") {
-                                    Task {
-                                        await appState.claudeWebResetSession?.signOut()
-                                        appState.claudeWebResetsSettingDidChange(enabled: false)
-                                        claudeWebResetsEnabled = false
-                                    }
-                                }
-                                .buttonStyle(.borderless)
-                                .controlSize(.small)
-                            }
-                            if let error = appState.claudeWebResetError {
-                                Text(error).foregroundStyle(.orange)
-                            } else if appState.claudeWebResetLastSuccessAt != nil {
-                                Text("Claude web session connected")
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Text("Sign in to check your reset offers")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .font(.caption)
+                    if oauthSourceEnabled && oauthMode == "auto" {
+                        ConfigDirAccountsSection(appState: appState)
                     }
                 }
 
@@ -177,7 +122,7 @@ struct DataSettingsTab: View {
                     icon: "sparkles",
                     iconColor: Color(hex: "49A3B0"),
                     title: "Codex",
-                    subtitle: "Read Codex usage from Codex CLI App Server or local Codex auth.",
+                    subtitle: "Read subscription usage from your Codex sign-in.",
                     isEnabled: $codexSourceEnabled
                 ) {
                     codexContent
@@ -200,37 +145,19 @@ struct DataSettingsTab: View {
             loadCodexStatus()
             loadGrokStatus()
         }
-        .onChange(of: statuslineSourceEnabled) { _, _ in appState.scheduleRebuildPipeline() }
-        .onChange(of: oauthSourceEnabled) { _, _ in appState.scheduleRebuildPipeline() }
-        .onChange(of: claudeWebResetsEnabled) { _, enabled in
-            appState.claudeWebResetsSettingDidChange(enabled: enabled)
-        }
-        .sheet(isPresented: $showingClaudeWebSignIn) {
-            if let session = appState.claudeWebResetSession {
-                ClaudeWebSignInView(session: session) {
-                    claudeWebResetsEnabled = true
-                    appState.refreshClaudeWebResets(force: true)
-                }
-            }
-        }
-        .onChange(of: cursorSourceEnabled) { _, enabled in
+        .onChange(of: oauthSourceEnabled) { _, _ in appState.providerEnablementDidChange() }
+
+        .onChange(of: cursorSourceEnabled) { _, _ in
             loadCursorStatus()
-            appState.setCursorSourceEnabled(enabled)
+            appState.providerEnablementDidChange()
         }
-        .onChange(of: codexSourceEnabled) { _, enabled in
+        .onChange(of: codexSourceEnabled) { _, _ in
             loadCodexStatus()
-            appState.setCodexSourceEnabled(enabled)
+            appState.providerEnablementDidChange()
         }
-        .onChange(of: codexSourceMode) { _, _ in
-            loadCodexStatus()
-            if codexSourceEnabled {
-                appState.refreshCodexAccountsFromSettings(configurationChanged: true)
-                appState.refreshNow()
-            }
-        }
-        .onChange(of: grokSourceEnabled) { _, enabled in
+        .onChange(of: grokSourceEnabled) { _, _ in
             loadGrokStatus()
-            appState.setGrokSourceEnabled(enabled)
+            appState.providerEnablementDidChange()
         }
     }
 
@@ -269,19 +196,20 @@ struct DataSettingsTab: View {
         cursorStatusGeneration += 1
         let generation = cursorStatusGeneration
         cursorStatusTask = Task {
-            // `detect()` reads state.vscdb via a `sqlite3` subprocess; run it off
-            // the main actor so the UI thread doesn't block on a lower-QoS process
-            // (priority inversion). Mirrors the browser-import detach below.
-            let creds = await Task.detached(priority: .userInitiated) {
-                CursorTokenStore.detect()
+            // SQLite and Keychain reads must stay off the main actor.
+            let result = await Task.detached(priority: .userInitiated) {
+                Result { try CursorTokenStore.detect() }
             }.value
             let status: String
-            if let creds {
+            switch result {
+            case .success(let creds?):
                 let plan = creds.membership.map { " · \($0)" } ?? ""
                 let emailPart = creds.email.map { ": \(Self.maskedEmail($0))" } ?? ""
                 status = "Connected\(emailPart)\(plan)"
-            } else {
+            case .success(nil):
                 status = "Cursor not detected — sign in to the Cursor app."
+            case .failure(let error):
+                status = DiagnosticsSanitizer.sanitize(error.localizedDescription)
             }
             guard !Task.isCancelled, generation == cursorStatusGeneration else { return }
             cursorStatus = status
@@ -292,14 +220,6 @@ struct DataSettingsTab: View {
     private var codexContent: some View {
         if codexSourceEnabled {
             VStack(alignment: .leading, spacing: 8) {
-                Picker("Source", selection: $codexSourceMode) {
-                    Text("Auto").tag(CodexSourceMode.auto.rawValue)
-                    Text("Codex CLI App Server").tag(CodexSourceMode.appServer.rawValue)
-                    Text("Direct OAuth").tag(CodexSourceMode.directOAuth.rawValue)
-                }
-                .pickerStyle(.segmented)
-                .controlSize(.small)
-
                 HStack(spacing: 6) {
                     Image(
                         systemName: codexStatus.hasPrefix("Connected")
@@ -310,10 +230,10 @@ struct DataSettingsTab: View {
                 }
                 CodexHomesSection(appState: appState)
                 ForEach(appState.codexAccounts) { reading in
-                    if let error = reading.error {
+                    if let error = reading.lastError {
                         HStack(spacing: 6) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                            Text("\(reading.account.displayName): \(error)")
+                            Text("\(reading.label): \(error)")
                         }
                         .foregroundStyle(.red)
                     }
@@ -333,24 +253,18 @@ struct DataSettingsTab: View {
         codexStatus = ""
         codexStatusGeneration += 1
         let generation = codexStatusGeneration
-        let mode = CodexSourceMode.normalized(codexSourceMode)
         codexStatusTask = Task {
             let status = await Task.detached(priority: .userInitiated) {
-                let cliFound = CodexCLILocator.resolve() != nil
-                let authAvailable = (try? CodexOAuthCredentialsStore.load()) != nil
-                switch mode {
-                case .appServer:
-                    return cliFound
-                        ? "Connected via Codex CLI"
-                        : "Codex CLI not found"
-                case .directOAuth:
-                    return authAvailable
-                        ? "Connected via direct OAuth"
-                        : "Direct OAuth unavailable; run `codex login` or use Auto"
-                case .auto:
-                    if cliFound { return "Connected via Codex CLI" }
-                    if authAvailable { return "Connected via direct OAuth" }
-                    return "Codex CLI not found — run `codex login` after installing Codex."
+                do {
+                    _ = try CodexOAuthCredentialsStore.load()
+                    return "Connected to Codex"
+                } catch CodexOAuthCredentialsError.apiKeyOnly {
+                    return
+                        "API-key sign-in has no subscription quota. Sign in with ChatGPT in Codex."
+                } catch {
+                    return CodexCLILocator.resolve() != nil
+                        ? "Codex detected; checking sign-in during refresh."
+                        : "Sign in with ChatGPT using `codex login`."
                 }
             }.value
             guard !Task.isCancelled, generation == codexStatusGeneration else { return }
@@ -481,7 +395,7 @@ private struct ConfigDirAccountsSection: View {
             }
 
             Text(
-                "Each account runs via its own `CLAUDE_CONFIG_DIR`, so every login keeps a separate rate limit. The menu bar follows your most recently used account — the rest live in the popover."
+                "Each config directory supplies separate Claude OAuth credentials. The menu bar uses your pinned account, or the account nearest its limit. The popover shows the other accounts."
             )
             .font(PFont.body(12, .semibold))
             .foregroundStyle(Color.pfInkMuted)
@@ -496,7 +410,7 @@ private struct ConfigDirAccountsSection: View {
     }
 
     private func accountRow(_ account: AccountConfig) -> some View {
-        let isDefault = account.id == StatuslineBridge.defaultAccountKey
+        let isDefault = account.id == "claude"
         let display =
             (names[account.id]?.isEmpty == false)
             ? names[account.id]! : account.label.friendlyAccountLabel
@@ -551,8 +465,8 @@ private struct ConfigDirAccountsSection: View {
                     disabledKeys: disabledKeys,
                     accountID: key,
                     enabled: enabled)
-                AppGroupConfig.disabledAccountKeys = Array(disabledKeys)
-                appState.scheduleRebuildPipeline()
+                MeterSettings.disabledAccountKeys = Array(disabledKeys)
+                appState.claudeConfigurationDidChange()
             }
         )
     }
@@ -589,8 +503,7 @@ private struct ConfigDirAccountsSection: View {
         } else {
             plans.removeValue(forKey: key)
         }
-        AppGroupConfig.accountPlans = plans
-        appState.mainMeterMetadataChanged(provider: .claude)
+        MeterSettings.accountPlans = plans
     }
 
     /// Editable display name; blank clears the override (falls back to the default).
@@ -603,17 +516,16 @@ private struct ConfigDirAccountsSection: View {
                 } else {
                     names[key] = newValue
                 }
-                AppGroupConfig.accountNames = names
-                appState.mainMeterMetadataChanged(provider: .claude)
+                MeterSettings.accountNames = names
             }
         )
     }
 
     private func reload() {
-        disabledKeys = Set(AppGroupConfig.disabledAccountKeys)
-        configuredDirs = AppGroupConfig.configuredConfigDirs
-        plans = AppGroupConfig.accountPlans
-        names = AppGroupConfig.accountNames
+        disabledKeys = Set(MeterSettings.disabledAccountKeys)
+        configuredDirs = MeterSettings.configuredConfigDirs
+        plans = MeterSettings.accountPlans
+        names = MeterSettings.accountNames
         let configured = configuredDirs
         Task.detached(priority: .userInitiated) {
             // Pass no disabled filter so disabled accounts still appear (and can be
@@ -638,11 +550,11 @@ private struct ConfigDirAccountsSection: View {
             return
         }
         addError = nil
-        var dirs = AppGroupConfig.configuredConfigDirs
+        var dirs = MeterSettings.configuredConfigDirs
         if !dirs.contains(url.path) {
             dirs.append(url.path)
-            AppGroupConfig.configuredConfigDirs = dirs
-            appState.scheduleRebuildPipeline()
+            MeterSettings.configuredConfigDirs = dirs
+            appState.claudeConfigurationDidChange()
         }
         reload()
     }
@@ -721,7 +633,7 @@ private struct CodexHomesSection: View {
                     names[account.id] = value
                 }
                 AppSettings.codexAccountNames = names
-                appState.refreshCodexAccountsFromSettings(configurationChanged: true)
+                appState.codexConfigurationDidChange()
             })
     }
 
@@ -753,8 +665,7 @@ private struct CodexHomesSection: View {
         guard !existing.contains(url.path) else { return }
         homes.append(url.path)
         AppSettings.configuredCodexHomes = homes
-        appState.refreshCodexAccountsFromSettings(configurationChanged: true)
-        appState.refreshNow()
+        appState.codexConfigurationDidChange()
     }
 
     private func remove(_ account: CodexAccount) {
@@ -765,7 +676,6 @@ private struct CodexHomesSection: View {
         AppSettings.configuredCodexHomes = homes
         names.removeValue(forKey: account.id)
         AppSettings.codexAccountNames = names
-        appState.refreshCodexAccountsFromSettings(configurationChanged: true)
-        appState.refreshNow()
+        appState.codexConfigurationDidChange()
     }
 }

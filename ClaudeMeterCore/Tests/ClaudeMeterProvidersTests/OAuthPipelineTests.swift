@@ -14,23 +14,6 @@ struct OAuthPipelineTests {
                 == "Anthropic is rate-limiting usage checks — retrying automatically")
     }
 
-    @Test func enrichmentRetainsWhyNoObservationWasAvailable() async {
-        let defaults = UserDefaults.standard
-        let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)
-        defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
-        defer {
-            if let previousMode {
-                defaults.set(previousMode, forKey: AppGroupConfig.oauthModeKey)
-            } else {
-                defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
-            }
-        }
-
-        let result = await OAuthPipeline.fetchEnrichmentResult()
-
-        #expect(result == .unavailable(.notConnected))
-    }
-
     @Test func decodesUsageResponseWithExtraFields() throws {
         let json = """
             {"five_hour":{"utilization":81.0,"resets_at":"2026-06-23T11:30:00.462328+00:00","limit_dollars":null,"used_dollars":null,"remaining_dollars":null},"seven_day":{"utilization":61.0,"resets_at":"2026-06-27T07:00:00.462348+00:00","limit_dollars":null,"used_dollars":null,"remaining_dollars":null},"seven_day_oauth_apps":null,"limits":[],"spend":{},"extra_usage":{"is_enabled":false}}
@@ -290,18 +273,19 @@ struct OAuthPipelineTests {
 
     @Test func rateLimitBackoffIsNeverShortened() {
         let now = Date()
+        let gate = OAuthRateLimitGate()
         // A 429 asking for ten minutes.
-        OAuthPipeline.recordRateLimit(retryAfter: now.addingTimeInterval(600), now: now)
+        gate.recordRateLimit(retryAfter: now.addingTimeInterval(600), now: now)
         // A second 429 with no header would default to 60 s — it must not win.
-        OAuthPipeline.recordRateLimit(retryAfter: nil, now: now)
-        #expect(OAuthPipeline.isRateLimited(now: now.addingTimeInterval(120)))
+        gate.recordRateLimit(retryAfter: nil, now: now)
+        #expect(gate.isRateLimited(now: now.addingTimeInterval(120)))
 
         // A genuinely longer window still extends the block.
-        OAuthPipeline.recordRateLimit(retryAfter: now.addingTimeInterval(1800), now: now)
-        #expect(OAuthPipeline.isRateLimited(now: now.addingTimeInterval(900)))
+        gate.recordRateLimit(retryAfter: now.addingTimeInterval(1800), now: now)
+        #expect(gate.isRateLimited(now: now.addingTimeInterval(900)))
 
         // And an elapsed block clears.
-        #expect(!OAuthPipeline.isRateLimited(now: now.addingTimeInterval(3600)))
+        #expect(!gate.isRateLimited(now: now.addingTimeInterval(3600)))
     }
 
     @Test func retryAfterParsesHTTPDate() throws {
@@ -322,6 +306,7 @@ struct OAuthPipelineTests {
     /// 60 s default instead.
     @Test func zeroRetryAfterFallsBackToDefaultBackoff() throws {
         let now = Date()
+        let gate = OAuthRateLimitGate()
         let url = try #require(URL(string: "https://api.anthropic.com"))
         let response = try #require(
             HTTPURLResponse(
@@ -329,11 +314,11 @@ struct OAuthPipelineTests {
                 headerFields: ["Retry-After": "0"]))
         #expect(OAuthPipeline.retryAfterDate(from: response, now: now) == nil)
 
-        OAuthPipeline.recordRateLimit(
+        gate.recordRateLimit(
             retryAfter: OAuthPipeline.retryAfterDate(from: response, now: now), now: now)
         // The gate is armed for the 60 s default, not open.
-        #expect(OAuthPipeline.isRateLimited(now: now.addingTimeInterval(30)))
-        #expect(!OAuthPipeline.isRateLimited(now: now.addingTimeInterval(61)))
+        #expect(gate.isRateLimited(now: now.addingTimeInterval(30)))
+        #expect(!gate.isRateLimited(now: now.addingTimeInterval(61)))
     }
 
     @Test func retryAfterIgnoresPastHTTPDate() throws {
@@ -474,8 +459,8 @@ struct OAuthPipelineTests {
 
     @Test func lateAncestorHandoffCannotReplaceANewerRotation() async throws {
         let defaults = UserDefaults.standard
-        let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)
-        defaults.set("auto", forKey: AppGroupConfig.oauthModeKey)
+        let previousMode = defaults.string(forKey: MeterSettings.oauthModeKey)
+        defaults.set("auto", forKey: MeterSettings.oauthModeKey)
         OAuthPipeline.clearCachedCredentials()
         OAuthPipeline.clearRateLimitForTesting()
         OAuthRefreshGate.resetForTesting()
@@ -511,9 +496,9 @@ struct OAuthPipelineTests {
             OAuthRefreshGate.resetForTesting()
             OAuthRefreshCoordinator.resetForTesting()
             if let previousMode {
-                defaults.set(previousMode, forKey: AppGroupConfig.oauthModeKey)
+                defaults.set(previousMode, forKey: MeterSettings.oauthModeKey)
             } else {
-                defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
+                defaults.removeObject(forKey: MeterSettings.oauthModeKey)
             }
         }
 
@@ -528,10 +513,7 @@ struct OAuthPipelineTests {
 
         let firstRotation = try #require(
             OAuthPipeline.credentials(from: .temporarilyUnavailable, oauthMode: "auto"))
-        let store = SnapshotStore(
-            directory: FileManager.default.temporaryDirectory.appendingPathComponent(
-                UUID().uuidString, isDirectory: true))
-        let pipeline = OAuthPipeline(fallback: OAuthFallbackPipeline(), store: store)
+        let pipeline = OAuthPipeline(fallback: OAuthFallbackPipeline(), accountConfigs: { [] })
         _ = try await pipeline.poll(now: firstRotation.expiresAt.addingTimeInterval(1))
         #expect(
             OAuthPipeline.credentials(from: .temporarilyUnavailable, oauthMode: "auto")?
@@ -551,8 +533,8 @@ struct OAuthPipelineTests {
 
     @Test func rejectedDescendantCannotRestoreAnAncestorHandoff() async throws {
         let defaults = UserDefaults.standard
-        let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)
-        defaults.set("auto", forKey: AppGroupConfig.oauthModeKey)
+        let previousMode = defaults.string(forKey: MeterSettings.oauthModeKey)
+        defaults.set("auto", forKey: MeterSettings.oauthModeKey)
         OAuthPipeline.clearCachedCredentials()
         OAuthPipeline.clearRateLimitForTesting()
         OAuthRefreshGate.resetForTesting()
@@ -581,9 +563,9 @@ struct OAuthPipelineTests {
             OAuthRefreshGate.resetForTesting()
             OAuthRefreshCoordinator.resetForTesting()
             if let previousMode {
-                defaults.set(previousMode, forKey: AppGroupConfig.oauthModeKey)
+                defaults.set(previousMode, forKey: MeterSettings.oauthModeKey)
             } else {
-                defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
+                defaults.removeObject(forKey: MeterSettings.oauthModeKey)
             }
         }
 
@@ -597,10 +579,7 @@ struct OAuthPipelineTests {
             oauthMode: "auto",
             sourceRefreshToken: source.refreshToken)
 
-        let store = SnapshotStore(
-            directory: FileManager.default.temporaryDirectory.appendingPathComponent(
-                UUID().uuidString, isDirectory: true))
-        let pipeline = OAuthPipeline(fallback: OAuthFallbackPipeline(), store: store)
+        let pipeline = OAuthPipeline(fallback: OAuthFallbackPipeline(), accountConfigs: { [] })
         let rejected = try await pipeline.poll(now: Date())
         #expect(
             rejected.sourceAttempts.first
@@ -712,8 +691,8 @@ struct OAuthPipelineTests {
 
     @Test func revocationDuringRefreshPreventsCredentialCommit() async {
         let defaults = UserDefaults.standard
-        let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)
-        defaults.set("manual", forKey: AppGroupConfig.oauthModeKey)
+        let previousMode = defaults.string(forKey: MeterSettings.oauthModeKey)
+        defaults.set("manual", forKey: MeterSettings.oauthModeKey)
         OAuthPipeline.clearCachedCredentials()
         OAuthPipeline.clearRateLimitForTesting()
         OAuthRefreshGate.resetForTesting()
@@ -734,9 +713,9 @@ struct OAuthPipelineTests {
             OAuthRefreshGate.resetForTesting()
             OAuthRefreshCoordinator.resetForTesting()
             if let previousMode {
-                defaults.set(previousMode, forKey: AppGroupConfig.oauthModeKey)
+                defaults.set(previousMode, forKey: MeterSettings.oauthModeKey)
             } else {
-                defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
+                defaults.removeObject(forKey: MeterSettings.oauthModeKey)
             }
         }
 
@@ -762,7 +741,7 @@ struct OAuthPipelineTests {
         }
         #expect(
             OAuthPipeline.credentials(from: .temporarilyUnavailable, oauthMode: "manual") == nil)
-        #expect(defaults.string(forKey: AppGroupConfig.oauthModeKey) == "")
+        #expect(defaults.string(forKey: MeterSettings.oauthModeKey) == "")
         #expect(persistence.saveCount == 0)
         #expect(persistence.deleteCount == 1)
         #expect(await transport.requestCount == 1)
@@ -770,8 +749,8 @@ struct OAuthPipelineTests {
 
     @Test func manualReplacementInvalidatesAnOlderRefresh() async throws {
         let defaults = UserDefaults.standard
-        let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)
-        defaults.set("manual", forKey: AppGroupConfig.oauthModeKey)
+        let previousMode = defaults.string(forKey: MeterSettings.oauthModeKey)
+        defaults.set("manual", forKey: MeterSettings.oauthModeKey)
         OAuthPipeline.clearCachedCredentials()
         OAuthPipeline.clearRateLimitForTesting()
         OAuthRefreshGate.resetForTesting()
@@ -792,9 +771,9 @@ struct OAuthPipelineTests {
             OAuthRefreshGate.resetForTesting()
             OAuthRefreshCoordinator.resetForTesting()
             if let previousMode {
-                defaults.set(previousMode, forKey: AppGroupConfig.oauthModeKey)
+                defaults.set(previousMode, forKey: MeterSettings.oauthModeKey)
             } else {
-                defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
+                defaults.removeObject(forKey: MeterSettings.oauthModeKey)
             }
         }
 
@@ -823,8 +802,8 @@ struct OAuthPipelineTests {
 
     @Test func failedManualCandidateCleanupInvalidatesAnOlderRefresh() async throws {
         let defaults = UserDefaults.standard
-        let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)
-        defaults.set("manual", forKey: AppGroupConfig.oauthModeKey)
+        let previousMode = defaults.string(forKey: MeterSettings.oauthModeKey)
+        defaults.set("manual", forKey: MeterSettings.oauthModeKey)
         OAuthPipeline.clearCachedCredentials()
         OAuthPipeline.clearRateLimitForTesting()
         OAuthRefreshGate.resetForTesting()
@@ -845,9 +824,9 @@ struct OAuthPipelineTests {
             OAuthRefreshGate.resetForTesting()
             OAuthRefreshCoordinator.resetForTesting()
             if let previousMode {
-                defaults.set(previousMode, forKey: AppGroupConfig.oauthModeKey)
+                defaults.set(previousMode, forKey: MeterSettings.oauthModeKey)
             } else {
-                defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
+                defaults.removeObject(forKey: MeterSettings.oauthModeKey)
             }
         }
 
@@ -868,7 +847,7 @@ struct OAuthPipelineTests {
         }
         #expect(
             OAuthPipeline.credentials(from: .temporarilyUnavailable, oauthMode: "manual") == nil)
-        #expect(defaults.string(forKey: AppGroupConfig.oauthModeKey) == "")
+        #expect(defaults.string(forKey: MeterSettings.oauthModeKey) == "")
         #expect(persistence.saveCount == 0)
         #expect(persistence.deleteCount == 1)
         #expect(await transport.requestCount == 1)
@@ -926,8 +905,8 @@ struct OAuthPipelineTests {
 
     @Test func automaticKeychainReplacementDuringPollRejectsOldRefresh() async throws {
         let defaults = UserDefaults.standard
-        let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)
-        defaults.set("auto", forKey: AppGroupConfig.oauthModeKey)
+        let previousMode = defaults.string(forKey: MeterSettings.oauthModeKey)
+        defaults.set("auto", forKey: MeterSettings.oauthModeKey)
         OAuthPipeline.clearCachedCredentials()
         OAuthPipeline.clearRateLimitForTesting()
         OAuthRefreshGate.resetForTesting()
@@ -948,16 +927,13 @@ struct OAuthPipelineTests {
             OAuthRefreshGate.resetForTesting()
             OAuthRefreshCoordinator.resetForTesting()
             if let previousMode {
-                defaults.set(previousMode, forKey: AppGroupConfig.oauthModeKey)
+                defaults.set(previousMode, forKey: MeterSettings.oauthModeKey)
             } else {
-                defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
+                defaults.removeObject(forKey: MeterSettings.oauthModeKey)
             }
         }
 
-        let store = SnapshotStore(
-            directory: FileManager.default.temporaryDirectory.appendingPathComponent(
-                UUID().uuidString, isDirectory: true))
-        let pipeline = OAuthPipeline(fallback: OAuthFallbackPipeline(), store: store)
+        let pipeline = OAuthPipeline(fallback: OAuthFallbackPipeline(), accountConfigs: { [] })
         let poll = Task { try await pipeline.poll(now: Date()) }
         await transport.waitUntilRequestStarts()
 
@@ -981,8 +957,8 @@ struct OAuthPipelineTests {
 
     @Test func automaticKeychainReplacementDuringUsageRejectsOldResponse() async throws {
         let defaults = UserDefaults.standard
-        let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)
-        defaults.set("auto", forKey: AppGroupConfig.oauthModeKey)
+        let previousMode = defaults.string(forKey: MeterSettings.oauthModeKey)
+        defaults.set("auto", forKey: MeterSettings.oauthModeKey)
         OAuthPipeline.clearCachedCredentials()
         OAuthPipeline.clearRateLimitForTesting()
         let transport = SuspendedUsageTransport()
@@ -999,16 +975,13 @@ struct OAuthPipelineTests {
             OAuthPipeline.clearCachedCredentials()
             OAuthPipeline.clearRateLimitForTesting()
             if let previousMode {
-                defaults.set(previousMode, forKey: AppGroupConfig.oauthModeKey)
+                defaults.set(previousMode, forKey: MeterSettings.oauthModeKey)
             } else {
-                defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
+                defaults.removeObject(forKey: MeterSettings.oauthModeKey)
             }
         }
 
-        let store = SnapshotStore(
-            directory: FileManager.default.temporaryDirectory.appendingPathComponent(
-                UUID().uuidString, isDirectory: true))
-        let pipeline = OAuthPipeline(fallback: OAuthFallbackPipeline(), store: store)
+        let pipeline = OAuthPipeline(fallback: OAuthFallbackPipeline(), accountConfigs: { [] })
         let poll = Task { try await pipeline.poll(now: Date()) }
         await transport.waitUntilUsageStarts()
 
@@ -1252,7 +1225,6 @@ private struct OAuthFallbackPipeline: ClaudeMeterPipeline {
                 state: SnapshotState(status: .stale, severity: .normal)),
             warnings: [],
             errors: [],
-            rawHash: "",
             parserVersion: "fallback-test",
             sourceAttempts: [
                 SourceAttempt(source: .cache, outcome: .selected, reason: .cachedSnapshot)
@@ -1309,25 +1281,14 @@ extension OAuthPipelineTests {
             }
         }
 
-        /// `fetchEnrichment` must clear the in-memory credential on *every* refresh
-        /// failure, exactly as `poll` does.
-        ///
-        /// Why it matters: `credentials(from:)` deliberately prefers whichever
-        /// credential carries the later `expiresAt`, and `OAuthRefreshGate` reopens by
-        /// *token identity*. A dead credential left resident therefore outranks the
-        /// fresh entry Claude Code writes on `claude login`, and the gate stays shut
-        /// against the good token until the app is relaunched.
-        @Suite("OAuth enrichment credential cache")
-        struct EnrichmentCacheTests {
-            /// Drives `fetchEnrichment` with an expired cached credential and a
-            /// transport that fails the refresh, then reports whether that credential
-            /// is still resident afterwards.
+        @Suite("OAuth refresh failure cache")
+        struct RefreshFailureCacheTests {
             private func residentCredentialAfterFailedRefresh(
                 status: Int, body: String
             ) async -> OAuthCredentials? {
                 let defaults = UserDefaults.standard
-                let previousMode = defaults.string(forKey: AppGroupConfig.oauthModeKey)
-                defaults.set("auto", forKey: AppGroupConfig.oauthModeKey)
+                let previousMode = defaults.string(forKey: MeterSettings.oauthModeKey)
+                defaults.set("auto", forKey: MeterSettings.oauthModeKey)
                 OAuthPipeline.clearCachedCredentials()
                 OAuthPipeline.clearRateLimitForTesting()
                 OAuthRefreshGate.resetForTesting()
@@ -1337,9 +1298,9 @@ extension OAuthPipelineTests {
                     OAuthPipeline.clearCachedCredentials()
                     OAuthRefreshGate.resetForTesting()
                     if let previousMode {
-                        defaults.set(previousMode, forKey: AppGroupConfig.oauthModeKey)
+                        defaults.set(previousMode, forKey: MeterSettings.oauthModeKey)
                     } else {
-                        defaults.removeObject(forKey: AppGroupConfig.oauthModeKey)
+                        defaults.removeObject(forKey: MeterSettings.oauthModeKey)
                     }
                 }
 
@@ -1354,8 +1315,10 @@ extension OAuthPipelineTests {
                 )
                 OAuthPipeline.setCachedCredentialsForTesting(dead, oauthMode: "auto")
 
-                let enrichment = await OAuthPipeline.fetchEnrichment()
-                #expect(enrichment == nil)
+                let pipeline = OAuthPipeline(
+                    fallback: OAuthFallbackPipeline(), accountConfigs: { [] })
+                let result = try? await pipeline.poll(now: Date())
+                #expect(result?.sourceAttempts.first?.outcome == .failed)
                 return OAuthPipeline.credentials(from: .temporarilyUnavailable, oauthMode: "auto")
             }
 
@@ -1378,7 +1341,7 @@ extension OAuthPipelineTests {
 /// fields into the generic `limits` array, and the flat fields have been observed
 /// going null as that happens. Without a fallback the Opus weekly window — often
 /// the binding limit on Max — would silently vanish from severity, the menu bar,
-/// notifications and the widget, with no error anywhere.
+/// with no error anywhere.
 @Suite("Scoped weekly limits from limits[]")
 struct ScopedLimitsArrayTests {
     private func decode(_ json: String) throws -> UsageResponse {
@@ -1514,16 +1477,15 @@ struct ScopedLimitsArrayTests {
 struct OAuthRateLimitDeadlineTests {
     @Test func reportsAnActiveDeadlineAndNothingOtherwise() {
         let now = Date()
-        OAuthPipeline.clearRateLimitForTesting()
-        defer { OAuthPipeline.clearRateLimitForTesting() }
+        let gate = OAuthRateLimitGate()
 
-        #expect(OAuthPipeline.rateLimitedUntil(now: now) == nil)
+        #expect(gate.deadline(now: now) == nil)
 
         let until = now.addingTimeInterval(600)
-        OAuthPipeline.recordRateLimit(retryAfter: until, now: now)
-        #expect(OAuthPipeline.rateLimitedUntil(now: now) == until)
+        gate.recordRateLimit(retryAfter: until, now: now)
+        #expect(gate.deadline(now: now) == until)
         // Past the deadline there is nothing to report.
-        #expect(OAuthPipeline.rateLimitedUntil(now: until.addingTimeInterval(1)) == nil)
+        #expect(gate.deadline(now: until.addingTimeInterval(1)) == nil)
     }
 
     /// Reading the deadline must not clear the gate — `isRateLimited` mutates as a
@@ -1531,13 +1493,12 @@ struct OAuthRateLimitDeadlineTests {
     /// reopens the pipeline's own bookkeeping.
     @Test func readingTheDeadlineDoesNotMutateTheGate() {
         let now = Date()
-        OAuthPipeline.clearRateLimitForTesting()
-        defer { OAuthPipeline.clearRateLimitForTesting() }
+        let gate = OAuthRateLimitGate()
 
         let until = now.addingTimeInterval(600)
-        OAuthPipeline.recordRateLimit(retryAfter: until, now: now)
-        _ = OAuthPipeline.rateLimitedUntil(now: until.addingTimeInterval(1))
+        gate.recordRateLimit(retryAfter: until, now: now)
+        _ = gate.deadline(now: until.addingTimeInterval(1))
         // Still armed for a caller asking about the original window.
-        #expect(OAuthPipeline.isRateLimited(now: now))
+        #expect(gate.isRateLimited(now: now))
     }
 }

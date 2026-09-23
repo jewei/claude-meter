@@ -1,518 +1,304 @@
+import ClaudeMeterCore
 import Darwin
 import Foundation
+import SQLite3
 import Testing
 
 @testable import ClaudeMeterProviders
 
-@Suite("Cursor token store cache", .serialized)
+@Suite("Cursor direct SQLite credentials")
 struct CursorTokenStoreTests {
-    private enum FixtureError: Error {
-        case sqliteFailed(Int32)
-    }
+    private final class Database {
+        let directory: URL
+        let url: URL
+        var connection: OpaquePointer?
 
-    private func makeDatabase() throws -> (directory: URL, database: URL) {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true)
-        let database = directory.appendingPathComponent("state.vscdb")
-        try Data("database".utf8).write(to: database)
-        return (directory, database)
-    }
+        init(table: Bool = true) throws {
+            directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+                UUID().uuidString)
+            try FileManager.default.createDirectory(
+                at: directory, withIntermediateDirectories: true)
+            url = directory.appendingPathComponent("state.vscdb")
+            try Self.check(sqlite3_open(url.path, &connection))
+            if table { try exec("CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB)") }
+        }
 
-    private func credentials(_ token: String) -> CursorCredentials {
-        CursorCredentials(
-            accessToken: token,
-            refreshToken: "refresh-\(token)",
-            email: nil,
-            membership: nil
-        )
-    }
+        deinit {
+            sqlite3_close(connection)
+            try? FileManager.default.removeItem(at: directory)
+        }
 
-    private func runSQLite(database: URL, sql: String) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-        process.arguments = ["-batch", database.path, sql]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw FixtureError.sqliteFailed(process.terminationStatus)
+        func close() throws {
+            try Self.check(sqlite3_close(connection))
+            connection = nil
+        }
+
+        func exec(_ sql: String) throws {
+            try Self.check(sqlite3_exec(connection, sql, nil, nil, nil))
+        }
+
+        func put(_ key: String, _ data: Data) throws {
+            var statement: OpaquePointer?
+            defer { sqlite3_finalize(statement) }
+            try Self.check(
+                sqlite3_prepare_v2(
+                    connection, "INSERT OR REPLACE INTO ItemTable VALUES (?, ?)", -1, &statement,
+                    nil))
+            let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+            try Self.check(key.withCString { sqlite3_bind_text(statement, 1, $0, -1, transient) })
+            try Self.check(
+                data.withUnsafeBytes {
+                    sqlite3_bind_blob(statement, 2, $0.baseAddress, Int32($0.count), transient)
+                })
+            try Self.check(sqlite3_step(statement))
+        }
+
+        func token(_ text: String) throws {
+            try put("cursorAuth/accessToken", Data(text.utf8))
+        }
+
+        func read() throws -> CursorCredentials? {
+            try CursorTokenStore.load(stateDatabasePath: url.path, keychainLoader: { _ in nil })
+        }
+
+        static func check(_ code: Int32) throws {
+            guard code == SQLITE_OK || code == SQLITE_DONE else { throw FixtureError.sqlite(code) }
         }
     }
 
-    @Test func timeoutBeforeProcessLaunchDoesNotLaunchAnAbandonedCommand() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let marker = directory.appendingPathComponent("unexpected-launch")
-        let launchQueue = DispatchQueue(label: "CursorTokenStoreTests.delayed-launch")
-        launchQueue.suspend()
-        let result = CursorTokenStore.run(
-            "/usr/bin/touch", [marker.path], timeout: 0.01, launchQueue: launchQueue)
-        launchQueue.resume()
-        launchQueue.sync {}
+    private enum FixtureError: Error { case sqlite(Int32) }
 
-        #expect(result == nil)
-        #expect(!FileManager.default.fileExists(atPath: marker.path))
-    }
-
-    @Test func failedProcessLaunchReturnsNoOutput() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let executable = directory.appendingPathComponent("invalid-executable")
-        try Data("Not an executable format".utf8).write(to: executable)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o700], ofItemAtPath: executable.path)
-        let launchQueue = DispatchQueue(label: "CursorTokenStoreTests.failed-launch")
-
+    @Test func allKeysAndReadOnlyFiles() throws {
+        let db = try Database()
+        try db.token("\"access\"")
+        try db.put("cursorAuth/refreshToken", Data("refresh".utf8))
+        try db.put("cursorAuth/cachedEmail", Data("test@example.invalid".utf8))
+        try db.put("cursorAuth/stripeMembershipType", Data("PRO".utf8))
+        try db.close()
+        let before = try Data(contentsOf: db.url)
+        let attributes = try FileManager.default.attributesOfItem(atPath: db.url.path)
+        let files = try FileManager.default.contentsOfDirectory(atPath: db.directory.path)
         #expect(
-            CursorTokenStore.run(executable.path, [], timeout: 1, launchQueue: launchQueue) == nil)
-        launchQueue.sync {}
-    }
-
-    @Test func sqliteOutputBeyondTheLimitIsDrainedAndRejected() {
-        let launchQueue = DispatchQueue(label: "CursorTokenStoreTests.large-output")
-        let result = CursorTokenStore.run(
-            "/usr/bin/sqlite3", ["-batch", ":memory:", "SELECT hex(zeroblob(600000));"],
-            timeout: 3, launchQueue: launchQueue)
-        let completed = DispatchSemaphore(value: 0)
-        launchQueue.async { completed.signal() }
-
-        #expect(result == nil)
-        #expect(completed.wait(timeout: .now() + 1) == .success)
-    }
-
-    @Test func unchangedDatabaseAndWalReuseCachedDetection() throws {
-        let fixture = try makeDatabase()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        CursorTokenStore.resetDetectionCacheForTesting()
-        defer { CursorTokenStore.resetDetectionCacheForTesting() }
-
-        var loadCount = 0
-        let load = {
-            loadCount += 1
-            return CursorTokenStore.CredentialDetection(
-                credentials: credentials("token-\(loadCount)"),
-                canUseStateFileCache: true
-            )
+            try db.read()
+                == CursorCredentials(
+                    accessToken: "access", refreshToken: "refresh", email: "test@example.invalid",
+                    membership: "pro"))
+        #expect(try Data(contentsOf: db.url) == before)
+        let after = try FileManager.default.attributesOfItem(atPath: db.url.path)
+        for key: FileAttributeKey in [
+            .modificationDate, .size, .systemFileNumber, .posixPermissions,
+        ] {
+            #expect((attributes[key] as? NSObject) == (after[key] as? NSObject))
         }
-
-        let first = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-        let second = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-
-        #expect(first == credentials("token-1"))
-        #expect(second == first)
-        #expect(loadCount == 1)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: db.directory.path) == files)
     }
 
-    @Test func walCreationChangeAndRemovalInvalidateCachedDetection() throws {
-        let fixture = try makeDatabase()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        CursorTokenStore.resetDetectionCacheForTesting()
-        defer { CursorTokenStore.resetDetectionCacheForTesting() }
-
-        let wal = URL(fileURLWithPath: fixture.database.path + "-wal")
-        var loadCount = 0
-        let load = {
-            loadCount += 1
-            return CursorTokenStore.CredentialDetection(
-                credentials: credentials("token-\(loadCount)"),
-                canUseStateFileCache: true
-            )
-        }
-
-        let beforeWal = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-        try Data("wal-one".utf8).write(to: wal)
-        let afterCreation = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-        let unchangedWal = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-        try Data("wal-two-is-longer".utf8).write(to: wal)
-        let afterChange = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-        try FileManager.default.removeItem(at: wal)
-        let afterRemoval = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-
-        #expect(beforeWal == credentials("token-1"))
-        #expect(afterCreation == credentials("token-2"))
-        #expect(unchangedWal == afterCreation)
-        #expect(afterChange == credentials("token-3"))
-        #expect(afterRemoval == credentials("token-4"))
-        #expect(loadCount == 4)
-    }
-
-    @Test func shmCreationHeaderChangeAndRemovalInvalidateCachedDetection() throws {
-        let fixture = try makeDatabase()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        CursorTokenStore.resetDetectionCacheForTesting()
-        defer { CursorTokenStore.resetDetectionCacheForTesting() }
-
-        let shm = URL(fileURLWithPath: fixture.database.path + "-shm")
-        var loadCount = 0
-        let load = {
-            loadCount += 1
-            return CursorTokenStore.CredentialDetection(
-                credentials: credentials("token-\(loadCount)"),
-                canUseStateFileCache: true
-            )
-        }
-
-        let beforeShm = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-        var header = Data(repeating: 0, count: 136)
-        try header.write(to: shm)
-        let afterCreation = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-        let unchangedShm = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-        header[8] = 1
-        try header.write(to: shm)
-        let afterHeaderChange = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-        try FileManager.default.removeItem(at: shm)
-        let afterRemoval = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-
-        #expect(beforeShm == credentials("token-1"))
-        #expect(afterCreation == credentials("token-2"))
-        #expect(unchangedShm == afterCreation)
-        #expect(afterHeaderChange == credentials("token-3"))
-        #expect(afterRemoval == credentials("token-4"))
-        #expect(loadCount == 4)
-    }
-
-    @Test func symlinkedDatabaseObservesSidecarsBesideResolvedTarget() throws {
-        let fixture = try makeDatabase()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        CursorTokenStore.resetDetectionCacheForTesting()
-        defer { CursorTokenStore.resetDetectionCacheForTesting() }
-
-        let link = fixture.directory.appendingPathComponent("linked.vscdb")
-        try FileManager.default.createSymbolicLink(
-            atPath: link.path,
-            withDestinationPath: fixture.database.lastPathComponent
-        )
-        let targetWal = URL(fileURLWithPath: fixture.database.path + "-wal")
-        let targetShm = URL(fileURLWithPath: fixture.database.path + "-shm")
-        var loadCount = 0
-        let load = {
-            loadCount += 1
-            return CursorTokenStore.CredentialDetection(
-                credentials: credentials("token-\(loadCount)"),
-                canUseStateFileCache: true
-            )
-        }
-
-        let beforeWal = CursorTokenStore.detect(
-            stateDatabasePath: link.path, uncachedLoader: load)
-        try Data("target-wal".utf8).write(to: targetWal)
-        let afterWal = CursorTokenStore.detect(
-            stateDatabasePath: link.path, uncachedLoader: load)
-        try Data(repeating: 0, count: 136).write(to: targetShm)
-        let afterShm = CursorTokenStore.detect(
-            stateDatabasePath: link.path, uncachedLoader: load)
-
-        #expect(beforeWal == credentials("token-1"))
-        #expect(afterWal == credentials("token-2"))
-        #expect(afterShm == credentials("token-3"))
-        #expect(loadCount == 3)
-    }
-
-    @Test func specialDatabaseOrWalDisablesMemoization() throws {
-        let fixture = try makeDatabase()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        CursorTokenStore.resetDetectionCacheForTesting()
-        defer { CursorTokenStore.resetDetectionCacheForTesting() }
-
-        let wal = URL(fileURLWithPath: fixture.database.path + "-wal")
-        #expect(wal.path.withCString { Darwin.mkfifo($0, S_IRUSR | S_IWUSR) } == 0)
-        #expect(CursorTokenStore.stateDBCacheIdentity(atPath: fixture.database.path) == nil)
+    @Test func accessOnlyAndMissingAccess() throws {
+        let db = try Database()
+        #expect(try db.read() == nil)
+        try db.put("cursorAuth/refreshToken", Data("refresh".utf8))
+        #expect(try db.read() == nil)
+        try db.exec("DELETE FROM ItemTable")
+        try db.token("access")
         #expect(
-            CursorTokenStore.readStateValues(
-                ["cursorAuth/accessToken"], stateDatabasePath: fixture.database.path
-            ).isEmpty
-        )
+            try db.read()
+                == CursorCredentials(
+                    accessToken: "access", refreshToken: nil, email: nil, membership: nil))
+    }
 
-        var loadCount = 0
-        let load = {
-            loadCount += 1
-            return CursorTokenStore.CredentialDetection(
-                credentials: credentials("token-\(loadCount)"),
-                canUseStateFileCache: true
-            )
-        }
-        _ = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-        _ = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-        #expect(loadCount == 2)
-
-        try FileManager.default.removeItem(at: wal)
-        try FileManager.default.removeItem(at: fixture.database)
+    @Test func missingDatabaseFallsBackWithoutCreatingFiles() throws {
+        let db = try Database()
+        let missing = db.directory.appendingPathComponent("missing.vscdb")
         #expect(
-            fixture.database.path.withCString {
-                Darwin.mkfifo($0, S_IRUSR | S_IWUSR)
-            } == 0
-        )
-        #expect(CursorTokenStore.stateDBCacheIdentity(atPath: fixture.database.path) == nil)
-    }
-
-    @Test func specialSharedMemoryFileDisablesMemoization() throws {
-        let fixture = try makeDatabase()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        CursorTokenStore.resetDetectionCacheForTesting()
-        defer { CursorTokenStore.resetDetectionCacheForTesting() }
-
-        let shm = URL(fileURLWithPath: fixture.database.path + "-shm")
-        #expect(shm.path.withCString { Darwin.mkfifo($0, S_IRUSR | S_IWUSR) } == 0)
-        #expect(CursorTokenStore.stateDBCacheIdentity(atPath: fixture.database.path) == nil)
+            try CursorTokenStore.load(stateDatabasePath: missing.path, keychainLoader: { _ in nil })
+                == nil)
         #expect(
-            CursorTokenStore.readStateValues(
-                ["cursorAuth/accessToken"], stateDatabasePath: fixture.database.path
-            ).isEmpty
-        )
-
-        var loadCount = 0
-        let load = {
-            loadCount += 1
-            return CursorTokenStore.CredentialDetection(
-                credentials: credentials("token-\(loadCount)"),
-                canUseStateFileCache: true
-            )
-        }
-        _ = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-        _ = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-        #expect(loadCount == 2)
+            try CursorTokenStore.load(
+                stateDatabasePath: missing.path, keychainLoader: { _ in "fallback" })?.accessToken
+                == "fallback")
+        #expect(!FileManager.default.fileExists(atPath: missing.path))
     }
 
-    @Test func shortRegularSharedMemoryAllowsReadButDisablesMemoization() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let database = directory.appendingPathComponent("state.vscdb")
-        try runSQLite(
-            database: database,
-            sql: """
-                CREATE TABLE ItemTable(key TEXT PRIMARY KEY, value TEXT);
-                INSERT INTO ItemTable VALUES('cursorAuth/accessToken', 'db-access');
-                INSERT INTO ItemTable VALUES('cursorAuth/refreshToken', 'db-refresh');
-                """
-        )
-        let shm = URL(fileURLWithPath: database.path + "-shm")
-        try Data(repeating: 0, count: 48).write(to: shm)
-
-        #expect(CursorTokenStore.stateDBIsSafeForSQLiteRead(atPath: database.path))
-        #expect(CursorTokenStore.stateDBCacheIdentity(atPath: database.path) == nil)
-        let values = CursorTokenStore.readStateValues(
-            ["cursorAuth/accessToken", "cursorAuth/refreshToken"],
-            stateDatabasePath: database.path
-        )
-        #expect(values["cursorAuth/accessToken"] == "db-access")
-        #expect(values["cursorAuth/refreshToken"] == "db-refresh")
-
-        try Data(repeating: 0, count: 48).write(to: shm)
-        CursorTokenStore.resetDetectionCacheForTesting()
-        defer { CursorTokenStore.resetDetectionCacheForTesting() }
-        var loadCount = 0
-        let load = {
-            loadCount += 1
-            return CursorTokenStore.CredentialDetection(
-                credentials: credentials("token-\(loadCount)"),
-                canUseStateFileCache: true
-            )
-        }
-        _ = CursorTokenStore.detect(
-            stateDatabasePath: database.path, uncachedLoader: load)
-        _ = CursorTokenStore.detect(
-            stateDatabasePath: database.path, uncachedLoader: load)
-        #expect(loadCount == 2)
+    @Test func unusableDatabaseAllowsKeychainFallback() throws {
+        let db = try Database(table: false)
+        #expect(throws: CursorCredentialReadError.unavailable) { try db.read() }
+        try db.close()
+        // Also exercise an invalid SQLite header.
+        try Data("not a database".utf8).write(to: db.url)
+        #expect(throws: CursorCredentialReadError.unavailable) { try db.read() }
+        #expect(
+            try CursorTokenStore.load(
+                stateDatabasePath: db.url.path, keychainLoader: { _ in "fallback" })?.accessToken
+                == "fallback")
     }
 
-    @Test func identityChangeDuringDetectionPreventsCacheStorage() throws {
-        let fixture = try makeDatabase()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        CursorTokenStore.resetDetectionCacheForTesting()
-        defer { CursorTokenStore.resetDetectionCacheForTesting() }
+    @Test func encodingsAndLiteralValues() throws {
+        let db = try Database()
+        for data in [
+            Data("token".utf8),
+            "token".data(using: .utf16LittleEndian)!,
+            "token".data(using: .utf16)!,
+            Data([0xfe, 0xff]) + "token".data(using: .utf16BigEndian)!,
+        ] {
+            try db.put("cursorAuth/accessToken", data)
+            #expect(try db.read()?.accessToken == "token")
+        }
+        try db.token("token|with\nseparators'?")
+        #expect(try db.read()?.accessToken == "token|with\nseparators'?")
+        for data in [Data([0xff]), Data([0xfe, 0xff, 0xd8, 0x00]), Data()] {
+            try db.put("cursorAuth/accessToken", data)
+            #expect(try db.read() == nil)
+        }
+    }
 
-        let shm = URL(fileURLWithPath: fixture.database.path + "-shm")
-        var loadCount = 0
-        let load = {
-            loadCount += 1
-            if loadCount == 1 {
-                try? Data(repeating: 0, count: 136).write(to: shm)
+    @Test func textInUTF16Database() throws {
+        let db = try Database(table: false)
+        try db.exec(
+            "PRAGMA encoding='UTF-16le'; CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT); INSERT INTO ItemTable VALUES ('cursorAuth/accessToken', 'token'), ('cursorAuth/cachedEmail', '用戶@example.invalid')"
+        )
+        #expect(try db.read()?.accessToken == "token")
+        #expect(try db.read()?.email == "用戶@example.invalid")
+    }
+
+    @Test func activeWALReadsCommittedUpdatesAndCheckpoint() throws {
+        let db = try Database()
+        try db.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0")
+        try db.token("first")
+        let mainBefore = try Data(contentsOf: db.url)
+        let wal = URL(fileURLWithPath: db.url.path + "-wal")
+        let walBefore = try Data(contentsOf: wal)
+        #expect(try db.read()?.accessToken == "first")
+        #expect(try Data(contentsOf: db.url) == mainBefore)
+        #expect(try Data(contentsOf: wal) == walBefore)
+        try db.exec("BEGIN IMMEDIATE")
+        try db.token("second")
+        #expect(try db.read()?.accessToken == "first")
+        try db.exec("COMMIT")
+        #expect(try db.read()?.accessToken == "second")
+        try db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
+        #expect(try db.read()?.accessToken == "second")
+        // The owner may also leave WAL mode and remove its sidecars.
+        try db.exec("PRAGMA journal_mode=DELETE")
+        #expect(try db.read()?.accessToken == "second")
+    }
+
+    @Test func missingSHMIsNotCreatedByReader() throws {
+        let db = try Database()
+        try db.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0")
+        try db.token("token")
+        try db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
+        try db.close()
+        // Simulate a WAL database whose owner removed sidecars. Never repair it here.
+        for suffix in ["-wal", "-shm"] {
+            try? FileManager.default.removeItem(atPath: db.url.path + suffix)
+        }
+        let before = try Data(contentsOf: db.url)
+        #expect(throws: CursorCredentialReadError.unavailable) { try db.read() }
+        #expect(try Data(contentsOf: db.url) == before)
+        #expect(
+            try FileManager.default.contentsOfDirectory(atPath: db.directory.path) == [
+                "state.vscdb"
+            ])
+    }
+
+    @Test func replacedDatabaseIsReadWithoutCache() throws {
+        let old = try Database()
+        try old.token("old")
+        try old.close()
+        #expect(try old.read()?.accessToken == "old")
+        let new = try Database()
+        try new.token("new")
+        try new.close()
+        try FileManager.default.removeItem(at: old.url)
+        try FileManager.default.copyItem(at: new.url, to: old.url)
+        #expect(try old.read()?.accessToken == "new")
+    }
+
+    @Test func busyDatabaseIsTransientAndClosesReader() throws {
+        let db = try Database()
+        try db.token("token")
+        try db.exec("BEGIN EXCLUSIVE")
+        #expect(throws: CursorCredentialReadError.busy) { try db.read() }
+        #expect(
+            try CursorTokenStore.load(
+                stateDatabasePath: db.url.path, keychainLoader: { _ in "fallback" })?.accessToken
+                == "fallback")
+        try db.exec("ROLLBACK")
+        #expect(try db.read()?.accessToken == "token")
+    }
+
+    @Test func unsuitablePathsAreRejected() throws {
+        let db = try Database()
+        try db.close()
+        let fifo = db.directory.appendingPathComponent("fifo")
+        #expect(mkfifo(fifo.path, 0o600) == 0)
+        for path in [fifo.path, db.directory.path, "/dev/null"] {
+            #expect(throws: CursorCredentialReadError.unavailable) {
+                try CursorTokenStore.readStateValues(stateDatabasePath: path)
             }
-            return CursorTokenStore.CredentialDetection(
-                credentials: credentials("token-\(loadCount)"),
-                canUseStateFileCache: true
-            )
         }
-
-        let changedDuringFirstRead = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-        let secondRead = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-        let cachedSecondRead = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-
-        #expect(changedDuringFirstRead == credentials("token-1"))
-        #expect(secondRead == credentials("token-2"))
-        #expect(cachedSecondRead == secondRead)
-        #expect(loadCount == 2)
+        #expect(mkfifo(db.url.path + "-wal", 0o600) == 0)
+        #expect(throws: CursorCredentialReadError.unavailable) { try db.read() }
     }
 
-    @Test func concurrentWalCommitInvalidatesRealDatabaseDetection() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let database = directory.appendingPathComponent("state.vscdb")
-        try runSQLite(
-            database: database,
-            sql: """
-                PRAGMA journal_mode=WAL;
-                PRAGMA wal_autocheckpoint=0;
-                CREATE TABLE ItemTable(key TEXT PRIMARY KEY, value TEXT);
-                INSERT INTO ItemTable VALUES('cursorAuth/accessToken', 'old-access');
-                INSERT INTO ItemTable VALUES('cursorAuth/refreshToken', 'old-refresh');
-                """
-        )
-
-        let reader = Process()
-        let readerInput = Pipe()
-        let readerOutput = Pipe()
-        reader.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-        reader.arguments = ["-batch", database.path]
-        reader.standardInput = readerInput
-        reader.standardOutput = readerOutput
-        reader.standardError = FileHandle.nullDevice
-        try reader.run()
-        defer {
-            try? readerInput.fileHandleForWriting.close()
-            if reader.isRunning { reader.terminate() }
-            reader.waitUntilExit()
-        }
-        try readerInput.fileHandleForWriting.write(
-            contentsOf: Data("BEGIN; SELECT 'reader-ready';\n".utf8))
-        let readyData = readerOutput.fileHandleForReading.availableData
-        #expect(String(data: readyData, encoding: .utf8)?.contains("reader-ready") == true)
-
-        CursorTokenStore.resetDetectionCacheForTesting()
-        defer { CursorTokenStore.resetDetectionCacheForTesting() }
-        let loadFromDatabase = {
-            CursorTokenStore.resolveCredentialDetection(
-                stateValues: CursorTokenStore.readStateValues(
-                    ["cursorAuth/accessToken", "cursorAuth/refreshToken"],
-                    stateDatabasePath: database.path
-                ),
-                keychainLoader: { _ in nil }
-            )
-        }
-
-        let identityBefore = try #require(
-            CursorTokenStore.stateDBCacheIdentity(atPath: database.path))
-        let old = CursorTokenStore.detect(
-            stateDatabasePath: database.path,
-            uncachedLoader: loadFromDatabase
-        )
-        try runSQLite(
-            database: database,
-            sql: """
-                PRAGMA wal_autocheckpoint=0;
-                UPDATE ItemTable SET value = 'new-access'
-                  WHERE key = 'cursorAuth/accessToken';
-                UPDATE ItemTable SET value = 'new-refresh'
-                  WHERE key = 'cursorAuth/refreshToken';
-                """
-        )
-        let identityAfter = try #require(
-            CursorTokenStore.stateDBCacheIdentity(atPath: database.path))
-        let new = CursorTokenStore.detect(
-            stateDatabasePath: database.path,
-            uncachedLoader: loadFromDatabase
-        )
-
-        #expect(old?.accessToken == "old-access")
-        #expect(new?.accessToken == "new-access")
-        #expect(new?.refreshToken == "new-refresh")
-        #expect(identityAfter != identityBefore)
+    @Test func keychainFallbackIsSelectiveAndNeverCached() throws {
+        var services: [String] = []
+        let values = [
+            "cursorAuth/accessToken": "db-access", "cursorAuth/refreshToken": "db-refresh",
+        ]
         #expect(
-            identityAfter.sharedMemoryFiles.compactMap(\.walIndexHeader)
-                != identityBefore.sharedMemoryFiles.compactMap(\.walIndexHeader)
-        )
+            CursorTokenStore.resolveCredentials(stateValues: values) {
+                services.append($0)
+                return nil
+            }?.accessToken == "db-access")
+        #expect(services.isEmpty)
+        #expect(
+            CursorTokenStore.resolveCredentials(stateValues: ["cursorAuth/accessToken": "db-access"]
+            ) {
+                services.append($0)
+                return "keychain-refresh"
+            }?.refreshToken == "keychain-refresh")
+        #expect(services == ["cursor-refresh-token"])
+        services.removeAll()
+        #expect(
+            CursorTokenStore.resolveCredentials(stateValues: [
+                "cursorAuth/refreshToken": "db-refresh"
+            ]) {
+                services.append($0)
+                return "keychain-access"
+            }?.accessToken == "keychain-access")
+        #expect(services == ["cursor-access-token"])
+        let db = try Database()
+        for token in ["keychain-one", "keychain-two"] {
+            #expect(
+                try CursorTokenStore.load(
+                    stateDatabasePath: db.url.path, keychainLoader: { _ in token })?.accessToken
+                    == token)
+        }
     }
 
-    @Test func keychainFallbackMakesDetectionNonCacheable() throws {
-        var requestedServices: [String] = []
-        let stateOnly = CursorTokenStore.resolveCredentialDetection(
-            stateValues: [
-                "cursorAuth/accessToken": "db-access",
-                "cursorAuth/refreshToken": "db-refresh",
-            ]
-        ) { service in
-            requestedServices.append(service)
-            return nil
+    @Test func cancelledReadDoesNotFallBack() async throws {
+        let task = Task.detached {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try CursorTokenStore.load(stateDatabasePath: "/unused") { _ in
+                Issue.record("Cancelled read reached Keychain")
+                return nil
+            }
         }
-        #expect(stateOnly.canUseStateFileCache)
-        #expect(requestedServices.isEmpty)
-
-        let refreshFallback = CursorTokenStore.resolveCredentialDetection(
-            stateValues: ["cursorAuth/accessToken": "db-access"]
-        ) { service in
-            requestedServices.append(service)
-            return service == "cursor-refresh-token" ? "keychain-refresh" : nil
-        }
-        #expect(refreshFallback.credentials?.refreshToken == "keychain-refresh")
-        #expect(refreshFallback.canUseStateFileCache == false)
-        #expect(requestedServices == ["cursor-refresh-token"])
-
-        requestedServices.removeAll()
-        let accessFallback = CursorTokenStore.resolveCredentialDetection(
-            stateValues: ["cursorAuth/refreshToken": "db-refresh"]
-        ) { service in
-            requestedServices.append(service)
-            return service == "cursor-access-token" ? "keychain-access" : nil
-        }
-        #expect(accessFallback.credentials?.accessToken == "keychain-access")
-        #expect(accessFallback.canUseStateFileCache == false)
-        #expect(requestedServices == ["cursor-access-token"])
+        await #expect(throws: CancellationError.self) { try await task.value }
     }
 
-    @Test func keychainDerivedResultIsNotStoredInStateFileCache() throws {
-        let fixture = try makeDatabase()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        CursorTokenStore.resetDetectionCacheForTesting()
-        defer { CursorTokenStore.resetDetectionCacheForTesting() }
-
-        var loadCount = 0
-        let load = {
-            loadCount += 1
-            return CursorTokenStore.CredentialDetection(
-                credentials: credentials("keychain-\(loadCount)"),
-                canUseStateFileCache: false
-            )
-        }
-
-        let first = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-        let second = CursorTokenStore.detect(
-            stateDatabasePath: fixture.database.path, uncachedLoader: load)
-
-        #expect(first == credentials("keychain-1"))
-        #expect(second == credentials("keychain-2"))
-        #expect(loadCount == 2)
+    @Test func transientReadErrorRetainsLastGoodPolicy() async {
+        let adapter = CursorProviderAdapter(
+            provider: CursorUsageProvider(credentialsLoader: {
+                throw CursorCredentialReadError.busy
+            }))
+        do {
+            _ = try await adapter.fetch(now: Date())
+            Issue.record("Expected a credential read failure")
+        } catch let failure as UsageProviderFailure {
+            #expect(failure.retainsLastGood)
+            #expect(failure.message == CursorCredentialReadError.busy.errorDescription)
+        } catch { Issue.record("Unexpected error type") }
     }
 }

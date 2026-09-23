@@ -11,7 +11,6 @@ struct OAuthCredentialIssueTests {
         outcome: SourceAttempt.Outcome = .skipped
     ) -> [SourceAttempt] {
         [
-            SourceAttempt(source: .statusline, outcome: .skipped, reason: .staleData),
             SourceAttempt(source: .oauth, outcome: outcome, reason: reason),
             SourceAttempt(source: .cache, outcome: .selected, reason: .cachedSnapshot),
         ]
@@ -44,7 +43,7 @@ struct OAuthCredentialIssueTests {
     /// warning them would be noise.
     @Test func ignoresDeliberateAndUnactionableStates() {
         for reason: SourceAttempt.Reason in [
-            .notConnected, .sourceDisabled, .networkError, .requestFailed,
+            .notConnected, .networkError, .requestFailed,
             .invalidResponse,
         ] {
             #expect(
@@ -88,7 +87,7 @@ struct OAuthCredentialIssueTests {
 
     @Test func ignoresPollsThatNeverTouchedOAuth() {
         let noOAuth = [
-            SourceAttempt(source: .statusline, outcome: .selected, reason: .freshData)
+            SourceAttempt(source: .cache, outcome: .selected, reason: .cachedSnapshot)
         ]
         #expect(OAuthCredentialIssue.from(sourceAttempts: noOAuth) == nil)
         #expect(OAuthCredentialIssue.from(sourceAttempts: []) == nil)

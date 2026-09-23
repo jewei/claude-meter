@@ -59,7 +59,7 @@ public final class CursorUsageProvider: @unchecked Sendable {
     private static let planInfoPath = "/aiserver.v1.DashboardService/GetPlanInfo"
 
     private let transport: any HTTPTransport
-    private let credentialsLoader: @Sendable () -> CursorCredentials?
+    private let credentialsLoader: @Sendable () throws -> CursorCredentials?
     private let beforeRefreshCoordinator: (@Sendable () async -> Void)?
     private let refreshCoordinator =
         RefreshResultHandoffCoordinator<RefreshKey, RefreshResult>(
@@ -74,8 +74,8 @@ public final class CursorUsageProvider: @unchecked Sendable {
 
     public init(
         transport: any HTTPTransport = ProviderHTTPClient.shared,
-        credentialsLoader: @escaping @Sendable () -> CursorCredentials? = {
-            CursorTokenStore.detect()
+        credentialsLoader: @escaping @Sendable () throws -> CursorCredentials? = {
+            try CursorTokenStore.detect()
         }
     ) {
         self.transport = transport
@@ -87,7 +87,7 @@ public final class CursorUsageProvider: @unchecked Sendable {
     /// acquisition. Production callers use the public initializer above.
     init(
         transport: any HTTPTransport,
-        credentialsLoader: @escaping @Sendable () -> CursorCredentials?,
+        credentialsLoader: @escaping @Sendable () throws -> CursorCredentials?,
         beforeRefreshCoordinator: @escaping @Sendable () async -> Void
     ) {
         self.transport = transport
@@ -96,7 +96,7 @@ public final class CursorUsageProvider: @unchecked Sendable {
     }
 
     public func fetchUsage(now: Date = Date()) async throws -> CursorUsage {
-        guard let creds = credentialsLoader() else { throw CursorError.notDetected }
+        guard let creds = try credentialsLoader() else { throw CursorError.notDetected }
         let selection = reconcileCachedTokens(with: creds)
         let lease = selection.lease
 

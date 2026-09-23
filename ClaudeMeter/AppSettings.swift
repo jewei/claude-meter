@@ -15,25 +15,17 @@ extension String {
 
 enum AppSettings {
     static let isActiveKey = "isActive"
-    static let statuslineSourceEnabledKey = "statuslineSourceEnabled"
     static let oauthSourceEnabledKey = "oauthSourceEnabled"
-    static let claudeWebResetsEnabledKey = "claudeWebResetsEnabled"
     static let cursorSourceEnabledKey = "cursorSourceEnabled"
     static let codexSourceEnabledKey = "codexSourceEnabled"
     static let grokSourceEnabledKey = "grokSourceEnabled"
-    static let codexSourceModeKey = "codexSourceMode"
     static let configuredCodexHomesKey = "configuredCodexHomes"
     static let codexAccountNamesKey = "codexAccountNames"
-    static let oauthModeKey = AppGroupConfig.oauthModeKey
+    static let oauthModeKey = MeterSettings.oauthModeKey
 
     static var isActive: Bool {
         get { UserDefaults.standard.bool(forKey: isActiveKey) }
         set { UserDefaults.standard.set(newValue, forKey: isActiveKey) }
-    }
-
-    static var statuslineSourceEnabled: Bool {
-        get { boolDefaultingTrue(forKey: statuslineSourceEnabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: statuslineSourceEnabledKey) }
     }
 
     static var oauthSourceEnabled: Bool {
@@ -57,11 +49,6 @@ enum AppSettings {
     static var grokSourceEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: grokSourceEnabledKey) }
         set { UserDefaults.standard.set(newValue, forKey: grokSourceEnabledKey) }
-    }
-
-    static var codexSourceMode: CodexSourceMode {
-        get { CodexSourceMode.normalized(UserDefaults.standard.string(forKey: codexSourceModeKey)) }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: codexSourceModeKey) }
     }
 
     static var configuredCodexHomes: [String] {
@@ -101,36 +88,6 @@ enum AppSettings {
         }
     }
 
-    static let attentionStopEnabledKey = "attentionStopEnabled"
-    static let attentionNotificationEnabledKey = "attentionNotificationEnabled"
-    static let attentionLimitHitEnabledKey = "attentionLimitHitEnabled"
-    static let predictiveNotificationsEnabledKey = "predictiveNotificationsEnabled"
-
-    static var attentionStopEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: attentionStopEnabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: attentionStopEnabledKey) }
-    }
-
-    static var attentionNotificationEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: attentionNotificationEnabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: attentionNotificationEnabledKey) }
-    }
-
-    static var attentionLimitHitEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: attentionLimitHitEnabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: attentionLimitHitEnabledKey) }
-    }
-
-    static var enabledAttentionEvents: Set<String> {
-        var events = Set<String>()
-        if attentionStopEnabled { events.insert("Stop") }
-        if attentionNotificationEnabled { events.insert("Notification") }
-        if attentionLimitHitEnabled { events.insert("StopFailure") }
-        return events
-    }
-
-    static var attentionEnabled: Bool { !enabledAttentionEvents.isEmpty }
-
     // MARK: - Popover card expansion
 
     static let expandedProviderCardsKey = "expandedProviderCards"
@@ -149,73 +106,13 @@ enum AppSettings {
         }
     }
 
-    static var hasClaudeSource: Bool {
-        statuslineSourceEnabled || oauthSourceEnabled
-    }
-
     static var hasEnabledDataSource: Bool {
-        hasClaudeSource || cursorSourceEnabled || codexSourceEnabled || grokSourceEnabled
+        oauthSourceEnabled || cursorSourceEnabled || codexSourceEnabled || grokSourceEnabled
     }
 
     private static func boolDefaultingTrue(forKey key: String) -> Bool {
         guard UserDefaults.standard.object(forKey: key) != nil else { return true }
         return UserDefaults.standard.bool(forKey: key)
-    }
-}
-
-struct CodexAccount: Identifiable, Sendable, Equatable {
-    let home: URL
-    let isImplicit: Bool
-    let customName: String?
-
-    var id: String { home.path }
-    var defaultName: String { isImplicit ? "Codex" : home.lastPathComponent }
-    var displayName: String {
-        guard let name = customName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty
-        else { return defaultName }
-        return name
-    }
-}
-
-/// Immutable settings captured once at the start of a poll. Every provider in a
-/// cycle therefore sees the same source selection, account list, and Codex mode.
-struct PollConfiguration: Sendable {
-    let generation: Int
-    /// Whether anyone is waiting on this cycle. Only the statusline tier's
-    /// API-fallback cooldown reads it — never a correctness rule.
-    let refreshKind: RefreshKind
-    let claudeEnabled: Bool
-    let cursorEnabled: Bool
-    let codexEnabled: Bool
-    let grokEnabled: Bool
-    let oauthEnabled: Bool
-    let oauthMode: String
-    let configuredClaudeDirs: [String]
-    let disabledClaudeAccountKeys: Set<String>
-    let thresholds: UsageThresholds
-    let codexMode: CodexSourceMode
-    let codexAccounts: [CodexAccount]
-
-    var costSourcesMatchCurrentSettings: Bool {
-        claudeEnabled == AppSettings.hasClaudeSource
-            && configuredClaudeDirs == AppGroupConfig.configuredConfigDirs
-            && disabledClaudeAccountKeys == Set(AppGroupConfig.disabledAccountKeys)
-    }
-
-    init(generation: Int, refreshKind: RefreshKind = .background) {
-        self.generation = generation
-        self.refreshKind = refreshKind
-        claudeEnabled = AppSettings.hasClaudeSource
-        cursorEnabled = AppSettings.cursorSourceEnabled
-        codexEnabled = AppSettings.codexSourceEnabled
-        grokEnabled = AppSettings.grokSourceEnabled
-        oauthEnabled = AppSettings.oauthSourceEnabled
-        oauthMode = UserDefaults.standard.string(forKey: AppGroupConfig.oauthModeKey) ?? ""
-        configuredClaudeDirs = AppGroupConfig.configuredConfigDirs
-        disabledClaudeAccountKeys = Set(AppGroupConfig.disabledAccountKeys)
-        thresholds = AppGroupConfig.currentThresholds()
-        codexMode = AppSettings.codexSourceMode
-        codexAccounts = codexEnabled ? AppSettings.codexAccounts() : []
     }
 }
 

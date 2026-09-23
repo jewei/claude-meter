@@ -1,17 +1,6 @@
 import ClaudeMeterCore
 import Foundation
 
-public enum CodexSourceMode: String, Codable, Sendable, CaseIterable {
-    case auto
-    case appServer
-    case directOAuth
-
-    public static func normalized(_ raw: String?) -> CodexSourceMode {
-        guard let raw, let mode = CodexSourceMode(rawValue: raw) else { return .auto }
-        return mode
-    }
-}
-
 public enum CodexUsageSource: String, Codable, Equatable, Sendable {
     case appServer
     case directOAuth
@@ -433,11 +422,13 @@ public struct CodexOAuthUsageResponse: Decodable, Sendable {
     let planType: String?
     let rateLimit: RateLimit?
     let credits: Credits?
+    let resetCredits: ResetCredits?
 
     enum CodingKeys: String, CodingKey {
         case planType = "plan_type"
         case rateLimit = "rate_limit"
         case credits
+        case resetCredits = "rate_limit_reset_credits"
     }
 
     public init(from decoder: Decoder) throws {
@@ -446,6 +437,7 @@ public struct CodexOAuthUsageResponse: Decodable, Sendable {
         rateLimit = try container.decodeIfPresent(RateLimit.self, forKey: .rateLimit)
         planType = try? container.decodeIfPresent(String.self, forKey: .planType)
         credits = try? container.decodeIfPresent(Credits.self, forKey: .credits)
+        resetCredits = try? container.decodeIfPresent(ResetCredits.self, forKey: .resetCredits)
     }
 
     public func usage(accountEmail: String?, now: Date, source: CodexUsageSource) throws
@@ -461,6 +453,9 @@ public struct CodexOAuthUsageResponse: Decodable, Sendable {
             primaryWindow: primary,
             secondaryWindow: secondary,
             usageCredits: usageCredits,
+            rateLimitResets: resetCredits.map {
+                CodexRateLimitResets(availableCount: $0.availableCount, credits: nil)
+            },
             accountEmail: accountEmail,
             plan: planType,
             authMode: .chatGPT,
@@ -499,6 +494,11 @@ public struct CodexOAuthUsageResponse: Decodable, Sendable {
             case resetAt = "reset_at"
             case limitWindowSeconds = "limit_window_seconds"
         }
+    }
+
+    struct ResetCredits: Decodable, Sendable {
+        let availableCount: Int
+        enum CodingKeys: String, CodingKey { case availableCount = "available_count" }
     }
 
     struct Credits: Decodable, Sendable {

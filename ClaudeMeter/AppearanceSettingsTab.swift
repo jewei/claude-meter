@@ -1,17 +1,17 @@
 import ClaudeMeterCore
 import ClaudeMeterProviders
 import SwiftUI
-import WidgetKit
 
 struct AppearanceSettingsTab: View {
-    @ObservedObject var appState: AppState
+    @AppStorage(MeterSettings.cardStyleKey) private var cardStyle = "rings"
+    @AppStorage(MeterSettings.progressionModeKey) private var progressionMode = "left"
+    @AppStorage(MeterSettings.mainMeterProviderKey) private var mainMeterProvider = "claude"
+    @AppStorage(MeterSettings.menuBarAccountKey) private var claudeMainMeterAccount = ""
+    @AppStorage(MeterSettings.codexMainMeterAccountKey) private var codexMainMeterAccount = ""
+    @AppStorage(MeterSettings.menuBarWindowKey) private var menuBarWindow = "nearest"
 
-    @AppStorage(AppGroupConfig.cardStyleKey) private var cardStyle = "rings"
-    @AppStorage(AppGroupConfig.progressionModeKey) private var progressionMode = "left"
-    @AppStorage(AppGroupConfig.mainMeterProviderKey) private var mainMeterProvider = "claude"
-    @AppStorage(AppGroupConfig.menuBarAccountKey) private var claudeMainMeterAccount = ""
-    @AppStorage(AppGroupConfig.codexMainMeterAccountKey) private var codexMainMeterAccount = ""
-    @AppStorage(AppGroupConfig.menuBarWindowKey) private var menuBarWindow = "nearest"
+    @AppStorage("warningThresholdPercent") private var warningThresholdPercent = 80.0
+    @AppStorage("criticalThresholdPercent") private var criticalThresholdPercent = 95.0
 
     @State private var accounts: [AccountConfig] = []
 
@@ -26,7 +26,7 @@ struct AppearanceSettingsTab: View {
                 settingCard(
                     icon: "bolt.circle.fill", color: Color(hex: "4FC51C"),
                     title: "Main meter",
-                    subtitle: "The provider that owns the hero, menu bar, widget, and quota alerts."
+                    subtitle: "The provider that owns the hero and menu bar."
                 ) {
                     VStack(alignment: .leading, spacing: 8) {
                         segmented(
@@ -66,28 +66,85 @@ struct AppearanceSettingsTab: View {
                 settingCard(
                     icon: "gauge.with.dots.needle.bottom.50percent", color: Color(hex: "4FC51C"),
                     title: "Main meter shows",
-                    subtitle: "Choose a window or pair the nearest percentage with its forecast."
+                    subtitle: "Choose which usage percentage appears in the menu bar."
                 ) {
                     segmented(
                         $menuBarWindow,
                         [
                             ("nearest", "Nearest"), ("5h", "5h"), ("7d", "7d"),
-                            ("both", "Both"), ("forecast", "Forecast"),
+                            ("both", "Both"),
                         ])
+                }
+                settingCard(
+                    icon: "exclamationmark.circle", color: .pfEnergyLow,
+                    title: "Severity thresholds",
+                    subtitle: "Usage levels that change the menu bar and card colors."
+                ) {
+                    thresholdRow(
+                        label: "Warning at", color: .pfEnergyLow,
+                        value: $warningThresholdPercent, range: 50...90)
+                    Divider().overlay(Color.pfCardBorder)
+                    thresholdRow(
+                        label: "Critical at", color: .pfEnergyEmpty,
+                        value: $criticalThresholdPercent, range: 60...100)
                 }
             }
             .padding(20)
         }
-        .onAppear { reloadAccounts() }
-        .onChange(of: cardStyle) { _, _ in AppGroupConfig.syncDisplaySettings() }
-        .onChange(of: progressionMode) { _, _ in
-            AppGroupConfig.syncDisplaySettings()
-            WidgetCenter.shared.reloadAllTimelines()
+        .onAppear {
+            let thresholds = MeterSettings.repairThresholdSettings()
+            warningThresholdPercent = thresholds.warning
+            criticalThresholdPercent = thresholds.critical
+            MeterSettings.repairMenuBarWindow()
+            reloadAccounts()
         }
-        .onChange(of: mainMeterProvider) { _, _ in mainMeterSettingChanged() }
-        .onChange(of: claudeMainMeterAccount) { _, _ in mainMeterSettingChanged() }
-        .onChange(of: codexMainMeterAccount) { _, _ in mainMeterSettingChanged() }
-        .onChange(of: menuBarWindow) { _, _ in mainMeterDisplaySettingChanged() }
+        .onChange(of: warningThresholdPercent) { _, newWarning in
+            if criticalThresholdPercent <= newWarning {
+                criticalThresholdPercent = min(100, newWarning + 5)
+            }
+        }
+        .onChange(of: criticalThresholdPercent) { _, newCritical in
+            if newCritical <= warningThresholdPercent {
+                criticalThresholdPercent = min(100, warningThresholdPercent + 5)
+            }
+        }
+    }
+
+    private func thresholdRow(
+        label: String, color: Color, value: Binding<Double>, range: ClosedRange<Double>
+    ) -> some View {
+        let safeValue =
+            value.wrappedValue.isFinite
+            ? min(range.upperBound, max(range.lowerBound, value.wrappedValue))
+            : range.lowerBound
+        let safeBinding = Binding<Double>(
+            get: {
+                value.wrappedValue.isFinite
+                    ? min(range.upperBound, max(range.lowerBound, value.wrappedValue))
+                    : range.lowerBound
+            },
+            set: { value.wrappedValue = $0 })
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 9) {
+                Circle().fill(color).frame(width: 12, height: 12)
+                Text(label).font(PFont.display(16, .semibold)).foregroundStyle(Color.pfInk)
+                Spacer()
+                Text("\(Int(safeValue))%")
+                    .font(PFont.display(14, .bold))
+                    .foregroundStyle(color)
+                    .monospacedDigit()
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(color.opacity(0.16)))
+            }
+            ColorSlider(
+                value: safeBinding,
+                range: range,
+                step: 5,
+                color: color,
+                accessibilityName: label,
+                accessibilityValueText: "\(Int(safeValue)) percent")
+        }
     }
 
     @ViewBuilder
@@ -197,22 +254,12 @@ struct AppearanceSettingsTab: View {
     }
 
     private func displayName(_ account: AccountConfig) -> String {
-        AppGroupConfig.accountName(forKey: account.id) ?? account.label.friendlyAccountLabel
-    }
-
-    private func mainMeterSettingChanged() {
-        AppGroupConfig.syncDisplaySettings()
-        appState.mainMeterSelectionChanged()
-    }
-
-    private func mainMeterDisplaySettingChanged() {
-        AppGroupConfig.syncDisplaySettings()
-        WidgetCenter.shared.reloadAllTimelines()
+        MeterSettings.accountName(forKey: account.id) ?? account.label.friendlyAccountLabel
     }
 
     private func reloadAccounts() {
-        let configured = AppGroupConfig.configuredConfigDirs
-        let disabled = Set(AppGroupConfig.disabledAccountKeys)
+        let configured = MeterSettings.configuredConfigDirs
+        let disabled = Set(MeterSettings.disabledAccountKeys)
         Task.detached(priority: .userInitiated) {
             let found = ConfigDirDiscovery.discover(
                 configuredDirs: configured, disabledKeys: disabled)

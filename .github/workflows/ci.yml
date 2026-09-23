@@ -22,8 +22,7 @@ jobs:
         uses: actions/checkout@v7
 
       # Echoed so a runner-image bump that changes the toolchain is obvious in
-      # the log rather than showing up as a mystery compile error. The widget
-      # needs the macOS 26 SDK (`Widget`/`WidgetBundle` live in SwiftUI there).
+      # the log rather than showing up as a mystery compile error.
       - name: Toolchain versions
         run: |
           xcodebuild -version
@@ -32,7 +31,6 @@ jobs:
 
       # The same gate developers run locally — deliberately invoked as a script
       # rather than restated here, so CI and `verify-local.sh` cannot drift.
-      # Signing is disabled inside it: the App Group entitlement needs a real
-      # provisioning profile to *run*, but not to *compile*.
+      # The script uses unsigned builds.
       - name: Verify
         run: ./scripts/verify-local.sh

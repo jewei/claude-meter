@@ -240,7 +240,7 @@ public enum OAuthKeychain: Sendable {
     }
 
     /// Resolves only an exact credential-service match. A newest hashed item can
-    /// belong to a different config directory from the active statusline account.
+    /// belong to a different config directory from another configured account.
     public static func accountKey(
         forCredentialService credentialService: String?, accounts: [AccountConfig]
     ) -> String? {

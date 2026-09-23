@@ -6,18 +6,16 @@ import SwiftUI
 struct PopoverView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.openSettings) private var openSettings
-    @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage(AppSettings.cursorSourceEnabledKey) private var cursorSourceEnabled = false
     @AppStorage(AppSettings.codexSourceEnabledKey) private var codexSourceEnabled = false
     @AppStorage(AppSettings.grokSourceEnabledKey) private var grokSourceEnabled = false
-    @AppStorage(AppGroupConfig.cardStyleKey) private var cardStyle = "rings"
-    @AppStorage(AppGroupConfig.progressionModeKey) private var progressionMode = "left"
-    @AppStorage(AppGroupConfig.mainMeterProviderKey) private var mainMeterProvider = "claude"
+    @AppStorage(MeterSettings.cardStyleKey) private var cardStyle = "rings"
+    @AppStorage(MeterSettings.progressionModeKey) private var progressionMode = "left"
+    @AppStorage(MeterSettings.mainMeterProviderKey) private var mainMeterProvider = "claude"
     @AppStorage(AppSettings.oauthModeKey) private var oauthMode = ""
     @State private var now = Date()
-    @State private var showHeatmap = false
     // Tracks whether the popover window is on screen (the view is retained,
     // hidden, across dismissals). Gates the ticker and, via the environment,
     // every continuous TimelineView animation — otherwise they keep the
@@ -85,21 +83,21 @@ struct PopoverView: View {
     }
 
     /// `true` when the user chose to display usage instead of energy-left.
-    private var cardStyleValue: AppGroupConfig.CardStyle {
-        AppGroupConfig.CardStyle(rawValue: cardStyle) ?? .rings
+    private var cardStyleValue: MeterSettings.CardStyle {
+        MeterSettings.CardStyle(rawValue: cardStyle) ?? .rings
     }
 
     nonisolated static func accountCardStyle(
-        requested: AppGroupConfig.CardStyle,
+        requested: MeterSettings.CardStyle,
         provider: MainMeterProvider
-    ) -> AppGroupConfig.CardStyle {
+    ) -> MeterSettings.CardStyle {
         switch provider {
         case .claude, .codex: requested
         }
     }
 
     private var showsUsage: Bool {
-        (AppGroupConfig.ProgressionMode(rawValue: progressionMode) ?? .left) == .used
+        (MeterSettings.ProgressionMode(rawValue: progressionMode) ?? .left) == .used
     }
 
     private var selectedProvider: MainMeterProvider {
@@ -115,20 +113,10 @@ struct PopoverView: View {
             headerBar
             PopoverTransitionBody(desiredExpandedCards: expandedCards) {
                 VStack(spacing: 0) {
-                    if showHeatmap {
-                        heatmapBody
-                    } else {
-                        if appState.updateAvailable {
-                            updateAvailableNotice
-                        }
-                        if selectedProvider == .claude,
-                            let status = appState.serviceStatus,
-                            status.level.isIncident
-                        {
-                            serviceStatusNotice(status)
-                        }
-                        mainContent
+                    if appState.updateAvailable {
+                        updateAvailableNotice
                     }
+                    mainContent
                 }
             }
         }
@@ -150,15 +138,7 @@ struct PopoverView: View {
             isVisible = true
             now = Date()
         }
-        // The popover view is retained across dismissals (MenuBarExtra `.window`),
-        // so reset to the main view on close — otherwise reopening lands on the
-        // heatmap and skips onboarding/error/loading branches.
-        .onDisappear {
-            isVisible = false
-            showHeatmap = false
-            // Don't keep burning disk I/O on a heatmap nobody is looking at.
-            appState.cancelActivityHeatmapLoad()
-        }
+        .onDisappear { isVisible = false }
     }
 
     // MARK: - Header
@@ -191,19 +171,6 @@ struct PopoverView: View {
                     .layoutPriority(-1)
                     .help("Last updated")
             }
-            // Settings and Quit moved up from the footer, which is now gone.
-            // Refresh went with it: `popoverDidOpen()` already refreshes on every
-            // open, so the button only re-did what had just happened.
-            //
-            // Usage & Spend belongs here, not behind the cost card: that card
-            // renders only while Claude owns the main meter, so a Codex-primary
-            // user had no route to it at all.
-            if !needsOnboarding {
-                squareButton("chart.bar.fill", help: "Usage & Spend", size: 28) {
-                    NSApp.activate(ignoringOtherApps: true)
-                    openWindow(id: AppState.usageSpendWindowID)
-                }
-            }
             squareButton("gearshape.fill", help: "Settings", size: 28) {
                 openSettingsAndCompleteOnboarding()
             }
@@ -221,19 +188,19 @@ struct PopoverView: View {
     // MARK: - Main content
 
     private var hasCursor: Bool {
-        cursorSourceEnabled && appState.cursorUsage != nil
+        cursorSourceEnabled && appState.cursorSnapshot != nil
     }
 
     private var hasCodex: Bool {
-        codexSourceEnabled && appState.codexAccounts.contains { $0.usage != nil }
+        codexSourceEnabled && appState.codexAccounts.contains { $0.observedAt != nil }
     }
 
     private var hasGrok: Bool {
-        grokSourceEnabled && appState.grokUsage != nil
+        grokSourceEnabled && appState.grokSnapshot != nil
     }
 
     private var hasAnyData: Bool {
-        appState.snapshot != nil || hasCursor || hasCodex || hasGrok
+        appState.claudeSnapshot != nil || hasCursor || hasCodex || hasGrok
     }
 
     private var hasProviderState: Bool {
@@ -288,11 +255,11 @@ struct PopoverView: View {
                 codexProviderSection(isPrimary: true)
                 claudeProviderSection(isPrimary: false)
             }
-            if hasCursor, let cursor = appState.cursorUsage {
+            if hasCursor, let cursor = appState.cursorSnapshot?.accounts.first {
                 cursorNotices()
                 cursorCard(cursor)
             }
-            if hasGrok, let grok = appState.grokUsage {
+            if hasGrok, let grok = appState.grokSnapshot?.accounts.first {
                 grokNotices()
                 grokCard(grok)
             }
@@ -304,10 +271,10 @@ struct PopoverView: View {
 
     @ViewBuilder
     private func claudeProviderSection(isPrimary: Bool) -> some View {
-        if let snap = appState.snapshot, AppSettings.hasClaudeSource {
-            let models = accountModels(snap)
+        if appState.claudeSnapshot != nil, AppSettings.oauthSourceEnabled {
+            let models = accountModels
             if isPrimary {
-                claudeNotices(snap)
+                claudeNotices()
                 if appState.mainMeterReading == nil {
                     selectedMeterUnavailable(provider: .claude)
                 } else {
@@ -316,7 +283,7 @@ struct PopoverView: View {
                             ? HeroSummary.stale(
                                 providerName: "Claude",
                                 recovery: oauthMode.isEmpty
-                                    ? "Open Claude Code or connect OAuth"
+                                    ? "Connect Claude OAuth in Settings"
                                     : "Claude data is out of date"
                             )
                             : HeroSummary.make(
@@ -325,16 +292,16 @@ struct PopoverView: View {
                                 now: now))
                 }
                 accountsSection(primaryOrdered(models))
-                if !models.contains(where: { $0.claudeLimitResets != nil }) {
-                    claudeLimitResetsLink
-                }
-                if let extra = snap.limits.extraUsage, extra.hasSpend {
-                    extraUsageCard(extra)
-                }
-                if !appState.costModels.isEmpty {
-                    costCard(appState.costModels)
-                } else {
-                    activityEntryCard
+
+                if let selected = appState.claudeAccounts.first(where: {
+                    $0.id == appState.mainMeterReading?.accountID
+                }),
+                    let extra = selected.balances.first(where: { $0.id == "extra-usage" }),
+                    extra.value != nil || extra.limit != nil
+                {
+                    extraUsageCard(
+                        extra,
+                        percent: selected.windows.first { $0.id == "extra-usage" }?.usedPercent)
                 }
             } else {
                 claudeSecondaryCard(models)
@@ -379,9 +346,10 @@ struct PopoverView: View {
                 secondaryProviderCard(
                     name: "Codex",
                     models: codexAccountModels,
-                    hasError: orderedCodexReadings.contains(where: { $0.error != nil }),
+                    hasError: orderedCodexReadings.contains(where: { $0.lastError != nil }),
                     isStale: orderedCodexReadings.contains(where: {
-                        $0.observationIsStale(asOf: now)
+                        $0.observedAt != nil
+                            && MeterSettings.isSnapshotStale(lastPollAt: $0.observedAt, now: now)
                     }),
                     cardID: Self.codexSecondaryCardID
                 ) {
@@ -404,38 +372,8 @@ struct PopoverView: View {
             ) {
                 claudeMark
             }
-            if !models.contains(where: { $0.claudeLimitResets != nil }) {
-                claudeLimitResetsLink
-            }
-        }
-    }
 
-    private var claudeLimitResetsLink: some View {
-        Link(destination: URL(string: "https://claude.ai/settings/usage")!) {
-            HStack(spacing: 10) {
-                Image(systemName: "arrow.clockwise.circle")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Color.pfInk)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Claude limit resets")
-                        .font(PFont.display(13, .semibold))
-                        .foregroundStyle(Color.pfInk)
-                    Text("Check available resets in Claude")
-                        .font(PFont.body(11, .semibold))
-                        .foregroundStyle(Color.pfInkMuted)
-                }
-                Spacer(minLength: 4)
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.pfInkMuted)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-            .chunkyCard()
         }
-        .buttonStyle(.plain)
-        .help("Open Claude Settings > Usage to check or use a limit reset")
-        .accessibilityLabel("Check Claude limit resets in Settings, Usage")
     }
 
     private func secondaryProviderCard<Mark: View>(
@@ -539,7 +477,6 @@ struct PopoverView: View {
                             .font(PFont.display(12, .semibold))
                             .foregroundStyle(Color.pfInk)
                             .lineLimit(1)
-                        if model.isLive { LiveDot() }
                         if let plan = model.plan { PlanBadge(plan: plan) }
                         if model.isDuplicateLogin { DuplicateLoginBadge() }
                         Spacer(minLength: 0)
@@ -561,9 +498,7 @@ struct PopoverView: View {
                     if let resets = model.rateLimitResets {
                         CodexUsageResetsView(resets: resets, now: now)
                     }
-                    if let resets = model.claudeLimitResets {
-                        ClaudeUsageResetsView(resets: resets, now: now)
-                    }
+
                 }
             }
         }
@@ -651,7 +586,7 @@ struct PopoverView: View {
     }
 
     @ViewBuilder
-    private func claudeNotices(_ snap: ClaudeUsageSnapshot) -> some View {
+    private func claudeNotices() -> some View {
         if appState.lastError != nil {
             noticeBanner(
                 pollErrorText, systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
@@ -665,16 +600,11 @@ struct PopoverView: View {
                 systemImage: issue.needsUserAction
                     ? "key.slash.fill" : "clock.arrow.circlepath",
                 tint: issue.needsUserAction ? .pfEnergyLow : .pfInkMuted)
-        } else if appState.oauthEnrichmentIsStale {
-            noticeBanner(
-                "OAuth details may be outdated — showing last known values",
-                systemImage: "clock.fill",
-                tint: .pfInkMuted)
         }
-        if appState.claudeIsStale || snap.state.isStale {
+        if appState.claudeIsStale {
             let message =
                 oauthMode.isEmpty
-                ? "Claude data is stale — open Claude Code or connect OAuth in Settings"
+                ? "Claude data is stale — connect OAuth in Settings"
                 : "Claude data may be stale"
             noticeBanner(message, systemImage: "clock.fill", tint: .pfInkMuted)
         }
@@ -716,7 +646,7 @@ struct PopoverView: View {
 
     private func accountSectionHeader(
         _ title: String,
-        style: AppGroupConfig.CardStyle
+        style: MeterSettings.CardStyle
     ) -> some View {
         HStack {
             Text(title)
@@ -751,12 +681,12 @@ struct PopoverView: View {
         .padding(.horizontal, 2)
     }
 
-    private var orderedCodexReadings: [CodexAccountReading] {
+    private var orderedCodexReadings: [ProviderAccountSnapshot] {
         let selectedID = selectedProvider == .codex ? appState.mainMeterReading?.accountID : nil
         return appState.codexAccounts.sorted { lhs, rhs in
             if lhs.id == selectedID { return true }
             if rhs.id == selectedID { return false }
-            return lhs.account.displayName.localizedCaseInsensitiveCompare(rhs.account.displayName)
+            return lhs.label.localizedCaseInsensitiveCompare(rhs.label)
                 == .orderedAscending
         }
     }
@@ -765,91 +695,47 @@ struct PopoverView: View {
         orderedCodexReadings.compactMap(Self.codexAccountModel)
     }
 
-    static func codexAccountModel(_ reading: CodexAccountReading) -> AccountCardModel? {
-        guard let normalized = AppState.codexMainMeterReading(reading) else { return nil }
+    static func codexAccountModel(_ reading: ProviderAccountSnapshot) -> AccountCardModel? {
+        guard let normalized = MainMeterReading(account: reading, provider: .codex) else {
+            return nil
+        }
         var model = AccountCardModel(mainMeterReading: normalized)
-        model.rateLimitResets = reading.usage?.rateLimitResets
+        model.rateLimitResets = reading.balances.first { $0.id == "usage-resets" }
         return model
     }
 
-    /// Builds the unified per-account list: `snapshot.accounts` when present
-    /// (active first), else a single card synthesized from the top-level snapshot.
-    /// Plan/email/Opus come from OAuth and exist only for the active account.
-    private func accountModels(_ snap: ClaudeUsageSnapshot) -> [AccountCardModel] {
-        // "Live" = a Claude Code session is open right now: the snapshot came from
-        // the statusline tier and isn't stale. OAuth-tier snapshots mean no open
-        // CLI session, so no dot.
-        let bridgeLive = snap.parserVersion.hasPrefix("statusline") && !appState.claudeIsStale
-        if let accounts = snap.accounts, !accounts.isEmpty {
-            let duplicates = MultiAccountOAuth.duplicateOrgAccountKeys(accounts)
-            let sorted = accounts.sorted { lhs, rhs in
-                if lhs.isActive != rhs.isActive { return lhs.isActive }
-                return lhs.label.localizedCaseInsensitiveCompare(rhs.label) == .orderedAscending
+    private var accountModels: [AccountCardModel] {
+        appState.claudeAccounts.map { account in
+            let windows = account.resolvedWindows(asOf: now)
+            func limit(_ window: UsageWindow?) -> LimitWindow {
+                LimitWindow(
+                    percentUsed: window?.isOverLimit == true ? 101 : window?.usedPercent,
+                    resetsAt: window?.resetAt)
             }
-            return sorted.map { acc in
-                AccountCardModel(
-                    id: acc.id,
-                    label: AppGroupConfig.accountName(forKey: acc.id)
-                        ?? acc.label.friendlyAccountLabel,
-                    plan: AppGroupConfig.accountPlan(forKey: acc.id)
-                        ?? (acc.isActive ? snap.account?.plan : acc.account?.plan)
-                            ?? acc.account?.plan,
-                    subtitle: (acc.isActive ? snap.account?.email : acc.account?.email)
-                        ?? acc.account?.email,
-                    session: acc.limits.currentSession,
-                    week: acc.limits.currentWeekAllModels,
-                    opus: acc.isActive
-                        ? (snap.limits.currentWeekOpus ?? acc.limits.currentWeekOpus)
-                        : acc.limits.currentWeekOpus,
-                    claudeLimitResets: appState.claudeWebResets(
-                        organizationID: acc.account?.organization
-                            ?? (acc.isActive ? snap.account?.organization : nil)),
-                    scoped: Self.scopedLimits(for: acc, topLevel: snap.limits),
-                    isDuplicateLogin: duplicates.contains(acc.id),
-                    isLive: acc.isActive && bridgeLive
-                )
-            }
+            return AccountCardModel(
+                id: account.id, label: account.label, plan: account.plan,
+                subtitle: account.subtitle, session: limit(windows.first { $0.kind == .session }),
+                week: limit(windows.first { $0.kind == .weekly }),
+                opus: windows.first { $0.id == "seven_day_opus" }.map { limit($0) },
+                scoped: windows.filter { $0.kind == .scoped && $0.id != "seven_day_opus" }.map {
+                    ScopedLimitWindow(id: $0.id, window: limit($0))
+                },
+                isDuplicateLogin: appState.claudeDiagnostics.duplicateAccountKeys.contains(
+                    account.id),
+                lastError: account.lastError)
         }
-        // Single-account override key must match how Settings stores it (the
-        // discovery account key), not the OAuth email.
-        let singleID = StatuslineBridge.defaultAccountKey
-        return [
-            AccountCardModel(
-                id: singleID,
-                label: AppGroupConfig.accountName(forKey: singleID) ?? "Claude",
-                plan: AppGroupConfig.accountPlan(forKey: singleID) ?? snap.account?.plan,
-                subtitle: snap.account?.email,
-                session: snap.limits.currentSession,
-                week: snap.limits.currentWeekAllModels,
-                opus: snap.limits.currentWeekOpus,
-                claudeLimitResets: appState.claudeWebResets(
-                    organizationID: snap.account?.organization),
-                scoped: snap.limits.scopedWeekly ?? [],
-                isLive: bridgeLive
-            )
-        ]
-    }
-
-    nonisolated static func scopedLimits(
-        for account: AccountUsage,
-        topLevel: LimitInfo
-    ) -> [ScopedLimitWindow] {
-        if account.isActive {
-            return topLevel.scopedWeekly ?? account.limits.scopedWeekly ?? []
-        }
-        return account.limits.scopedWeekly ?? []
     }
 
     // MARK: - Extra usage (pay-as-you-go overage)
 
-    private func extraUsageCard(_ extra: ExtraUsage) -> some View {
+    private func extraUsageCard(_ extra: BalanceItem, percent: Double?) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
                 Text("💳").font(.system(size: 13))
                 Text("Extra usage")
                     .font(PFont.display(14, .semibold))
                     .foregroundStyle(Color.pfInk)
-                if !extra.isEnabled {
+                if extra.displayText == "Paused" {
                     Text("paused")
                         .font(PFont.body(10, .bold))
                         .foregroundStyle(Color.pfInkMuted)
@@ -862,7 +748,7 @@ struct PopoverView: View {
                     .foregroundStyle(Color.pfInk)
                     .monospacedDigit()
             }
-            if let pct = extra.percentUsed {
+            if let pct = percent {
                 EnergyBar(fraction: min(1, pct / 100), color: .pfEnergyFull, height: 12)
             }
         }
@@ -871,191 +757,25 @@ struct PopoverView: View {
         .chunkyCard()
     }
 
-    private func extraUsageText(_ extra: ExtraUsage) -> String {
-        let symbol = extra.currency == "USD" || extra.currency == nil ? "$" : "\(extra.currency!) "
-        let used = String(format: "%@%.2f", symbol, extra.usedAmount ?? 0)
-        if let limit = extra.limitAmount, limit > 0 {
-            return used + String(format: " / %@%.2f", symbol, limit)
+    private func extraUsageText(_ extra: BalanceItem) -> String {
+        let symbol = extra.unit == "USD" || extra.unit == nil ? "$" : "\(extra.unit!) "
+        let used =
+            extra.value.map {
+                String(format: "%@%.2f", symbol, NSDecimalNumber(decimal: $0).doubleValue)
+            } ?? "—"
+        if let limit = extra.limit, limit > 0 {
+            return used
+                + String(format: " / %@%.2f", symbol, NSDecimalNumber(decimal: limit).doubleValue)
         }
         return used
     }
 
-    // MARK: - Cost breakdown (local log scan, last 7 days)
-
-    /// Opens the activity heatmap and kicks off (or refreshes) its scan.
-    private func openHeatmap() {
-        appState.loadActivityHeatmap()
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { showHeatmap = true }
-    }
-
-    /// Heatmap entry when there's no 7-day cost data (OAuth-only week, pricing
-    /// miss, idle week) — so activity is still reachable whenever transcripts exist.
-    private var activityEntryCard: some View {
-        Button(action: openHeatmap) {
-            HStack(spacing: 7) {
-                Text("🗓️").font(.system(size: 13))
-                Text("Activity")
-                    .font(PFont.display(14, .semibold))
-                    .foregroundStyle(Color.pfInk)
-                Spacer()
-                Text(
-                    appState.costRefreshFailed
-                        ? "Cost scan failed"
-                        : appState.costIsLoading ? "Scanning cost…" : "When you work"
-                )
-                .font(PFont.body(12, .semibold))
-                .foregroundStyle(Color.pfInkMuted)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Color.pfInkMuted)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 13)
-            .chunkyCard()
-        }
-        .buttonStyle(.plain)
-        .help("View activity heatmap")
-    }
-
-    /// Single summary row. The per-model breakdown used to live here and was the
-    /// tallest non-account card in the popover; the total is the number people
-    /// come for, and the card is still the way into the activity heatmap — the
-    /// only other entry point (`activityEntryCard`) appears solely when there's no
-    /// cost data at all, so this must not become a plain label.
-    private func costCard(_ models: [ModelUsage]) -> some View {
-        let total = models.reduce(0.0) { $0 + ($1.costUsd ?? 0) }
-        return Button(action: openHeatmap) {
-            HStack(spacing: 7) {
-                Text("💸").font(.system(size: 13))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Last 7 days")
-                        .font(PFont.display(14, .semibold))
-                        .foregroundStyle(Color.pfInk)
-                    if let scannedAt = appState.costScannedAt {
-                        Text(
-                            "Scanned \(Self.updatedText(lastPollAt: scannedAt, now: now).lowercased())"
-                        )
-                        .font(PFont.body(10, .semibold))
-                        .foregroundStyle(Color.pfInkMuted)
-                    }
-                }
-                if appState.costScanPartial {
-                    Text(appState.costRefreshFailed ? "update failed" : "partial")
-                        .font(PFont.body(10, .semibold))
-                        .foregroundStyle(Color.pfInkMuted)
-                }
-                Spacer()
-                Text(Self.usd(total))
-                    .font(PFont.display(14, .bold))
-                    .foregroundStyle(Color.pfInk)
-                    .monospacedDigit()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Color.pfInkMuted)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 13)
-            .chunkyCard()
-        }
-        .buttonStyle(.plain)
-        .help("View activity heatmap")
-    }
-
-    private static func usd(_ value: Double) -> String {
-        value < 0.01 && value > 0 ? "<$0.01" : String(format: "$%.2f", value)
-    }
-
-    // MARK: - Activity heatmap (cost card flips to this)
-
-    private var heatmapBody: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 8) {
-                Button {
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
-                        showHeatmap = false
-                    }
-                    appState.cancelActivityHeatmapLoad()
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.left").font(.system(size: 11, weight: .bold))
-                        Text("Back").font(PFont.display(13, .semibold))
-                    }
-                    .foregroundStyle(Color.pfInk)
-                }
-                .buttonStyle(.plain)
-                Spacer()
-                Text("🗓️").font(.system(size: 13))
-                Text("Activity")
-                    .font(PFont.display(15, .semibold))
-                    .foregroundStyle(Color.pfInk)
-            }
-            heatmapCard
-        }
-        .padding(.horizontal, 15)
-        .padding(.top, 2)
-        .padding(.bottom, 12)
-    }
-
-    @ViewBuilder
-    private var heatmapCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let map = appState.activityHeatmap, !map.isEmpty {
-                Text(heatmapSubtitle(map))
-                    .font(PFont.body(11, .semibold))
-                    .foregroundStyle(Color.pfInkMuted)
-                ActivityHeatmapGrid(map: map)
-                heatmapLegend
-            } else if appState.activityHeatmapLoading {
-                heatmapPlaceholder("Scanning your activity…", loading: true)
-            } else {
-                heatmapPlaceholder("No activity in the last 30 days")
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 13)
-        .chunkyCard()
-    }
-
-    private func heatmapPlaceholder(_ text: String, loading: Bool = false) -> some View {
-        VStack(spacing: 10) {
-            if loading {
-                ProgressView().controlSize(.small)
-            }
-            Text(text)
-                .font(PFont.body(12, .semibold))
-                .foregroundStyle(Color.pfInkMuted)
-        }
-        .frame(maxWidth: .infinity, minHeight: 120, alignment: .center)
-    }
-
-    private func heatmapSubtitle(_ map: ActivityHeatmap) -> String {
-        var parts = ["\(map.total) messages · last 30 days"]
-        if map.daysCovered > 0, map.daysCovered < 30 {
-            parts = ["\(map.total) messages · \(map.daysCovered) active days"]
-        }
-        if map.isPartial { parts.append("partial") }
-        return parts.joined(separator: " · ")
-    }
-
-    private var heatmapLegend: some View {
-        HStack(spacing: 5) {
-            Text("Less").font(PFont.body(10, .semibold)).foregroundStyle(Color.pfInkMuted)
-            ForEach(0..<5, id: \.self) { level in
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(ActivityHeatmapGrid.color(forLevel: level))
-                    .frame(width: 11, height: 11)
-            }
-            Text("More").font(PFont.body(10, .semibold)).foregroundStyle(Color.pfInkMuted)
-            Spacer()
-        }
-    }
-
     // MARK: - Cursor card (spend-based, shared left/used progression)
 
-    private func cursorCard(_ cursor: CursorUsage) -> some View {
-        let displayPercent = cursor.displayPercent(showUsage: showsUsage)
-        let band = EnergyBand(severity: usageThresholds.severity(for: cursor.percentUsed))
+    private func cursorCard(_ cursor: ProviderAccountSnapshot) -> some View {
+        let window = cursor.windows.first { $0.kind == .billing }
+        let displayPercent = window?.displayPercent(showUsage: showsUsage)
+        let band = EnergyBand(severity: window?.severity(thresholds: usageThresholds) ?? .unknown)
         let tint: Color = band == .full ? .pfEnergyFull : band.color
         let expanded = isExpanded(Self.cursorCardID)
         return VStack(alignment: .leading, spacing: 8) {
@@ -1072,7 +792,7 @@ struct PopoverView: View {
                     Text("Cursor")
                         .font(PFont.display(14, .semibold))
                         .foregroundStyle(Color.pfInk)
-                    if let planName = cursor.displayPlanName {
+                    if let planName = cursor.plan {
                         PlanBadge(plan: planName, verbatim: true)
                     }
                     disclosure(expanded)
@@ -1089,33 +809,28 @@ struct PopoverView: View {
             // Percent, bar and reset timing all stay visible when collapsed —
             // that's what makes collapsing safe as the default.
             EnergyBar(fraction: (displayPercent ?? 0) / 100, color: tint, height: 12)
-            if let subtitle = cursorSubtitle(cursor) {
+            if let subtitle = Self.cursorSubtitle(cursor, asOf: now) {
                 Text(subtitle)
                     .font(PFont.body(11, .semibold))
                     .foregroundStyle(Color.pfInkMuted)
             }
             if expanded {
                 Group {
-                    if cursor.clampedAutoPercent != nil || cursor.clampedAPIPercent != nil {
+                    let buckets = cursor.windows.filter {
+                        $0.kind == .scoped && $0.usedPercent != nil
+                    }
+                    if !buckets.isEmpty {
                         Divider().overlay(Color.pfCardBorder)
                         VStack(spacing: 7) {
-                            if let percentUsed = cursor.clampedAutoPercent,
-                                let displayedPercent = cursor.displayAutoPercent(
-                                    showUsage: showsUsage)
-                            {
-                                cursorUsageRow(
-                                    "Auto + Composer",
-                                    percentUsed: percentUsed,
-                                    displayedPercent: displayedPercent)
-                            }
-                            if let percentUsed = cursor.clampedAPIPercent,
-                                let displayedPercent = cursor.displayAPIPercent(
-                                    showUsage: showsUsage)
-                            {
-                                cursorUsageRow(
-                                    "API",
-                                    percentUsed: percentUsed,
-                                    displayedPercent: displayedPercent)
+                            ForEach(buckets) { bucket in
+                                if let percentUsed = bucket.usedPercent,
+                                    let displayedPercent = bucket.displayPercent(
+                                        showUsage: showsUsage)
+                                {
+                                    cursorUsageRow(
+                                        bucket.title, percentUsed: percentUsed,
+                                        displayedPercent: displayedPercent)
+                                }
                             }
                         }
                     }
@@ -1154,21 +869,30 @@ struct PopoverView: View {
         .accessibilityValue("\(Int(displayedPercent.rounded())) percent")
     }
 
-    private func cursorSubtitle(_ usage: CursorUsage) -> String? {
+    static func cursorSubtitle(_ account: ProviderAccountSnapshot, asOf now: Date) -> String? {
         var parts: [String] = []
-        if let spend = usage.spendText { parts.append("\(spend) spent") }
-        if let end = usage.periodEnd, let phrase = ResetPhrase.spoken(until: end, asOf: now) {
+        // Cursor's reported percentage includes bonus credit. Do not show a spend/limit ratio.
+        if let spend = account.balances.first?.value {
+            parts.append("\(dollars(spend)) spent")
+        }
+        if let end = account.windows.first(where: { $0.kind == .billing })?.resetAt,
+            let phrase = ResetPhrase.spoken(until: end, asOf: now)
+        {
             parts.append("Resets \(phrase)")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private static func dollars(_ value: Decimal) -> String {
+        String(format: "$%.2f", NSDecimalNumber(decimal: value).doubleValue)
     }
 
     // MARK: - Codex card (usage-based, local to the popover)
 
     @ViewBuilder
     private func codexAccountCard(
-        _ reading: CodexAccountReading,
-        style: AppGroupConfig.CardStyle
+        _ reading: ProviderAccountSnapshot,
+        style: MeterSettings.CardStyle
     ) -> some View {
         if style == .rings, let model = Self.codexAccountModel(reading) {
             AccountRingCard(
@@ -1176,29 +900,28 @@ struct PopoverView: View {
                 now: now,
                 thresholds: usageThresholds,
                 usage: showsUsage)
-        } else if let usage = reading.usage {
-            codexCard(usage, account: reading.account)
+        } else if reading.observedAt != nil {
+            codexCard(reading)
         }
     }
 
     @ViewBuilder
-    private func codexNotices(_ reading: CodexAccountReading) -> some View {
-        if let error = reading.error {
+    private func codexNotices(_ reading: ProviderAccountSnapshot) -> some View {
+        if let error = reading.lastError {
             noticeBanner(
-                "\(reading.account.displayName): \(error)",
+                "\(reading.label): \(error)",
                 systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
-        } else if reading.observationIsStale(asOf: now) {
+        } else if MeterSettings.isSnapshotStale(lastPollAt: reading.observedAt, now: now) {
             noticeBanner(
-                "\(reading.account.displayName) data may be outdated",
+                "\(reading.label) data may be outdated",
                 systemImage: "clock.fill", tint: .pfInkMuted)
         }
     }
 
-    private func codexCard(_ usage: CodexUsage, account: CodexAccount) -> some View {
-        let primary = usage.primaryWindow
-        let percentUsed = primary?.usedPercent
+    private func codexCard(_ account: ProviderAccountSnapshot) -> some View {
+        let primary = account.windows.first { $0.id == "primary" }
         let displayPercent = codexDisplayPercent(primary)
-        let band = EnergyBand(severity: usageThresholds.severity(for: percentUsed))
+        let band = EnergyBand(severity: primary?.severity(thresholds: usageThresholds) ?? .unknown)
         let tint: Color = band == .full ? .pfEnergyFull : band.color
         let cardID = Self.codexCardID(account.id)
         let expanded = isExpanded(cardID)
@@ -1208,14 +931,14 @@ struct PopoverView: View {
             } label: {
                 HStack(spacing: 7) {
                     codexMark
-                    Text(account.displayName)
+                    Text(account.label)
                         .font(PFont.display(14, .semibold))
                         .foregroundStyle(Color.pfInk)
                         .lineLimit(1)
                     // The plan the provider actually reports, beside the name the
                     // user gave the account — so a card labelled "Codex Pro 5X"
                     // that is really on Plus says so at a glance.
-                    if let planName = usage.displayPlanName {
+                    if let planName = account.plan {
                         PlanBadge(plan: planName, verbatim: true)
                     }
                     disclosure(expanded)
@@ -1230,18 +953,18 @@ struct PopoverView: View {
             .buttonStyle(.plain)
             .help(
                 expanded
-                    ? "Hide \(account.displayName) details" : "Show \(account.displayName) details")
+                    ? "Hide \(account.label) details" : "Show \(account.label) details")
             EnergyBar(fraction: (displayPercent ?? 0) / 100, color: tint, height: 12)
             // Reset timing stays visible when collapsed — one line, and without it
             // a red "93%" tells you you're nearly out but not when it comes back.
-            if let subtitle = codexSubtitle(usage) {
+            if let subtitle = codexSubtitle(account) {
                 Text(subtitle)
                     .font(PFont.body(11, .semibold))
                     .foregroundStyle(Color.pfInkMuted)
             }
             if expanded {
                 Group {
-                    if let resets = usage.rateLimitResets {
+                    if let resets = account.balances.first(where: { $0.id == "usage-resets" }) {
                         CodexUsageResetsView(resets: resets, now: now)
                     }
                 }
@@ -1253,35 +976,37 @@ struct PopoverView: View {
         .chunkyCard()
     }
 
-    private func codexDisplayPercent(_ window: CodexLimitWindow?) -> Double? {
+    private func codexDisplayPercent(_ window: UsageWindow?) -> Double? {
         window?.displayPercent(showUsage: showsUsage)
     }
 
-    private func codexSubtitle(_ usage: CodexUsage) -> String? {
+    private func codexSubtitle(_ account: ProviderAccountSnapshot) -> String? {
         var parts: [String] = []
-        if let secondary = usage.secondaryWindow,
+        if let secondary = account.windows.first(where: { $0.id == "secondary" }),
             let percent = codexDisplayPercent(secondary)
         {
             let modeLabel = showsUsage ? "used" : "left"
-            parts.append("\(secondary.displayLabel) \(Int(percent.rounded()))% \(modeLabel)")
+            parts.append("\(secondary.title) \(Int(percent.rounded()))% \(modeLabel)")
         }
-        if let credits = usage.usageCredits {
-            if credits.unlimited {
+        if let credits = account.balances.first(where: { $0.id == "credits" }) {
+            if credits.displayText == "Unlimited" {
                 parts.append("Unlimited credits")
-            } else if credits.remaining > 0 {
+            } else if let remaining = credits.value, remaining > 0 {
                 let formatted =
-                    Self.codexCreditsFormatter.string(from: NSNumber(value: credits.remaining))
-                    ?? "\(credits.remaining)"
+                    Self.codexCreditsFormatter.string(from: NSDecimalNumber(decimal: remaining))
+                    ?? "\(remaining)"
                 parts.append("\(formatted) credits")
             }
         }
-        if let reset = usage.primaryWindow?.resetAt,
+        if let reset = account.windows.first(where: { $0.id == "primary" })?.resetAt,
             let phrase = ResetPhrase.spoken(until: reset, asOf: now)
         {
             parts.append("Resets \(phrase)")
         }
-        if let resets = usage.rateLimitResets {
-            parts.append("\(resets.availableCount) usage resets available")
+        if let resets = account.balances.first(where: { $0.id == "usage-resets" }) {
+            parts.append(
+                "\(resets.value.map { NSDecimalNumber(decimal: $0).intValue } ?? 0) usage resets available"
+            )
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -1306,9 +1031,10 @@ struct PopoverView: View {
         }
     }
 
-    private func grokCard(_ usage: GrokUsage) -> some View {
-        let displayPercent = usage.displayPercent(showUsage: showsUsage)
-        let band = EnergyBand(severity: usageThresholds.severity(for: usage.usedPercent))
+    private func grokCard(_ account: ProviderAccountSnapshot) -> some View {
+        let window = account.windows.first
+        let displayPercent = window?.displayPercent(showUsage: showsUsage)
+        let band = EnergyBand(severity: window?.severity(thresholds: usageThresholds) ?? .unknown)
         let tint: Color = band == .full ? .pfEnergyFull : band.color
         let expanded = isExpanded(Self.grokCardID)
         return VStack(alignment: .leading, spacing: 8) {
@@ -1324,7 +1050,7 @@ struct PopoverView: View {
                         .foregroundStyle(Color.pfInk)
                     disclosure(expanded)
                     Spacer()
-                    Text("\(Int(displayPercent.rounded()))%")
+                    Text(displayPercent.map { "\(Int($0.rounded()))%" } ?? "—")
                         .font(PFont.display(14, .bold))
                         .foregroundStyle(band == .full ? Color.pfInk : tint)
                         .monospacedDigit()
@@ -1333,8 +1059,8 @@ struct PopoverView: View {
             }
             .buttonStyle(.plain)
             .help(expanded ? "Hide Grok details" : "Show Grok details")
-            EnergyBar(fraction: displayPercent / 100, color: tint, height: 12)
-            if let subtitle = grokSubtitle(usage) {
+            EnergyBar(fraction: (displayPercent ?? 0) / 100, color: tint, height: 12)
+            if let subtitle = Self.grokSubtitle(account, asOf: now) {
                 Text(subtitle)
                     .font(PFont.body(11, .semibold))
                     .foregroundStyle(Color.pfInkMuted)
@@ -1345,18 +1071,20 @@ struct PopoverView: View {
         .chunkyCard()
     }
 
-    private func grokSubtitle(_ usage: GrokUsage) -> String? {
-        var parts: [String] = [usage.windowLabel]
-        if usage.onDemandUsedCents > 0 {
-            let used = Double(usage.onDemandUsedCents) / 100
-            if usage.onDemandCapCents > 0 {
-                let cap = Double(usage.onDemandCapCents) / 100
-                parts.append(String(format: "On-demand $%.2f of $%.2f", used, cap))
+    static func grokSubtitle(_ account: ProviderAccountSnapshot, asOf now: Date) -> String? {
+        var parts = account.windows.first.map { [$0.title] } ?? []
+        if let balance = account.balances.first(where: { $0.id == "on-demand" }),
+            let used = balance.value, used > 0
+        {
+            if let cap = balance.limit, cap > 0 {
+                parts.append("On-demand \(dollars(used)) of \(dollars(cap))")
             } else {
-                parts.append(String(format: "On-demand $%.2f", used))
+                parts.append("On-demand \(dollars(used))")
             }
         }
-        if let reset = usage.resetsAt, let phrase = ResetPhrase.spoken(until: reset, asOf: now) {
+        if let reset = account.windows.first?.resetAt,
+            let phrase = ResetPhrase.spoken(until: reset, asOf: now)
+        {
             parts.append("Resets \(phrase)")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
@@ -1424,20 +1152,20 @@ struct PopoverView: View {
     }
 
     private var loadingMessage: String {
-        if AppSettings.hasClaudeSource
+        if AppSettings.oauthSourceEnabled
             && (cursorSourceEnabled || codexSourceEnabled || grokSourceEnabled)
         {
             return "Checking your tanks…"
         }
-        if codexSourceEnabled && !AppSettings.hasClaudeSource && !cursorSourceEnabled {
+        if codexSourceEnabled && !AppSettings.oauthSourceEnabled && !cursorSourceEnabled {
             return "Checking Codex…"
         }
-        if grokSourceEnabled && !AppSettings.hasClaudeSource && !cursorSourceEnabled
+        if grokSourceEnabled && !AppSettings.oauthSourceEnabled && !cursorSourceEnabled
             && !codexSourceEnabled
         {
             return "Checking Grok…"
         }
-        if cursorSourceEnabled && !AppSettings.hasClaudeSource { return "Checking Cursor…" }
+        if cursorSourceEnabled && !AppSettings.oauthSourceEnabled { return "Checking Cursor…" }
         return "Checking your tanks…"
     }
 
@@ -1446,17 +1174,17 @@ struct PopoverView: View {
     }
 
     private var setupMessage: String {
-        if codexSourceEnabled && !AppSettings.hasClaudeSource && !cursorSourceEnabled {
+        if codexSourceEnabled && !AppSettings.oauthSourceEnabled && !cursorSourceEnabled {
             return "Install Codex or run `codex login` so Claude Meter can read Codex usage."
         }
-        if cursorSourceEnabled && !AppSettings.hasClaudeSource && !codexSourceEnabled {
+        if cursorSourceEnabled && !AppSettings.oauthSourceEnabled && !codexSourceEnabled {
             return "Sign in to the Cursor app so Claude Meter can read your billing usage."
         }
-        if AppSettings.hasClaudeSource && (cursorSourceEnabled || codexSourceEnabled) {
+        if AppSettings.oauthSourceEnabled && (cursorSourceEnabled || codexSourceEnabled) {
             return "Open Claude Code, sign in to enabled sources, or connect OAuth in Settings."
         }
         return
-            "Open Claude Code so the statusline bridge can publish usage, or connect OAuth in Settings."
+            "Connect Claude OAuth in Settings to read your usage."
     }
 
     private var mainMeterErrorState: some View {
@@ -1476,7 +1204,7 @@ struct PopoverView: View {
     }
 
     private var codexErrorState: some View {
-        let error = appState.codexAccounts.compactMap(\.error).first
+        let error = appState.codexAccounts.compactMap(\.lastError).first
         return statusState(
             emoji: "⚠️", title: "Couldn't read Codex",
             message: error ?? "Install Codex or run `codex login`.",
@@ -1524,21 +1252,10 @@ struct PopoverView: View {
         .padding(.bottom, 2)
     }
 
-    private func serviceStatusNotice(_ status: ServiceStatus) -> some View {
-        let tint: Color =
-            status.level == .critical || status.level == .major ? .pfEnergyEmpty : .pfEnergyLow
-        return noticeBanner(
-            "Anthropic: \(status.description)", systemImage: "exclamationmark.bubble.fill",
-            tint: tint
-        )
-        .padding(.horizontal, 15)
-        .padding(.bottom, 2)
-    }
-
     private var pollErrorText: String {
         let err = appState.lastError ?? ""
-        if isSessionExpiredError(err) {
-            return err
+        if let issue = appState.oauthCredentialIssue {
+            return issue.displayText(retryAt: appState.oauthRetryAt, now: now)
         }
         if err.contains("decode") || err.contains("data couldn't be read") {
             return "Refresh failed — could not parse usage data"
@@ -1592,123 +1309,21 @@ struct PopoverView: View {
 
     // MARK: - Error helpers
 
-    private func isSessionExpiredError(_ err: String) -> Bool {
-        err.localizedCaseInsensitiveContains("session expired")
-            || err.localizedCaseInsensitiveContains("session key")
-    }
-
     private var errorTitle: String {
-        let err = appState.lastError ?? ""
-        if isSessionExpiredError(err) {
-            return "Session expired"
-        }
-        if err.contains("decode") || err.contains("data couldn't be read") {
-            return "Could not parse usage data"
-        }
-        return "Could not read usage stats"
+        "Could not read Claude usage"
     }
 
     private var errorHint: String? {
-        let err = appState.lastError ?? ""
-        if isSessionExpiredError(err) {
-            return "Update your session key and org ID in Settings → Data."
-        }
-        if err.contains("decode") {
-            return "Check Diagnostics for details."
-        }
-        return nil
+        appState.oauthCredentialIssue?.displayText(retryAt: appState.oauthRetryAt, now: now)
     }
 
     private var shouldOfferSettings: Bool {
-        let err = appState.lastError ?? ""
-        return err.localizedCaseInsensitiveContains("session")
-            || err.localizedCaseInsensitiveContains("session key")
-    }
-}
-
-// MARK: - Preview helpers
-
-extension AppState {
-    static var preview: AppState {
-        let snap = ClaudeUsageSnapshot(
-            parserVersion: "preview-1.0",
-            createdAt: Date(),
-            lastSuccessfulPollAt: Date(),
-            source: SourceInfo(
-                cliPath: "/Users/jewei/.claude/stats-cache.json", command: "stats-cache"),
-            account: AccountInfo(email: "you@oneone.com", plan: "Max"),
-            session: SessionInfo(activeModel: "claude-sonnet-4-6"),
-            limits: LimitInfo(
-                currentSession: LimitWindow(
-                    percentUsed: 22,
-                    resetsAt: Date().addingTimeInterval(3 * 3600 + 12 * 60),
-                    rawValueText: "245 msgs"
-                ),
-                currentWeekAllModels: LimitWindow(
-                    percentUsed: 36,
-                    resetsAt: Calendar.current.startOfDay(
-                        for: Date().addingTimeInterval(3 * 86400)),
-                    rawValueText: "1482 msgs"
-                )
-            ),
-            state: SnapshotState(status: .ok, severity: .normal)
-        )
-        let store = SnapshotStore(directory: FileManager.default.temporaryDirectory)
-        try? store.writeLatest(snap)
-        let pipeline = CachedSnapshotPipeline(store: store)
-        return AppState(pipeline: pipeline, initialSnapshot: snap)
+        appState.oauthCredentialIssue != nil || oauthMode.isEmpty
     }
 
-    /// Three-account sample mirroring the design mock (Work / Personal / buildbot).
-    /// Percentages are stored as % *used*; the UI shows the inverse as energy left.
-    static var previewMulti: AppState {
-        func win(used: Double, hoursToReset: Double) -> LimitWindow {
-            LimitWindow(percentUsed: used, resetsAt: Date().addingTimeInterval(hoursToReset * 3600))
-        }
-        let work = AccountUsage(
-            id: "it-oneone", label: "it-oneone",
-            account: AccountInfo(email: "you@oneone.com", plan: "Max"),
-            limits: LimitInfo(
-                currentSession: win(used: 18, hoursToReset: 3.2),
-                currentWeekAllModels: win(used: 30, hoursToReset: 72),
-                currentWeekOpus: win(used: 42, hoursToReset: 72)),
-            severity: .normal, isActive: true)
-        let personal = AccountUsage(
-            id: "personal", label: "personal",
-            account: AccountInfo(plan: "Pro"),
-            limits: LimitInfo(
-                currentSession: win(used: 84, hoursToReset: 1.8),
-                currentWeekAllModels: win(used: 24, hoursToReset: 96)),
-            severity: .warning, isActive: false)
-        let buildbot = AccountUsage(
-            id: "buildbot", label: "buildbot",
-            account: AccountInfo(plan: "Free"),
-            limits: LimitInfo(
-                currentSession: win(used: 97, hoursToReset: 1.1),
-                currentWeekAllModels: win(used: 86, hoursToReset: 120)),
-            severity: .critical, isActive: false)
-        let snap = ClaudeUsageSnapshot(
-            parserVersion: "preview-multi",
-            createdAt: Date(), lastSuccessfulPollAt: Date(),
-            source: SourceInfo(cliPath: "statusline", command: "statusline"),
-            account: AccountInfo(email: "you@oneone.com", plan: "Max"),
-            limits: work.limits,
-            state: SnapshotState(status: .ok, severity: .normal),
-            accounts: [work, personal, buildbot])
-        let store = SnapshotStore(directory: FileManager.default.temporaryDirectory)
-        try? store.writeLatest(snap)
-        return AppState(pipeline: CachedSnapshotPipeline(store: store), initialSnapshot: snap)
-    }
 }
 
-#Preview("Single account") {
-    PopoverView()
-        .environmentObject(AppState.preview)
-        .frame(width: 360)
-}
-
-#Preview("Multi-account") {
-    PopoverView()
-        .environmentObject(AppState.previewMulti)
-        .frame(width: 360)
+#Preview {
+    PopoverView().environmentObject(
+        AppState(usageStore: UsageStore(providers: []), onboardingIsComplete: false))
 }

@@ -54,14 +54,64 @@ final class SnapshotStoreTests {
     @Test("Writes and reads back an identical snapshot")
     func roundtrip() throws {
         let store = try makeStore()
-        var original = makeSnapshot()
-        original.costObservation = CostObservation(scannedAt: fixedDate, isPartial: true)
+        let original = makeSnapshot()
 
         try store.writeLatest(original)
         let recovered = try store.readLatest()
 
         #expect(recovered != nil)
         #expect(recovered == original)
+    }
+
+    @Test("Older snapshots retain quota and live extra usage while ignoring removed analytics")
+    func olderSnapshotPreservesQuota() throws {
+        let store = try makeStore()
+        var original = makeSnapshot()
+        original.lastSuccessfulPollAt = fixedDate
+        original.account = AccountInfo(plan: "Max")
+        original.limits.extraUsage = ExtraUsage(
+            isEnabled: true, usedCredits: 1250, monthlyLimit: 5000, currency: "USD")
+        try store.writeLatest(original)
+        let url = store.directory.appending(path: "current.json")
+        var legacy = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        legacy["models"] = [["name": "old-model", "costUsd": 12, "inputTokens": 100]]
+        legacy["costObservation"] = ["scannedAt": "2026-06-22T06:00:00Z", "isPartial": true]
+        var session: [String: Any] = [
+            "activeModel": "Claude", "cwd": "/old/path", "id": "old-session",
+        ]
+        session["totalCostUsd"] = 12
+        session["totalApiDurationSeconds"] = 30
+        session["codeLinesAdded"] = 10
+        session["codeLinesRemoved"] = 5
+        legacy["session"] = session
+        try JSONSerialization.data(withJSONObject: legacy).write(to: url, options: .atomic)
+
+        let recovered = try #require(try store.readLatest())
+        #expect(recovered == original)
+        #expect(recovered.limits.extraUsage?.usedAmount == 12.5)
+        try store.writeLatest(recovered)
+        let rewritten = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        #expect(rewritten["models"] == nil)
+        #expect(rewritten["costObservation"] == nil)
+        #expect(rewritten["session"] == nil)
+    }
+
+    @Test("Legacy local observations are stale at the persistence boundary")
+    func legacyStatuslineSnapshotIsNeverCurrentOAuth() throws {
+        let store = try makeStore()
+        var snapshot = makeSnapshot()
+        snapshot.parserVersion = "statusline-1.0"
+        snapshot.source = SourceInfo(cliPath: "statusline-bridge", command: "capture")
+        try store.writeLatest(snapshot)
+        let restored = try #require(try store.readLatest())
+        #expect(restored.state.isStale)
+        #expect(restored.limits == snapshot.limits)
+        snapshot.parserVersion = "oauth-api-1.0"
+        snapshot.source = SourceInfo(cliPath: "api.anthropic.com", command: "GET /api/oauth/usage")
+        try store.writeLatest(snapshot)
+        #expect(try store.readLatest()?.state.isStale == false)
     }
 
     @Test("Rejects unsafe dates before ISO-8601 formatting")
@@ -75,16 +125,6 @@ final class SnapshotStoreTests {
             try store.writeLatest(snapshot)
         }
 
-        let reading = MainMeterReading(
-            provider: .codex,
-            accountID: "codex-test",
-            accountLabel: "Codex",
-            limits: LimitInfo(currentSession: LimitWindow(percentUsed: 10)),
-            observedAt: unsafeDate)
-        #expect(throws: EncodingError.self) {
-            try store.writeMainMeter(reading)
-        }
-
         #expect(throws: EncodingError.self) {
             try store.writeLastError(LastErrorRecord(occurredAt: unsafeDate, message: "fail"))
         }
@@ -94,82 +134,6 @@ final class SnapshotStoreTests {
     func readMissingReturnsNil() throws {
         let store = try makeStore()
         #expect(try store.readLatest() == nil)
-    }
-
-    @Test("Writes, reads, and clears the selected main meter independently")
-    func mainMeterRoundtrip() throws {
-        let store = try makeStore()
-        let reading = MainMeterReading(
-            provider: .codex,
-            accountID: "codex-work",
-            accountLabel: "Work",
-            plan: "Pro",
-            limits: LimitInfo(
-                currentSession: LimitWindow(
-                    percentUsed: 42, resetsAt: fixedDate.addingTimeInterval(18_000)),
-                currentWeekAllModels: LimitWindow(
-                    percentUsed: 63, resetsAt: fixedDate.addingTimeInterval(604_800))),
-            sessionLabel: "5h",
-            weeklyLabel: "Weekly",
-            observedAt: fixedDate)
-
-        try store.writeMainMeter(reading)
-        #expect(try store.readMainMeter() == reading)
-        #expect(try store.readLatest() == nil)
-
-        try store.clearMainMeter()
-        #expect(try store.readMainMeter() == nil)
-    }
-
-    @Test("Widget publication loader follows shared provider, pin, revision, and clearing")
-    func mainMeterPublicationLoader() throws {
-        let store = try makeStore()
-        let defaultsName = "MainMeterPublication-defaults-\(UUID().uuidString)"
-        let sharedName = "MainMeterPublication-shared-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: defaultsName)!
-        let shared = UserDefaults(suiteName: sharedName)!
-        defer {
-            defaults.removePersistentDomain(forName: defaultsName)
-            shared.removePersistentDomain(forName: sharedName)
-        }
-        defaults.set("claude", forKey: AppGroupConfig.mainMeterProviderKey)
-        defaults.set("wrong", forKey: AppGroupConfig.codexMainMeterAccountKey)
-        shared.set("codex", forKey: AppGroupConfig.mainMeterProviderKey)
-        shared.set("codex-work", forKey: AppGroupConfig.codexMainMeterAccountKey)
-        shared.set(7, forKey: AppGroupConfig.mainMeterRevisionKey)
-        let reading = MainMeterReading(
-            provider: .codex,
-            accountID: "codex-work",
-            accountLabel: "Work",
-            limits: LimitInfo(currentSession: LimitWindow(percentUsed: 42)),
-            observedAt: fixedDate,
-            selectionRevision: 7, observationOwnerID: "owner")
-
-        try MainMeterPublication.replace(reading, in: store)
-        #expect(
-            MainMeterPublication.load(from: store, defaults: defaults, shared: shared) == reading)
-
-        shared.set("claude", forKey: AppGroupConfig.mainMeterProviderKey)
-        #expect(MainMeterPublication.load(from: store, defaults: defaults, shared: shared) == nil)
-        shared.set("codex", forKey: AppGroupConfig.mainMeterProviderKey)
-        shared.set("other", forKey: AppGroupConfig.codexMainMeterAccountKey)
-        #expect(MainMeterPublication.load(from: store, defaults: defaults, shared: shared) == nil)
-        shared.set("codex-work", forKey: AppGroupConfig.codexMainMeterAccountKey)
-        shared.set(8, forKey: AppGroupConfig.mainMeterRevisionKey)
-        #expect(MainMeterPublication.load(from: store, defaults: defaults, shared: shared) == nil)
-
-        var unowned = reading
-        unowned.observationOwnerID = nil
-        try MainMeterPublication.replace(unowned, in: store)
-        #expect(try store.readMainMeter() == nil)
-        // Older app versions could write these files. The widget must reject them.
-        shared.set(7, forKey: AppGroupConfig.mainMeterRevisionKey)
-        try store.writeMainMeter(unowned)
-        #expect(MainMeterPublication.load(from: store, defaults: defaults, shared: shared) == nil)
-
-        try MainMeterPublication.replace(nil, in: store)
-        #expect(try store.readMainMeter() == nil)
-        #expect(MainMeterPublication.load(from: store, defaults: defaults, shared: shared) == nil)
     }
 
     @Test("A wedged filesystem operation trips a per-store circuit breaker")
@@ -304,7 +268,6 @@ final class SnapshotStoreTests {
         let store = try makeStore()
         let readers: [(String, () throws -> Void)] = [
             ("current.json", { _ = try store.readLatest() }),
-            ("main-meter.json", { _ = try store.readMainMeter() }),
             ("last-error.json", { _ = try store.readLastError() }),
         ]
 
@@ -336,7 +299,6 @@ final class SnapshotStoreTests {
         let store = try makeStore()
         let readers: [(String, () throws -> Void)] = [
             ("current.json", { _ = try store.readLatest() }),
-            ("main-meter.json", { _ = try store.readMainMeter() }),
             ("last-error.json", { _ = try store.readLastError() }),
         ]
 
@@ -371,64 +333,118 @@ final class SnapshotStoreTests {
         #expect(isDir.boolValue)
     }
 
-    @Test("migrateSnapshotIfNeeded copies legacy snapshot when destination is empty")
-    func migratesLegacySnapshot() throws {
-        let legacyDir =
-            root
-            .appending(path: "claudemeter-legacy-\(UUID().uuidString)")
-        let sharedDir =
-            root
-            .appending(path: "claudemeter-shared-\(UUID().uuidString)")
-        defer {
-            try? FileManager.default.removeItem(at: legacyDir)
-            try? FileManager.default.removeItem(at: sharedDir)
+    @Test(
+        "Legacy import keeps the newest observation and runs once", arguments: [nil, -60.0, 0, 60])
+    func importsLegacySnapshot(currentOffset: Double?) throws {
+        let suite = "LegacySnapshot-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = try SnapshotStore.applicationSupport(
+            in: root.appending(path: "Application Support"))
+        let legacyDirectory = root.appending(
+            path:
+                "Library/Group Containers/group.com.jewei.claudemeter/Library/Application Support/ClaudeMeter"
+        )
+        try FileManager.default.createDirectory(
+            at: legacyDirectory, withIntermediateDirectories: true)
+        let legacy = SnapshotStore(directory: legacyDirectory)
+        var previous = makeSnapshot(sessionPercent: 35)
+        previous.lastSuccessfulPollAt = fixedDate
+        try legacy.writeLatest(previous)
+        let legacyBytes = try Data(contentsOf: legacyDirectory.appending(path: "current.json"))
+        var current: ClaudeUsageSnapshot?
+        if let currentOffset {
+            var snapshot = makeSnapshot(sessionPercent: 75)
+            snapshot.lastSuccessfulPollAt = fixedDate.addingTimeInterval(currentOffset)
+            // Rewrite time must not make an older usage observation win.
+            snapshot.createdAt = fixedDate.addingTimeInterval(3600)
+            try store.writeLatest(snapshot)
+            current = snapshot
         }
-        try FileManager.default.createDirectory(at: legacyDir, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: sharedDir, withIntermediateDirectories: true)
 
-        let legacy = SnapshotStore(directory: legacyDir)
-        let shared = SnapshotStore(directory: sharedDir)
-        let snap = makeSnapshot()
-
-        try legacy.writeLatest(snap)
-        try SnapshotStore.migrateSnapshotIfNeeded(from: legacy, to: shared)
-
-        let recovered = try #require(try shared.readLatest())
+        try store.importLegacyAppGroupSnapshotIfNeeded(home: root, defaults: defaults)
+        let expected = currentOffset.map { $0 >= 0 } == true ? current : previous
+        #expect(try store.readLatest() == expected)
+        #expect(defaults.bool(forKey: "didImportLegacyAppGroupSnapshot.v1"))
         #expect(
-            recovered.limits.currentSession.percentUsed == snap.limits.currentSession.percentUsed)
+            try Data(contentsOf: legacyDirectory.appending(path: "current.json")) == legacyBytes)
+
+        previous.lastSuccessfulPollAt = fixedDate.addingTimeInterval(7200)
+        try legacy.writeLatest(previous)
+        try store.importLegacyAppGroupSnapshotIfNeeded(home: root, defaults: defaults)
+        #expect(try store.readLatest() == expected)
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: store.directory.appending(path: "main-meter.json").path))
     }
 
-    @Test("migrateSnapshotIfNeeded does not overwrite existing shared snapshot")
-    func skipsMigrationWhenDestinationExists() throws {
-        let legacyDir =
-            root
-            .appending(path: "claudemeter-legacy-\(UUID().uuidString)")
-        let sharedDir =
-            root
-            .appending(path: "claudemeter-shared-\(UUID().uuidString)")
-        defer {
-            try? FileManager.default.removeItem(at: legacyDir)
-            try? FileManager.default.removeItem(at: sharedDir)
+    @Test("Missing legacy data does not create a shared container")
+    func missingLegacySnapshot() throws {
+        let suite = "MissingLegacySnapshot-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = try makeStore()
+        try store.importLegacyAppGroupSnapshotIfNeeded(home: root, defaults: defaults)
+        #expect(try store.readLatest() == nil)
+        #expect(defaults.bool(forKey: "didImportLegacyAppGroupSnapshot.v1"))
+        #expect(!FileManager.default.fileExists(atPath: root.appending(path: "Library").path))
+    }
+
+    @Test("A malformed legacy snapshot preserves local data and can be retried")
+    func malformedLegacySnapshot() throws {
+        let suite = "MalformedLegacySnapshot-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = try makeStore()
+        let original = makeSnapshot()
+        try store.writeLatest(original)
+        let legacyDirectory = root.appending(
+            path:
+                "Library/Group Containers/group.com.jewei.claudemeter/Library/Application Support/ClaudeMeter"
+        )
+        try FileManager.default.createDirectory(
+            at: legacyDirectory, withIntermediateDirectories: true)
+        let url = legacyDirectory.appending(path: "current.json")
+        let malformed = Data("invalid JSON".utf8)
+        try malformed.write(to: url)
+
+        #expect(throws: DecodingError.self) {
+            try store.importLegacyAppGroupSnapshotIfNeeded(home: root, defaults: defaults)
         }
-        try FileManager.default.createDirectory(at: legacyDir, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: sharedDir, withIntermediateDirectories: true)
+        #expect(try store.readLatest() == original)
+        #expect(try Data(contentsOf: url) == malformed)
+        #expect(!defaults.bool(forKey: "didImportLegacyAppGroupSnapshot.v1"))
 
-        let legacy = SnapshotStore(directory: legacyDir)
-        let shared = SnapshotStore(directory: sharedDir)
+        var recovered = makeSnapshot(sessionPercent: 55)
+        recovered.lastSuccessfulPollAt = fixedDate.addingTimeInterval(60)
+        try SnapshotStore(directory: legacyDirectory).writeLatest(recovered)
+        try store.importLegacyAppGroupSnapshotIfNeeded(home: root, defaults: defaults)
+        #expect(try store.readLatest() == recovered)
+        #expect(defaults.bool(forKey: "didImportLegacyAppGroupSnapshot.v1"))
+    }
 
-        var legacySnap = makeSnapshot()
-        legacySnap.limits.currentSession = LimitWindow(
-            percentUsed: 10, resetsAt: nil, rawResetText: nil)
-        var sharedSnap = makeSnapshot()
-        sharedSnap.limits.currentSession = LimitWindow(
-            percentUsed: 99, resetsAt: nil, rawResetText: nil)
-
-        try legacy.writeLatest(legacySnap)
-        try shared.writeLatest(sharedSnap)
-        try SnapshotStore.migrateSnapshotIfNeeded(from: legacy, to: shared)
-
-        let recovered = try #require(try shared.readLatest())
-        #expect(recovered.limits.currentSession.percentUsed == 99)
+    @Test("A failed destination write does not complete the legacy import")
+    func legacyImportWriteFailure() throws {
+        let suite = "FailedLegacySnapshot-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let legacyDirectory = root.appending(
+            path:
+                "Library/Group Containers/group.com.jewei.claudemeter/Library/Application Support/ClaudeMeter"
+        )
+        try FileManager.default.createDirectory(
+            at: legacyDirectory, withIntermediateDirectories: true)
+        let original = makeSnapshot()
+        try SnapshotStore(directory: legacyDirectory).writeLatest(original)
+        let destination = root.appending(path: "missing-destination")
+        let store = SnapshotStore(directory: destination)
+        #expect(throws: (any Error).self) {
+            try store.importLegacyAppGroupSnapshotIfNeeded(home: root, defaults: defaults)
+        }
+        #expect(!defaults.bool(forKey: "didImportLegacyAppGroupSnapshot.v1"))
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        try store.importLegacyAppGroupSnapshotIfNeeded(home: root, defaults: defaults)
+        #expect(try store.readLatest() == original)
     }
 
     // MARK: - Dates survive encode/decode

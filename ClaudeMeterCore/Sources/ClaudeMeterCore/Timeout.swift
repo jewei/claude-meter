@@ -32,7 +32,7 @@ public enum Timeout {
     private static let detachedTaskBudget = TaskBudget(limit: 64)
 
     /// A separate capacity pool for callers whose abandoned work must not consume
-    /// the default pool. This is useful for advisory work such as filesystem scans.
+    /// the default pool, such as provider HTTP requests and Codex processes.
     public final class TaskBudget: @unchecked Sendable {
         private let lock = NSLock()
         private let limit: Int

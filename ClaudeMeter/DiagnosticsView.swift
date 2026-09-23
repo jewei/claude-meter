@@ -12,13 +12,17 @@ struct DiagnosticsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var copied = false
 
+    private var codexDiagnostics: [String: CodexSourceDiagnostic] {
+        (appState.usageStore.provider(for: .codex) as? CodexProviderAdapter)?.sourceDiagnostics
+            ?? [:]
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             Form {
                 dataSourceSection
                 sourceAttemptsSection
                 pollSection
-                snapshotSection
                 warningsSection
             }
             .formStyle(.grouped)
@@ -54,7 +58,8 @@ struct DiagnosticsView: View {
 
     @ViewBuilder
     private var sourceAttemptsSection: some View {
-        if let attempts = appState.lastPollResult?.sourceAttempts, !attempts.isEmpty {
+        let attempts = appState.claudeDiagnostics.sourceAttempts
+        if !attempts.isEmpty {
             Section("Source Attempts") {
                 ForEach(Array(attempts.enumerated()), id: \.offset) { _, attempt in
                     Text(attempt.diagnosticDescription)
@@ -77,21 +82,16 @@ struct DiagnosticsView: View {
                         appState.mainMeterReading?.accountLabel,
                     ].compactMap { $0 }.joined(separator: " · "))
             }
-            if let snap = appState.snapshot {
-                LabeledContent("Source", value: DiagnosticsSanitizer.sanitize(snap.source.command))
-                LabeledContent("Parser", value: snap.parserVersion)
-            }
             if AppSettings.cursorSourceEnabled {
                 LabeledContent(
-                    "Cursor", value: appState.cursorUsage != nil ? "Connected" : "Not available")
+                    "Cursor", value: appState.cursorSnapshot != nil ? "Connected" : "Not available")
             }
             if AppSettings.codexSourceEnabled {
-                LabeledContent("Codex mode", value: AppSettings.codexSourceMode.rawValue)
                 ForEach(appState.codexAccounts) { reading in
-                    LabeledContent(DiagnosticsSanitizer.sanitize(reading.account.displayName)) {
-                        if let usage = reading.usage {
+                    LabeledContent(DiagnosticsSanitizer.sanitize(reading.label)) {
+                        if let usage = codexDiagnostics[reading.id] {
                             Text(
-                                [usage.source.rawValue, usage.authMode?.rawValue]
+                                [usage.source, usage.authentication]
                                     .compactMap { $0 }.joined(separator: " · "))
                         } else {
                             Text("Not available")
@@ -101,7 +101,7 @@ struct DiagnosticsView: View {
             }
             if AppSettings.grokSourceEnabled {
                 LabeledContent(
-                    "Grok", value: appState.grokUsage != nil ? "Connected" : "Not available")
+                    "Grok", value: appState.grokSnapshot != nil ? "Connected" : "Not available")
             }
             ForEach(appState.accountOAuthFailures.keys.sorted(), id: \.self) { accountKey in
                 if let failure = appState.accountOAuthFailures[accountKey] {
@@ -125,19 +125,6 @@ struct DiagnosticsView: View {
                         .textSelection(.enabled)
                 }
             }
-            if appState.oauthEnrichmentLastPolledAt != nil
-                || appState.oauthEnrichmentError != nil
-            {
-                LabeledContent("OAuth details", value: oauthEnrichmentPollTimeText)
-                if let err = appState.oauthEnrichmentError {
-                    LabeledContent("OAuth details error") {
-                        Text(DiagnosticsSanitizer.sanitize(err))
-                            .foregroundStyle(Color.cmCritical)
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
-                    }
-                }
-            }
             if AppSettings.cursorSourceEnabled {
                 LabeledContent("Cursor", value: cursorPollTimeText)
                 if let err = appState.cursorError {
@@ -152,18 +139,18 @@ struct DiagnosticsView: View {
             if AppSettings.codexSourceEnabled {
                 ForEach(appState.codexAccounts) { reading in
                     LabeledContent(
-                        "\(DiagnosticsSanitizer.sanitize(reading.account.displayName)) success",
-                        value: reading.lastSuccessfulAt.map { isoFormatter.string(from: $0) }
+                        "\(DiagnosticsSanitizer.sanitize(reading.label)) success",
+                        value: reading.observedAt.map { isoFormatter.string(from: $0) }
                             ?? "Never"
                     )
                     LabeledContent(
-                        "\(DiagnosticsSanitizer.sanitize(reading.account.displayName)) attempt",
+                        "\(DiagnosticsSanitizer.sanitize(reading.label)) attempt",
                         value: reading.lastAttemptAt.map { isoFormatter.string(from: $0) }
                             ?? "None this launch"
                     )
-                    if let err = reading.error {
+                    if let err = reading.lastError {
                         LabeledContent(
-                            "\(DiagnosticsSanitizer.sanitize(reading.account.displayName)) error"
+                            "\(DiagnosticsSanitizer.sanitize(reading.label)) error"
                         ) {
                             Text(DiagnosticsSanitizer.sanitize(err))
                                 .foregroundStyle(Color.cmCritical)
@@ -187,20 +174,10 @@ struct DiagnosticsView: View {
         }
     }
 
-    private var snapshotSection: some View {
-        Section("Snapshot") {
-            LabeledContent(
-                "Schema version", value: appState.snapshot.map { "\($0.schemaVersion)" } ?? "—")
-            LabeledContent("Parser version", value: appState.snapshot?.parserVersion ?? "—")
-            LabeledContent(
-                "Created",
-                value: appState.snapshot.map { isoFormatter.string(from: $0.createdAt) } ?? "—")
-        }
-    }
-
     @ViewBuilder
     private var warningsSection: some View {
-        if let warnings = appState.lastPollResult?.warnings, !warnings.isEmpty {
+        let warnings = appState.claudeDiagnostics.warnings
+        if !warnings.isEmpty {
             Section("Parser Warnings (\(warnings.count))") {
                 ForEach(Array(warnings.enumerated()), id: \.offset) { _, w in
                     VStack(alignment: .leading, spacing: 2) {
@@ -217,7 +194,7 @@ struct DiagnosticsView: View {
     // MARK: - Helpers
 
     private var claudePollTimeText: String {
-        guard let date = appState.snapshot?.lastSuccessfulPollAt ?? appState.lastPolledAt else {
+        guard let date = appState.lastPolledAt else {
             return "Never"
         }
         return isoFormatter.string(from: date)
@@ -228,22 +205,13 @@ struct DiagnosticsView: View {
         return isoFormatter.string(from: date)
     }
 
-    private var oauthEnrichmentPollTimeText: String {
-        guard let date = appState.oauthEnrichmentLastPolledAt else { return "Never" }
-        let suffix = appState.oauthEnrichmentIsStale ? " (stale)" : ""
-        return isoFormatter.string(from: date) + suffix
-    }
-
     private var grokPollTimeText: String {
         guard let date = appState.grokLastPolledAt else { return "Never" }
         return isoFormatter.string(from: date)
     }
 
     private var dataSourceMode: String {
-        let parserVersion = appState.snapshot?.parserVersion ?? ""
-        if parserVersion.hasPrefix("statusline") { return "Statusline bridge" }
-        if parserVersion.hasPrefix("oauth") { return "OAuth usage API" }
-        return "Cached snapshot"
+        "OAuth usage API"
     }
 
     private static nonisolated(unsafe) let isoFormatter: ISO8601DateFormatter = {
@@ -271,14 +239,6 @@ struct DiagnosticsView: View {
             "  Claude: \(claudePollTimeText)",
             "  Claude error: \(DiagnosticsSanitizer.sanitize(appState.lastError ?? "None"))",
         ]
-        if appState.oauthEnrichmentLastPolledAt != nil
-            || appState.oauthEnrichmentError != nil
-        {
-            lines += [
-                "  OAuth details: \(oauthEnrichmentPollTimeText)",
-                "  OAuth details error: \(DiagnosticsSanitizer.sanitize(appState.oauthEnrichmentError ?? "None"))",
-            ]
-        }
         if AppSettings.cursorSourceEnabled {
             lines += [
                 "  Cursor: \(cursorPollTimeText)",
@@ -286,21 +246,20 @@ struct DiagnosticsView: View {
             ]
         }
         if AppSettings.codexSourceEnabled {
-            lines.append("  Codex mode: \(AppSettings.codexSourceMode.rawValue)")
             for reading in appState.codexAccounts {
                 let success =
-                    reading.lastSuccessfulAt.map { isoFormatter.string(from: $0) } ?? "Never"
+                    reading.observedAt.map { isoFormatter.string(from: $0) } ?? "Never"
                 let attempt =
                     reading.lastAttemptAt.map { isoFormatter.string(from: $0) }
                     ?? "None this launch"
                 lines += [
-                    "  Codex account: \(DiagnosticsSanitizer.sanitize(reading.account.displayName))",
-                    "    Home: \(DiagnosticsSanitizer.sanitize(reading.account.home.path))",
+                    "  Codex account: \(DiagnosticsSanitizer.sanitize(reading.label))",
+                    "    Home: \(DiagnosticsSanitizer.sanitize(reading.id))",
                     "    Last success: \(success)",
                     "    Last attempt: \(attempt)",
-                    "    Source: \(reading.usage?.source.rawValue ?? "None")",
-                    "    Auth: \(reading.usage?.authMode?.rawValue ?? "Unknown")",
-                    "    Error: \(DiagnosticsSanitizer.sanitize(reading.error ?? "None"))",
+                    "    Source: \(codexDiagnostics[reading.id]?.source ?? "None")",
+                    "    Auth: \(codexDiagnostics[reading.id]?.authentication ?? "Unknown")",
+                    "    Error: \(DiagnosticsSanitizer.sanitize(reading.lastError ?? "None"))",
                 ]
             }
         }
@@ -318,24 +277,15 @@ struct DiagnosticsView: View {
         }
         lines += [""]
 
-        if let attempts = appState.lastPollResult?.sourceAttempts, !attempts.isEmpty {
+        let attempts = appState.claudeDiagnostics.sourceAttempts
+        if !attempts.isEmpty {
             lines.append("Source Attempts")
             lines += attempts.map { "  \($0.diagnosticDescription)" }
             lines.append("")
         }
 
-        if let snap = appState.snapshot {
-            lines += [
-                "Snapshot",
-                "  Schema version: \(snap.schemaVersion)",
-                "  Parser version: \(snap.parserVersion)",
-                "  Created: \(isoFormatter.string(from: snap.createdAt))",
-            ]
-            lines.append("  Source: \(DiagnosticsSanitizer.sanitize(snap.source.command))")
-            lines.append("")
-        }
-
-        if let warnings = appState.lastPollResult?.warnings, !warnings.isEmpty {
+        let warnings = appState.claudeDiagnostics.warnings
+        if !warnings.isEmpty {
             lines.append("Parser Warnings")
             for w in warnings {
                 let msg = DiagnosticsSanitizer.sanitize(w.message)

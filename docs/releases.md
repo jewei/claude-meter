@@ -1,7 +1,7 @@
 # Signed release verification
 
 Releases require the local checks, Developer ID signing, Apple notarization, matching
-app and widget debug symbols, DMG integrity, and matching update-feed metadata.
+app debug symbols, DMG integrity, and matching update-feed metadata.
 A separate macOS test account, VM, or recorded Sparkle update test is not required for
 this or future releases.
 
@@ -32,7 +32,9 @@ Replace `VERSION` and `BUILD` with the target values. The build must be greater 
 that in the public update feed. Omit `NOTARY_KEYCHAIN` to use the default Keychain
 search. Set `KEYCHAIN_PROFILE` if the credentials use a profile other than `notarytool`.
 
-The script builds, signs, notarizes, and validates the app and DMG. It commits the
+The script builds, signs, notarizes, and validates the app and DMG. It uses the app
+signing identity for the DMG. It staples the DMG before Sparkle signs the final bytes.
+Validation checks Gatekeeper and the stapled tickets for both containers. It commits the
 version, changelog, and update feed, then pushes a staging branch. It publishes the
 GitHub release assets before pushing the feed to `main`. It removes the staging branch
 and reports completion. There is no upgrade-report wait, upload, or automatic feed
@@ -43,6 +45,20 @@ push fails, keep the signed assets and staging branch, resolve the push failure,
 retry the feed push. If only staging-branch removal fails, the release and feed are
 already public; remove that branch after resolving the error. Retain `build/` and the
 release output until publication is complete.
+
+## Private candidate
+
+Use the same workflow without publication:
+
+```bash
+./scripts/release.sh VERSION BUILD --prepare-only
+```
+
+This option writes the candidate feed to `build/appcast.xml`. It stops after artifact
+validation. It does not change the project version, changelog or public feed, create a
+commit or tag, push Git refs, or publish assets. Use a clean candidate checkout and set
+the project version and build before the final validation pass. Keep the candidate
+artifacts private until publication is authorized.
 
 ## Optional manual update check
 

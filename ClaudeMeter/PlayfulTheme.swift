@@ -91,7 +91,7 @@ enum PFont {
 
 /// Display band derived from the existing usage severity. We keep `UsageThresholds`
 /// (percentUsed: warning 80 / critical 95) as the single source of truth so the
-/// menu-bar dot, ring colors, hero, and notifications always agree.
+/// menu-bar dot, ring colors, and hero always agree.
 enum EnergyBand {
     case full, low, empty, tappedOut, unknown
 
@@ -130,9 +130,6 @@ enum EnergyBand {
 }
 
 extension LimitWindow {
-    // `percentLeft(asOf:)` now lives in ClaudeMeterCore (Models.swift) so the
-    // notification engine doesn't depend on this UI layer.
-
     func energyBand(thresholds: UsageThresholds, asOf now: Date) -> EnergyBand {
         EnergyBand(severity: thresholds.severity(for: resolved(asOf: now).percentUsed))
     }
@@ -159,7 +156,7 @@ extension LimitWindow {
 
 /// Flavor phrase for a per-window energy level. Finer-grained than the color
 /// band — it's mood text. `kind` lets 5-hour vs weekly read a little differently.
-func energyPhrase(left: Double, kind: LimitWindowKind) -> String {
+func energyPhrase(left: Double, kind: LimitWindowScope) -> String {
     switch left {
     case 80...: return kind == .session ? "Full tank ⚡️" : "Loads left"
     case 50..<80: return kind == .session ? "Tons of energy" : "Loads left"
@@ -256,8 +253,7 @@ struct RaisedButtonStyle: ButtonStyle {
 
 // MARK: - Plan badge
 
-/// Pill badge for a known plan. Only the active OAuth account carries a plan, so
-/// callers pass `nil` (no badge) for statusline-only accounts.
+/// Pill badge for a known provider plan.
 struct PlanBadge: View {
     let plan: String
     /// Show the plan exactly as its provider names it instead of normalizing to
@@ -290,7 +286,7 @@ struct PlanBadge: View {
         // Codex tiers with no Claude equivalent; paid, so they take the Pro
         // palette but keep their own label. `go` is matched exactly rather than
         // by substring — "go" appears inside plenty of words, and plan strings
-        // can be arbitrary user-typed overrides (`AppGroupConfig.accountPlans`).
+        // can be arbitrary user-typed overrides (`MeterSettings.accountPlans`).
         if p.contains("plus") { return (.pfPlanProFG, .pfPlanProBG, "PLUS") }
         if p == "go" { return (.pfPlanProFG, .pfPlanProBG, "GO") }
         if p.contains("free") { return (.pfPlanFreeFG, .pfPlanFreeBG, "FREE") }

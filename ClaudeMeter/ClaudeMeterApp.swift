@@ -1,3 +1,4 @@
+import AppKit
 import ClaudeMeterCore
 import SwiftUI
 
@@ -12,7 +13,6 @@ struct ClaudeMeterApp: App {
                 .environmentObject(appState)
                 .frame(width: 360)
                 .onAppear { appState.popoverDidOpen() }
-                .onDisappear { appState.popoverDidClose() }
         } label: {
             MenuBarLabel(appState: appState)
         }
@@ -23,13 +23,14 @@ struct ClaudeMeterApp: App {
                 .environmentObject(appState)
         }
 
-        // A separate window, not a popover section: 30 daily bars do not fit the
-        // 360-point popover. `.windowResizability(.contentMinSize)` keeps the user
-        // free to widen it without letting it collapse below the chart.
-        Window("Usage & Spend", id: AppState.usageSpendWindowID) {
-            UsageSpendView()
-                .environmentObject(appState)
-        }
-        .windowResizability(.contentMinSize)
     }
+}
+
+final class ClaudeMeterAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if UserDefaults.standard.bool(forKey: MeterSettings.fileLoggingEnabledKey) {
+            MeterLog.setFileLoggingEnabled(true)
+        }
+    }
+
 }

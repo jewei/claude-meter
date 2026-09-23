@@ -11,7 +11,7 @@ struct AdvancedSettingsTab: View {
     @AppStorage("launchAtLogin") private var launchAtLogin = false
     @State private var launchAtLoginNeedsApproval = false
     @AppStorage("SUEnableAutomaticChecks") private var automaticallyCheckForUpdates = true
-    @AppStorage(AppGroupConfig.fileLoggingEnabledKey) private var fileLoggingEnabled = false
+    @AppStorage(MeterSettings.fileLoggingEnabledKey) private var fileLoggingEnabled = false
     @State private var showingDiagnostics = false
 
     var body: some View {

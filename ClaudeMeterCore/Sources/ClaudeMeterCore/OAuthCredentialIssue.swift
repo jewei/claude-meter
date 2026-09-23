@@ -3,11 +3,8 @@ import Foundation
 /// A credential problem worth telling the user about, derived from a poll's
 /// `sourceAttempts` trail.
 ///
-/// The OAuth tier fails silently by design — every failure falls through to the
-/// next source, so the meter keeps showing *something*. That's right for
-/// transient faults and wrong for a dead sign-in: without a notice, a user whose
-/// refresh token was revoked just sees numbers quietly stop moving, with the
-/// cause visible only in Diagnostics.
+/// Provider diagnostics retain the cause when a previous quota observation stays
+/// visible after a failed request. Credential notices explain the required action.
 public enum OAuthCredentialIssue: String, Sendable, Equatable, CaseIterable {
     /// Claude Code has no stored credentials — never signed in, or signed out.
     case signedOut
@@ -36,7 +33,7 @@ public enum OAuthCredentialIssue: String, Sendable, Equatable, CaseIterable {
     }
 
     /// One line naming the problem and its exact fix. Lives here (like
-    /// `ResetPhrase` and `UsagePace.displayName`) because both the popover banner
+    /// `ResetPhrase`) because both the popover banner
     /// and the Settings row show the same sentence.
     ///
     /// Every actionable case points at `claude login`: a rejected refresh token can
@@ -50,13 +47,13 @@ public enum OAuthCredentialIssue: String, Sendable, Equatable, CaseIterable {
     public func displayText(retryAt: Date? = nil, now: Date = Date()) -> String {
         switch self {
         case .signedOut:
-            "Claude Code isn't signed in — run `claude login` to restore Opus and plan details"
+            "Claude Code isn't signed in — run `claude login` to restore Claude usage"
         case .signInExpired:
-            "Claude Code sign-in expired — run `claude login` to restore Opus and plan details"
+            "Claude Code sign-in expired — run `claude login` to restore Claude usage"
         case .corrupt:
             "Claude Code credentials couldn't be read — run `claude login` to re-create them"
         case .keychainLocked:
-            "Keychain is locked — unlock your Mac to refresh Opus and plan details"
+            "Keychain is locked — unlock your Mac to refresh Claude usage"
         case .retrying:
             "Retrying the Claude Code sign-in…"
         case .rateLimited:
@@ -79,7 +76,7 @@ public enum OAuthCredentialIssue: String, Sendable, Equatable, CaseIterable {
     /// informational tone (`needsUserAction == false`) — naming the cause, not
     /// asking for a fix.
     ///
-    /// `notConnected` and `sourceDisabled` are deliberately excluded: the user
+    /// `notConnected` is deliberately excluded: the user
     /// chose those, so a warning would be noise.
     public static func from(sourceAttempts: [SourceAttempt]) -> OAuthCredentialIssue? {
         guard let attempt = sourceAttempts.first(where: { $0.source == .oauth }),
@@ -93,7 +90,7 @@ public enum OAuthCredentialIssue: String, Sendable, Equatable, CaseIterable {
         case .credentialsUnavailable: return .keychainLocked
         case .refreshDeferred, .refreshFailed: return .retrying
         case .rateLimited: return .rateLimited
-        case .freshData, .sourceDisabled, .notConnected, .staleData, .noData, .cooldown,
+        case .freshData, .notConnected,
             .networkError, .invalidResponse, .requestFailed, .cachedSnapshot,
             .cacheMissing, .cacheUnreadable:
             return nil

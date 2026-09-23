@@ -1,338 +1,86 @@
 import AppKit
 import ClaudeMeterCore
 import ClaudeMeterProviders
+import Combine
 import SwiftUI
-import WidgetKit
-
-struct ConfigBridgeRefreshRequest: Sendable {
-    let statuslineEnabled: Bool
-    let attentionEvents: Set<String>
-    let configuredDirs: [String]
-    let disabledAccountKeys: Set<String>
-    let store: SnapshotStore
-}
-
-struct SpendBreakdownRequest: Sendable {
-    let rangeDays: Int
-    let now: Date
-    let calendar: Calendar
-    let configuredDirs: [String]
-    let disabledKeys: Set<String>
-    let codexHomes: [String]
-    let codexEnabled: Bool
-}
-
-/// The completed scan and its time window travel together for display and export.
-struct SpendBreakdown: Sendable {
-    let result: SpendScanResult
-    let rangeDays: Int
-    let scannedAt: Date
-    let calendar: Calendar
-}
-
-/// Provider amounts stay separate until the window computes its combined total.
-struct ProviderSpend: Sendable, Identifiable {
-    let provider: MainMeterProvider
-    let usage: CostUsageResult
-    let knownCostUsd: Double
-    let hasUnknownCosts: Bool
-    let usesStandardTierAssumption: Bool
-    let knownDailyCosts: [String: Double]
-    let unknownCostDays: Set<String>
-    let isEnabled: Bool
-
-    var id: MainMeterProvider { provider }
-    var isLowerBound: Bool {
-        usage.isPartialEstimate || hasUnknownCosts || usesStandardTierAssumption
-    }
-
-    init(
-        provider: MainMeterProvider, usage: CostUsageResult,
-        knownCostUsd: Double? = nil, hasUnknownCosts: Bool = false,
-        usesStandardTierAssumption: Bool = false,
-        knownDailyCosts: [String: Double]? = nil,
-        unknownCostDays: Set<String> = [], isEnabled: Bool = true
-    ) {
-        self.provider = provider
-        self.usage = usage
-        self.knownCostUsd =
-            knownCostUsd
-            ?? usage.models.compactMap(\.costUsd)
-            .filter(\.isFinite).reduce(0, +)
-        self.hasUnknownCosts =
-            hasUnknownCosts
-            || usage.models.contains {
-                $0.costUsd == nil || $0.costUsd?.isFinite == false
-            }
-        self.usesStandardTierAssumption = usesStandardTierAssumption
-        self.knownDailyCosts =
-            knownDailyCosts
-            ?? usage.daily.reduce(into: [:]) { days, row in
-                if let cost = row.costUsd, cost.isFinite { days[row.day, default: 0] += cost }
-            }
-        self.unknownCostDays = unknownCostDays.union(
-            usage.daily.compactMap {
-                $0.costUsd == nil || $0.costUsd?.isFinite == false ? $0.day : nil
-            })
-        self.isEnabled = isEnabled
-    }
-}
-
-struct SpendScanResult: Sendable {
-    let providers: [ProviderSpend]
-    static let empty = SpendScanResult(providers: [])
-    var isEmpty: Bool { providers.allSatisfy { $0.usage.isEmpty } }
-    var knownCostUsd: Double { providers.reduce(0) { $0 + $1.knownCostUsd } }
-    var isLowerBound: Bool { providers.contains(where: \.isLowerBound) }
-    var isPartialEstimate: Bool { providers.contains { $0.usage.isPartialEstimate } }
-}
-
-typealias ConfigBridgeRefreshOperation =
-    @Sendable (ConfigBridgeRefreshRequest) async -> Void
-typealias CodexUsageFetchOperation =
-    @Sendable (CodexAccount, CodexSourceMode, Date) async throws -> CodexUsage
-typealias CodexIdentityLoadOperation = @Sendable (CodexAccount) -> CodexCredentialIdentity
-typealias AttentionEventDrainOperation =
-    @Sendable (Set<String>, Date) async -> [SessionEvent]
-typealias MainMeterPublicationOperation =
-    @Sendable (MainMeterReading?, SnapshotStore) throws -> Void
-
-/// At most one blocked read per home, with a separate process-work limit.
-final class CodexIdentityReadGate: @unchecked Sendable {
-    let budget = Timeout.TaskBudget(limit: 64)
-    private let lock = NSLock()
-    private var active: Set<String> = []
-
-    func read(_ account: CodexAccount, loader: CodexIdentityLoadOperation) throws
-        -> CodexCredentialIdentity
-    {
-        let inserted = lock.withLock { active.insert(account.id).inserted }
-        guard inserted else { throw TimeoutCapacityError() }
-        defer { _ = lock.withLock { active.remove(account.id) } }
-        return loader(account)
-    }
-}
 
 @MainActor
 final class AppState: ObservableObject {
-    @Published var snapshot: ClaudeUsageSnapshot? = nil
-    @Published var lastPollResult: ParseResult? = nil
-    @Published var isLoading = false
-    @Published private(set) var claudeIsLoading = false
-    @Published private(set) var codexIsLoading = false
-    @Published var lastError: String? = nil
-    @Published var lastPolledAt: Date? = nil
-    @Published var isPopoverOpen = false
     @Published var updateAvailable = false
-    /// Anthropic service status, refreshed alongside Claude polls. Surfaced only
-    /// during incidents to distinguish an outage from bad credentials.
-    @Published var serviceStatus: ServiceStatus? = nil
-    @Published private(set) var claudeWebResetObservations: [String: ClaudeWebResetObservation] =
-        [:]
-    @Published private(set) var claudeWebResetError: String?
-    @Published private(set) var claudeWebResetLastSuccessAt: Date?
     @Published private(set) var isActive: Bool
     @Published private(set) var hasEnabledDataSource: Bool
 
-    // Cursor is a parallel, optional source (separate billing model from Claude).
-    @Published private var cursorReading: ReadingState<CursorUsage>?
-    @Published private(set) var codexAccounts: [CodexAccountReading] = []
-    @Published private var grokReading: ReadingState<GrokUsage>?
-    @Published private var costReading: ReadingState<CostUsageResult>?
-    @Published private(set) var costIsLoading = false
-    var costModels: [ModelUsage] { costReading?.value?.models ?? [] }
-    var costScanPartial: Bool {
-        costReading?.value?.isPartialEstimate == true || costReading?.error != nil
-    }
-    var costScannedAt: Date? { costReading?.lastPolledAt }
-    var costRefreshFailed: Bool { costReading?.error != nil }
-    private var costRefreshTask: Task<Void, Never>?
-    private var pendingCostConfiguration: PollConfiguration?
-    private let costScanBudget = Timeout.TaskBudget(limit: 1)
-    private let costScanTimeoutSeconds: TimeInterval
-    /// Activity heatmap (7×24 message counts), scanned on demand when the user
-    /// opens it from the cost card. `nil` until first requested.
-    @Published var activityHeatmap: ActivityHeatmap? = nil
-    @Published var activityHeatmapLoading = false
-    /// Scene id for the Usage and Spend window, shared by the scene and the
-    /// `openWindow` caller so the two cannot drift.
-    static let usageSpendWindowID = "usage-spend"
-    /// State for the Usage and Spend window. Separate from `costReading`, which
-    /// belongs to the poll and covers seven days only.
-    @Published private(set) var spendBreakdown: SpendBreakdown? = nil
-    @Published private(set) var spendBreakdownLoading = false
-    @Published private(set) var spendBreakdownError: String? = nil
-    private let spendBreakdownScanner:
-        @Sendable (SpendBreakdownRequest) async throws -> SpendScanResult
-    private let spendBreakdownScanBudget: Timeout.TaskBudget
-    private let cursorProvider = CursorUsageProvider()
-    private let grokProvider = GrokUsageProvider()
+    let usageStore: UsageStore
+    let refreshScheduler: RefreshScheduler
+    private var usageStoreChanges: AnyCancellable?
 
-    var pipeline: any ClaudeMeterPipeline
-    let notificationEngine: NotificationEngine
-    private let store: SnapshotStore
-    private let codexReadingStore: CodexReadingStore
-    private let codexIdentityLoader: CodexIdentityLoadOperation
-    private let codexIdentityReadGate = CodexIdentityReadGate()
     /// Test meters keep pause/resume writes out of the installed app's settings.
     private let activationDefaults: UserDefaults
     private let ephemeralDefaultsSuiteName: String?
-    /// Present only for the dependency-injected initializer. Keeping each test in
-    /// its own directory prevents parallel runs from sharing `current.json`.
-    private let ephemeralStoreDirectory: URL?
-    /// Tests exercise polling without changing Claude Code settings or consuming
-    /// real attention markers.
-    private let systemIntegrationEnabled: Bool
     private let appUpdater: AppUpdater
-    /// Advisory service status is intentionally detached from the authoritative
-    /// usage poll. A slow Statuspage request must never delay fresh quota data.
-    private let serviceStatusFetcher: @Sendable () async -> ServiceStatus?
-    /// Auxiliary OAuth-only fields have their own lifecycle because a fresh
-    /// statusline snapshot short-circuits the main OAuth fallback tier.
-    private let oauthEnrichmentFetcher:
-        @Sendable (Date) async -> OAuthPipeline.OAuthEnrichmentFetchResult
-    private let costUsageScanner: @Sendable (Date, PollConfiguration) async -> CostUsageResult
-    /// Test seam that can hold a completed provider group before its cycle releases
-    /// the shared loading state. Production polling does not install a barrier.
-    private let pollCompletionBarrier: (@Sendable () async -> Void)?
-    private let configBridgeRefreshOperation: ConfigBridgeRefreshOperation
-    private let attentionEventDrainOperation: AttentionEventDrainOperation
-    private let mainMeterPublicationOperation: MainMeterPublicationOperation
-    private var serviceStatusRefreshTask: Task<Void, Never>?
-    private(set) var claudeWebResetSession: ClaudeWebResetSession?
-    private var claudeWebResetTask: Task<Void, Never>?
-    private var lastClaudeWebResetAttemptAt: Date?
-    private var claudeWebResetRerunRequested = false
-    private var pollTask: Task<Void, Never>?
-    /// Identifies the cycle that owns the aggregate and provider loading flags.
-    /// A cancelled cycle can resume later, but it cannot clear a newer cycle's UI.
-    private var activePollCycleID: UInt64?
-    private var nextPollCycleID: UInt64 = 0
-    private var rebuildDebounceTask: Task<Void, Never>?
-    private var pipelineGeneration = 0
-    private var refreshPending = false
-    /// Intent of a refresh that arrived mid-poll. `.interactive` sticks until the
-    /// deferred poll consumes it — otherwise opening the popover during a poll
-    /// (likely, at a 60 s cadence) would silently downgrade to `.background` and
-    /// serve cache, which is the exact case the bypass exists for.
-    private var pendingRefreshKind: RefreshKind = .background
-    /// When each popover-only source last ran, successful or not. `SecondaryPollPolicy`
-    /// reads it to keep a source that nobody is looking at off the 60-second cadence.
-    private var lastSecondaryAttemptAt: [PollSource: Date] = [:]
-    /// When the popover last opened. A recent visit restores the fast cadence for
-    /// every source, because the user is switching between cards.
-    private var lastPopoverOpenAt: Date?
-    /// Identity last processed by quota notifications. A provider/account switch
-    /// starts a new baseline instead of comparing unrelated meters.
-    private var notificationIdentity: String?
-    private var lastNotificationReading: MainMeterReading?
-    private var publishedMainMeterReading: MainMeterReading?
-    /// A cold launch may recover from a persisted same-account baseline. Explicit
-    /// provider/account switches suppress that recovery on their first observation.
-    private var allowsPersistedNotificationRecovery = true
-    private var powerMonitor: PowerMonitor?
-    private var networkMonitor: NetworkMonitor?
-    private var memoryPressureMonitor: MemoryPressureMonitor?
-    private var lastOAuthEnrichmentAttemptAt: Date?
-    @Published private var oauthEnrichmentReading: ReadingState<OAuthPipeline.OAuthEnrichment>?
-    private var oauthEnrichmentAccountKey: String?
-    private var lastAccountsFetchAt: Date?
-    private var cachedAccountReadings: [OAuthAccountReading] = []
-    @Published private(set) var accountOAuthFailures:
-        [String: MultiAccountOAuth.AccountFetchFailure] = [:]
-    /// At most one statusline/hook reconciliation runs at a time. Repeated requests
-    /// set one rerun bit, so a wedged synchronous filesystem call cannot build an
-    /// unbounded chain of detached waiters.
-    private var configRefreshTask: Task<Void, Never>?
-    private var configRefreshRerunRequested = false
-    private var configRefreshID: UInt64 = 0
-    private(set) var configRefreshOperationCount = 0
-    /// Periodic drain of Claude Code attention markers → native notifications.
-    private var attentionTask: Task<Void, Never>?
-    /// Guards against overlapping `drainAttention` runs (re-entrant restarts).
-    private var attentionDraining = false
-    /// First-run onboarding blocks all polling and bridge work until the user
-    /// chooses Get Started. Existing-user evidence sets this before startup work.
+    /// First-run onboarding blocks polling until the user chooses Get Started.
     private var onboardingIsComplete: Bool
 
-    private static let pollIntervalSeconds: TimeInterval = 60
-    /// Wall-clock backstop for a single tier read. Generous — above the worst-case
-    /// legitimate poll (OAuth refresh + usage GET + transient retries, ~40 s) — so it
-    /// only ever trips on a genuinely wedged read, never a slow-but-progressing one. A
-    /// trip throws so `isLoading` resets and the loop recovers on the next interval
-    /// instead of freezing every later refresh.
-    private static let pollTimeoutSeconds: TimeInterval = 60
-    /// Transcript deadlines release loading state. Cost scans run independently
-    /// of quota publication, so even a blocked read cannot hold fresh quota data.
-    nonisolated private static let transcriptScanTimeoutSeconds: TimeInterval = 30
-    /// A stuck transcript read must not consume the capacity used by provider
-    /// requests. Cost has a separate per-app budget; activity uses this slot.
-    private static let transcriptScanTimeoutBudget = Timeout.TaskBudget(limit: 1)
-    /// Isolate cancellation-ignoring Codex processes from other providers. Two
-    /// batches can remain abandoned; later cycles then fail fast until they exit.
-    private static let codexPollTimeoutBudget = Timeout.TaskBudget(limit: 6)
-    private static let oauthEnrichmentIntervalSeconds: TimeInterval = 300
-    private static let rebuildDebounceMilliseconds: UInt64 = 300
-    /// How much to stretch the poll cadence while on battery, to cut idle drain
-    /// when unplugged. Restored automatically on the next tick after plugging in.
-    private static let batteryPollMultiplier: Double = 2
-    /// While the display/system is asleep the loop skips polling entirely and
-    /// re-checks at this slow cadence; `PowerMonitor.onWake` provides immediacy,
-    /// so this is only a safety net (e.g. a missed wake notification).
-    private static let asleepRecheckSeconds: TimeInterval = 300
-    /// How often to drain attention markers and fire notifications — low-latency
-    /// "your turn" without a file watcher; cheap (a stat of a usually-empty dir).
-    private static let attentionDrainSeconds: TimeInterval = 2
-    /// While the poll loop isn't running (attention on, no data source), self-heal
-    /// the hooks every this-many drain ticks (~60 s at the 2 s cadence).
-    private static let attentionSelfHealEveryTicks = 30
-
-    var cursorUsage: CursorUsage? { cursorReading?.value }
-    var cursorError: String? { cursorReading?.error }
-    var cursorLastPolledAt: Date? { cursorReading?.lastPolledAt }
-    var grokUsage: GrokUsage? { grokReading?.value }
-    var grokError: String? { grokReading?.error }
-    var grokLastPolledAt: Date? { grokReading?.lastPolledAt }
-    var oauthEnrichmentIsStale: Bool {
-        snapshot?.source.cliPath != "api.anthropic.com"
-            && oauthEnrichmentAccountKey == (snapshot?.activeAccountID ?? "claude")
-            && oauthEnrichmentReading?.isStale == true
+    var codexIsLoading: Bool { usageStore.refreshing.contains(.codex) }
+    var codexAccounts: [ProviderAccountSnapshot] {
+        let accounts = usageStore.reading(for: .codex)?.value?.accounts ?? []
+        let byID = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
+        // Settings own labels/order. A removed pin becomes unavailable immediately.
+        return AppSettings.codexAccounts().compactMap { configuration in
+            guard var account = byID[configuration.id] else { return nil }
+            account.label = configuration.displayName
+            return account
+        }
     }
-    var oauthEnrichmentError: String? {
-        guard snapshot?.source.cliPath != "api.anthropic.com" else { return nil }
-        return oauthEnrichmentReading?.error
+    var cursorSnapshot: ProviderSnapshot? { usageStore.reading(for: .cursor)?.value }
+    var cursorError: String? { usageStore.reading(for: .cursor)?.error }
+    var cursorLastPolledAt: Date? { usageStore.reading(for: .cursor)?.lastPolledAt }
+    var grokSnapshot: ProviderSnapshot? { usageStore.reading(for: .grok)?.value }
+    var grokError: String? { usageStore.reading(for: .grok)?.error }
+    var grokLastPolledAt: Date? { usageStore.reading(for: .grok)?.lastPolledAt }
+    var claudeIsLoading: Bool { usageStore.refreshing.contains(.claude) }
+    var claudeSnapshot: ProviderSnapshot? { usageStore.reading(for: .claude)?.value }
+    var lastError: String? {
+        usageStore.reading(for: .claude)?.error ?? claudeAccounts.compactMap(\.lastError).first
     }
-    var oauthEnrichmentLastPolledAt: Date? {
-        guard snapshot?.source.cliPath != "api.anthropic.com" else { return nil }
-        return oauthEnrichmentReading?.lastPolledAt
+    var lastPolledAt: Date? { usageStore.reading(for: .claude)?.lastPolledAt }
+    var claudeDiagnostics: ClaudeDiagnostics {
+        (usageStore.provider(for: .claude) as? ClaudeProviderAdapter)?.diagnostics
+            ?? ClaudeDiagnostics()
     }
-    /// Credential problem on the OAuth tier, when there is one the user should
-    /// see. Only surfaced while OAuth is actually configured — the tier is
-    /// skipped silently otherwise, and a warning would be noise.
-    var oauthCredentialIssue: OAuthCredentialIssue? {
-        guard AppSettings.oauthSourceEnabled,
-            let attempts = lastPollResult?.sourceAttempts
-        else { return nil }
-        return OAuthCredentialIssue.from(sourceAttempts: attempts)
+    var oauthCredentialIssue: OAuthCredentialIssue? { claudeDiagnostics.credentialIssue }
+    var oauthRetryAt: Date? {
+        (usageStore.provider(for: .claude) as? ClaudeProviderAdapter)?.retryAt
     }
-
-    /// When an active OAuth 429 backoff lifts, for the `.rateLimited` notice's
-    /// countdown. `nil` whenever we aren't throttled.
-    var oauthRetryAt: Date? { OAuthPipeline.rateLimitedUntil() }
-
-    /// Per-account usage rows for accounts other than the active one (for the
-    /// popover's multi-account section). Empty for the common single-account case.
-    var otherAccounts: [AccountUsage] {
-        snapshot?.accounts?.filter { !$0.isActive } ?? []
+    var accountOAuthFailures: [String: MultiAccountOAuth.AccountFetchFailure] {
+        claudeDiagnostics.accountFailures
     }
-
-    /// Label of the account currently mirrored into the menu bar / top-level fields.
-    var activeAccountLabel: String? {
-        snapshot?.accounts?.first(where: { $0.isActive })?.label
+    var claudeAccounts: [ProviderAccountSnapshot] {
+        (claudeSnapshot?.accounts ?? []).filter {
+            $0.id == "claude" || !MeterSettings.disabledAccountKeys.contains($0.id)
+        }.map {
+            var account = $0
+            account.label =
+                MeterSettings.accountName(forKey: account.id) ?? account.label.friendlyAccountLabel
+            account.plan = MeterSettings.accountPlan(forKey: account.id) ?? account.plan
+            return account
+        }
+    }
+    var normalizedSnapshots: [ProviderID: ProviderSnapshot] {
+        var values = usageStore.readings.compactMapValues(\.value)
+        if let snapshot = values[.claude] {
+            values[.claude] = ProviderSnapshot(
+                provider: .claude, accounts: claudeAccounts, fetchedAt: snapshot.fetchedAt)
+        }
+        if let snapshot = values[.codex] {
+            values[.codex] = ProviderSnapshot(
+                provider: .codex, accounts: codexAccounts, fetchedAt: snapshot.fetchedAt)
+        }
+        return values
     }
 
     var mainMeterProvider: MainMeterProvider {
-        AppGroupConfig.resolvedMainMeterProvider(shared: nil)
+        MeterSettings.resolvedMainMeterProvider()
     }
 
     private struct MainMeterSourceState {
@@ -344,64 +92,42 @@ final class AppState: ObservableObject {
 
     private var mainMeterSourceState: MainMeterSourceState {
         let provider = mainMeterProvider
-        switch provider {
-        case .claude:
-            guard AppSettings.hasClaudeSource else {
-                return MainMeterSourceState(
-                    readings: [], selected: nil, isLoading: claudeIsLoading,
-                    error: "Claude is not enabled in Data settings.")
-            }
-            let readings = snapshot.map(Self.claudeMainMeterReadings(from:)) ?? []
-            let selected = Self.selectedMainMeterReading(readings, provider: provider)
-            let error: String?
-            if selected == nil {
-                error = lastError ?? "The selected Claude account has no usage reading."
-            } else {
-                error = lastError
-            }
+        let enabled =
+            provider == .claude ? AppSettings.oauthSourceEnabled : AppSettings.codexSourceEnabled
+        let loading = provider == .claude ? claudeIsLoading : codexIsLoading
+        guard enabled else {
             return MainMeterSourceState(
-                readings: readings,
-                selected: selected,
-                isLoading: claudeIsLoading,
-                error: error)
-        case .codex:
-            guard AppSettings.codexSourceEnabled else {
-                return MainMeterSourceState(
-                    readings: [], selected: nil, isLoading: codexIsLoading,
-                    error: "Codex is not enabled in Data settings.")
-            }
-            let readings = codexAccounts.compactMap(Self.codexMainMeterReading)
-            let selected = Self.selectedMainMeterReading(readings, provider: provider)
-            let error: String?
-            if case .account(let key) = AppGroupConfig.mainMeterAccountSelection(
-                provider: .codex)
-            {
-                if let lifecycle = codexAccounts.first(where: { $0.id == key }) {
-                    error =
-                        lifecycle.usage == nil
-                        ? lifecycle.error ?? "The selected Codex account has no usage reading."
-                        : lifecycle.error
-                } else {
-                    error = "The selected Codex account is no longer configured."
-                }
-            } else {
-                error =
-                    codexAccounts.compactMap(\.error).first
-                    ?? (selected == nil ? "Codex has no usage reading." : nil)
-            }
-            return MainMeterSourceState(
-                readings: readings,
-                selected: selected,
-                isLoading: codexIsLoading,
-                error: error)
+                readings: [], selected: nil, isLoading: loading,
+                error: "\(provider.displayName) is not enabled in Data settings.")
         }
+        let accounts = provider == .claude ? claudeAccounts : codexAccounts
+        let selected = ProviderAccountSelection.primary(
+            from: accounts,
+            pinnedAccountID: Self.pinnedAccountID(for: provider), asOf: Date())
+        let reading = selected.flatMap { MainMeterReading(account: $0, provider: provider) }
+        let error: String?
+        if let pin = Self.pinnedAccountID(for: provider) {
+            error =
+                accounts.first { $0.id == pin }?.lastError
+                ?? (!accounts.contains { $0.id == pin }
+                    ? "The selected \(provider.displayName) account is no longer configured." : nil)
+                ?? (reading == nil
+                    ? "The selected \(provider.displayName) account has no usage reading." : nil)
+        } else {
+            error =
+                accounts.compactMap(\.lastError).first
+                ?? (reading == nil ? "\(provider.displayName) has no usage reading." : nil)
+        }
+        return MainMeterSourceState(
+            readings: accounts.compactMap { MainMeterReading(account: $0, provider: provider) },
+            selected: reading, isLoading: loading, error: error)
     }
 
     /// All usable readings for the selected provider. Ordering is stable; the
     /// selection policy chooses the nearest or explicitly pinned account.
     var mainMeterReadings: [MainMeterReading] { mainMeterSourceState.readings }
 
-    /// Reading that owns the hero, widget, header timestamp, and specific-window
+    /// Reading that owns the hero, header timestamp, and specific-window
     /// menu-bar values. A pin wins. Otherwise the account nearest its limit owns
     /// every primary surface.
     var mainMeterReading: MainMeterReading? { mainMeterSourceState.selected }
@@ -431,7 +157,7 @@ final class AppState: ObservableObject {
     var mainMeterIsStale: Bool {
         guard let reading = mainMeterReading else { return false }
         return reading.sourceMarkedStale
-            || AppGroupConfig.isSnapshotStale(lastPollAt: reading.observedAt)
+            || MeterSettings.isSnapshotStale(lastPollAt: reading.observedAt)
     }
 
     var mainMeterLastSuccessfulAt: Date? { mainMeterReading?.observedAt }
@@ -440,802 +166,201 @@ final class AppState: ObservableObject {
 
     var mainMeterError: String? { mainMeterSourceState.error }
 
-    nonisolated static func startupMainMeterTransition(
-        previousPublished: MainMeterReading?,
-        current: MainMeterReading?
-    ) -> (bumpRevision: Bool, reloadWidget: Bool, allowsPersistedRecovery: Bool) {
-        (
-            bumpRevision: MainMeterPolicy.shouldBumpSelectionRevision(
-                previous: previousPublished,
-                current: current,
-                configurationChanged: false),
-            reloadWidget: MainMeterPolicy.shouldReloadWidget(
-                previous: previousPublished,
-                current: current),
-            allowsPersistedRecovery: current != nil
-                && previousPublished?.stableIdentity == current?.stableIdentity
-        )
-    }
-
-    func mainMeterSelectionChanged() {
-        notificationEngine.pollFailed()
-        finishMainMeterSelectionChange()
-    }
-
-    private func finishMainMeterSelectionChange() {
-        AppGroupConfig.bumpMainMeterRevision()
-        notificationIdentity = nil
-        allowsPersistedNotificationRecovery = false
-        publishMainMeterReading()
-        WidgetCenter.shared.reloadAllTimelines()
-    }
-
-    func mainMeterMetadataChanged(provider: MainMeterProvider) {
-        guard mainMeterProvider == provider else { return }
-        notificationEngine.pollFailed()
-        AppGroupConfig.bumpMainMeterRevision()
-        publishMainMeterReading()
-        WidgetCenter.shared.reloadAllTimelines()
-    }
-
-    /// One-shot cleanup of `usage-history.jsonl`, the per-account time series the
-    /// app used to record every poll. Nothing ever read it back, so the collector
-    /// was removed — this stops a few hundred KB of orphaned data sitting in
-    /// Application Support forever. No-op once it's gone.
-    private static func removeLegacyUsageHistory() {
-        Task.detached(priority: .background) {
-            guard
-                let base = try? FileManager.default.url(
-                    for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil,
-                    create: false)
-            else { return }
-            try? FileManager.default.removeItem(
-                at:
-                    base
-                    .appendingPathComponent("ClaudeMeter", isDirectory: true)
-                    .appendingPathComponent("usage-history.jsonl"))
-        }
-    }
-
-    private static func claudeMainMeterReadings(
-        from snapshot: ClaudeUsageSnapshot
-    ) -> [MainMeterReading] {
-        let observedAt = snapshot.lastSuccessfulPollAt ?? snapshot.createdAt
-        if let accounts = snapshot.accounts, !accounts.isEmpty {
-            let disabled = Set(AppGroupConfig.disabledAccountKeys)
-            return accounts.filter { !disabled.contains($0.id) }.sorted { lhs, rhs in
-                if lhs.isActive != rhs.isActive { return lhs.isActive }
-                return lhs.label.localizedCaseInsensitiveCompare(rhs.label) == .orderedAscending
-            }.map { account in
-                MainMeterReading(
-                    provider: .claude,
-                    accountID: account.id,
-                    accountLabel: AppGroupConfig.accountName(forKey: account.id)
-                        ?? account.label.friendlyAccountLabel,
-                    plan: AppGroupConfig.accountPlan(forKey: account.id)
-                        ?? (account.isActive ? snapshot.account?.plan : account.account?.plan),
-                    limits: account.isActive ? snapshot.limits : account.limits,
-                    observedAt: account.lastSuccessfulPollAt ?? observedAt,
-                    selectionRevision: AppGroupConfig.mainMeterRevision(shared: nil),
-                    sourceMarkedStale: snapshot.state.isStale)
-            }
-        }
-        return [
-            MainMeterReading(
-                provider: .claude,
-                accountID: StatuslineBridge.defaultAccountKey,
-                accountLabel: AppGroupConfig.accountName(forKey: StatuslineBridge.defaultAccountKey)
-                    ?? "Claude",
-                plan: AppGroupConfig.accountPlan(forKey: StatuslineBridge.defaultAccountKey)
-                    ?? snapshot.account?.plan,
-                limits: snapshot.limits,
-                observedAt: observedAt,
-                selectionRevision: AppGroupConfig.mainMeterRevision(shared: nil),
-                sourceMarkedStale: snapshot.state.isStale)
-        ]
-    }
-
-    nonisolated static func codexMainMeterReading(
-        _ reading: CodexAccountReading
-    ) -> MainMeterReading? {
-        guard let usage = reading.usage, let observedAt = reading.lastSuccessfulAt else {
-            return nil
-        }
-        let windows = classifiedCodexWindows(usage)
-        return MainMeterReading(
-            provider: .codex,
-            accountID: reading.id,
-            accountLabel: reading.account.displayName,
-            plan: usage.displayPlanName,
-            limits: LimitInfo(
-                currentSession: LimitWindow(
-                    percentUsed: windows.session?.usedPercent,
-                    resetsAt: windows.session?.resetAt),
-                currentWeekAllModels: LimitWindow(
-                    percentUsed: windows.weekly?.usedPercent,
-                    resetsAt: windows.weekly?.resetAt)),
-            sessionLabel: windows.session?.displayLabel ?? "5h",
-            weeklyLabel: windows.weekly?.displayLabel ?? "7d",
-            observedAt: observedAt,
-            selectionRevision: AppGroupConfig.mainMeterRevision(shared: nil),
-            observationOwnerID: reading.ownerID)
-    }
-
-    private nonisolated static func classifiedCodexWindows(_ usage: CodexUsage) -> (
-        session: CodexLimitWindow?, weekly: CodexLimitWindow?
-    ) {
-        var session: CodexLimitWindow?
-        var weekly: CodexLimitWindow?
-        for window in [usage.primaryWindow, usage.secondaryWindow].compactMap({ $0 }) {
-            let isWeekly: Bool
-            if let duration = window.durationSeconds {
-                isWeekly = duration > 24 * 60 * 60
-            } else {
-                isWeekly = window.kind == .secondary
-            }
-            if isWeekly {
-                if weekly == nil || (window.usedPercent ?? -1) > (weekly?.usedPercent ?? -1) {
-                    weekly = window
-                }
-            } else if session == nil || (window.usedPercent ?? -1) > (session?.usedPercent ?? -1) {
-                session = window
-            }
-        }
-        return (session, weekly)
-    }
-
-    private static func selectedMainMeterReading(
-        _ readings: [MainMeterReading],
-        provider: MainMeterProvider
-    ) -> MainMeterReading? {
-        MainMeterPolicy.primary(
-            from: readings,
-            pinnedAccountID: pinnedAccountID(for: provider))
-    }
-
     private static func pinnedAccountID(for provider: MainMeterProvider) -> String? {
-        if case .account(let key) = AppGroupConfig.mainMeterAccountSelection(provider: provider) {
+        if case .account(let key) = MeterSettings.mainMeterAccountSelection(provider: provider) {
             return key
         }
         return nil
     }
 
-    private func processMainMeterObservation(
-        _ reading: MainMeterReading,
-        previous: MainMeterReading?,
-        isStale: Bool,
-        generation: Int
-    ) async {
-        guard
-            Self.notificationTargetMatches(
-                expected: reading,
-                expectedGeneration: generation,
-                current: mainMeterReading,
-                currentGeneration: pipelineGeneration),
-            canPoll
-        else { return }
-        let notificationLease = notificationEngine.quotaLease()
-        let baselines = NotificationPolicy.mainMeterBaselines(
-            reading: reading,
-            previous: previous,
-            notificationIdentity: notificationIdentity,
-            allowsPersistedRecovery: allowsPersistedNotificationRecovery)
-        await notificationEngine.process(
-            reading: reading,
-            previous: baselines.escalation,
-            recoveryBaseline: baselines.recovery,
-            isStale: isStale,
-            expectedRevision: notificationLease)
-        guard
-            Self.notificationTargetMatches(
-                expected: reading,
-                expectedGeneration: generation,
-                current: mainMeterReading,
-                currentGeneration: pipelineGeneration),
-            canPoll
-        else { return }
-        guard !isStale else { return }
-        notificationIdentity = reading.stableIdentity
-        lastNotificationReading = reading
-        allowsPersistedNotificationRecovery = true
-    }
-
-    nonisolated static func notificationTargetMatches(
-        expected: MainMeterReading,
-        expectedGeneration: Int,
-        current: MainMeterReading?,
-        currentGeneration: Int
-    ) -> Bool {
-        expectedGeneration == currentGeneration
-            && current?.stableIdentity == expected.stableIdentity
-            && current?.selectionRevision == expected.selectionRevision
-    }
-
-    private func publishMainMeterReading() {
-        let reading = mainMeterReading
-        do {
-            try mainMeterPublicationOperation(reading, store)
-            publishedMainMeterReading = reading
-        } catch {
-            // The main provider stores remain authoritative. Widget publication is
-            // best-effort and must not change poll lifecycle or user-facing errors.
-            // It is therefore invisible when it fails, which is why it is logged.
-            MeterLog.logger(.widget).error("Main-meter publication failed", error: error)
-        }
-    }
-
-    private static func makeStore() -> SnapshotStore {
-        if let shared = try? SnapshotStore.appGroup(suiteName: AppGroupConfig.suiteName) {
-            if let legacy = try? SnapshotStore.applicationSupport() {
-                try? SnapshotStore.migrateSnapshotIfNeeded(from: legacy, to: shared)
-            }
-            return shared
-        }
-        if let legacy = try? SnapshotStore.applicationSupport() {
-            return legacy
-        }
-        return SnapshotStore(directory: FileManager.default.temporaryDirectory)
-    }
-
     init() {
+        self.usageStore = UsageStore(providers: [
+            ClaudeProviderAdapter(configuration: {
+                ClaudeConfiguration(
+                    mode: UserDefaults.standard.string(forKey: MeterSettings.oauthModeKey) ?? "",
+                    configuredDirs: MeterSettings.configuredConfigDirs,
+                    disabledKeys: Set(MeterSettings.disabledAccountKeys),
+                    thresholds: MeterSettings.currentThresholds())
+            }),
+            CodexProviderAdapter(configuration: {
+                await Task.detached(priority: .utility) {
+                    CodexConfiguration(
+                        accounts: AppSettings.codexAccounts())
+                }.value
+            }), CursorProviderAdapter(), GrokProviderAdapter(),
+        ])
+        self.refreshScheduler = RefreshScheduler(usageStore: usageStore)
         OAuthPipeline.enableRateLimitPersistence()
         UserDefaults.standard.register(defaults: [
-            AppSettings.statuslineSourceEnabledKey: true,
-            AppSettings.isActiveKey: true,
+            AppSettings.isActiveKey: true
         ])
         self.onboardingIsComplete = UserDefaults.standard.bool(
             forKey: "hasCompletedOnboarding")
-        AppGroupConfig.syncDisplaySettings()
-        AppState.removeLegacyUsageHistory()
-        let store = AppState.makeStore()
-        self.store = store
-        let codexReadingStore = CodexReadingStore()
-        self.codexReadingStore = codexReadingStore
-        self.codexIdentityLoader = { CodexOAuthCredentialsStore.identity(codexHome: $0.home) }
+        MeterSettings.repairMenuBarWindow()
+        let configuredDirs = MeterSettings.configuredConfigDirs
+        let claudeProvider = usageStore.provider(for: .claude) as? ClaudeProviderAdapter
+        Task.detached(priority: .utility) {
+            do {
+                try LegacyAttentionHookMigration.runIfNeeded(configuredDirs: configuredDirs)
+            } catch {
+                MeterLog.logger(.app).error(
+                    "Legacy hook cleanup failed: \(error.localizedDescription)")
+            }
+            do { try LegacyStatuslineMigration.runIfNeeded(configuredDirs: configuredDirs) } catch {
+                MeterLog.logger(.app).error(
+                    "Legacy statusline cleanup failed: \(error.localizedDescription)")
+            }
+            do { try await claudeProvider?.importLegacySnapshotIfNeeded() } catch {
+                MeterLog.logger(.app).error("Legacy snapshot import failed", error: error)
+            }
+            do { try LegacyArtifactCleanupMigration.runIfNeeded() } catch {
+                MeterLog.logger(.app).error("Obsolete artifact cleanup failed", error: error)
+            }
+        }
         self.activationDefaults = .standard
         self.ephemeralDefaultsSuiteName = nil
-        self.ephemeralStoreDirectory = nil
-        self.systemIntegrationEnabled = true
-        self.claudeWebResetSession = ClaudeWebResetSession()
-        self.notificationEngine = NotificationEngine()
         self.isActive = AppSettings.isActive
         self.hasEnabledDataSource = AppSettings.hasEnabledDataSource
         let appUpdater = AppUpdater(startingUpdater: true)
         self.appUpdater = appUpdater
-        self.serviceStatusFetcher = { await AnthropicStatusClient().fetch() }
-        self.oauthEnrichmentFetcher = { now in
-            await OAuthPipeline.fetchEnrichmentResult(now: now)
-        }
-        self.costUsageScanner = { now, configuration in
-            await AppState.scanCostModels(now: now, configuration: configuration)
-        }
-        self.costScanTimeoutSeconds = Self.transcriptScanTimeoutSeconds
-        self.spendBreakdownScanner = { request in Self.scanSpendBreakdown(request) }
-        self.spendBreakdownScanBudget = Self.transcriptScanTimeoutBudget
-        self.pollCompletionBarrier = nil
-        self.configBridgeRefreshOperation = { request in
-            AppState.performConfigBridgeRefresh(request)
-        }
-        self.attentionEventDrainOperation = { disabledAccountKeys, now in
-            await Task.detached(priority: .utility) {
-                SessionEventStore.drain(
-                    disabledAccountKeys: disabledAccountKeys, now: now)
-            }.value
-        }
-        self.mainMeterPublicationOperation = { reading, store in
-            try MainMeterPublication.replace(reading, in: store)
-        }
-        self.pipeline = AppState.makePipeline(store: store)
-        // Self is fully initialized from here on.
-        self.snapshot = try? store.readLatest()
-        // Persisted totals have no verified current root scope on launch.
-        self.snapshot?.models = []
-        self.snapshot?.costObservation = nil
-        self.lastPolledAt = snapshot?.lastSuccessfulPollAt
-        // Persisted Codex readings are restored only after the first poll checks
-        // their owner off-main. A home path alone is not a signed-in account.
-        if snapshot == nil, let record = try? store.readLastError() {
-            self.lastError = record.message
-        }
-        let previousPublishedReading = try? store.readMainMeter()
-        publishedMainMeterReading = previousPublishedReading
-        lastNotificationReading = previousPublishedReading
-        var currentReading = mainMeterReading
-        let startupTransition = Self.startupMainMeterTransition(
-            previousPublished: previousPublishedReading,
-            current: currentReading)
-        if startupTransition.bumpRevision {
-            AppGroupConfig.bumpMainMeterRevision()
-            currentReading = mainMeterReading
-        }
-        allowsPersistedNotificationRecovery = startupTransition.allowsPersistedRecovery
-        publishMainMeterReading()
-        if startupTransition.reloadWidget
-            || MainMeterPolicy.shouldReloadWidget(
-                previous: previousPublishedReading,
-                current: currentReading)
-        {
-            WidgetCenter.shared.reloadAllTimelines()
-        }
         appUpdater.appState = self
+        observeUsageStore()
         if !onboardingIsComplete, hasExistingUserEvidence {
             onboardingIsComplete = true
             UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
         }
-        let monitor = PowerMonitor()
-        monitor.onDisplaySleep = { AppState.releasePooledSubprocesses() }
-        monitor.onWake = { [weak self] in
-            self?.admitEverySourceOnNextCycle()
-            self?.refreshNow()
-            // Restart the attention watcher so markers written near wake surface
-            // promptly instead of waiting out the asleep-recheck interval.
-            self?.startAttentionWatcher()
+        if !onboardingIsComplete {
+            Task { [weak self] in
+                guard let self,
+                    let provider = self.usageStore.provider(for: .claude) as? ClaudeProviderAdapter,
+                    await provider.hasPersistedObservation()
+                else { return }
+                self.completeOnboarding()
+            }
         }
-        self.powerMonitor = monitor
-        let network = NetworkMonitor()
-        network.onReconnect = { [weak self] in
-            // Connectivity regained — refresh now instead of waiting out the
-            // remaining poll interval. Mirrors PowerMonitor.onWake.
-            self?.admitEverySourceOnNextCycle()
-            self?.refreshNow()
-        }
-        self.networkMonitor = network
-        let memoryPressure = MemoryPressureMonitor()
-        memoryPressure.start()
-        self.memoryPressureMonitor = memoryPressure
-        if onboardingIsComplete {
-            startPolling()
-            Task { await notificationEngine.requestAuthorizationIfNeeded() }
-        }
+        refreshScheduler.update(configuration: refreshConfiguration)
     }
 
     init(
-        pipeline: any ClaudeMeterPipeline,
-        initialSnapshot: ClaudeUsageSnapshot? = nil,
-        serviceStatusFetcher: @escaping @Sendable () async -> ServiceStatus? = { nil },
-        oauthEnrichmentFetcher:
-            @escaping @Sendable (Date) async ->
-            OAuthPipeline.OAuthEnrichmentFetchResult = { _ in .unavailable(.notConnected) },
-        costUsageScanner: @escaping @Sendable (Date, PollConfiguration) async -> CostUsageResult = {
-            _, _ in .empty
-        },
-        costScanTimeoutSeconds: TimeInterval = 30,
-        spendBreakdownScanner:
-            @escaping @Sendable (SpendBreakdownRequest) async throws -> SpendScanResult = {
-                _ in .empty
-            },
-        codexReadingStore: CodexReadingStore? = nil,
-        codexIdentityLoader: @escaping CodexIdentityLoadOperation = { _ in .unavailable },
-        notificationEngine: NotificationEngine = NotificationEngine(),
-        pollCompletionBarrier: (@Sendable () async -> Void)? = nil,
-        systemIntegrationEnabled: Bool = false,
-        configBridgeRefreshOperation: ConfigBridgeRefreshOperation? = nil,
-        attentionEventDrainOperation: AttentionEventDrainOperation? = nil,
-        mainMeterPublicationOperation: MainMeterPublicationOperation? = nil,
+        usageStore: UsageStore = UsageStore(providers: []),
         onboardingIsComplete: Bool = true
     ) {
+        self.usageStore = usageStore
+        self.refreshScheduler = RefreshScheduler(
+            usageStore: usageStore, powerMonitor: nil)
         self.onboardingIsComplete = onboardingIsComplete
-        let id = UUID().uuidString
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ClaudeMeter-AppState-\(id)", isDirectory: true)
-        try? FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true)
-        self.store = SnapshotStore(directory: directory)
-        let suiteName = "ClaudeMeter-AppState-\(id)"
-        let testDefaults = UserDefaults(suiteName: suiteName)!
-        self.codexReadingStore = codexReadingStore ?? CodexReadingStore(defaults: testDefaults)
-        self.codexIdentityLoader = codexIdentityLoader
-        self.activationDefaults = testDefaults
+        let suiteName = "ClaudeMeter-AppState-\(UUID().uuidString)"
+        self.activationDefaults = UserDefaults(suiteName: suiteName)!
         self.ephemeralDefaultsSuiteName = suiteName
-        self.ephemeralStoreDirectory = directory
-        self.systemIntegrationEnabled = systemIntegrationEnabled
-        self.notificationEngine = notificationEngine
         self.isActive = true
         self.hasEnabledDataSource = true
         let appUpdater = AppUpdater(startingUpdater: false)
         self.appUpdater = appUpdater
-        self.serviceStatusFetcher = serviceStatusFetcher
-        self.oauthEnrichmentFetcher = oauthEnrichmentFetcher
-        self.costUsageScanner = costUsageScanner
-        self.costScanTimeoutSeconds = costScanTimeoutSeconds
-        self.spendBreakdownScanner = spendBreakdownScanner
-        self.spendBreakdownScanBudget = Timeout.TaskBudget(limit: 1)
-        self.pollCompletionBarrier = pollCompletionBarrier
-        self.configBridgeRefreshOperation =
-            configBridgeRefreshOperation
-            ?? { request in AppState.performConfigBridgeRefresh(request) }
-        self.attentionEventDrainOperation =
-            attentionEventDrainOperation
-            ?? { disabledAccountKeys, now in
-                await Task.detached(priority: .utility) {
-                    SessionEventStore.drain(
-                        disabledAccountKeys: disabledAccountKeys, now: now)
-                }.value
-            }
-        self.mainMeterPublicationOperation =
-            mainMeterPublicationOperation
-            ?? { reading, store in
-                try MainMeterPublication.replace(reading, in: store)
-            }
-        self.pipeline = pipeline
-        self.snapshot = initialSnapshot
-        self.snapshot?.models = []
-        self.snapshot?.costObservation = nil
-        self.lastPolledAt = initialSnapshot?.lastSuccessfulPollAt
         appUpdater.appState = self
+        observeUsageStore()
+    }
+
+    private func observeUsageStore() {
+        usageStoreChanges = usageStore.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
     }
 
     deinit {
-        pollTask?.cancel()
-        serviceStatusRefreshTask?.cancel()
-        costRefreshTask?.cancel()
-        rebuildDebounceTask?.cancel()
-        configRefreshTask?.cancel()
-        attentionTask?.cancel()
-        if let ephemeralStoreDirectory {
-            try? FileManager.default.removeItem(at: ephemeralStoreDirectory)
-        }
         if let ephemeralDefaultsSuiteName {
             UserDefaults(suiteName: ephemeralDefaultsSuiteName)?.removePersistentDomain(
                 forName: ephemeralDefaultsSuiteName)
         }
     }
 
-    func startPolling() {
-        let replacedExistingCycle = pollTask != nil || activePollCycleID != nil
-        if replacedExistingCycle { invalidatePollGeneration() }
-        pollTask?.cancel()
-        invalidateActivePollCycle()
-        guard onboardingIsComplete else {
-            pollTask = nil
-            return
-        }
-        // Config bridges + the attention watcher are independent of whether a usage
-        // data source is enabled (attention comes from Claude Code hooks, not the
-        // meter pipeline), so they run regardless of `canPoll`.
-        refreshConfigBridges()
-        startAttentionWatcher()
-        guard canPoll else {
-            pollTask = nil
-            return
-        }
-        pollTask = Task { [weak self] in
-            await self?.poll()
-            while !Task.isCancelled {
-                guard let self else { break }
-                // Energy-aware cadence: skip work entirely while the display is
-                // asleep (PowerMonitor.onWake handles the immediate refresh on
-                // wake), and stretch the interval on battery to reduce drain.
-                let interval: TimeInterval
-                if self.powerMonitor?.isDisplayAsleep == true {
-                    interval = Self.asleepRecheckSeconds
-                } else if self.powerMonitor?.isOnBattery == true {
-                    interval = Self.pollIntervalSeconds * Self.batteryPollMultiplier
-                } else {
-                    interval = Self.pollIntervalSeconds
-                }
-                try? await Task.sleep(for: .seconds(interval))
-                guard !Task.isCancelled else { break }
-                // Re-check: the display may have gone to sleep during the wait.
-                guard self.powerMonitor?.isDisplayAsleep != true else { continue }
-                await self.poll()
-            }
-        }
-    }
+    func checkForUpdates() { appUpdater.checkForUpdates() }
 
-    func stopPolling() {
-        // Only the meter poll — the attention watcher has its own lifecycle (it's
-        // not tied to having a usage data source).
-        let invalidatedExistingCycle =
-            pollTask != nil || activePollCycleID != nil || costRefreshTask != nil
-        if invalidatedExistingCycle { invalidatePollGeneration() }
-        pollTask?.cancel()
-        pollTask = nil
-        invalidateActivePollCycle()
-        Self.releasePooledSubprocesses()
-    }
+    func refreshNow() { refreshScheduler.refreshNow() }
 
-    /// Ends resident provider subprocesses. Nothing polls while the app is paused,
-    /// the display sleeps, or the app quits, so a `codex app-server` must not stay
-    /// resident through any of them. The next poll starts a fresh one.
-    nonisolated static func releasePooledSubprocesses() {
-        Task.detached(priority: .utility) { await CodexSubprocesses.shutdownAll() }
-    }
-
-    /// A task can be suspended in Notification Center after its poll generation
-    /// changes. Revoke that delivery before abandoning the observation, including
-    /// interactive polls whose task is not stored in `pollTask`.
-    private func invalidatePollGeneration() {
-        notificationEngine.pollFailed()
-        pipelineGeneration += 1
-        pendingCostConfiguration = nil
-        // A source or account change must take effect on the next cycle, not after
-        // the idle interval of the source that changed.
-        lastSecondaryAttemptAt.removeAll()
-        clearCostReading()
-    }
-
-    private func clearCostReading() {
-        refreshSpendConfigurationIfNeeded()
-        costReading = nil
-        // Do not cancel-and-await synchronous scans. Their generation is revoked;
-        // a later request replaces only the one pending configuration.
-        if var snapshot {
-            snapshot.models = []
-            snapshot.costObservation = nil
-            self.snapshot = snapshot
-            try? store.writeLatest(snapshot)
-        }
-    }
-
-    private func invalidateActivePollCycle() {
-        activePollCycleID = nil
-        isLoading = false
-        claudeIsLoading = false
-        codexIsLoading = false
-        refreshPending = false
-        pendingRefreshKind = .background
-    }
-
-    /// Called by Settings when an attention toggle flips: reconcile the installed
-    /// hooks, (re)start or stop the watcher, and clean up markers when disabled.
-    func attentionSettingsChanged() {
-        notificationEngine.attentionSettingsChanged()
-        refreshConfigBridges()
-        startAttentionWatcher()
-        if !AppSettings.attentionEnabled { clearAttentionEvents() }
-    }
-
-    /// Invalidates any alert that is suspended in a Notification Center call.
-    /// The delivery path retracts it when that call resumes.
-    func notificationSettingsChanged() {
-        notificationEngine.notificationSettingsChanged()
-    }
-
-    func checkForUpdates() {
-        appUpdater.checkForUpdates()
-    }
-
-    /// - Parameter kind: `.interactive` when the user is waiting on the result, so
-    ///   the statusline tier's API-fallback cooldown yields rather than serving up
-    ///   to `fallbackCooldown` of cache. Wake and reconnect deliberately stay
-    ///   `.background`: after either, the cooldown has almost always elapsed on its
-    ///   own, so the bypass would buy nothing and only widen how often we can be
-    ///   made to call out.
-    func refreshNow(kind: RefreshKind = .background) {
-        guard canPoll else { return }
-        if activePollCycleID != nil {
-            refreshPending = true
-            if kind == .interactive { pendingRefreshKind = .interactive }
-            return
-        }
-        Task { await poll(kind: kind) }
-    }
-
-    func popoverDidOpen() {
-        isPopoverOpen = true
-        lastPopoverOpenAt = Date()
-        refreshNow(kind: .interactive)
-    }
-
-    func popoverDidClose() {
-        isPopoverOpen = false
-    }
+    func popoverDidOpen() { refreshScheduler.popoverDidOpen() }
 
     var claudeIsStale: Bool {
-        AppGroupConfig.isSnapshotStale(lastPollAt: snapshot?.lastSuccessfulPollAt)
+        claudeAccounts.contains {
+            $0.isStale || MeterSettings.isSnapshotStale(lastPollAt: $0.observedAt)
+        }
     }
 
     var isStale: Bool {
         let cursorStale =
             AppSettings.cursorSourceEnabled
-            && cursorUsage != nil
-            && AppGroupConfig.isSnapshotStale(lastPollAt: cursorLastPolledAt)
-        let claudeStale = claudeIsStale || snapshot?.state.isStale == true
+            && cursorSnapshot != nil
+            && MeterSettings.isSnapshotStale(lastPollAt: cursorLastPolledAt)
+        let claudeStale = claudeIsStale
         return claudeStale || cursorStale
     }
 
     var cursorIsStale: Bool {
-        AppGroupConfig.isSnapshotStale(lastPollAt: cursorLastPolledAt)
+        MeterSettings.isSnapshotStale(lastPollAt: cursorLastPolledAt)
     }
 
     /// Observation age only. A recent last-good value remains fresh even when
     /// the newest refresh attempt failed; callers can inspect `reading.error`
     /// independently.
     var codexIsStale: Bool {
-        codexAccounts.contains { $0.observationIsStale() }
+        codexAccounts.contains {
+            $0.observedAt != nil && MeterSettings.isSnapshotStale(lastPollAt: $0.observedAt)
+        }
     }
 
     var grokIsStale: Bool {
-        AppGroupConfig.isSnapshotStale(lastPollAt: grokLastPolledAt)
+        MeterSettings.isSnapshotStale(lastPollAt: grokLastPolledAt)
     }
 
-    func setCursorSourceEnabled(_ enabled: Bool) {
-        optionalSourceSettingDidChange(enabled: enabled, clearState: clearCursorState)
-    }
-
-    func clearCursorState() {
-        cursorReading = nil
-    }
-
-    func setCodexSourceEnabled(_ enabled: Bool) {
-        let codexOwnsMainMeter = mainMeterProvider == .codex
-        if codexOwnsMainMeter {
-            // Disabling clears and publishes account state synchronously. Revoke
-            // the old observation before that work can let delivery complete.
-            notificationEngine.pollFailed()
-        }
-        optionalSourceSettingDidChange(enabled: enabled, clearState: clearCodexState)
-        if codexOwnsMainMeter { finishMainMeterSelectionChange() }
-    }
-
-    func clearCodexState() {
-        codexAccounts = []
-    }
-
-    func refreshCodexAccountsFromSettings(configurationChanged: Bool = false) {
-        let codexOwnsMainMeter = mainMeterProvider == .codex
-        if configurationChanged {
-            invalidatePollGeneration()
-        } else if codexOwnsMainMeter {
-            // Account restoration and publication can do synchronous work. Revoke
-            // the old observation before either operation can expose new state.
-            notificationEngine.pollFailed()
-        }
-        let previousPublishedReading = publishedMainMeterReading
-        let previousNotificationReading = lastNotificationReading
-        let existing = Dictionary(uniqueKeysWithValues: codexAccounts.map { ($0.id, $0) })
-        codexAccounts = AppSettings.codexAccounts().compactMap { account in
-            guard let reading = existing[account.id] else { return nil }
-            return CodexAccountReading(
-                account: account,
-                state: reading.state,
-                lastAttemptAt: reading.lastAttemptAt,
-                ownerID: reading.ownerID)
-        }
-        guard codexOwnsMainMeter else { return }
-        var currentReading = mainMeterReading
-        if MainMeterPolicy.shouldBumpSelectionRevision(
-            previous: previousPublishedReading,
-            current: currentReading,
-            configurationChanged: configurationChanged)
-        {
-            AppGroupConfig.bumpMainMeterRevision()
-            currentReading = mainMeterReading
-        }
-        if configurationChanged
-            || previousNotificationReading?.stableIdentity != currentReading?.stableIdentity
-        {
-            notificationIdentity = nil
-            allowsPersistedNotificationRecovery = false
-        }
-        publishMainMeterReading()
-        if configurationChanged
-            || MainMeterPolicy.shouldReloadWidget(
-                previous: previousPublishedReading,
-                current: currentReading)
-        {
-            WidgetCenter.shared.reloadAllTimelines()
-        }
-    }
-
-    func setGrokSourceEnabled(_ enabled: Bool) {
-        optionalSourceSettingDidChange(enabled: enabled, clearState: clearGrokState)
-    }
-
-    private func optionalSourceSettingDidChange(
-        enabled: Bool,
-        clearState: () -> Void
-    ) {
-        // Invalidates every task in the old poll cycle. `startPolling()` cancels
-        // its parent task, but detached timeout work can finish later.
-        invalidatePollGeneration()
+    func providerEnablementDidChange() {
         hasEnabledDataSource = AppSettings.hasEnabledDataSource
-        if enabled {
-            if isActive { startPolling() }
-        } else {
-            clearState()
-            if !canPoll {
-                stopPolling()
-                isLoading = false
-            }
-        }
+        refreshScheduler.update(configuration: refreshConfiguration)
     }
 
-    func clearGrokState() {
-        grokReading = nil
+    func codexConfigurationDidChange() {
+        objectWillChange.send()
+        refreshScheduler.refresh([.codex])
     }
 
-    /// Debounced rebuild for source toggles — avoids restarting the poll loop on every flip.
-    func scheduleRebuildPipeline() {
-        clearCostReading()
-        if mainMeterProvider == .claude {
-            // The setting changed before the debounce starts. Revoke its old
-            // observation now instead of leaving it live during the delay.
-            notificationEngine.pollFailed()
-        }
-        rebuildDebounceTask?.cancel()
-        rebuildDebounceTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(Self.rebuildDebounceMilliseconds))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                self?.rebuildPipeline()
-            }
-        }
+    func claudeConfigurationDidChange() {
+        providerEnablementDidChange()
+        refreshScheduler.refresh([.claude])
     }
 
-    func rebuildPipeline() {
-        let claudeOwnsMainMeter = mainMeterProvider == .claude
-        invalidatePollGeneration()
-        lastOAuthEnrichmentAttemptAt = nil
-        oauthEnrichmentReading = nil
-        oauthEnrichmentAccountKey = nil
-        lastAccountsFetchAt = nil
-        cachedAccountReadings = []
-        accountOAuthFailures = [:]
-        hasEnabledDataSource = AppSettings.hasEnabledDataSource
-        pipeline = AppState.makePipeline(store: store)
-        if claudeOwnsMainMeter { finishMainMeterSelectionChange() }
-        if canPoll && pollTask == nil {
-            // startPolling reconciles bridges + (re)starts the attention watcher.
-            startPolling()
-        } else {
-            // Already polling, or no data source — reconcile bridges + re-evaluate the
-            // attention watcher (it runs regardless of canPoll) without churning the
-            // poll loop. (Avoids the double-invoke that calling startPolling too would
-            // cause.)
-            refreshConfigBridges()
-            startAttentionWatcher()
-            if !canPoll {
-                stopPolling()
-                isLoading = false
-            }
-        }
+    private var refreshConfiguration: RefreshConfiguration {
+        var enabled: Set<ProviderID> = []
+        if AppSettings.oauthSourceEnabled { enabled.insert(.claude) }
+        if AppSettings.codexSourceEnabled { enabled.insert(.codex) }
+        if AppSettings.cursorSourceEnabled { enabled.insert(.cursor) }
+        if AppSettings.grokSourceEnabled { enabled.insert(.grok) }
+        return RefreshConfiguration(
+            isActive: onboardingIsComplete && isActive, enabledProviders: enabled)
     }
 
     func setActive(_ active: Bool) {
         guard isActive != active else { return }
-        if !active {
-            // Revoke suspended deliveries before settings, published state, or
-            // task cancellation can let independent notification work resume.
-            notificationEngine.pollFailed()
-            notificationEngine.attentionSettingsChanged()
-        }
         activationDefaults.set(active, forKey: AppSettings.isActiveKey)
         isActive = active
-        refreshPending = false
-        pendingRefreshKind = .background
-        if active {
-            rebuildPipeline()
-        } else {
-            stopPolling()
-            startAttentionWatcher()  // self-cancels now that isActive == false
-            isLoading = false
-        }
+        refreshScheduler.update(configuration: refreshConfiguration)
     }
 
-    /// Releases the first-run gate and starts the normal background lifecycle.
-    /// The persistent Fetch Usage preference remains authoritative.
+    /// Releases the first-run gate. Onboarding remains application state.
     func completeOnboarding() {
         guard !onboardingIsComplete else { return }
         onboardingIsComplete = true
         UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
-        startPolling()
-        Task { await notificationEngine.requestAuthorizationIfNeeded() }
+        refreshScheduler.update(configuration: refreshConfiguration)
     }
 
     /// Existing installs must not see first-run onboarding after an upgrade.
     /// Keychain probes are attributes-only and never read credential contents.
     private var hasExistingUserEvidence: Bool {
         Self.existingUserEvidenceIsPresent(
-            snapshotExists: snapshot != nil,
+            snapshotExists: claudeSnapshot != nil,
             automaticOAuthAvailability: OAuthKeychain.credentialAvailability(),
             manualOAuthAvailability: OAuthKeychain.manualCredentialAvailability(),
             cursorStateExists: CursorTokenStore.isStateDBPresent(),
-            codexUsageExists: codexAccounts.contains(where: { $0.usage != nil }),
-            codexConfigurationExists: Self.codexConfigurationExists,
-            statuslineDataDirectoryExists: FileManager.default.fileExists(
-                atPath: StatuslineBridge.statuslineFilePath.deletingLastPathComponent().path)
+            codexUsageExists: codexAccounts.contains(where: { $0.observedAt != nil }),
+            codexConfigurationExists: Self.codexConfigurationExists
         )
     }
 
@@ -1248,8 +373,7 @@ final class AppState: ObservableObject {
         manualOAuthAvailability: KeychainCredentialAvailability,
         cursorStateExists: Bool,
         codexUsageExists: Bool,
-        codexConfigurationExists: Bool,
-        statuslineDataDirectoryExists: Bool
+        codexConfigurationExists: Bool
     ) -> Bool {
         snapshotExists
             || automaticOAuthAvailability == .available
@@ -1257,7 +381,6 @@ final class AppState: ObservableObject {
             || cursorStateExists
             || codexUsageExists
             || codexConfigurationExists
-            || statuslineDataDirectoryExists
     }
 
     private static var codexConfigurationExists: Bool {
@@ -1271,1533 +394,14 @@ final class AppState: ObservableObject {
     }
 
     static func currentThresholds() -> UsageThresholds {
-        AppGroupConfig.currentThresholds()
-    }
-
-    private func poll(kind: RefreshKind = .background) async {
-        guard canPoll else { return }
-        refreshConfigBridges()  // self-heal statusline + attention hooks each poll
-        guard activePollCycleID == nil else {
-            refreshPending = true
-            if kind == .interactive { pendingRefreshKind = .interactive }
-            return
-        }
-        nextPollCycleID &+= 1
-        let cycleID = nextPollCycleID
-        activePollCycleID = cycleID
-        let configuration = PollConfiguration(
-            generation: pipelineGeneration, refreshKind: kind)
-        isLoading = true
-        if configuration.claudeEnabled { scheduleCostRefresh(configuration: configuration) }
-        defer { finishPollCycle(cycleID) }
-
-        let admitted = admittedSources(configuration: configuration, now: Date())
-        await withTaskGroup(of: Void.self) { group in
-            if admitted.contains(.claude) {
-                group.addTask {
-                    await self.pollClaude(configuration: configuration, cycleID: cycleID)
-                }
-            }
-            if admitted.contains(.cursor) {
-                group.addTask { await self.pollCursor(configuration: configuration) }
-            }
-            if admitted.contains(.codex) {
-                group.addTask {
-                    await self.pollCodex(configuration: configuration, cycleID: cycleID)
-                }
-            }
-            if admitted.contains(.grok) {
-                group.addTask { await self.pollGrok(configuration: configuration) }
-            }
-        }
-        await pollCompletionBarrier?()
-    }
-
-    /// One pollable source. Only the two that can own the main meter are named
-    /// separately from the popover-only sources.
-    enum PollSource: String, CaseIterable, Sendable {
-        case claude
-        case cursor
-        case codex
-        case grok
-    }
-
-    /// Clears the slow-cadence record so the next cycle runs every enabled source.
-    ///
-    /// Wake and reconnect stay `.background` on purpose (see `refreshNow`), so
-    /// without this a source that failed during sleep or a network loss would keep
-    /// its error for up to one idle interval after the machine recovers.
-    private func admitEverySourceOnNextCycle() {
-        lastSecondaryAttemptAt.removeAll()
-    }
-
-    /// The sources this cycle runs, and the record of the attempt.
-    private func admittedSources(
-        configuration: PollConfiguration, now: Date
-    ) -> Set<PollSource> {
-        let admitted = Self.admittedSources(
-            enabled: enabledSources(in: configuration),
-            mainMeterProvider: mainMeterProvider,
-            lastAttemptAt: lastSecondaryAttemptAt,
-            lastPopoverOpenAt: lastPopoverOpenAt,
-            isPopoverOpen: isPopoverOpen,
-            isInteractive: configuration.refreshKind == .interactive,
-            idleInterval: SecondaryPollPolicy.idleInterval(
-                staleAfterSeconds: AppGroupConfig.resolvedStaleAfterSeconds()),
-            now: now)
-        for source in admitted where Self.isRateLimitable(source, mainMeter: mainMeterProvider) {
-            lastSecondaryAttemptAt[source] = now
-        }
-        return admitted
-    }
-
-    /// Decides which enabled sources this cycle runs. Pure, so the rule can be
-    /// tested without driving the poll loop.
-    ///
-    /// Two sources always keep the 60-second cadence:
-    ///
-    /// - The selected main provider, because it owns the hero, the menu bar, the
-    ///   header time, the widget, and every quota alert.
-    /// - Claude, because its first tier is a local statusline file read. Slowing a
-    ///   file read saves nothing, and its OAuth tier already has a fallback cooldown
-    ///   and a shared 429 gate. Claude cost scans stay on their own schedule, and
-    ///   attention hooks keep their own watcher.
-    ///
-    /// The remaining sources appear only inside the popover, and opening the popover
-    /// always runs an interactive refresh. Slowing them removes the repeated
-    /// `codex app-server` and `sqlite3` launches that dominate a background cycle.
-    nonisolated static func admittedSources(
-        enabled: Set<PollSource>,
-        mainMeterProvider: MainMeterProvider,
-        lastAttemptAt: [PollSource: Date],
-        lastPopoverOpenAt: Date?,
-        isPopoverOpen: Bool = false,
-        isInteractive: Bool,
-        idleInterval: TimeInterval = SecondaryPollPolicy.idleInterval(
-            staleAfterSeconds: AppGroupConfig.defaultStaleAfterSeconds),
-        now: Date
-    ) -> Set<PollSource> {
-        var admitted: Set<PollSource> = []
-        for source in enabled {
-            guard isRateLimitable(source, mainMeter: mainMeterProvider) else {
-                admitted.insert(source)
-                continue
-            }
-            guard
-                SecondaryPollPolicy.shouldPoll(
-                    now: now,
-                    lastAttemptAt: lastAttemptAt[source],
-                    lastPopoverOpenAt: lastPopoverOpenAt,
-                    isPopoverOpen: isPopoverOpen,
-                    isInteractive: isInteractive,
-                    idleInterval: idleInterval)
-            else { continue }
-            admitted.insert(source)
-        }
-        return admitted
-    }
-
-    /// Whether the slow cadence may apply to this source.
-    nonisolated static func isRateLimitable(
-        _ source: PollSource, mainMeter: MainMeterProvider
-    ) -> Bool {
-        switch source {
-        // Never gated: a local file read, plus Claude-specific work that does not
-        // follow the main-meter selection.
-        case .claude: false
-        case .codex: mainMeter != .codex
-        case .cursor, .grok: true
-        }
-    }
-
-    private func enabledSources(in configuration: PollConfiguration) -> Set<PollSource> {
-        var enabled: Set<PollSource> = []
-        if configuration.claudeEnabled { enabled.insert(.claude) }
-        if configuration.cursorEnabled { enabled.insert(.cursor) }
-        if configuration.codexEnabled { enabled.insert(.codex) }
-        if configuration.grokEnabled { enabled.insert(.grok) }
-        return enabled
-    }
-
-    private func finishPollCycle(_ cycleID: UInt64) {
-        guard activePollCycleID == cycleID else { return }
-        activePollCycleID = nil
-        isLoading = false
-        claudeIsLoading = false
-        codexIsLoading = false
-        guard refreshPending else { return }
-        refreshPending = false
-        let pending = pendingRefreshKind
-        pendingRefreshKind = .background
-        Task { await poll(kind: pending) }
-    }
-
-    private func pollClaude(configuration: PollConfiguration, cycleID: UInt64) async {
-        guard activePollCycleID == cycleID else { return }
-        claudeIsLoading = true
-        defer {
-            if activePollCycleID == cycleID { claudeIsLoading = false }
-        }
-        let pipeline = self.pipeline
-        let now = Date()
-        let previousPublishedReading = publishedMainMeterReading
-        let previousNotificationReading = lastNotificationReading
-        scheduleServiceStatusRefresh(generation: configuration.generation)
-        refreshClaudeWebResets(force: configuration.refreshKind == .interactive)
-        do {
-            let result = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
-                try await pipeline.poll(now: now, kind: configuration.refreshKind)
-            }
-            guard configuration.generation == pipelineGeneration, canPoll else { return }
-
-            lastPollResult = result
-
-            if result.isFatal {
-                recordClaudePollFailure(
-                    result.errors.map(\.message).joined(separator: "; "),
-                    generation: configuration.generation)
-                return
-            }
-
-            if var snap = result.snapshot {
-                // Opus weekly, extra-usage spend, and plan live only in the OAuth
-                // response. When statusline produced the snapshot, layer those
-                // fields on if OAuth credentials are available.
-                let enrichment = await oauthEnrichment(
-                    for: snap, now: now, configuration: configuration)
-                guard configuration.generation == pipelineGeneration, canPoll else { return }
-                if let enrichment {
-                    Self.apply(
-                        enrichment, to: &snap, sourceAccountKey: oauthEnrichmentAccountKey)
-                }
-                let topLevelOAuthDetailsObservedAt = Self.topLevelOAuthDetailsObservedAt(
-                    for: snap,
-                    enrichmentObservedAt: enrichment.flatMap { _ in
-                        oauthEnrichmentReading?.lastPolledAt
-                    })
-                // Per-account OAuth readings (multi-account tier): fill each
-                // account's plan/email/Opus/extra and cover accounts with no
-                // live session. A post-reset OAuth reading can also replace an
-                // expired statusline window whose displayed 0% is only inferred.
-                let readings = await accountReadings(now: now, configuration: configuration)
-                guard configuration.generation == pipelineGeneration, canPoll else { return }
-                let mergedSnap = MultiAccountOAuth.merge(
-                    readings: readings,
-                    into: snap,
-                    now: now,
-                    thresholds: configuration.thresholds,
-                    activeTopLevelOAuthDetailsObservedAt: topLevelOAuthDetailsObservedAt)
-                snap = mergedSnap
-                applyCurrentCost(to: &snap)
-                do {
-                    try store.writeLatest(snap)
-                    try store.clearLastError()
-                } catch {
-                    // Persistence is best-effort. The guarded in-memory reading is
-                    // still authoritative for this process.
-                }
-                snapshot = snap
-                if let successfulPollAt = snap.lastSuccessfulPollAt {
-                    lastPolledAt = successfulPollAt
-                }
-                if mainMeterProvider == .claude {
-                    var currentReading = mainMeterReading
-                    if MainMeterPolicy.shouldBumpSelectionRevision(
-                        previous: previousPublishedReading,
-                        current: currentReading,
-                        configurationChanged: false)
-                    {
-                        AppGroupConfig.bumpMainMeterRevision()
-                        notificationIdentity = nil
-                        allowsPersistedNotificationRecovery = false
-                        currentReading = mainMeterReading
-                    }
-                    if let currentReading {
-                        await processMainMeterObservation(
-                            currentReading,
-                            previous: previousNotificationReading,
-                            isStale: claudeIsStale || snap.state.isStale,
-                            generation: configuration.generation)
-                        guard configuration.generation == pipelineGeneration, canPoll else {
-                            return
-                        }
-                    }
-                    publishMainMeterReading()
-                    if MainMeterPolicy.shouldReloadWidget(
-                        previous: previousPublishedReading,
-                        current: currentReading)
-                    {
-                        WidgetCenter.shared.reloadAllTimelines()
-                    }
-                }
-            } else {
-                // No snapshot at all — not a fresh reading, so it must not count
-                // toward the selected meter's predictive confirmation.
-                if mainMeterProvider == .claude { notificationEngine.pollFailed() }
-            }
-
-            // A successful poll clears the error; tier failures remain available
-            // through the sanitized source-attempt trail.
-            lastError = nil
-        } catch {
-            let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            recordClaudePollFailure(message, generation: configuration.generation)
-        }
-    }
-
-    func claudeWebResets(organizationID: String?) -> ClaudeLimitResets? {
-        guard UserDefaults.standard.bool(forKey: AppSettings.claudeWebResetsEnabledKey),
-            let organizationID,
-            let observation = claudeWebResetObservations[organizationID.lowercased()],
-            Date().timeIntervalSince(observation.observedAt) < 600,
-            claudeWebResetError == nil
-        else { return nil }
-        return observation.resets
-    }
-
-    func claudeWebResetsSettingDidChange(enabled: Bool) {
-        if enabled {
-            refreshClaudeWebResets(force: true)
-        } else {
-            claudeWebResetTask?.cancel()
-            claudeWebResetObservations = [:]
-            claudeWebResetError = nil
-            claudeWebResetLastSuccessAt = nil
-            lastClaudeWebResetAttemptAt = nil
-        }
-    }
-
-    func refreshClaudeWebResets(force: Bool = false) {
-        guard systemIntegrationEnabled,
-            UserDefaults.standard.bool(forKey: AppSettings.claudeWebResetsEnabledKey),
-            let session = claudeWebResetSession,
-            isActive
-        else { return }
-        if claudeWebResetTask != nil {
-            if force { claudeWebResetRerunRequested = true }
-            return
-        }
-        let now = Date()
-        if !force, let lastClaudeWebResetAttemptAt,
-            now.timeIntervalSince(lastClaudeWebResetAttemptAt) < 300
-        {
-            return
-        }
-        lastClaudeWebResetAttemptAt = now
-        let generation = pipelineGeneration
-        claudeWebResetTask = Task { [weak self] in
-            guard let self else { return }
-            defer {
-                self.claudeWebResetTask = nil
-                if self.claudeWebResetRerunRequested {
-                    self.claudeWebResetRerunRequested = false
-                    self.refreshClaudeWebResets(force: true)
-                }
-            }
-            do {
-                let observations = try await session.fetch()
-                guard !Task.isCancelled,
-                    generation == self.pipelineGeneration,
-                    UserDefaults.standard.bool(forKey: AppSettings.claudeWebResetsEnabledKey)
-                else { return }
-                self.claudeWebResetObservations = Dictionary(
-                    uniqueKeysWithValues: observations.map {
-                        ($0.organizationID.lowercased(), $0)
-                    })
-                self.claudeWebResetError = nil
-                self.claudeWebResetLastSuccessAt = Date()
-            } catch {
-                guard !Task.isCancelled,
-                    generation == self.pipelineGeneration,
-                    UserDefaults.standard.bool(forKey: AppSettings.claudeWebResetsEnabledKey)
-                else { return }
-                self.claudeWebResetObservations = [:]
-                self.claudeWebResetError =
-                    error is ClaudeWebResetSession.FetchError
-                        && (error as? ClaudeWebResetSession.FetchError) == .signInRequired
-                    ? "Sign in to Claude to show limit resets."
-                    : "Could not check Claude limit resets."
-            }
-        }
-    }
-
-    /// Records only the active Claude poll generation. The app owns this final
-    /// persistence step because provider tiers do not write shared snapshots.
-    private func recordClaudePollFailure(_ message: String, generation: Int) {
-        guard generation == pipelineGeneration, canPoll else { return }
-        let sanitized = DiagnosticsSanitizer.sanitize(message)
-        lastError = sanitized
-        try? store.writeLastError(LastErrorRecord(message: sanitized))
-        MeterLog.logger(.poll).error("Claude poll failed: \(message)")
-        if mainMeterProvider == .claude { notificationEngine.pollFailed() }
-    }
-
-    /// Cursor runs independently of the Claude pipeline so a Cursor failure never
-    /// affects Claude state (and vice versa).
-    private func pollCursor(configuration: PollConfiguration) async {
-        let provider = cursorProvider
-        let now = Date()
-        do {
-            let usage = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
-                try await provider.fetchUsage(now: now)
-            }
-            guard configuration.generation == pipelineGeneration,
-                canPoll,
-                AppSettings.cursorSourceEnabled
-            else { return }
-            cursorReading = .current(value: usage, polledAt: Date())
-        } catch {
-            guard configuration.generation == pipelineGeneration,
-                canPoll,
-                AppSettings.cursorSourceEnabled
-            else { return }
-            let message = DiagnosticsSanitizer.sanitize(
-                (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            )
-            switch error {
-            case CursorError.notDetected, CursorError.unauthorized, CursorError.forbidden:
-                cursorReading = .failed(error: message, lastPolledAt: cursorLastPolledAt)
-            default:
-                if let usage = cursorUsage, let polledAt = cursorLastPolledAt {
-                    cursorReading = .stale(value: usage, polledAt: polledAt, error: message)
-                } else {
-                    cursorReading = .failed(error: message, lastPolledAt: cursorLastPolledAt)
-                }
-            }
-        }
-    }
-
-    /// Codex runs independently of Claude and Cursor. It owns shared meter output
-    /// only when the user explicitly selects Codex as the main meter.
-    private func pollCodex(configuration: PollConfiguration, cycleID: UInt64) async {
-        guard activePollCycleID == cycleID else { return }
-        codexIsLoading = true
-        defer {
-            if activePollCycleID == cycleID { codexIsLoading = false }
-        }
-        let now = Date()
-        let accounts = configuration.codexAccounts
-        var previous = Dictionary(
-            uniqueKeysWithValues: codexReadingStore.candidates(accounts: accounts).map {
-                ($0.id, $0)
-            })
-        for reading in codexAccounts { previous[reading.id] = reading }
-        let previousPublishedReading = publishedMainMeterReading
-        let previousNotificationReading = lastNotificationReading
-        let readings = await Self.fetchOwnedCodexAccountReadings(
-            accounts: accounts,
-            previous: previous,
-            mode: configuration.codexMode,
-            now: now,
-            perAccountTimeoutSeconds: Self.pollTimeoutSeconds,
-            totalTimeoutSeconds: Self.pollTimeoutSeconds,
-            budget: Self.codexPollTimeoutBudget,
-            identityLoader: codexIdentityLoader,
-            identityGate: codexIdentityReadGate,
-            validatedPrevious: { [weak self] validated in
-                guard let self,
-                    configuration.generation == self.pipelineGeneration,
-                    self.activePollCycleID == cycleID, self.canPoll
-                else { return }
-                let previousReading = self.mainMeterReading
-                self.codexAccounts = validated
-                guard self.mainMeterProvider == .codex else { return }
-                if MainMeterPolicy.shouldBumpSelectionRevision(
-                    previous: previousReading, current: self.mainMeterReading,
-                    configurationChanged: false)
-                {
-                    AppGroupConfig.bumpMainMeterRevision()
-                    self.notificationIdentity = nil
-                    self.allowsPersistedNotificationRecovery = false
-                    self.notificationEngine.pollFailed()
-                }
-                self.publishMainMeterReading()
-                if MainMeterPolicy.shouldReloadWidget(
-                    previous: previousReading, current: self.mainMeterReading)
-                {
-                    WidgetCenter.shared.reloadAllTimelines()
-                }
-            },
-            fetch: { account, mode, now in
-                try await CodexUsageProvider(codexHome: account.home).fetchUsage(
-                    mode: mode, now: now)
-            })
-        guard configuration.generation == pipelineGeneration,
-            canPoll,
-            AppSettings.codexSourceEnabled
-        else { return }
-        let byID = Dictionary(uniqueKeysWithValues: readings.map { ($0.id, $0) })
-        codexAccounts = accounts.compactMap { byID[$0.id] }
-        codexReadingStore.save(codexAccounts)
-
-        guard mainMeterProvider == .codex else { return }
-        var currentSelected = mainMeterReading
-        if MainMeterPolicy.shouldBumpSelectionRevision(
-            previous: previousPublishedReading,
-            current: currentSelected,
-            configurationChanged: false)
-        {
-            AppGroupConfig.bumpMainMeterRevision()
-            notificationIdentity = nil
-            allowsPersistedNotificationRecovery = false
-            currentSelected = mainMeterReading
-        }
-        publishMainMeterReading()
-        if let currentSelected,
-            let lifecycle = codexAccounts.first(where: { $0.id == currentSelected.accountID })
-        {
-            if case .current = lifecycle.state, lifecycle.ownerID != nil {
-                await processMainMeterObservation(
-                    currentSelected,
-                    previous: previousNotificationReading,
-                    isStale: mainMeterIsStale,
-                    generation: configuration.generation)
-                guard configuration.generation == pipelineGeneration, canPoll else { return }
-            } else {
-                notificationEngine.pollFailed()
-            }
-        } else {
-            notificationEngine.pollFailed()
-        }
-        if MainMeterPolicy.shouldReloadWidget(
-            previous: previousPublishedReading,
-            current: currentSelected)
-        {
-            WidgetCenter.shared.reloadAllTimelines()
-        }
-    }
-
-    /// Ownership reads share the provider deadline and run on bounded detached
-    /// workers. Reserve the final read before fetching so even a timed-out source
-    /// cannot reuse another login's previous value. Unknown owners can supply a
-    /// current reading only when their source stayed unchanged; they are never
-    /// restored from cache or used for notification baselines.
-    nonisolated static func fetchOwnedCodexAccountReadings(
-        accounts: [CodexAccount],
-        previous: [String: CodexAccountReading],
-        mode: CodexSourceMode,
-        now: Date,
-        perAccountTimeoutSeconds: TimeInterval,
-        totalTimeoutSeconds: TimeInterval,
-        budget: Timeout.TaskBudget,
-        identityLoader: @escaping CodexIdentityLoadOperation,
-        identityGate: CodexIdentityReadGate = .init(),
-        validatedPrevious: @escaping @MainActor @Sendable ([CodexAccountReading]) -> Void = { _ in
-        },
-        fetch: @escaping CodexUsageFetchOperation
-    ) async -> [CodexAccountReading] {
-        let timeout = totalTimeoutSeconds.isFinite ? max(0, totalTimeoutSeconds) : 0
-        let deadline = ProcessInfo.processInfo.systemUptime + timeout
-        let identityAllowance = min(2, timeout / 4)
-        let before = await loadCodexIdentities(
-            accounts: accounts, timeout: identityAllowance, gate: identityGate,
-            loader: identityLoader)
-        let validPrevious = previous.filter { key, reading in
-            reading.ownerID != nil && reading.ownerID == before[key]?.ownerID
-        }
-        await validatedPrevious(accounts.compactMap { validPrevious[$0.id] })
-        let readings = await fetchCodexAccountReadings(
-            accounts: accounts, previous: validPrevious, mode: mode, now: now,
-            perAccountTimeoutSeconds: perAccountTimeoutSeconds,
-            totalTimeoutSeconds: max(
-                0, deadline - ProcessInfo.processInfo.systemUptime - identityAllowance),
-            budget: budget, fetch: fetch)
-        let after = await loadCodexIdentities(
-            accounts: accounts,
-            timeout: min(
-                identityAllowance, max(0, deadline - ProcessInfo.processInfo.systemUptime)),
-            gate: identityGate, loader: identityLoader)
-        return readings.map { reading in
-            guard let original = before[reading.id], let current = after[reading.id],
-                original.acceptsResult(after: current)
-            else {
-                return CodexAccountReading(
-                    account: reading.account,
-                    state: .failed(
-                        error: "Codex sign-in changed or could not be verified. Refresh again.",
-                        lastPolledAt: nil),
-                    lastAttemptAt: reading.lastAttemptAt)
-            }
-            return CodexAccountReading(
-                account: reading.account, state: reading.state,
-                lastAttemptAt: reading.lastAttemptAt, ownerID: current.ownerID)
-        }
-    }
-
-    nonisolated private static func loadCodexIdentities(
-        accounts: [CodexAccount], timeout: TimeInterval, gate: CodexIdentityReadGate,
-        loader: @escaping CodexIdentityLoadOperation
-    ) async -> [String: CodexCredentialIdentity] {
-        guard timeout > 0, !Task.isCancelled else { return [:] }
-        return await withTaskGroup(of: (String, CodexCredentialIdentity?).self) { group in
-            for account in accounts {
-                group.addTask {
-                    let identity = try? await Timeout.run(seconds: timeout, budget: gate.budget) {
-                        try gate.read(account, loader: loader)
-                    }
-                    return (account.id, identity)
-                }
-            }
-            var identities: [String: CodexCredentialIdentity] = [:]
-            for await (id, identity) in group { identities[id] = identity }
-            return identities
-        }
-    }
-
-    /// Fetches Codex accounts in batches of three under one provider-wide
-    /// deadline. Accounts that do not start before the deadline still receive a
-    /// coherent failed/stale lifecycle result.
-    nonisolated static func fetchCodexAccountReadings(
-        accounts: [CodexAccount],
-        previous: [String: CodexAccountReading],
-        mode: CodexSourceMode,
-        now: Date,
-        perAccountTimeoutSeconds: TimeInterval,
-        totalTimeoutSeconds: TimeInterval,
-        budget: Timeout.TaskBudget,
-        fetch: @escaping CodexUsageFetchOperation
-    ) async -> [CodexAccountReading] {
-        let totalTimeout =
-            totalTimeoutSeconds.isFinite && totalTimeoutSeconds > 0
-            ? totalTimeoutSeconds : 0
-        let deadline = ProcessInfo.processInfo.systemUptime + totalTimeout
-        var readings: [CodexAccountReading] = []
-        var nextIndex = 0
-
-        while nextIndex < accounts.count {
-            let remaining = deadline - ProcessInfo.processInfo.systemUptime
-            guard remaining > 0 else {
-                let error = TimeoutError(seconds: totalTimeoutSeconds)
-                for account in accounts[nextIndex...] {
-                    readings.append(
-                        failedCodexReading(
-                            account: account, prior: previous[account.id], error: error))
-                }
-                break
-            }
-
-            let endIndex = min(nextIndex + 3, accounts.count)
-            let batch = Array(accounts[nextIndex..<endIndex])
-            let accountTimeout = min(perAccountTimeoutSeconds, remaining)
-            let results = await withTaskGroup(of: CodexAccountReading.self) { group in
-                for account in batch {
-                    let prior = previous[account.id]
-                    group.addTask {
-                        do {
-                            let usage = try await Timeout.run(
-                                seconds: accountTimeout, budget: budget
-                            ) {
-                                try await fetch(account, mode, now)
-                            }
-                            let completedAt = Date()
-                            return CodexAccountReading(
-                                account: account,
-                                state: .current(value: usage, polledAt: completedAt),
-                                lastAttemptAt: completedAt)
-                        } catch {
-                            return failedCodexReading(
-                                account: account, prior: prior, error: error)
-                        }
-                    }
-                }
-                var batchReadings: [CodexAccountReading] = []
-                for await reading in group { batchReadings.append(reading) }
-                return batchReadings
-            }
-            readings.append(contentsOf: results)
-            nextIndex = endIndex
-        }
-
-        let readingsByID = readings.reduce(into: [String: CodexAccountReading]()) {
-            $0[$1.id] = $1
-        }
-        return accounts.compactMap { readingsByID[$0.id] }
-    }
-
-    nonisolated private static func failedCodexReading(
-        account: CodexAccount,
-        prior: CodexAccountReading?,
-        error: any Error
-    ) -> CodexAccountReading {
-        let message = DiagnosticsSanitizer.sanitize(
-            (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
-        let attemptedAt = Date()
-        if let usage = prior?.usage, let polledAt = prior?.lastSuccessfulAt {
-            return CodexAccountReading(
-                account: account,
-                state: .stale(value: usage, polledAt: polledAt, error: message),
-                lastAttemptAt: attemptedAt, ownerID: prior?.ownerID)
-        }
-        return CodexAccountReading(
-            account: account,
-            state: .failed(error: message, lastPolledAt: nil),
-            lastAttemptAt: attemptedAt)
-    }
-
-    /// Grok runs independently of Claude, Cursor, and Codex so failures never
-    /// affect Claude state, menu-bar severity, widget data, or notifications.
-    private func pollGrok(configuration: PollConfiguration) async {
-        let provider = grokProvider
-        let now = Date()
-        do {
-            let usage = try await Timeout.run(seconds: Self.pollTimeoutSeconds) {
-                try await provider.fetchUsage(now: now)
-            }
-            guard configuration.generation == pipelineGeneration,
-                canPoll,
-                AppSettings.grokSourceEnabled
-            else { return }
-            grokReading = .current(value: usage, polledAt: Date())
-        } catch {
-            guard configuration.generation == pipelineGeneration,
-                canPoll,
-                AppSettings.grokSourceEnabled
-            else { return }
-            let message = DiagnosticsSanitizer.sanitize(
-                (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            )
-            if let usage = grokUsage, let polledAt = grokLastPolledAt {
-                grokReading = .stale(value: usage, polledAt: polledAt, error: message)
-            } else {
-                grokReading = .failed(error: message, lastPolledAt: grokLastPolledAt)
-            }
-        }
-    }
-
-    /// Starts one best-effort Anthropic status refresh without joining it to the
-    /// authoritative usage task. Repeated interactive polls coalesce while the
-    /// advisory request is in flight.
-    func scheduleServiceStatusRefresh(generation: Int) {
-        guard serviceStatusRefreshTask == nil else { return }
-        let fetch = serviceStatusFetcher
-        serviceStatusRefreshTask = Task { [weak self] in
-            let status = await fetch()
-            guard let self else { return }
-            defer { self.serviceStatusRefreshTask = nil }
-            guard !Task.isCancelled,
-                generation == self.pipelineGeneration,
-                self.canPoll
-            else { return }
-            self.serviceStatus = status
-        }
-    }
-
-    /// Fetches OAuth-only enrichment (Opus window, extra usage, plan) when the
-    /// snapshot came from a non-OAuth source and OAuth creds are available. Returns
-    /// `nil` when not applicable. An OAuth-produced snapshot already has these.
-    private func oauthEnrichment(
-        for snap: ClaudeUsageSnapshot,
-        now: Date,
-        configuration: PollConfiguration
-    ) async -> OAuthPipeline.OAuthEnrichment? {
-        guard configuration.oauthEnabled,
-            configuration.oauthMode == "auto",
-            snap.source.cliPath != "api.anthropic.com"
-        else {
-            lastOAuthEnrichmentAttemptAt = nil
-            oauthEnrichmentReading = nil
-            oauthEnrichmentAccountKey = nil
-            return nil
-        }
-        if let lastOAuthEnrichmentAttemptAt,
-            now.timeIntervalSince(lastOAuthEnrichmentAttemptAt)
-                < Self.oauthEnrichmentIntervalSeconds
-        {
-            if let oauthEnrichmentReading {
-                self.oauthEnrichmentReading = Self.resolvedOAuthEnrichmentReading(
-                    oauthEnrichmentReading, asOf: now)
-            }
-            return await matchingOAuthEnrichment(for: snap, configuration: configuration)
-        }
-        let result = await oauthEnrichmentFetcher(now)
-        guard configuration.generation == pipelineGeneration, canPoll else { return nil }
-        lastOAuthEnrichmentAttemptAt = now
-        oauthEnrichmentReading = Self.updatedOAuthEnrichmentReading(
-            previous: oauthEnrichmentReading,
-            result: result,
-            now: now
-        )
-        return await matchingOAuthEnrichment(for: snap, configuration: configuration)
-    }
-
-    /// Single-slot credentials need an exact account match before their cached or
-    /// fresh details can supplement statusline data. Active-account changes do not
-    /// rebuild the pipeline, and the newest Keychain login can be a different one.
-    private func matchingOAuthEnrichment(
-        for snapshot: ClaudeUsageSnapshot,
-        configuration: PollConfiguration
-    ) async -> OAuthPipeline.OAuthEnrichment? {
-        guard let enrichment = oauthEnrichmentReading?.value,
-            let service = enrichment.credentialService
-        else {
-            oauthEnrichmentAccountKey = nil
-            return nil
-        }
-        var accountKey = OAuthKeychain.accountKey(forCredentialService: service, accounts: [])
-        if accountKey == nil {
-            let configuredDirs = configuration.configuredClaudeDirs
-            accountKey = try? await Timeout.run(seconds: 5) {
-                OAuthKeychain.accountKey(
-                    forCredentialService: service,
-                    accounts: ConfigDirDiscovery.discover(configuredDirs: configuredDirs))
-            }
-            guard configuration.generation == pipelineGeneration, canPoll else { return nil }
-        }
-        oauthEnrichmentAccountKey = accountKey
-        guard accountKey == (snapshot.activeAccountID ?? "claude") else { return nil }
-        return enrichment
-    }
-
-    static func updatedOAuthEnrichmentReading(
-        previous: ReadingState<OAuthPipeline.OAuthEnrichment>?,
-        result: OAuthPipeline.OAuthEnrichmentFetchResult,
-        now: Date
-    ) -> ReadingState<OAuthPipeline.OAuthEnrichment> {
-        let updated: ReadingState<OAuthPipeline.OAuthEnrichment>
-        switch result {
-        case .success(let enrichment):
-            updated = .current(value: enrichment, polledAt: now)
-        case .unavailable(let reason):
-            let error = reason.rawValue
-            if let value = previous?.value, let observedAt = previous?.lastPolledAt {
-                updated = .stale(value: value, polledAt: observedAt, error: error)
-            } else {
-                updated = .failed(error: error, lastPolledAt: previous?.lastPolledAt)
-            }
-        }
-        return resolvedOAuthEnrichmentReading(updated, asOf: now)
-    }
-
-    /// Clears limits from a cached OAuth observation after their reset boundary.
-    /// The cached value cannot describe usage that accumulated in the new rolling
-    /// window. Plan and extra-usage fields remain valid on their own cadence.
-    static func resolvedOAuthEnrichmentReading(
-        _ reading: ReadingState<OAuthPipeline.OAuthEnrichment>,
-        asOf now: Date
-    ) -> ReadingState<OAuthPipeline.OAuthEnrichment> {
-        switch reading {
-        case .current(let value, let observedAt):
-            return .current(
-                value: resolvedOAuthEnrichment(value, observedAt: observedAt, asOf: now),
-                polledAt: observedAt)
-        case .stale(let value, let observedAt, let error):
-            return .stale(
-                value: resolvedOAuthEnrichment(value, observedAt: observedAt, asOf: now),
-                polledAt: observedAt,
-                error: error)
-        case .failed:
-            return reading
-        }
-    }
-
-    private static func resolvedOAuthEnrichment(
-        _ enrichment: OAuthPipeline.OAuthEnrichment,
-        observedAt: Date,
-        asOf now: Date
-    ) -> OAuthPipeline.OAuthEnrichment {
-        func resolvedWindow(_ window: LimitWindow) -> LimitWindow? {
-            guard let resetAt = window.resetsAt, resetAt <= now else { return window }
-            guard observedAt >= resetAt else { return nil }
-            return window.resolved(asOf: now)
-        }
-
-        return OAuthPipeline.OAuthEnrichment(
-            opus: enrichment.opus.flatMap(resolvedWindow),
-            scopedWeekly: enrichment.scopedWeekly.map { scoped in
-                scoped.compactMap { limit in
-                    resolvedWindow(limit.window).map {
-                        ScopedLimitWindow(id: limit.id, window: $0)
-                    }
-                }
-            },
-            extraUsage: enrichment.extraUsage,
-            plan: enrichment.plan,
-            credentialService: enrichment.credentialService)
-    }
-
-    /// Per-account OAuth readings for every discovered config dir (multi-account
-    /// tier). Interval-gated like the single-slot enrichment; the fetch itself
-    /// runs off-main (inside `Timeout.run`'s detached task). Returns cached
-    /// readings between refreshes so every poll can re-merge.
-    ///
-    /// Gated on `oauthMode == "auto"` (the user explicitly connected the Claude
-    /// Code token), not just the source toggle: reading another app's Keychain
-    /// items surfaces the macOS ACL password prompt once per entry, which must
-    /// never ambush a statusline-only user. Manual mode is excluded too — its
-    /// app-owned token deliberately avoids Claude Code's Keychain entries.
-    private func accountReadings(
-        now: Date,
-        configuration: PollConfiguration
-    ) async -> [OAuthAccountReading] {
-        guard configuration.oauthEnabled, configuration.oauthMode == "auto"
-        else {
-            accountOAuthFailures = [:]
-            return []
-        }
-        let disabledKeys = configuration.disabledClaudeAccountKeys
-        let enabledCachedReadings = Self.enabledCachedAccountReadings(
-            cachedAccountReadings,
-            disabledKeys: disabledKeys)
-        if let lastAccountsFetchAt,
-            now.timeIntervalSince(lastAccountsFetchAt) < Self.oauthEnrichmentIntervalSeconds
-        {
-            return enabledCachedReadings
-        }
-        let configuredDirs = configuration.configuredClaudeDirs
-        let accounts: [AccountConfig]
-        do {
-            accounts = try await Timeout.run(seconds: 5) {
-                ConfigDirDiscovery.discover(
-                    configuredDirs: configuredDirs, disabledKeys: disabledKeys)
-            }
-        } catch {
-            guard configuration.generation == pipelineGeneration, canPoll else {
-                return enabledCachedReadings
-            }
-            lastAccountsFetchAt = now
-            accountOAuthFailures = Dictionary(
-                uniqueKeysWithValues: enabledCachedReadings.map {
-                    ($0.accountKey, .requestFailed)
-                })
-            return enabledCachedReadings
-        }
-        guard configuration.generation == pipelineGeneration, canPoll else {
-            return enabledCachedReadings
-        }
-
-        let accountKeys = accounts.map(\.id)
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        // The provider owns both the total deadline and each account deadline.
-        // It returns completed results when a later account times out.
-        let results = await MultiAccountOAuth.fetchAllResults(
-            accounts: accounts,
-            home: home,
-            thresholds: configuration.thresholds,
-            transport: ProviderHTTPClient.shared,
-            credentialsLoader: { path, isDefault in
-                OAuthKeychain.loadResult(configDirPath: path, isDefault: isDefault)
-            },
-            now: now)
-        guard configuration.generation == pipelineGeneration, canPoll else {
-            return enabledCachedReadings
-        }
-
-        lastAccountsFetchAt = now
-        cachedAccountReadings = Self.mergedCachedAccountReadings(
-            previous: enabledCachedReadings,
-            successful: results.compactMap(\.reading),
-            validAccountKeys: accountKeys)
-        var failures = Dictionary(
-            uniqueKeysWithValues: results.compactMap { result in
-                result.failure.map { (result.accountKey, $0) }
-            })
-        let reportedKeys = Set(results.map(\.accountKey))
-        let missingFailure: MultiAccountOAuth.AccountFetchFailure =
-            OAuthPipeline.rateLimitedUntil(now: now) != nil ? .rateLimited : .requestFailed
-        for key in accountKeys where !reportedKeys.contains(key) {
-            failures[key] = missingFailure
-        }
-        accountOAuthFailures = failures
-        return cachedAccountReadings
-    }
-
-    /// A discovery timeout must not restore an account that the captured poll
-    /// configuration disabled. The default Claude account is always enabled.
-    nonisolated static func enabledCachedAccountReadings(
-        _ readings: [OAuthAccountReading],
-        disabledKeys: Set<String>
-    ) -> [OAuthAccountReading] {
-        readings.filter {
-            $0.accountKey == "claude" || !disabledKeys.contains($0.accountKey)
-        }
-    }
-
-    /// Replaces successful accounts in place, retains last-good values for failed
-    /// accounts, and removes values only when the account is no longer enabled.
-    nonisolated static func mergedCachedAccountReadings(
-        previous: [OAuthAccountReading],
-        successful: [OAuthAccountReading],
-        validAccountKeys: [String]
-    ) -> [OAuthAccountReading] {
-        var byKey = Dictionary(
-            previous.map { ($0.accountKey, $0) },
-            uniquingKeysWith: { current, _ in current })
-        for reading in successful {
-            byKey[reading.accountKey] = reading
-        }
-        return validAccountKeys.compactMap { byKey[$0] }
-    }
-
-    /// Cost scans never join the quota task group. One active scan and one latest
-    /// pending request bound repeated opens, even when filesystem work ignores
-    /// cancellation. The separate one-slot budget also bounds timed-out workers.
-    private func scheduleCostRefresh(configuration: PollConfiguration) {
-        guard configuration.generation == pipelineGeneration, configuration.claudeEnabled,
-            configuration.costSourcesMatchCurrentSettings, canPoll
-        else { return }
-        guard costRefreshTask == nil else {
-            pendingCostConfiguration = configuration
-            return
-        }
-        let scan = costUsageScanner
-        let budget = costScanBudget
-        let timeout = costScanTimeoutSeconds
-        let now = Date()
-        costIsLoading = true
-        costRefreshTask = Task { [weak self] in
-            let result = try? await Timeout.run(seconds: timeout, budget: budget) {
-                await scan(now, configuration)
-            }
-            if result == nil {
-                // A timeout has no verified scope, so it clears old totals. Users
-                // see the cost card empty itself with no visible cause.
-                MeterLog.logger(.cost).warning(
-                    "Cost scan did not complete within \(Int(timeout)) s")
-            }
-            guard let self else { return }
-            costRefreshTask = nil
-            costIsLoading = false
-            if configuration.generation == pipelineGeneration,
-                configuration.costSourcesMatchCurrentSettings, canPoll
-            {
-                costReading = Self.updatedCostReading(result, previous: costReading, scannedAt: now)
-                // Merge only into the latest quota snapshot. Cost completion cannot
-                // restore an older quota, advance its timestamp, or emit quota alerts.
-                if var snapshot {
-                    applyCurrentCost(to: &snapshot)
-                    self.snapshot = snapshot
-                    try? store.writeLatest(snapshot)
-                }
-            }
-            let pending = pendingCostConfiguration
-            pendingCostConfiguration = nil
-            if let pending { scheduleCostRefresh(configuration: pending) }
-        }
-    }
-
-    nonisolated static func updatedCostReading(
-        _ result: CostUsageResult?, previous: ReadingState<CostUsageResult>?, scannedAt: Date
-    ) -> ReadingState<CostUsageResult> {
-        if let result, !result.models.isEmpty || !result.isPartialEstimate {
-            return .current(value: result, polledAt: scannedAt)
-        }
-        let error = "Cost scan did not complete."
-        if let previousValue = previous?.value, let previousDate = previous?.lastPolledAt,
-            let result, result.sourcePaths == previousValue.sourcePaths
-        {
-            return .stale(value: previousValue, polledAt: previousDate, error: error)
-        }
-        return .failed(error: error, lastPolledAt: nil)
-    }
-
-    private func applyCurrentCost(to snapshot: inout ClaudeUsageSnapshot) {
-        snapshot.models = costModels
-        snapshot.costObservation = costReading?.value.flatMap { _ in
-            costScannedAt.map { CostObservation(scannedAt: $0, isPartial: costScanPartial) }
-        }
-    }
-
-    @discardableResult
-    static func apply(
-        _ e: OAuthPipeline.OAuthEnrichment, to snap: inout ClaudeUsageSnapshot,
-        sourceAccountKey: String?
-    ) -> Bool {
-        guard sourceAccountKey == (snap.activeAccountID ?? "claude") else { return false }
-        // Enrichment is a complete successful observation, not a sparse patch.
-        // Replacing optionals lets the API explicitly remove a limit that existed
-        // in an earlier response; a failed fetch never reaches this method.
-        snap.limits.currentWeekOpus = e.opus
-        snap.limits.scopedWeekly = e.scopedWeekly
-        snap.limits.extraUsage = e.extraUsage
-
-        if var account = snap.account {
-            account.plan = e.plan
-            snap.account = account.isEmpty ? nil : account
-        } else if let plan = e.plan {
-            snap.account = AccountInfo(plan: plan)
-        }
-        return true
-    }
-
-    nonisolated static func topLevelOAuthDetailsObservedAt(
-        for snapshot: ClaudeUsageSnapshot,
-        enrichmentObservedAt: Date?
-    ) -> Date? {
-        if snapshot.source.cliPath == "api.anthropic.com" {
-            return snapshot.lastSuccessfulPollAt ?? snapshot.createdAt
-        }
-        return enrichmentObservedAt
-    }
-
-    /// Scans local Claude Code transcripts for per-model token/cost usage (last 7
-    /// days), unioned across every discovered config dir (cost is additive).
-    /// Discovery happens here, off-main, rather than reusing a cached list — so the
-    /// union is correct from the very first poll, independent of the statusline source.
-    nonisolated private static func scanCostModels(
-        now: Date,
-        configuration: PollConfiguration
-    ) async -> CostUsageResult {
-        // The caller runs this method in a bounded detached task. Do not add a
-        // second unstructured task here because it would escape that deadline.
-        let catalog = await ModelsDevPricing.loadCatalog(now: now)
-        let accounts = ConfigDirDiscovery.discover(
-            configuredDirs: configuration.configuredClaudeDirs,
-            disabledKeys: configuration.disabledClaudeAccountKeys)
-        let paths =
-            accounts.isEmpty
-            ? [JournalReader.defaultProjectsPath] : accounts.map(\.projectsPath)
-        let pricing = ModelPricing.current.withCatalog(catalog)
-        return CostUsageScanner(projectsPaths: paths, pricing: pricing).scan(
-            daysBack: 7, now: now)
-    }
-
-    /// Scans local transcripts for the 7×24 activity heatmap (off-main). Called
-    /// when the user opens the heatmap; refreshes the existing result in place.
-    /// The task handle is kept so closing the heatmap cancels a scan mid-flight
-    /// (the scanner checks `Task.isCancelled` per file); the generation guard
-    /// keeps a cancelled scan's completion from clobbering a newer load's state.
-    private var activityHeatmapTask: Task<Void, Never>?
-    private var activityHeatmapGeneration = 0
-    private var spendBreakdownTask: Task<Void, Never>?
-    private var spendBreakdownGeneration = 0
-    private var spendBreakdownRequest: SpendBreakdownRequest?
-
-    func loadActivityHeatmap() {
-        guard !activityHeatmapLoading else { return }
-        activityHeatmapLoading = true
-        activityHeatmapGeneration += 1
-        let generation = activityHeatmapGeneration
-        let now = Date()
-        let configuredDirs = AppGroupConfig.configuredConfigDirs
-        let disabledKeys = Set(AppGroupConfig.disabledAccountKeys)
-        activityHeatmapTask = Task.detached(priority: .userInitiated) { [weak self] in
-            let result: ActivityHeatmap?
-            do {
-                result = try await Timeout.run(
-                    seconds: Self.transcriptScanTimeoutSeconds,
-                    budget: Self.transcriptScanTimeoutBudget
-                ) {
-                    let accounts = ConfigDirDiscovery.discover(
-                        configuredDirs: configuredDirs, disabledKeys: disabledKeys)
-                    let paths =
-                        accounts.isEmpty
-                        ? [JournalReader.defaultProjectsPath] : accounts.map(\.projectsPath)
-                    return ActivityScanner(projectsPaths: paths).scan(daysBack: 30, now: now)
-                }
-            } catch is CancellationError {
-                result = nil
-            } catch {
-                result = ActivityHeatmap(
-                    counts: Array(repeating: Array(repeating: 0, count: 24), count: 7),
-                    total: 0,
-                    isPartial: true,
-                    daysCovered: 0)
-            }
-            let cancelled = Task.isCancelled
-            await MainActor.run { [weak self] in
-                guard let self, self.activityHeatmapGeneration == generation else { return }
-                if !cancelled, let result { self.activityHeatmap = result }
-                self.activityHeatmapLoading = false
-            }
-        }
-    }
-
-    /// Loads the Usage and Spend window's own scan.
-    ///
-    /// Deliberately separate from the poll's cost reading: the window offers a
-    /// 30-day range, and a 30-day scan must never delay quota publication or
-    /// widen what the 60-second loop reads. Mirrors `loadActivityHeatmap`.
-    func loadSpendBreakdown(
-        daysBack: Int, now: Date = Date(), calendar: Calendar = .current
-    ) {
-        spendBreakdownGeneration += 1
-        let generation = spendBreakdownGeneration
-        // A previous result does not cover the newly requested window. Clear it
-        // before loading so neither the chart nor the export can claim it does.
-        spendBreakdown = nil
-        spendBreakdownError = nil
-        spendBreakdownLoading = true
-        let request = Self.spendRequest(daysBack: daysBack, now: now, calendar: calendar)
-        spendBreakdownRequest = request
-        let scan = spendBreakdownScanner
-        let budget = spendBreakdownScanBudget
-        spendBreakdownTask?.cancel()
-        spendBreakdownTask = Task.detached(priority: .userInitiated) { [weak self] in
-            let result: SpendScanResult?
-            let errorMessage: String?
-            do {
-                result = try await Self.runSpendScan(request, scan: scan, budget: budget)
-                errorMessage = nil
-            } catch is CancellationError {
-                result = nil
-                errorMessage = nil
-            } catch {
-                // A timeout has no verified scope, so it cannot claim any total.
-                result = nil
-                errorMessage = "The scan did not finish."
-            }
-            let cancelled = Task.isCancelled
-            await MainActor.run { [weak self] in
-                guard let self, spendBreakdownGeneration == generation else { return }
-                if !cancelled, let result {
-                    spendBreakdown = SpendBreakdown(
-                        result: result, rangeDays: request.rangeDays,
-                        scannedAt: request.now, calendar: request.calendar)
-                }
-                if !cancelled {
-                    spendBreakdownError = errorMessage
-                    if errorMessage != nil {
-                        MeterLog.logger(.cost).warning("Usage and Spend scan did not finish")
-                    }
-                }
-                spendBreakdownLoading = false
-            }
-        }
-    }
-
-    /// A canceled file read can retain the shared slot. Keep only this latest
-    /// request waiting, within the same total deadline, until that read finishes.
-    nonisolated private static func runSpendScan(
-        _ request: SpendBreakdownRequest,
-        scan: @escaping @Sendable (SpendBreakdownRequest) async throws -> SpendScanResult,
-        budget: Timeout.TaskBudget
-    ) async throws -> SpendScanResult {
-        let deadline = ProcessInfo.processInfo.systemUptime + transcriptScanTimeoutSeconds
-        while true {
-            try Task.checkCancellation()
-            let remaining = deadline - ProcessInfo.processInfo.systemUptime
-            guard remaining > 0 else { throw TimeoutError(seconds: transcriptScanTimeoutSeconds) }
-            do {
-                return try await Timeout.run(seconds: remaining, budget: budget) {
-                    try Task.checkCancellation()
-                    return try await scan(request)
-                }
-            } catch is TimeoutCapacityError {
-                try await Task.sleep(for: .milliseconds(100))
-            }
-        }
-    }
-
-    nonisolated private static func scanSpendBreakdown(_ request: SpendBreakdownRequest)
-        -> SpendScanResult
-    {
-        let accounts = ConfigDirDiscovery.discover(
-            configuredDirs: request.configuredDirs, disabledKeys: request.disabledKeys)
-        let paths =
-            accounts.isEmpty
-            ? [JournalReader.defaultProjectsPath] : accounts.map(\.projectsPath)
-        let claude = CostUsageScanner(projectsPaths: paths, calendar: request.calendar).scan(
-            daysBack: request.rangeDays, now: request.now)
-        let codex: ProviderSpend
-        if request.codexEnabled {
-            let report = CodexCostScanner().scanReport(
-                codexHomes: request.codexHomes.map { URL(fileURLWithPath: $0) },
-                daysBack: request.rangeDays, now: request.now, calendar: request.calendar)
-            codex = ProviderSpend(
-                provider: .codex, usage: report.usage, knownCostUsd: report.knownCostUsd,
-                hasUnknownCosts: report.hasUnknownCosts,
-                usesStandardTierAssumption: report.usesStandardTierAssumption,
-                knownDailyCosts: report.knownDailyCosts, unknownCostDays: report.unknownCostDays)
-        } else {
-            codex = ProviderSpend(provider: .codex, usage: .empty, isEnabled: false)
-        }
-        return SpendScanResult(providers: [ProviderSpend(provider: .claude, usage: claude), codex])
-    }
-
-    private static func spendRequest(daysBack: Int, now: Date, calendar: Calendar)
-        -> SpendBreakdownRequest
-    {
-        SpendBreakdownRequest(
-            rangeDays: daysBack, now: now, calendar: calendar,
-            configuredDirs: AppGroupConfig.configuredConfigDirs,
-            disabledKeys: Set(AppGroupConfig.disabledAccountKeys),
-            codexHomes: AppSettings.codexHomePaths(), codexEnabled: AppSettings.codexSourceEnabled)
-    }
-
-    private func refreshSpendConfigurationIfNeeded() {
-        guard let old = spendBreakdownRequest else { return }
-        let current = Self.spendRequest(
-            daysBack: old.rangeDays, now: old.now, calendar: old.calendar)
-        guard
-            current.configuredDirs != old.configuredDirs || current.disabledKeys != old.disabledKeys
-                || current.codexHomes != old.codexHomes || current.codexEnabled != old.codexEnabled
-        else { return }
-        loadSpendBreakdown(daysBack: old.rangeDays, calendar: old.calendar)
-    }
-
-    func cancelSpendBreakdownLoad() {
-        spendBreakdownRequest = nil
-        spendBreakdownTask?.cancel()
-        spendBreakdownTask = nil
-        spendBreakdownGeneration += 1
-        spendBreakdownLoading = false
-    }
-
-    /// Cancels an in-flight heatmap scan (the user closed the heatmap or the
-    /// popover). The cut-short grid is discarded, never published.
-    func cancelActivityHeatmapLoad() {
-        activityHeatmapTask?.cancel()
-        activityHeatmapTask = nil
-        activityHeatmapGeneration += 1
-        activityHeatmapLoading = false
-    }
-
-    // MARK: - Pipeline factory
-
-    private static func makePipeline(store: SnapshotStore) -> any ClaudeMeterPipeline {
-        let thresholds = AppGroupConfig.currentThresholds()
-        var pipeline: any ClaudeMeterPipeline = CachedSnapshotPipeline(store: store)
-
-        if AppSettings.oauthSourceEnabled {
-            let configuredDirs = AppGroupConfig.configuredConfigDirs
-            pipeline = OAuthPipeline(
-                fallback: pipeline, store: store, thresholds: thresholds,
-                accountConfigs: { ConfigDirDiscovery.discover(configuredDirs: configuredDirs) })
-        }
-
-        if AppSettings.statuslineSourceEnabled {
-            pipeline = StatuslinePipeline(
-                fallback: pipeline,
-                store: store,
-                thresholds: thresholds,
-                disabledAccountKeys: Set(AppGroupConfig.disabledAccountKeys)
-            )
-        }
-
-        return DisabledClaudeAccountFilteringPipeline(
-            upstream: pipeline,
-            disabledAccountKeys: Set(AppGroupConfig.disabledAccountKeys))
-    }
-
-    private var canPoll: Bool {
-        onboardingIsComplete && isActive && AppSettings.hasEnabledDataSource
-    }
-
-    /// Installs/self-heals the statusline bridge and attention hooks in one
-    /// serialized off-main task. Requests during a run coalesce into one rerun.
-    private func refreshConfigBridges() {
-        guard onboardingIsComplete, systemIntegrationEnabled else { return }
-        if configRefreshTask != nil {
-            configRefreshRerunRequested = true
-            return
-        }
-
-        let request = ConfigBridgeRefreshRequest(
-            statuslineEnabled: AppSettings.statuslineSourceEnabled,
-            attentionEvents: AppSettings.enabledAttentionEvents,
-            configuredDirs: AppGroupConfig.configuredConfigDirs,
-            disabledAccountKeys: Set(AppGroupConfig.disabledAccountKeys),
-            store: store)
-        let operation = configBridgeRefreshOperation
-        configRefreshID &+= 1
-        let refreshID = configRefreshID
-        configRefreshOperationCount += 1
-        configRefreshTask = Task.detached(priority: .utility) { [weak self] in
-            await operation(request)
-            await self?.configBridgeRefreshDidFinish(refreshID)
-        }
-    }
-
-    private func configBridgeRefreshDidFinish(_ refreshID: UInt64) {
-        guard refreshID == configRefreshID else { return }
-        configRefreshTask = nil
-        guard configRefreshRerunRequested else { return }
-        configRefreshRerunRequested = false
-        refreshConfigBridges()
-    }
-
-    /// Test seam for the coalescing lifecycle. Production callers use the private
-    /// method through polling and settings changes.
-    func refreshConfigBridgesForTesting() {
-        refreshConfigBridges()
-    }
-
-    func persistedSnapshotForTesting() -> ClaudeUsageSnapshot? {
-        try? store.readLatest()
-    }
-
-    func persistedLastErrorForTesting() -> LastErrorRecord? {
-        try? store.readLastError()
-    }
-
-    nonisolated private static func performConfigBridgeRefresh(
-        _ request: ConfigBridgeRefreshRequest
-    ) {
-        // Global removal must see disabled accounts too. Apply the disabled filter
-        // only to installation and reads.
-        let allAccounts = ConfigDirDiscovery.discover(
-            configuredDirs: request.configuredDirs, disabledKeys: [])
-        let enabledAccounts = allAccounts.filter {
-            $0.id == StatuslineBridge.defaultAccountKey
-                || !request.disabledAccountKeys.contains($0.id)
-        }
-        let enabledDirs = enabledAccounts.map(\.configDir)
-        let disabledDirs = allAccounts.filter {
-            $0.id != StatuslineBridge.defaultAccountKey
-                && request.disabledAccountKeys.contains($0.id)
-        }.map(\.configDir)
-        let allDirs = allAccounts.map(\.configDir)
-        var firstError: Error?
-
-        // Repair payload files that a pre-umask snippet left readable by other
-        // local accounts. Runs for both bridges, and whether or not either source
-        // is enabled, because the old files stay until an explicit purge.
-        StatuslineBridge.restrictDataTree()
-
-        if request.statuslineEnabled {
-            do {
-                try StatuslineBridge.install(configDirs: enabledDirs)
-            } catch {
-                if firstError == nil { firstError = error }
-            }
-            do {
-                _ = try StatuslineBridge.uninstall(configDirs: disabledDirs)
-            } catch {
-                if firstError == nil { firstError = error }
-            }
-        } else {
-            do {
-                if try StatuslineBridge.uninstall(configDirs: allDirs) {
-                    StatuslineBridge.purgeSessionData()
-                }
-            } catch let error as StatuslineBridge.UninstallError {
-                if error.didChange { StatuslineBridge.purgeSessionData() }
-                if firstError == nil { firstError = error }
-            } catch {
-                if firstError == nil { firstError = error }
-            }
-        }
-
-        if request.attentionEvents.isEmpty {
-            do {
-                try HookBridge.install(configDirs: allDirs, events: [])
-            } catch {
-                if firstError == nil { firstError = error }
-            }
-        } else {
-            do {
-                try HookBridge.install(
-                    configDirs: enabledDirs, events: request.attentionEvents)
-            } catch {
-                if firstError == nil { firstError = error }
-            }
-            do {
-                try HookBridge.install(configDirs: disabledDirs, events: [])
-            } catch {
-                if firstError == nil { firstError = error }
-            }
-        }
-
-        if let firstError {
-            let message =
-                (firstError as? LocalizedError)?.errorDescription
-                ?? firstError.localizedDescription
-            try? request.store.writeLastError(
-                LastErrorRecord(message: DiagnosticsSanitizer.sanitize(message)))
-            MeterLog.logger(.bridge).error("Bridge reconciliation failed: \(message)")
-        }
-    }
-
-    // MARK: - Attention (Claude Code hooks)
-
-    /// Drains attention markers and fires a native notification per event, on its
-    /// own energy-aware cadence (independent of the meter poll): backs off to the
-    /// asleep recheck while the display is asleep, and stretches on battery — macOS
-    /// owns sound, Focus/DND, and Notification-Center history.
-    private func startAttentionWatcher() {
-        attentionTask?.cancel()
-        guard systemIntegrationEnabled, onboardingIsComplete, isActive,
-            AppSettings.attentionEnabled
-        else {
-            attentionTask = nil
-            return
-        }
-        attentionTask = Task { [weak self] in
-            var tick = 0
-            while !Task.isCancelled {
-                guard let self else { break }
-                if self.powerMonitor?.isDisplayAsleep == true {
-                    // Asleep: back off (PowerMonitor.onWake restarts us for an
-                    // immediate drain), don't spin a 2 s timer overnight.
-                    try? await Task.sleep(for: .seconds(Self.asleepRecheckSeconds))
-                    continue
-                }
-                await self.drainAttention()
-                tick += 1
-                // Self-heal the hooks periodically when the poll loop isn't running to
-                // do it (attention enabled but no usage data source) — so a dropped
-                // hook still recovers without a relaunch.
-                if tick % Self.attentionSelfHealEveryTicks == 0, !self.canPoll {
-                    self.refreshConfigBridges()
-                }
-                let interval =
-                    self.powerMonitor?.isOnBattery == true
-                    ? Self.attentionDrainSeconds * Self.batteryPollMultiplier
-                    : Self.attentionDrainSeconds
-                try? await Task.sleep(for: .seconds(interval))
-            }
-        }
-    }
-
-    private func drainAttention() async {
-        // Guard against overlapping drains (e.g. an onWake/toggle restart while a
-        // prior drain is mid-flight) — they could double-emit the same marker.
-        guard !attentionDraining else { return }
-        attentionDraining = true
-        defer { attentionDraining = false }
-
-        let now = Date()
-        let disabled = Set(AppGroupConfig.disabledAccountKeys)
-        let events = await attentionEventDrainOperation(disabled, now)
-        // A wake or configuration rebuild replaces the watcher while attention is
-        // still enabled. Finish events that this drain already removed from disk;
-        // the loop cancellation still stops the old watcher after this iteration.
-        guard isActive, onboardingIsComplete, AppSettings.attentionEnabled
-        else { return }
-        guard !events.isEmpty else { return }
-
-        let engine = notificationEngine
-        let enabled = AppSettings.enabledAttentionEvents
-        let attentionLease = engine.attentionLease()
-        var sawLimitBlock = false
-        for event in events where enabled.contains(event.kind.rawValue) {
-            // A StopFailure only alerts when it's a real limit/billing block — auth,
-            // server, and invalid-request failures are noise for a rate-limit meter.
-            if event.kind == .stopFailure {
-                guard event.isLimitBlock else { continue }
-                sawLimitBlock = true
-            }
-            let account = Self.friendlyAccountName(event.accountKey)
-            // Fire-and-forget: a slow/wedged notification call must never stall the
-            // drain loop.
-            Task {
-                await engine.postAttention(
-                    event: event,
-                    accountLabel: account,
-                    expectedRevision: attentionLease)
-            }
-        }
-        // A limit block is ground truth that usage maxed out — re-poll now so the
-        // meter reflects it immediately instead of waiting for the next interval.
-        if sawLimitBlock { refreshNow() }
-    }
-
-    @discardableResult
-    func startAttentionWatcherForTesting() -> Task<Void, Never>? {
-        startAttentionWatcher()
-        return attentionTask
-    }
-
-    /// Clears leftover markers when attention is disabled.
-    private func clearAttentionEvents() {
-        Task.detached(priority: .utility) { SessionEventStore.clearAll() }
+        MeterSettings.currentThresholds()
     }
 
     /// The display name for an account key — the user's override, else a prettified
     /// label — matching how the popover labels accounts (which strips the `claude-`
     /// prefix / maps `claude` → "default" via `ConfigDirDiscovery.label`).
     static func friendlyAccountName(_ key: String) -> String {
-        AppGroupConfig.accountName(forKey: key)
+        MeterSettings.accountName(forKey: key)
             ?? ConfigDirDiscovery.label(forKey: key).friendlyAccountLabel
     }
 }

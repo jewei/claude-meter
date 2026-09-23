@@ -17,111 +17,236 @@ The app is local-first:
 - Provider credentials are read-only except for manually entered Claude OAuth tokens,
   which Claude Meter owns in Keychain.
 - Provider secrets are never rendered, logged, or copied into diagnostics.
-- The widget reads only the normalized App Group main-meter reading and performs no
-  provider I/O.
+- Quota polling reads provider data. It does not scan local
+  transcripts or estimate historical costs. Provider-reported live balances remain visible.
 - Only the explicitly selected main provider affects the hero, first popover section,
-  menu-bar indicator, header timestamp, widget, or quota notifications. Missing selected
-  data never falls back to another provider.
+  menu-bar indicator or header timestamp. Missing selected data never falls
+  back to another provider.
 
 ## 2. Targets and ownership
 
 | Target | Responsibility |
 | --- | --- |
-| `ClaudeMeter` | AppKit/SwiftUI presentation, settings, polling orchestration, power/network monitors, notifications, Sparkle |
-| `ClaudeMeterCore` | Normalized snapshot models, storage, thresholds, notification/reset/pace policy; no UI or provider I/O |
-| `ClaudeMeterProviders` | Statusline and hook bridges, OAuth/Keychain/HTTP, transcript scanners, Cursor/Codex/Grok adapters |
-| `ClaudeMeterWidgetExtension` | Sandboxed App Group snapshot reader and WidgetKit views |
+| `ClaudeMeter` | AppKit/SwiftUI presentation, settings, refresh scheduling, display sleep/wake, Sparkle |
+| `ClaudeMeterCore` | Normalized snapshot models, storage, thresholds, reset formatting; no UI or provider I/O |
+| `ClaudeMeterProviders` | OAuth/Keychain/HTTP and all four provider adapters |
 
-Dependencies point inward: app and widget depend on Core; the app also depends on
-Providers; Providers depends on Core. Provider-specific wire formats do not enter Core.
+The app depends on Core and Providers. Providers depends on Core. Provider-specific wire formats do not enter Core.
 
-`AppState` is the main-actor composition root. Each poll captures one immutable
-`PollConfiguration`; optional providers publish one coherent `ReadingState` so value,
-timestamp, staleness, and error cannot drift apart. `MainMeterReading` is the normalized
-Core model shared by app policy, App Group persistence, and the widget; provider wire
-models never become presentation or widget contracts.
+`AppState` is the main-actor composition root and presentation/settings coordinator.
+`RefreshScheduler` owns global timing and admission through explicit `RefreshConfiguration`.
+All provider usage lifecycle belongs to `UsageStore`,
+which publishes Core `ReadingState<ProviderSnapshot>`. AppState owns no mutable provider readings.
+`MainMeterReading` holds the selected provider quota data for app presentation. It is not
+persisted.
 
-## 3. Claude data pipeline
+### Shared provider domain
 
-`ClaudeMeterPipeline` exposes:
+`ProviderSnapshot` is the application-domain boundary for all four providers. It holds a
+`ProviderID`, an account array, and the latest included quota observation time. It has no
+selected or active account. Each `ProviderAccountSnapshot` keeps its own optional observation time,
+explicit stale flag, sanitized last error and last attempt time. A nil observation means
+that the configured account has no usable data. Age-based staleness remains a consumer policy.
 
-```swift
-func poll(now: Date, kind: RefreshKind) async throws -> ParseResult
-```
+Each account has a label, optional plan and public subtitle, ordinary `UsageWindow` rows,
+and `BalanceItem` rows. Window percentages always mean used, from 0 through 100. Adapters
+clamp finite values and keep unknown or non-finite values unknown. An over-limit flag
+preserves severity after clamping. Window kinds support session/weekly menu-bar choices;
+`contributesToQuota` excludes display-only scoped windows and budget rows from selection.
+Only provider-reported reset/end times enter `resetAt`.
 
-`poll(now:)` is the background convenience. `RefreshKind.interactive` may bypass only
-idle API-saving cooldowns; it never bypasses correctness or the shared OAuth 429 gate.
+`UsageWindow.resolved` uses the existing `LimitWindow` reset rule. A current expired
+window becomes zero with no next reset date. A stale expired window becomes unknown.
+Resolution does not replace the stored authoritative timestamp. Presentation converts
+used percentage to energy left. Account selection takes an exact pin, or the greatest
+resolved quota usage. Ties retain input order. Unknown usage ranks below known zero.
 
-The active pipeline is assembled bottom-up from enabled sources:
+| Provider output | Domain mapping | Account identity |
+| --- | --- | --- |
+| Claude snapshot/account array | Session, weekly, Opus and other scoped windows; plan, email subtitle; extra-usage amount, limit, currency and paused state | Existing config account key, including the existing unmapped OAuth key; never email |
+| Codex reading per home | Session/weekly windows classified by duration; plan, credits and reset allowances | Existing canonical home path used by account pins |
+| Cursor usage | Authoritative billing percentage, optional Auto/API rows, billing end, plan and period spend/limit | `default`, a provider-local connection slot |
+| Grok usage | Credit percentage, reported period end, on-demand spend/cap and prepaid balance | `default`, a provider-local connection slot |
 
-1. `StatuslinePipeline`
-2. `OAuthPipeline`
-3. `CachedSnapshotPipeline` terminal fallback
+Cursor and Grok output no opaque member ID or reliable plan for Grok. Their slot keys do
+not prove login ownership. Existing credential-change protections remain in Providers.
+Codex member/workspace ownership checks still guard last-good restoration and publication;
+the home key alone is not sufficient. No token or credential fingerprint enters the domain.
+Codex email stays omitted. Claude email is display text only, as in the existing cards.
 
-The assembled chain is enclosed by `DisabledClaudeAccountFilteringPipeline`. Thus,
-disabled accounts cannot return from a cached result when the statusline source is off.
+Balance amounts use `Decimal` in the stated unit. They need not be money. Optional limits
+retain live spend/budget pairs. `displayText` retains non-numeric states such as unlimited
+credits and paused extra usage. Counted allowances have an authoritative total plus
+optional title/expiry details. Detail count never replaces the total. Codex reset-credit
+expiry is separate from a quota reset; it does not advance quota freshness.
 
-The statusline tier wins while it has fresh bridge data. If unavailable or stale, OAuth
-may run. Every failed tier records a sanitized `SourceAttempt`; fallback does not erase
-the reason. Cached data is marked stale and preserves its original successful-fetch time.
-Source tiers return data only. After the full poll is assembled, `AppState` writes the
-snapshot if that poll generation is still current. Cost scanning runs independently of
-this quota commit. Each quota snapshot uses the latest completed cost reading from the
-current account configuration. A later cost completion updates only the cost fields in
-the latest snapshot. It preserves quota timestamps, errors, and notification observations.
+The provider module has one adapter per provider. Authentication, raw source/parser
+metadata and raw errors stay outside `ProviderSnapshot`. Sanitized account error text
+belongs to the account. `ReadingState` lives in Core with current/stale/failed cases.
+A failed reading can include a snapshot of unavailable account labels and errors. It has
+no successful poll time and no account observations. This preserves error cards without
+inventing quota or maintaining another account array.
 
-Polling normally runs every 60 seconds. It doubles on battery, parks while the display is
-asleep, refreshes immediately after wake or network reconnection, and times out a wedged
-cycle. Opening the popover requests an interactive refresh. Source-setting rebuilds are
-debounced and do not restart an active poll loop. Statusline/hook reconciliation permits
-one active operation and one coalesced rerun.
+`AppState.normalizedSnapshots` reads UsageStore and applies account display overrides.
+It performs no I/O and stores no second copy. All provider cards consume normalized
+accounts, windows and balances. Existing Claude and Codex disk formats remain internal
+to their provider boundaries.
 
-Each cycle admits sources by cost. Claude and the selected main provider always run at the
-cycle cadence: Claude's first tier is a local statusline read, and the selected provider
-owns the hero, menu bar, header time, widget, and quota alerts. A source that appears only
-in the popover — Cursor, Grok, and Codex when Claude is selected — can drop to a slow
-cadence while nobody is looking.
+### Provider lifecycle store
 
-The slow cadence is at most 150 seconds, and always at least one poll cycle below the
-configured stale interval, so this policy alone can never make a card report itself stale.
-A stale interval at or below the cadence disables the slow cadence. An open popover, an
-interactive refresh, a first attempt, a backward clock change, wake, network reconnection,
-and any source or account change all admit every enabled source at once. Cost scans,
-attention hooks, and the advisory status sidecar keep their own schedules.
+Core's `UsageProvider` has explicit validation, fetch and acceptance stages:
 
-### 3.1 Statusline bridge
+1. `validatePrevious(_:now:refreshID:)` returns reconciled previous accounts.
+2. `fetch(now:previous:refreshID:)` returns a `ProviderSnapshot`.
+3. `didAccept(_:refreshID:)` updates in-memory metadata and enqueues ordered persistence.
+4. `waitForPersistence()` asynchronously waits for already accepted writes.
 
-The bridge prepends an idempotent pass-through command to every enabled discovered
-Claude config directory. It writes one sanitized session file per account/session under:
+UsageStore supplies the same refresh ID to validation, fetch and acceptance. It checks the active token,
+enabled state and cancellation before reconciliation, after reconciliation, before fetch,
+and after fetch. It publishes a changed reconciled value before fetching. An unchanged
+value keeps its existing outer reading error/freshness. A nil reconciled value clears it.
+The store checks the token, accepts through `didAccept`, then publishes the final value
+without suspension. This orders ownership stamps and diagnostics before observation.
+Disk success is not a condition for publication. MainActor acceptance must perform no
+blocking I/O, including Foundation file operations, Keychain calls or subprocess waits.
+It may only update memory and submit work to a provider-owned queue.
 
-```text
-~/.claude-meter/sessions/<account-key>/<session-id>.json
-```
+After publication, the store clears loading and awaits `waitForPersistence`. This async
+wait performs no blocking I/O on MainActor. A newer refresh sees the accepted snapshot
+immediately. Cancellation, supersession or disable before acceptance prevents a save.
+After acceptance, these events do not revoke the queued write. A thrown fetch failure
+cannot overwrite last-good data. No later state publication occurs after the write wait.
+Providers never call back into publication and return no side-effect closures.
 
-It preserves the user's existing statusline command, installs with `refreshInterval: 1`,
-repairs legacy snippets, and is removed when the source is disabled. Invalid settings in
-one config directory do not block the others. Disabling an account filters both discovery
-and the session read path.
+Cursor/Grok use default unchanged-previous reconciliation and no-op acceptance/wait methods. Their
+only concrete lifecycle method fetches a normalized snapshot. Claude and Codex each keep at most one
+pending preflight record and one pending save record, identified by refresh ID. These
+records carry existing archive data, source diagnostics and account checks across
+stages. They are consumed by fetch/commit or replaced at the next reconciliation; they
+never supply an independent last-good usage cache. Old stages cannot replace newer
+records. Repeated acceptance of the same result performs no second save.
 
-Both bridge snippets set `umask 077` before they create a directory or write a payload.
-Managed directories under `~/.claude-meter` are `0700` and payloads are `0600`, which
-matches how Claude Code protects its own transcripts. Bridge reconciliation also repairs
-directories and payloads that an earlier snippet created under the default umask. The
-repair uses `O_NOFOLLOW` descriptors, never follows or modifies a symbolic link, and never
-blocks install when it fails.
+Codex resolves configured home paths off-main during validation. Archive reads are
+async, and cancellation/refresh ownership is checked again after each suspended step.
+Codex submits each accepted archive to one serial queue before publication. Encoding,
+UserDefaults reads and UserDefaults writes run there. B cannot write before an earlier
+accepted A finishes. The reading store retains only the newest pending archive until
+its write wait completes. A new refresh can validate this archive during a slow write;
+it cannot restore an older disk value over the accepted observation. This temporary
+write buffer preserves raw archive fields without adding a second usage-state owner.
+Archive format, ownership validation, and email/fingerprint exclusions are unchanged.
 
-Fresh payloads are grouped and merged within an account only. The active account is the
-one with the latest observed activity-signature change; cold ties use the sticky previous
-active key, then payload recency, then key order. File mtime is not activity because an
-idle open session rewrites once per second.
+Refresh operations await their accepted writes, without blocking presentation or the
+main thread. There is no detached persistence task or shutdown daemon. Process exit can
+still interrupt an outstanding write. The app does not add a quit delay or a durability
+guarantee beyond existing storage; the next launch can fetch usage again.
 
-The API fallback cooldown is 120 seconds. Interactive popover refresh can bypass this
-cooldown, while background polling remains below the 180-second stale threshold. OAuth
-429 backoff is never bypassed. An expired fresh statusline window resolves to 0% for
-presentation but retains its raw reset boundary. A same-account OAuth observation fetched
-after that boundary can replace the inferred zero.
+`UsageStore` is an `@MainActor` observable application type, built with an explicit array
+of providers indexed by ID. It owns the only mutable provider reading dictionary,
+the refreshing set, and active refresh tasks. Main-actor work coordinates publication.
+Cursor/Grok fetches use the existing detached 60-second timeout. Codex owns its 60-second
+batch deadline and bounded workers. Claude owns its discovery, primary OAuth and secondary
+account deadlines. Neither has a redundant outer timeout. All admitted
+providers start before the store awaits their results. Failures remain independent.
 
-### 3.2 OAuth
+RefreshScheduler owns the global timer and display sleep/wake handling.
+It sends the admitted provider set to one UsageStore refresh call. Store observation forwards through
+AppState to the existing views; there is no copied store state or event stream. The store
+has no disk persistence.
+
+A success publishes a current reading with the snapshot's observation time. A transient
+failure retains the complete previous snapshot and successful timestamp as stale. Without
+a previous usable value, it publishes failed. Unknown percentages remain nil. Source
+account freshness is unchanged by the store: effective staleness is outer reading stale
+or account stale. Current Claude and Codex provider readings can have mixed account ages.
+Age-based display staleness still uses the existing threshold.
+
+Codex uses current configuration for each refresh. Each home succeeds, retains an
+ownership-validated previous observation as stale, or becomes unavailable with an account
+error. If any account has usable data, the provider reading is current. This includes an
+all-stale but still valid account set. If none has usable data, the reading is failed and
+retains only unavailable account details. Failure never advances an account observation
+time. Exact pins cannot substitute a different account. Nearest selection excludes
+unavailable accounts and resolves stale reset windows to unknown after expiry.
+
+Each provider refresh has one token. A newer request cancels the old task and replaces its
+token. Only the current token can publish or clear loading. Caller cancellation affects
+only that caller's requests; it does not record a failure or cancel a newer task. Disable
+cancels the active task, removes the reading and blocks late publication, including across
+re-enable. Pause and display sleep cancel store work through the same API.
+
+Provider adapters sanitize errors and classify last-good retention. Cursor missing,
+unauthorized or forbidden credentials clear its value while retaining the last successful
+timestamp. Other Cursor errors and Grok errors preserve last-good data, as before.
+Cancellation passes through without becoming a provider failure.
+
+Cursor/Grok cards now read normalized windows and balances. Cursor keeps its total and
+Auto/API percentages, plan, billing reset and spend text. Its limit stays available in the
+balance but does not form a displayed ratio because bonus credit affects the percentage.
+Grok keeps its credit percentage, reset and on-demand spend/cap text. Prepaid balance stays
+in the snapshot; this phase adds no new card row. Metadata visibility and card layout stay
+unchanged. Settings credential preflight remains separate from quota fetching.
+
+### Global refresh scheduler
+
+`@MainActor RefreshScheduler` owns one asynchronous timer, queued requests and PowerMonitor.
+AppState supplies only active state and enabled provider IDs. It combines onboarding and
+pause state before supplying configuration. Scheduler forwards enable/disable to UsageStore
+and never reads UserDefaults. It owns no provider values, credentials or storage.
+
+- Start/resume refreshes enabled providers immediately once onboarding permits it.
+- Every 300 s while awake, all enabled providers share one background refresh opportunity.
+  Provider work already in progress is not duplicated. There is no main/secondary provider
+  distinction and no battery-dependent cadence.
+- Popover open refreshes only missing, failed, provider-stale or at least 60 s old readings.
+  Core's `ReadingState<ProviderSnapshot>.needsRefresh` uses the successful observation time.
+  Invalid or future dates also request refresh. Account-level freshness remains provider-owned.
+- Explicit manual refresh bypasses the age check and can supersede current work.
+- Enabling a provider refreshes only that provider. Disabling cancels it and clears its
+  reading. Credentials/account/source changes invalidate and refresh only the affected
+  provider. These actions do not restart the timer or refresh unrelated providers.
+- Display sleep cancels the timer, queued requests and active store work. There are no periodic asleep checks. Wake refreshes missing, failed, stale or
+  at least 300 s old readings, then starts a new 300 s timer. Recent data needs no extra fetch.
+- Network changes do not trigger refresh. Normal cycles, popover open and manual refresh
+  handle recovery. Authentication retries and backoff remain provider-owned.
+
+Requests from the same actor turn merge into a provider set. UsageStore owns execution,
+supersession and publication safety. The scheduler has no global cycle IDs or mutable copy
+of provider readings. Pause/stop reject queued and late timer work.
+
+Reset countdowns need no provider request. The popover updates its local time each second
+while visible and cancels that timer when closed. UI age staleness uses 600 s by default,
+with a minimum of 600 s for older settings and a maximum of 24 h. This leaves a full normal
+refresh interval of headroom. Explicit provider/account failure can mark data stale sooner.
+The 60 s interactive threshold is independent from this display threshold.
+
+## 3. Claude provider
+
+Claude configuration flows through `ClaudeProviderAdapter`, OAuth usage and account
+reconciliation, then into one normalized `ProviderSnapshot` in UsageStore. The adapter
+uses the existing `OAuthPipeline` for the primary account and `MultiAccountOAuth` for
+secondary accounts. These internal clients return data only. The app does not consume
+`ParseResult`, `ClaudeUsageSnapshot`, or mirrored top-level account fields.
+
+Validation reads a legacy last-good snapshot off-main when needed, removes disabled
+accounts, and clears expired stale windows. A change between auto and manual mode
+invalidates previous usage before fetching. UsageStore publishes validated state only
+after its refresh-token check. Failed primary or secondary requests retain valid previous
+accounts as stale with their original observation times. An account without previous data
+remains visible with unknown windows and a sanitized error. A mixed fresh/stale/unavailable
+set is current when at least one account has usable data; an entirely unavailable set is
+failed. A successful account response replaces all its fields.
+
+The adapter owns a 5 s discovery bound, a 60 s primary bound and the existing 30 s secondary
+batch bound. `ownsDeadline` prevents a redundant UsageStore timeout. Typed source attempts,
+credential issues, account failures and duplicate-login metadata remain read-only provider
+diagnostics. Only sanitized account failure copy enters the normalized reading.
+
+Fetch results control current, stale and failed presentation. There is no separate
+service-status request. Global refresh policy is defined above; Claude account timing
+and authentication backoff remain inside the provider.
+
+### 3.1 OAuth
 
 OAuth is used only when mode is `auto` or `manual`.
 
@@ -130,9 +255,8 @@ OAuth is used only when mode is `auto` or `manual`.
 - Manual mode stores an app-owned Keychain item and reports save/delete failures.
 - Refreshed tokens are cached in memory. Claude Code's Keychain item is never rewritten.
 - Automatic credentials retain the exact Keychain service through refresh and cache reuse.
-  OAuth details supplement a statusline account only when that service maps to the same
-  config account. An unscoped manual token does not establish that match. Direct automatic
-  OAuth uses its mapped config identity; an unmapped login keeps a separate account key.
+  Each usage response belongs to its mapped config account. An unmapped login keeps a
+  separate account key. Manual mode supplies the default account slot.
 - Concurrent refreshes share one request. A bounded handoff retains the result for late
   callers that selected the same one-use token before it was rotated. Credential-generation
   keys prevent a replacement login from using an older result.
@@ -142,7 +266,7 @@ OAuth is used only when mode is `auto` or `manual`.
   in-flight connection result; verification never turns the source back on.
 - All usage and refresh requests use the shared cookie-less transport with same-origin
   HTTPS redirect enforcement.
-- The process-wide 429 gate is shared by polling, verification, and enrichment. It honors
+- The process-wide 429 gate is shared by polling, verification, and per-account requests. It honors
   positive `Retry-After` delta or HTTP-date values up to a 24-hour safety maximum. This
   maximum prevents an invalid server value from disabling OAuth for the life of the app.
   App startup restores one provider-wide deadline from standard defaults. The record
@@ -156,178 +280,147 @@ limits, `extra_usage`, and plan metadata. Flat scoped fields win over equivalent
 in `limits[]`; unknown/null windows degrade without failing the whole response. Extra
 usage minor units are scaled by the response's decimal places.
 
-Statusline does not provide Opus, scoped limits, extra usage, or plan. OAuth enrichment
-replaces those fields without touching fresher statusline session/weekly windows. A
-successful enrichment is a complete observation: absent optional fields clear older
-values. An unavailable or failed fetch produces no observation and keeps the cached one.
-The auxiliary fetch has its own coherent reading lifecycle (`current` / `stale` /
-`failed`) because a fresh statusline result bypasses the main OAuth fallback trail. A
-failed refresh preserves the last successful observation timestamp, marks only the
-OAuth details stale in the popover, and records its typed reason in Diagnostics.
+A successful OAuth response replaces one complete account observation, including absent
+optional fields. There is no second enrichment request. The primary credential has the
+existing token refresh path and is excluded from the secondary request batch.
 
-Multi-account OAuth runs only in auto mode and never refreshes secondary-account tokens.
-It reads each config directory's namespaced credential plus local account identity, fetches
-at most every five minutes, and normally merges fill-only-missing account data. It can
-replace an expired statusline window only with a same-account observation fetched after
-that reset. Each reading keeps its actual fetch timestamp. Failures remain per-account
-state instead of masquerading as fresh absence. A retained last-good account reading
-clears a rolling window after that window resets because post-reset use is unknown. If an
-accounts-nil default snapshot gains a secondary OAuth account, the merge first materializes
-the default account and keeps it active. The account that matches the selected automatic
-credential keeps the single-slot refresh path. When it is active, the direct/single-slot
-and per-account requests are complete observations of plan, Opus, scoped limits, and extra
-usage. The newest observation replaces that bundle in both the top-level and account
-records, including nil fields; an equal
-timestamp favors the per-account request because it runs later in the poll.
+Multi-account OAuth runs only in auto mode. It reads each configured directory's
+namespaced credential and local account identity. Secondary accounts retain the existing
+five-minute request interval and read-only credential behavior; expired secondary tokens
+require a new Claude login. Each reading keeps its actual fetch time. Failed enabled
+accounts retain stale last-good data; expired retained windows become unknown. An exact
+main-meter account pin wins; otherwise the account nearest its limit is selected. No
+session files, file activity, or Claude Code process activity influence selection.
 
-Claude limit resets use a separate, optional Claude web session. The user signs in inside
-Claude Meter in Settings > Data. WebKit retains that session in its website data store;
-Sign out removes Claude and Anthropic website data from that store. The app reads only reset
-offers from the signed-in web Usage response. It does not use the Claude Code OAuth
-token for this offer because that token reports an ineligible surface. It never uses or
-redeems a reset. The web read runs outside the quota pipeline at most every five minutes,
-or on interactive refresh, and does not delay quota publication. The app keeps the last
-successful web observation in memory for up to ten minutes. An error clears the display.
-It shows a reset count and expiry only on a Claude account card whose organization ID
-exactly matches the web organization ID. A missing ID, a different ID, or no web offer
-leaves the count unknown. In that case the popover links to Claude Settings > Usage.
-The user confirms any reset in Claude. The next Claude quota poll reads its new limits.
+Secondary request times are provider metadata, not a usage cache. Accounts not due keep
+UsageStore's previous normalized observation and timestamp. The shared 429 gate and token
+rotation remain independent of refresh acceptance. Interactive refresh cannot bypass them.
 
-### 3.3 Snapshot and staleness
+Optional Claude web reset offers and the separate web sign-in are removed. They reported
+reset grants, not usage, balance or authoritative quota reset times.
 
-The App Group suite is `group.com.jewei.claudemeter`. `AppState` is the only poll-time
-writer. It uses `SnapshotStore` to atomically write Claude's `current.json`, the selected
-provider's normalized `main-meter.json`, and sanitized last-error data after optional
-enrichment and a final generation check. Provider/account/source changes bump a mirrored
-selection revision; the widget rejects a file from an older revision or a mismatched
-provider/exact pin. App startup migrates a legacy Application Support snapshot into the App
-Group when needed. The widget never falls back outside the App Group.
+### 3.2 Snapshot and staleness
+
+`ClaudeReadingStore` owns legacy snapshot I/O. `SnapshotStore` atomically writes Claude's
+`current.json` and sanitized `last-error.json` under
+`~/Library/Application Support/ClaudeMeter/`. Writes follow account assembly and
+UsageStore acceptance. Validation, store creation, upgrade import and writes run on one
+provider-local serial queue. The queue preserves accepted write order. UsageStore publishes
+before awaiting disk completion. A rejected result cannot write; cancellation after acceptance
+does not revoke a queued write. Bounded reads, atomic writes and per-store circuit breakers
+also apply to restoration. Startup onboarding can check this archive asynchronously for
+existing-user evidence without taking ownership of usage state.
+
+On upgrade, a one-time import checks the former
+`~/Library/Group Containers/group.com.jewei.claudemeter/Library/Application Support/ClaudeMeter/current.json`.
+It imports only a newer usage observation, or fills an empty local store. A successful
+check sets `didImportLegacyAppGroupSnapshot.v1` in standard defaults. Read/write errors
+leave the key unset for a later launch. The import does not delete legacy files or
+copy the old widget publication or error record. Startup also requests this import
+through the same Claude storage queue when Claude is disabled. A separate cleanup
+may remove the legacy source only after this completion key is set.
 
 `lastSuccessfulPollAt` changes only after a usable successful poll. Data is stale after
-180 seconds unless explicitly marked stale earlier. Claude notices use Claude staleness;
+600 seconds by default unless explicitly marked stale earlier. Claude notices use Claude staleness;
 an optional provider's stale state cannot make the Claude card stale.
 
-Top-level limit fields mirror the active account for backward compatibility. `accounts`
-is nil only for the single default `claude` account. A lone non-default account remains a
-one-element array so per-account overrides have a stable key.
+Top-level fields mirror the first account only at the legacy persistence boundary. Each account
+has its own quota, metadata, observation time, and stale flag. Old JSON session, activity,
+and analytics fields are ignored. Old statusline snapshots are marked stale when read;
+the first successful OAuth response replaces that account's observation.
 
 Expired rolling windows resolve to 0% used and no reset date. Consumers must call
-`LimitWindow.resolved(asOf:)` before display or policy evaluation.
+`UsageWindow.resolved(asOf:isStale:)` before display or policy evaluation. Stale expired
+windows become unknown instead of zero.
 
-## 4. Local cost and activity
+## 4. Optional providers
 
-Cost refreshes have one active scan and one pending request for the latest configuration.
-A separate one-worker timeout budget bounds scans that ignore cancellation. Repeated
-refresh requests do not delay quota publication or create a chain of waiting scans.
-Completed work releases its timeout slot before returning a result, so an immediate
-next scan can use it. Timed-out work retains its slot until the operation finishes.
-Cost readings have their own scan time and partial/error state. An empty failed scan can
-retain an earlier result only within the same verified root scope and configuration. A
-timeout has no verified scope and clears old totals. A complete
-empty scan clears old totals. Account setting changes revoke old cost results immediately;
-old completions cannot restore them, including during the rebuild debounce. Persisted
-costs are not restored on launch until a scan verifies the current scope. `models` remains
-the compatibility list in `current.json`; `costObservation` records its scan time and
-partial state. Cost completion never advances quota freshness or sends quota alerts.
+### 4.1 Cursor
 
-Cost and activity scan every enabled discovered config directory's `projects/`, including
-top-level session journals and direct `subagents/*.jsonl`; context-fork replays and deeper
-workflow journals are excluded. One unreadable root or file marks the result partial and
-does not erase readable data.
+Cursor is opt-in. Each credential read opens its known `state.vscdb` path through
+macOS system SQLite, binds four ItemTable keys in one SELECT, then finalizes and closes.
+The SDK module links libsqlite3; no external package or executable is required.
+Open flags are `SQLITE_OPEN_READONLY | SQLITE_OPEN_URI`, with `readonly_shm=1`.
+SQLite handles committed WAL data with normal locking; immutable mode is never used.
+The reader does not write the database or create/repair sidecars. A WAL database that
+needs missing sidecars fails cleanly instead. See the
+[SQLite WAL read-only rules](https://www.sqlite.org/wal.html) and
+[Unix VFS read-only SHM behavior](https://github.com/sqlite/sqlite/blob/master/src/os_unix.c).
 
-Cost scans assistant usage chunks for the last seven days. Within each file, chunks with
-the same message/request identity are combined globally by maximum token fields. Complete
-message/request pairs are also reconciled across files within each canonical account root,
-so copied history counts once while unique continuations count separately. Missing IDs
-remain separate across files. Accounts remain additive, even with matching request IDs.
-Cache creation tier breakdown wins over the legacy total across both chunks and files;
-legacy-only writes count as 5-minute cache writes. Paths use stable order when duplicate
-metadata differs. Large files are tail-read and reported partial. A changed file can reuse
-committed records only after SHA-256 verification of its complete earlier prefix through
-the same safe file descriptor. A mismatch requires a full parse; growth alone is not proof
-of an append. Model output is deterministically ordered.
+Regular-file checks reject devices/FIFOs at the DB and existing sidecars. No file
+identity cache or SHM-header inspection remains. Reads run off-main under the existing
+provider timeout; Settings also uses a detached task. SQLite gets a 1 MiB row limit,
+no busy wait, and a cancellation progress handler. Temporary busy/locked/read failures
+retain last-good usage if the existing Keychain fallback cannot supply credentials.
+Missing credentials still require sign-in. Errors contain no raw SQLite paths.
 
-The version-8 cost cache retains compact request records, file-local identity, cache-tier
-provenance, and a verified append cursor. Older formats are rebuilt. The cursor stops after
-the last newline. An unfinished final line can contribute to the displayed estimate, but
-never to committed records. The next append reparses that line, including after a cache
-reload. This permits an invalidated unfinished line to retract its provisional maxima.
-Append parsing is permitted only while the current whole file is at most 32 MiB.
-Prefix verification still reads the earlier bytes; only JSON parsing skips those bytes.
-Parsing accepts at most 20,000 records and 8 MiB of accounted record
-storage per file. Reconciliation accepts at most 100,000 records and 32 MiB per root.
-Files above 32 MiB are tail-read at 16 MiB. A tail-read total falls as the file grows,
-because the fixed tail covers a shrinking share of it, so the limit is set above ordinary
-session sizes rather than at them. Limits produce explicit partial estimates. The LRU cache retains at most 2,048 files and
-32 MiB of accounted record storage, including path/record overhead, append cursors, and
-separate committed records when an unfinished final line is present. These accounting
-bounds do not measure the allocator's total memory use.
-
-Activity is loaded on demand from the cost card. It reports a 7×24 local-time grid over the
-last 30 days, Monday at index zero, deduping message identity within each file. Its total is
-derived from the normalized grid. Both scanner caches include the local time zone in file
-identity, so travel cannot reuse buckets from the prior zone. They also require matching
-device, inode, modification time, and size. An atomic replacement invalidates the cache
-even when size and modification time are unchanged. A read enters either cache only when
-the descriptor stamp remains unchanged and matches discovery. Unstable reads are partial.
-
-Both scanners use bounded, constant-time LRU caches. Cost cache is persisted and
-rate-limited; activity cache is in memory only. On macOS memory-pressure warnings, the
-app drops both rebuildable in-memory caches and asks malloc to release free pages off-main.
-The last flushed cost-cache file remains intact, but the current process repopulates only
-files touched by later scans instead of immediately reloading the whole disk cache.
-
-## 5. Optional providers
-
-### 5.1 Cursor
-
-Cursor is opt-in. Credentials are detected from Cursor's local state database with a
-Keychain fallback through the fail-closed gateway. Detection is memoized by the database,
-write-ahead-log, and shared-memory identities at both alias and resolved paths. The SHM key
-includes both 48-byte WAL-index headers, and the complete identity must stay stable across
-the SQLite read. A short regular SHM permits uncached SQLite recovery; a special sidecar is
-rejected. A result that uses a Keychain fallback is not memoized because Keychain changes
-have no file identity.
+UTF-8, ASCII UTF-16LE blobs and BOM-marked UTF-16 values are decoded before the existing
+whitespace/quote removal. Missing access or refresh values use the read-only, no-UI
+Keychain gateway independently. No detection result is cached.
 Access/refresh caches are bound to the detected account credential identity and are cleared
 immediately on account rotation. Refresh stays in memory. A bounded,
 source-generation-keyed handoff lets late callers reuse one completed token rotation but
 does not cross a detected credential replacement. Cursor errors and staleness appear only
 on its popover/settings/diagnostics surfaces.
 
-### 5.2 Codex
+### 4.2 Codex
 
 Malformed optional credit, reset, or plan metadata does not discard valid quota windows.
 Unusable metadata stays unknown. A valid reset count remains available when optional
 detail rows cannot be decoded. Direct OAuth quota decoding remains strict.
 
 Codex is opt-in and supports one implicit `CODEX_HOME` plus explicitly configured homes.
-Each home has its own subprocess/provider state and display name. Provider subprocesses
-strip environment credential overrides.
+Each home has its own display name and quota observation. Normal refresh reads access
+credentials from that home's `auth.json` and makes one direct HTTP usage request.
+It starts no Codex process. There is no source picker; old `codexSourceMode` values are ignored.
 
-One initialized `codex app-server` per home stays resident between polls, so a poll pays
-for two requests instead of a process start, an `initialize` handshake, and a reap. The
-resident process is replaced when the home's credential identity changes, when the
-resolved `codex` executable changes, when the child exits, or when any use of it fails,
-including a cancelled one. An unreadable executable identity counts as a change. A
-resident process ends after ten minutes without use, and when the app pauses, the display
-sleeps, or the app quits. Quit waits up to two seconds for this. The child's standard
-input suppresses `SIGPIPE`, so a write to a dead child reports an error instead of ending
-the app. App-server request/response dispatch is actor
-isolated so overlapping requests cannot consume one another's messages. Positional and
-keyed rate-limit windows independently fill missing session/weekly buckets. App-server
-account metadata retains the reported authentication mode. Auto-mode failures preserve
-both the app-server and direct-OAuth reasons for diagnostics.
+Claude Meter never consumes the Codex refresh token, rotates Codex credentials, or writes
+Codex auth storage. Codex owns that state. Upstream Codex reloads credentials before a
+managed refresh, exchanges the refresh token, and saves rotated tokens through its selected
+backend. Supported backends include file, OS keyring, automatic selection, and process-local
+memory. A new subprocess cannot recover another process's memory-only login.
+See [OpenAI authentication documentation](https://learn.chatgpt.com/docs/auth) and the
+[reviewed upstream implementation](https://github.com/openai/codex/blob/30fc6864cc1318121eca1843c217fe00ce1212f1/codex-rs/login/src/auth/manager.rs).
+
+Recovery is permitted only for these typed direct failures:
+
+- `CodexOAuthCredentialsError.notFound`, `missingTokens`, `decodeFailed`, `unreadable`,
+  or `expiredAccessToken`.
+- `CodexUsageError.loginRequired`, produced by HTTP 401/403.
+
+A numeric access-token JWT expiry within 60 seconds skips the direct request. Parsing is
+bounded to 64 KiB and accepted date bounds. Malformed, absent or nonnumeric expiry means
+unknown, so direct HTTP is attempted. Unverified claims are never authentication proof.
+Network/DNS failures, timeouts, HTTP 429/5xx, decoding errors and missing quota do not
+launch recovery. They keep normal last-good stale behavior. API-key auth shows unavailable
+subscription quota and cannot retain an earlier subscription observation.
+
+Recovery resolves Codex, launches one `codex app-server`, initializes, reads the account
+with `refreshToken: true`, then reads rate limits. Codex handles any credential rotation
+and backend writes. A successful result, error, timeout or cancellation awaits process
+termination and reaping before the source returns. Startup and individual requests keep
+5-second deadlines. Shutdown uses TERM, then SIGKILL after 0.25 seconds if needed, on a
+separate queue. Environment scrubbing, bounded protocol output and SIGPIPE protection remain.
+No process pool, idle eviction, executable cache or application shutdown hook remains.
+
+Source/auth-mode metadata remains in provider diagnostics and the compatible Codex archive;
+ProviderSnapshot has no source implementation fields. When recovery also fails, both failure
+reasons remain available for sanitized diagnostics. Account metadata is optional, but a
+reported API-key mode stops the subscription quota request.
 
 Last-good readings are persisted per resolved Codex home, without account email, and are
-restored on launch. A failed refresh retains that reading and records the attempt error/time
+restored after ownership checks on the first refresh. `CodexProviderAdapter` owns restore
+and save work; UsageStore accepts the save with final publication. A failed refresh retains that reading and records the attempt error/time
 separately from the last-success time; observation staleness remains age-based. Healthy
 accounts continue updating when another account fails. Accounts run in batches of three,
 but all batches share one 60-second provider deadline. Main-meter normalization classifies
 windows by reported duration (up to 24 hours is short/session; longer is weekly), falling back
 to primary/secondary position only when duration is absent.
 
-Codex account cards show usage limit resets from `rateLimitResetCredits`. The returned
-`availableCount` is authoritative because detail rows can be missing or capped. Ring cards
+Codex account cards show available usage resets. Direct usage reads the authoritative
+`rate_limit_reset_credits.available_count` from the same quota response. Recovery may also
+supply detail rows through `rateLimitResetCredits`. Missing detail rows remain unknown;
+normal direct refresh does not make an extra request or retain old expiry details. Ring cards
 show the count and each returned reset's title and time to expiry. Bar cards show the count
 when collapsed and reveal the rows when expanded. Expiry rows are sorted by date; a tooltip
 shows the exact local date and time. Missing expiry details remain explicit. Reset credits
@@ -339,17 +432,17 @@ identify both. Ownership is checked before restoring cached usage and again befo
 publishing a fetch result. A changed or unreadable sign-in clears the old reading.
 Normal token rotation for the same owner preserves offline usage. Missing claims
 permit current usage only while the source stays unchanged; such readings are not
-persisted and cannot establish quota notification baselines. Version-1 Codex reading
-archives have no owner and are rebuilt. All credential reads remain bounded and off-main.
+persisted. Version-1 Codex reading archives have no owner and are rebuilt. All credential
+reads remain bounded and off-main.
 
-### 5.3 Grok
+### 4.3 Grok
 
 Grok is opt-in and reads the Grok CLI auth file without writing or refreshing it. Candidate
 entries are preference-ordered, then the first valid usable token is selected. Expired
 credentials require opening Grok. Usage comes from the CLI billing endpoint and is shown
 only in its own popover/settings/diagnostics surfaces.
 
-## 6. Presentation
+## 5. Presentation
 
 Canonical data stores percent used. Presentation defaults to energy remaining:
 
@@ -363,31 +456,23 @@ Severity always uses percent used and the configured warning/critical thresholds
 progression mode does not change policy. Unknown values render neutral placeholders and
 never use an empty/tapped-out phrase.
 
-Pace presentation compares percent used with percent of the fixed rolling window elapsed.
-Bar cards show a neutral expected-position marker plus compact pace text; the marker mirrors
-between `used` and `left` progression modes. Ring cards show text only for the primary session
-and weekly rings while retaining reset timing. When the current burn rate projects depletion
-before reset, both card styles replace pace copy with `May run out in …`; an eight-percent
-elapsed-time guard suppresses early-window extrapolation. Pace and forecasts never affect severity
-or color. If the reset time is absent, expired, or outside the window span, pace presentation
-disappears and the bar falls back to its energy phrase.
+Reset countdowns use provider-reported reset timestamps minus the current time.
+`ResetPhrase` formats these durations. Usage percentages do not change reset timing.
 
 The menu-bar dot uses the highest severity from the selected main provider across all
 binding windows of the pinned account, or all of that provider's accounts when unpinned.
-Its number follows `menuBarWindow`: nearest, short/session, long/weekly, both, or forecast.
-Forecast pairs the nearest binding percentage with that same window's compact projected run-out
-and falls back to percentage-only when projection is unavailable. A single-window number may
-intentionally differ from the all-window dot. Selecting a provider
-or account with no reading produces an explicit unavailable/error state, never fallback.
+Its number follows `menuBarWindow`: nearest, short/session, long/weekly, or both.
+A single-window number may intentionally differ from the all-window dot. Selecting
+a provider or account with no reading produces an explicit unavailable/error state,
+never fallback.
 
 The menu-bar item exposes one spoken accessibility summary. It names the selected
 provider, quota window, percentage used/left, and overall severity separately. Paused,
 stale, loading, and unavailable states use explicit words; stale and paused summaries
-omit the percentage. Forecast speech uses `RunsOutPhrase.spoken`.
+omit the percentage.
 
-The popover is 360 points wide with a screen-derived scrolling height. Header controls are
-Usage & Spend, Settings, and Quit. Opening performs refresh, so there is no redundant
-refresh button. Usage & Spend appears after onboarding.
+The popover is 360 points wide with a screen-derived scrolling height. Header controls
+are Settings and Quit. Opening checks reading freshness; there is no separate refresh button.
 The selected provider owns the hero and first account section. An exact account pin wins;
 otherwise the account nearest its limit owns every primary surface. The other eligible
 provider remains visible below as one compact secondary summary. When Claude is secondary,
@@ -396,115 +481,24 @@ account's session, weekly, Opus/scoped windows, reset timing, and known identity
 The secondary Codex summary also expands to show each account's limits and usage limit resets.
 Primary Claude and Codex ring cards are always expanded. Codex bar cards, secondary summaries,
 Cursor, and Grok cards remember their expanded state.
-The header timestamp belongs only to the selected reading. The last-seven-days cost card
-shows its own scan age and partial or failed-update state, and opens the activity heatmap.
-When no cost totals exist, the Activity entry shows scan loading or failure instead. There is no footer or Add Account button.
+The header timestamp belongs only to the selected reading. There is no footer or Add Account button.
 
 First-run onboarding pauses polling and directs the user to Settings. Existing users skip
 onboarding when a snapshot exists, an attributes-only OAuth lookup finds a credential, Cursor
-state exists, an enabled Codex home has `auth.json`/`config.toml`, or the Claude Meter data
-directory exists. A temporarily unavailable Keychain is not credential evidence. Rendering
+state exists, or an enabled Codex home has `auth.json`/`config.toml`. A temporarily unavailable Keychain is not credential evidence. Rendering
 onboarding never reads credential contents or secret Keychain data.
 
 All rolling-window reset/refill copy uses Core `ResetPhrase`: minutes below one hour, hours
 below 48 hours, and days plus remaining whole hours from 48 hours, such as `6d 7h`. Zero
 hours are omitted. Surfaces never introduce their own date/weekday formatter.
 
-### 6.1 Usage and Spend window
+## 6. Settings
 
-A separate window shows one combined estimated cost over 7 or 30 days, with separate
-Claude and Codex sections. Each section has its own subtotal, daily chart, and model rows.
-The popover header opens it. The selected main meter does not change this layout. Claude
-uses enabled discovered config dirs. Codex uses the implicit and configured homes only
-when its source is enabled. A disabled Codex section states that its usage is excluded.
-
-The window runs its own scan off-main with its own generation check, so a 30-day scan
-never delays quota publication and never widens what the 60-second loop reads. Closing
-the window cancels the scan. A new request clears the previous result and error before
-loading. A failed scan, including a timeout, shows an error with no total or export.
-Each completed result keeps its requested range, scan date, and calendar. The chart,
-total label, and export use that completed window, even after midnight. They never use
-the current picker value or export time to extend the scanned range. The request captures
-provider settings and raw home paths before background work. A source or account change
-replaces the open window's scan and revokes the old result. If canceled work still holds
-the scan slot, only the latest request waits for it. Waiting and scanning share the
-30-second deadline. Closing cancels the waiter and stops this reload policy.
-
-Each provider shows one bar per local day summed across its models, per-model rows with
-tokens and estimated cost, and a shared JSON copy action. Rows with neither tokens nor cost, such as
-Claude Code's `<synthetic>` pseudo-model, are not listed.
-
-A complete scan read every day in the window, so a quiet day is a real zero and gets a
-zero bar, which keeps the bars proportional to elapsed time. A partial scan did not, so an
-unread day stays absent instead: a zero bar would claim the user spent nothing. When the
-scan is partial, a banner states that any day can be understated and the header says
-"at least" instead of "about". Bar colour does not carry the partial state, because a
-30-day range is partial on most real corpora and a permanent colour change carries no
-information. Every amount is labeled an estimate, never a bill.
-
-Unknown cost is separate from scan completeness. A model with any unpriced request shows
-"Unknown" for its complete cost. Known request costs still contribute to the provider and
-combined lower bound, and to known daily subtotals. A wholly unknown total says "Cost
-unknown". An unknown day is marked and never claims a known zero. Missing prices prevent
-zero-filled quiet days. Schema-version-2 JSON export names each provider, retains null
-costs, known subtotals, partial and pricing flags, and carries no source paths.
-
-Codex reads native `session_meta`, `turn_context`, and `event_msg/token_count` JSONL from
-both `sessions/` and `archived_sessions/`, including date directories and flat layouts.
-Directory dates do not filter files; earlier events establish cumulative baselines before
-the requested date filter. Canonical homes and file identities deduplicate aliases.
-Matching same-session event prefixes count once and retain the longest continuation.
-Divergent copies retain one stream and mark the result partial. Homes remain additive.
-
-A monotonic cumulative watermark prevents repeated or regressed totals from counting
-again. When last-request usage is present, count no more than positive cumulative growth
-or that request's counters. Unexplained gaps and regressions mark accounting partial.
-Totals-only growth can contribute tokens but has unknown cost because request boundaries
-control long-context prices. Last-only records need a response ID for exact deduplication;
-otherwise identical usage within a turn counts once as a partial lower bound. Cached
-input is a subset of input, and reasoning is already in output. Normalized input excludes
-cache reads and writes, so the displayed token total counts each token once.
-
-Copied fork history needs a verified inherited baseline and an owned suffix. Unresolved
-forks and tail-only files contribute no spend and mark the scan partial. Reads use the
-shared safe descriptor helper with the 32 MiB full-read and 16 MiB tail limits. Parsing is
-bounded to 20,000 events and 8 MiB of retained data per file, 100,000 events and 32 MiB per
-home, 2,048 files per home, 100,000 retained rows across homes, and 256 MiB of reads per
-scan. Stable path/session order makes limit selection repeatable. Codex cost runs on demand only
-and has no durable cache. It does not enter quota polls or change the Claude cost card.
-
-Codex pricing uses reviewed API rates, separate from Claude's family estimates. Rates
-verified on 2026-09-13, in USD per million tokens:
-
-| Model | Input | Cached input | Cache write | Output |
-| --- | ---: | ---: | ---: | ---: |
-| Astra (`gpt-6-astra`) | 10 | 1 | 12.5 | 50 |
-| Sol (`gpt-5.6-sol`, alias `gpt-5.6`) | 4 | 0.4 | 5 | 20 |
-
-Price each exact request before day/model aggregation. Above 272,000 input tokens,
-input and cache rates double, and output rates multiply by 1.5. An explicit priority or
-fast tier doubles the applicable rates. Missing historical tier uses standard rates and
-shows a lower-bound notice. Never infer historical tier from current settings. Unknown
-models, unsupported tiers, or uncertain request boundaries retain unknown costs. These
-are API-equivalent estimates of local usage, not ChatGPT subscription charges.
-Sources: [Astra model](https://developers.openai.com/api/docs/models/gpt-6-astra),
-[Sol model](https://developers.openai.com/api/docs/models/gpt-5.6-sol), and
-[OpenAI pricing](https://developers.openai.com/api/docs/pricing).
-
-The window is opened from the popover header, not from the cost card. The cost card
-renders only while Claude owns the main meter, so a Codex-primary user could not reach it.
-
-The export carries the day rows, the completed range, the scan time as `scannedAt`, the
-export time as `generatedAt`, and the partial flag. It never carries project
-or session paths. Because the window is visible, the app stays activatable exactly like
-the Settings window, so an `LSUIElement` process is never dropped to `.accessory` while it
-is on screen.
-
-## 7. Settings
-
-Settings uses a custom tab bar with Appearance, Data, Notifications, Advanced, and About.
-Display settings are mirrored from standard defaults into the App Group; removing a source
-value removes the mirrored value so defaults cannot become stale.
+Settings uses a custom tab bar with Data, Appearance, Advanced, and About.
+Appearance includes the visual warning and critical thresholds.
+`MeterSettings` reads and writes standard defaults. Existing settings already have
+standard copies, so removing App Group mirroring requires no settings migration.
+Old shared defaults and widget files remain unused.
 
 | Key | Domain value | Default |
 | --- | --- | --- |
@@ -513,63 +507,95 @@ value removes the mirrored value so defaults cannot become stale.
 | `mainMeterProvider` | `claude`, `codex` | `claude` |
 | `menuBarAccount` | nearest or Claude account key | nearest |
 | `codexMainMeterAccount` | nearest or Codex home id | nearest |
-| `menuBarWindow` | `nearest`, `5h`, `7d`, `both`, `forecast` | `nearest` |
+| `menuBarWindow` | `nearest`, `5h`, `7d`, `both` | `nearest` |
 | warning threshold | percent used | 80 |
 | critical threshold | percent used | 95 |
-| stale interval | seconds | 180 |
+| stale interval | seconds, minimum 600 | 600 |
+
+Startup and Appearance settings change the removed `forecast` value, or any invalid
+menu-bar mode, to `nearest` in standard defaults.
 
 Account names/plans are user overrides. Display precedence is name override then friendly
-config label; plan override then active-account OAuth plan then per-account OAuth plan.
+config label; plan override then account OAuth plan.
 Configured paths are canonicalized and account disabling never removes the default account.
 
-## 8. Notifications and attention hooks
+### Upgrade cleanup
 
-Quota notifications process only fresh observations from the selected main provider.
-Threshold events are typed by scope and level, and dedup by provider, account, scope,
-level, and reset cycle. A provider/account switch establishes a new baseline and never
-compares unrelated quota. Recovery compares raw prior severity so a rolling-window reset
-can emit “refueled.” Attention hooks remain Claude Code-specific and independent of the
-main-meter selection.
+`LegacyAttentionHookMigration` removes the six exact historical Claude Meter hook
+commands from `hooks.Stop`, `hooks.Notification`, and `hooks.StopFailure`. It runs
+off-main once at launch, including when usage polling is paused or its sources are disabled. It scans the previous config scope: `~/.claude`,
+plausible immediate `~/.claude-*` directories, and configured paths. Disabled accounts
+and paths with equal account keys are included.
 
-Predictive depletion is opt-in. It requires two consecutive fresh qualifying observations
-for the same account/scope/reset cycle and normal current severity. Small reset-time jitter
-is tolerated by the documented five-minute cycle bucket. Failed, stale, timed-out, or
-nonqualifying polls reset the qualification streak.
+The migration preserves user hooks, group metadata, `statusLine`, and unrelated settings.
+It uses bounded settings reads and atomic writes, and writes only after removing an
+exact command match. Missing files need no write. Invalid or inaccessible settings leave
+`didRemoveLegacyAttentionHooks.v1` unset so a later launch can retry. The key is
+set in standard defaults only after all discovered config paths have been checked.
 
-Notification-setting changes invalidate a delivery that is still suspended in Notification
-Center. If the add completes after invalidation, the app retracts the pending or delivered
-alert. Each delivery attempt has a distinct Notification Center identifier, so cleanup
-cannot remove a newer valid alert. Persisted dedup keeps the stable provider, account,
-scope, level, and reset-cycle key. Attention settings use a separate revision from quota polling.
+After config cleanup succeeds, the migration makes one safe attempt to remove old files
+under `~/.claude-meter/events`. It follows no directory links and can leave empty or
+inaccessible directories. It preserves `sessions` and `statusline.json` and creates no
+event storage or watchers.
 
-Attention hooks support main-agent `Stop`, permission `Notification`, and limit/billing
-`StopFailure`. Subagent `Stop` is consumed without notifying. Hook installation is
-idempotent and pass-through. Click routing activates the app first, then best-effort focuses
-an already-running terminal; it never launches a terminal and bounds subprocess waits.
+`LegacyStatuslineMigration` runs after the attention migration at launch. It removes only
+five exact known leading shell snippets: owner-only per-account, pre-umask per-account,
+sanitized flat session, unsanitized flat session, and original single-file capture.
+Repeated prefixes are removed. The remaining user command is preserved exactly; a
+standalone capture command becomes an empty command. Other `statusLine` fields remain.
 
-For Herdr sessions, attention hooks capture `HERDR_SOCKET_PATH`, `HERDR_PANE_ID`, and
-`HERDR_STARTUP_CWD` with the outer terminal route. A click uses `herdr agent focus` with
-the captured socket and pane ID to select the workspace, tab, and pane. Ghostty focus
-uses Herdr's start folder because the inner Claude project folder can differ. The same
-folder in multiple Ghostty terminals remains ambiguous. A missing Herdr executable or
-closed session still permits outer app activation. Herdr commands do not start a server.
+The previous installer forced `statusLine.refreshInterval` to 1 but saved no prior value.
+The migration preserves the current interval because its ownership cannot be determined.
+It performs no new installation, repair, or interval change. Missing files are harmless;
+malformed settings stay unchanged. It checks the same config scope as hook cleanup,
+including disabled accounts and paths with duplicate account keys. It writes only changed
+settings and preserves settings symlinks through atomic writes to their resolved targets.
 
-Version 2 hook markers store the original event and base64 route in one atomic JSON
-envelope. Route data stays out of filenames to avoid the 255-byte filename limit. The
-reader also accepts legacy plain events and filename routes. Installation replaces all
-known old hook snippets. Existing delivered notifications keep their original route.
+After all settings are handled, it removes captured files under `~/.claude-meter/sessions`,
+`~/.claude-meter/statusline.json`, and numeric `.sl-*` temporary files. It follows no links,
+checks directory and entry identity before deletion, and may leave empty directories.
+Errors leave `didRemoveLegacyStatuslineBridge.v1` unset for a later launch. Only successful
+settings and captured-file cleanup set that key in standard defaults. No periodic bridge
+work remains. A running Claude Code process that cached its old command may need a
+restart to load the changed settings.
 
-## 9. Widget
+`LegacyArtifactCleanupMigration` runs after the hook/statusline attempts and a bounded
+App Group snapshot import on Claude's existing storage queue. All three existing
+completion keys must be true before it removes anything. Import errors preserve the
+source for retry. Migration failures are logged and do not stop application startup.
+Provider restoration can request the same import on that queue; there is no second
+importer that could race an accepted snapshot write.
 
-The widget supports small, medium, and large families. It loads `main-meter.json` through
-Core's provider/account/revision-validating `MainMeterPublication` seam and shows
-depleting rings for the selected Claude or Codex account, optional Opus rows where space
-allows, provider/account identity, staleness, and a neutral no-data state. Timeline refresh
-is the earliest of the next binding reset, the stale deadline, or 15 minutes. Provider,
-account, and progression changes request a WidgetKit timeline reload. Widget fonts and
-color helpers intentionally remain target-local.
+The cleanup owns exactly these files under the user's home:
 
-## 10. Networking, Keychain, and diagnostics
+- `Library/Application Support/ClaudeMeter/cost-usage-cache.json`
+- `Library/Caches/com.jewei.claudemeter/models-dev-pricing-v1.json`
+- `Library/Group Containers/group.com.jewei.claudemeter/Library/Application Support/ClaudeMeter/main-meter.json`
+- `Library/Application Support/ClaudeMeter/main-meter.json` (the former non-App-Group fallback)
+- `Library/Group Containers/group.com.jewei.claudemeter/Library/Application Support/ClaudeMeter/current.json`
+- `Library/Group Containers/group.com.jewei.claudemeter/Library/Application Support/ClaudeMeter/last-error.json`
+- `Library/Application Support/ClaudeMeter/usage-history.jsonl`
+
+Usage-history cleanup retains the old deletion behavior through this one versioned
+owner. It no longer runs as a separate unversioned task. The cleanup never removes
+current Application Support snapshots/errors, standard defaults, credentials, or
+unknown neighboring files. Statusline and attention storage keep their existing
+migration owners. The two old shared-defaults plists remain because an independently
+installed older app/widget and the preferences service can still hold their values.
+The current app and its bundle have no consumer of these defaults. The historical
+emergency store also used generic `current.json`, `main-meter.json`, and `last-error.json`
+names in the user's temporary directory. These ambiguous paths are not cleanup targets.
+
+Cleanup traverses each path from an open home directory with no-follow directory
+descriptors. It accepts only regular final files, checks directory and entry identity,
+and unlinks only that entry. It never reads cache contents or recursively deletes
+directories. Links, special files, and filesystem errors leave cleanup incomplete.
+Independent files can still be removed on a partial failure. All seven files must be
+removed or proven absent before standard defaults records `didCleanupObsoleteArtifacts.v1`.
+The completed path returns after that defaults check, with no directory scan. Tests
+use isolated homes/defaults; hosted tests cannot invoke live cleanup.
+
+## 7. Networking, Keychain, and diagnostics
 
 OAuth and other direct provider requests use `ProviderHTTPClient.shared` or an injected
 `HTTPTransport`. The separate Claude reset read runs in a signed-in WebKit page, with
@@ -592,12 +618,12 @@ home paths, UUIDs, bearer/JWT/provider tokens, session keys, and labeled sensiti
 
 `MeterLog` is the logging seam. It sanitizes every message before the text reaches
 `os.Logger` or the log file, so a call site cannot leak a secret by forgetting to sanitize.
-Categories are app, poll, bridge, oauth, cost, notification, and widget. The log file is
-opt-in through Advanced settings, is written to `~/Library/Logs/ClaudeMeter/` at `0600`
+Categories are app, poll, and oauth. The log file is opt-in through
+Advanced settings, is written to `~/Library/Logs/ClaudeMeter/` at `0600`
 inside a `0700` directory, rotates once at 4 MiB, and is deleted when the user turns the
 setting off. Diagnostics keep showing present state only.
 
-## 11. Verification and maintenance
+## 8. Verification and maintenance
 
 The authoritative local/CI gate is:
 
@@ -606,7 +632,7 @@ The authoritative local/CI gate is:
 ```
 
 It runs strict Swift formatting checks, all Core/Provider package tests, and unsigned Debug
-and Release app/widget builds. CI invokes this script directly. Sparkle is exactly pinned by
+and Release app builds. CI invokes this script directly. Sparkle is exactly pinned by
 the Xcode project and committed workspace resolution.
 
 Release publishing must make the signed GitHub asset available before pushing the new
@@ -619,5 +645,5 @@ Optional manual Sparkle checks do not block publication or trigger automatic fee
 See `docs/releases.md`.
 
 Tests should be hermetic: temporary directories are unique and cleaned up, wall clocks and
-shared defaults are injectable where policy depends on them, and live user Keychain or
+defaults are injectable where policy depends on them, and live user Keychain or
 Application Support data is never read by default.

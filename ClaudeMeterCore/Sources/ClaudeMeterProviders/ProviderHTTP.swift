@@ -15,7 +15,7 @@ extension HTTPTransport {
 
 /// Bounded retry for transient failures. Defaults retry only idempotent methods,
 /// honor `Retry-After`, and use exponential backoff. Kept small on purpose so a
-/// poll never turns into a hammering loop (matches the app's 60 s cadence).
+/// refresh cannot cause an unbounded retry loop.
 public struct HTTPRetryPolicy: Sendable {
     public let maxRetries: Int
     public let retryableStatus: Set<Int>
@@ -103,9 +103,7 @@ public struct HTTPRetryPolicy: Sendable {
 public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
     public static let shared = ProviderHTTPClient()
 
-    /// Provider responses are small JSON except the models.dev catalog, which is
-    /// larger than 4 MiB. Eight MiB gives that catalog headroom without permitting
-    /// an unbounded response allocation.
+    /// Bound response allocation even when a provider returns an unexpected payload.
     static let maximumResponseByteCount = 8 * 1_024 * 1_024
     static let requestTimeoutSeconds: TimeInterval = 10
     static let resourceTimeoutSeconds: TimeInterval = 30

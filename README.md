@@ -2,7 +2,7 @@
 
 A macOS menu bar app that shows your Claude usage at a glance — your 5-hour
 session and weekly limits as playful, color-coded **energy rings**, across every
-account, with optional notifications.
+account.
 
 <table>
   <tr>
@@ -17,17 +17,34 @@ account, with optional notifications.
 
 ## Features
 
+- **Current usage and resets** — provider usage and balances for Claude, Codex, Cursor, and Grok, with countdowns from reported reset times.
 - **Menu bar meter** — an energy bolt + a nearest-limit status dot and your energy-left %, always visible.
-- **Playful popover** — a combined-health hero and per-account **activity rings** (weekly + 5-hour), framed as energy remaining — plus a desktop widget, threshold notifications, launch at login, and auto-updates.
+- **Playful popover** — a combined-health hero and per-account **activity rings** (weekly + 5-hour), framed as energy remaining — plus launch at login and auto-updates.
 - **Multi-account aware** — run several `CLAUDE_CONFIG_DIR` accounts side by side (rate limits are per-account); give each a display name and plan badge.
-- **Zero-config with Claude Code** — installs a transparent statusline bridge; no API keys needed.
-- **Optional sources** — Claude Code OAuth, Cursor billing-period usage, multiple Codex homes, and Grok CLI credits. Non-Claude providers stay separate from Claude's menu-bar meter and notifications.
-- **Private** — local-first and read-only toward provider credentials. Claude credentials remain in macOS Keychain; Cursor, Codex, and Grok read their own local sign-in state. Diagnostics are sanitized before display or persistence.
+- **Claude OAuth** — connect Claude Code credentials or enter OAuth credentials in Settings.
+- **Optional sources** — Cursor billing-period usage, multiple Codex homes, and Grok CLI credits. Claude or Codex can own the main meter. Cursor and Grok have separate cards.
+- **Private** — no local transcript scanning or historical cost estimation. Provider credentials are read-only. Claude credentials remain in macOS Keychain; Cursor, Codex, and Grok read their own local sign-in state. Diagnostics are sanitized before display or persistence.
+
+Usage refreshes every five minutes while the display is awake. Opening the popover
+refreshes missing, failed, stale or at least one-minute-old readings. Reset countdowns
+update locally. Display sleep stops refresh work; wake checks whether data needs refresh.
+
+Codex normally reads subscription usage directly without starting a process. If credentials
+need recovery, it runs one temporary Codex App Server and waits for it to exit. Codex owns
+its credential refresh and storage; Claude Meter does not rotate or write those credentials.
+API-key sign-ins do not supply ChatGPT subscription quota.
+
+## Architecture
+
+All four providers publish normalized accounts, quota windows and balances through
+`UsageStore`. It owns readings, loading and refresh cancellation. `RefreshScheduler`
+owns timing and admission. `AppState` owns presentation, settings and application coordination. Claude and Codex keep their existing last-good
+storage inside their provider boundaries; disk work does not block the UI.
 
 ## Requirements
 
 - macOS 14+
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (for the zero-config statusline source)
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sign-in for automatic OAuth, or manually supplied OAuth credentials
 
 ## Install
 
@@ -45,11 +62,10 @@ Gatekeeper warnings. Updates are delivered automatically via Sparkle.
 ./scripts/verify-local.sh  # formatting, all package tests, Debug + Release unsigned builds
 ```
 
-Running the app requires a provisioning profile (App Group entitlement).
 For a faster focused check, run `swift test --package-path ClaudeMeterCore`.
 
 Release builds attach a versioned `.dSYMs.zip` to the GitHub release. The release
-script verifies app and widget symbol UUIDs against the shipped binaries before
+script verifies app symbol UUIDs against the shipped binary before
 publication. Keep that archive for crash analysis; the local `build/` directory
 is replaced by the next release build.
 

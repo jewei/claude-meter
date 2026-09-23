@@ -3,18 +3,12 @@ import ClaudeMeterCore
 import SwiftUI
 
 enum MenuBarText {
-    private struct Candidate {
-        let window: LimitWindow
-        let kind: LimitWindowKind
-        let left: Double
-    }
-
     /// Spoken state is separate from the compact visual title and its color dot.
     static func accessibilitySummary(
         provider: MainMeterProvider,
         reading: MainMeterReading?,
-        progression: AppGroupConfig.ProgressionMode,
-        selection: AppGroupConfig.MenuBarWindow,
+        progression: MeterSettings.ProgressionMode,
+        selection: MeterSettings.MenuBarWindow,
         isActive: Bool,
         isStale: Bool,
         isLoading: Bool,
@@ -37,18 +31,12 @@ enum MenuBarText {
             case .weeklyOpus: "Opus weekly"
             }
         }
-        func describe(_ descriptor: LimitWindowDescriptor, forecast: Bool = false) -> String {
+        func describe(_ descriptor: LimitWindowDescriptor) -> String {
             let window = descriptor.window.resolved(asOf: now)
             let label = name(descriptor.scope)
             guard let left = window.percentLeft(asOf: now) else { return "\(label) unavailable." }
             let percent = Int((progression == .used ? 100 - left : left).rounded())
-            var text = "\(label) \(percent) percent \(progression == .used ? "used" : "left")."
-            if forecast,
-                let phrase = RunsOutPhrase.spoken(
-                    window.runsOutEstimate(kind: descriptor.scope.kind, asOf: now))
-            {
-                text += " \(phrase)."
-            }
+            let text = "\(label) \(percent) percent \(progression == .used ? "used" : "left")."
             return text
         }
 
@@ -63,7 +51,7 @@ enum MenuBarText {
                 describe(.init(scope: .session, window: reading.limits.currentSession)),
                 describe(.init(scope: .weekly, window: reading.limits.currentWeekAllModels)),
             ].joined(separator: " ")
-        case .nearest, .forecast:
+        case .nearest:
             let nearest = reading.limits.bindingWindows.filter {
                 $0.window.percentLeft(asOf: now) != nil
             }.max {
@@ -71,7 +59,7 @@ enum MenuBarText {
                     < ($1.window.resolved(asOf: now).percentUsed ?? -1)
             }
             details =
-                nearest.map { describe($0, forecast: selection == .forecast) }
+                nearest.map(describe)
                 ?? "Usage unavailable."
         }
         let status: String
@@ -85,24 +73,6 @@ enum MenuBarText {
         return "\(title) \(details) \(status)" + (isLoading ? " Refreshing." : "")
     }
 
-    static func forecast(
-        consideredLimits: [LimitInfo],
-        progression: AppGroupConfig.ProgressionMode,
-        now: Date
-    ) -> String? {
-        let candidates: [Candidate] = consideredLimits.flatMap(\.bindingWindows).compactMap {
-            descriptor in
-            let window = descriptor.window.resolved(asOf: now)
-            guard let left = window.percentLeft(asOf: now) else { return nil }
-            return Candidate(window: window, kind: descriptor.scope.kind, left: left)
-        }
-        guard let nearest = candidates.min(by: { $0.left < $1.left }) else { return nil }
-        let percent = progression == .used ? 100 - nearest.left : nearest.left
-        let percentText = "\(Int(percent.rounded()))%"
-        let estimate = nearest.window.runsOutEstimate(kind: nearest.kind, asOf: now)
-        guard let forecast = RunsOutPhrase.compact(estimate) else { return percentText }
-        return "\(percentText) · \(forecast)"
-    }
 }
 
 @MainActor
@@ -145,18 +115,18 @@ enum MenuBarAccessibility {
 struct MenuBarLabel: View {
     @ObservedObject var appState: AppState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage(AppGroupConfig.progressionModeKey) private var progressionMode = "left"
-    @AppStorage(AppGroupConfig.mainMeterProviderKey) private var mainMeterProvider = "claude"
-    @AppStorage(AppGroupConfig.menuBarAccountKey) private var claudeAccountPin = ""
-    @AppStorage(AppGroupConfig.codexMainMeterAccountKey) private var codexAccountPin = ""
-    @AppStorage(AppGroupConfig.menuBarWindowKey) private var menuBarWindow = "nearest"
+    @AppStorage(MeterSettings.progressionModeKey) private var progressionMode = "left"
+    @AppStorage(MeterSettings.mainMeterProviderKey) private var mainMeterProvider = "claude"
+    @AppStorage(MeterSettings.menuBarAccountKey) private var claudeAccountPin = ""
+    @AppStorage(MeterSettings.codexMainMeterAccountKey) private var codexAccountPin = ""
+    @AppStorage(MeterSettings.menuBarWindowKey) private var menuBarWindow = "nearest"
 
-    private var progression: AppGroupConfig.ProgressionMode {
-        AppGroupConfig.ProgressionMode(rawValue: progressionMode) ?? .left
+    private var progression: MeterSettings.ProgressionMode {
+        MeterSettings.ProgressionMode(rawValue: progressionMode) ?? .left
     }
 
-    private var selectedWindow: AppGroupConfig.MenuBarWindow {
-        AppGroupConfig.MenuBarWindow(rawValue: menuBarWindow) ?? .nearest
+    private var selectedWindow: MeterSettings.MenuBarWindow {
+        MeterSettings.MenuBarWindow(rawValue: menuBarWindow) ?? .nearest
     }
 
     var body: some View {
@@ -299,11 +269,6 @@ struct MenuBarLabel: View {
             return parts.isEmpty ? nil : parts.joined(separator: " · ")
         case .nearest:
             return nearestText(now: now)
-        case .forecast:
-            return MenuBarText.forecast(
-                consideredLimits: appState.mainMeterLimitSets,
-                progression: progression,
-                now: now)
         }
     }
 

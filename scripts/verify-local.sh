@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DERIVED_DATA_PATH="$PROJECT_DIR/build/verify-local"
 
 echo "▶ Checking release-symbol validation"
 "$SCRIPT_DIR/test-release-symbols.sh"
@@ -19,7 +20,6 @@ echo "▶ Checking Swift formatting"
 swift format lint --recursive --strict \
     "$PROJECT_DIR/ClaudeMeterCore" \
     "$PROJECT_DIR/ClaudeMeter" \
-    "$PROJECT_DIR/ClaudeMeterWidget" \
     "$PROJECT_DIR/ClaudeMeterTests"
 
 echo "▶ Running ClaudeMeterCore tests"
@@ -29,6 +29,7 @@ echo "▶ Running ClaudeMeter app tests"
 xcodebuild \
     -project "$PROJECT_DIR/ClaudeMeter.xcodeproj" \
     -scheme ClaudeMeter \
+    -derivedDataPath "$DERIVED_DATA_PATH" \
     -configuration Debug \
     -destination "platform=macOS" \
     -quiet \
@@ -40,10 +41,18 @@ for configuration in Debug Release; do
     xcodebuild \
         -project "$PROJECT_DIR/ClaudeMeter.xcodeproj" \
         -scheme ClaudeMeter \
+        -derivedDataPath "$DERIVED_DATA_PATH" \
         -configuration "$configuration" \
         -quiet \
         CODE_SIGNING_ALLOWED=NO \
         build
+    app="$DERIVED_DATA_PATH/Build/Products/$configuration/ClaudeMeter.app"
+    for extension in "$app"/Contents/PlugIns/*.appex; do
+        if [[ -e "$extension" ]]; then
+            echo "error: unexpected app extension: $extension" >&2
+            exit 1
+        fi
+    done
 done
 
 echo "✓ Local verification passed"

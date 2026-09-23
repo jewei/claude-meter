@@ -18,7 +18,12 @@ public final class CodexDirectOAuthSource: CodexUsageSourceFetching, @unchecked 
     }
 
     public func fetchUsage(now: Date = Date()) async throws -> CodexUsage {
+        try Task.checkCancellation()
         let credentials = try credentialsLoader()
+        try Task.checkCancellation()
+        if CodexOAuthCredentialsStore.accessTokenNeedsRecovery(credentials.accessToken, now: now) {
+            throw CodexOAuthCredentialsError.expiredAccessToken
+        }
         var request = URLRequest(url: Self.usageURL)
         request.httpMethod = "GET"
         request.setValue("Bearer \(credentials.accessToken)", forHTTPHeaderField: "Authorization")

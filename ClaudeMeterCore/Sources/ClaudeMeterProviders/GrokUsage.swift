@@ -117,6 +117,6 @@ enum GrokTimestamp {
     static func parse(_ raw: String) -> Date? {
         let stripped = raw.replacingOccurrences(
             of: #"\.\d+"#, with: "", options: .regularExpression)
-        return JournalReader.parseTimestamp(stripped)
+        return ProviderDate.parseISO8601(stripped)
     }
 }

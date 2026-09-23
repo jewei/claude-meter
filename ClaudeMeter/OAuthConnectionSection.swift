@@ -39,7 +39,7 @@ enum OAuthSetupState: Equatable {
 
 struct OAuthConnectionSection: View {
     /// Observed, not a plain `let`: the credential notice below is driven by
-    /// `lastPollResult`, so this view has to re-render when a poll lands.
+    /// provider-owned diagnostics, so this view has to re-render when a poll lands.
     @ObservedObject var appState: AppState
 
     @AppStorage(AppSettings.oauthSourceEnabledKey) private var oauthSourceEnabled = true
@@ -305,8 +305,7 @@ struct OAuthConnectionSection: View {
                 oauthMode = "auto"
                 testResult = "Session \(Int(session))%  ·  Week \(Int(week))%"
                 state = .connectedAuto
-                appState.rebuildPipeline()
-                appState.refreshNow()
+                appState.claudeConfigurationDidChange()
             } catch {
                 guard verificationIsCurrent(generation) else { return }
                 let message = DiagnosticsSanitizer.sanitize(error.localizedDescription)
@@ -348,8 +347,7 @@ struct OAuthConnectionSection: View {
                 manualAccess = ""
                 manualRefresh = ""
                 state = .connectedManual
-                appState.rebuildPipeline()
-                appState.refreshNow()
+                appState.claudeConfigurationDidChange()
             } catch {
                 guard verificationIsCurrent(generation) else { return }
                 try? OAuthPipeline.discardManualCredentials()
@@ -379,7 +377,7 @@ struct OAuthConnectionSection: View {
         testResult = ""
         manualAccess = ""
         manualRefresh = ""
-        appState.rebuildPipeline()
+        appState.claudeConfigurationDidChange()
         state = disconnectedState()
     }
 

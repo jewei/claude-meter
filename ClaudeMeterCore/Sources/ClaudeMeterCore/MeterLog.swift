@@ -16,11 +16,7 @@ public enum MeterLog {
     public enum Category: String, CaseIterable, Sendable {
         case app
         case poll
-        case bridge
         case oauth
-        case cost
-        case notification
-        case widget
     }
 
     public enum Level: String, Sendable {

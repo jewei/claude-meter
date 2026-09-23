@@ -69,6 +69,34 @@ class PublicationTests(unittest.TestCase):
             notes, NOTES + "\n\n---\nDownload and open **ClaudeMeter-2.17.dmg** to install.\n"
         )
 
+    def test_prepare_only_stops_before_repository_changes_and_publication(self):
+        tail = SCRIPT[SCRIPT.index("# ── Stop after private preparation"):]
+        result = subprocess.run(
+            ["/bin/bash", "-c", "set -euo pipefail\nPREPARE_ONLY=1\nBUILD_DIR=private\n" + tail],
+            capture_output=True, text=True, timeout=5, env={"PATH": os.defpath},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("No publication performed", result.stdout)
+        self.assertLess(SCRIPT.index("# ── Stop after private preparation"), SCRIPT.index("PBXPROJ="))
+        self.assertIn('APPCAST_PATH="$BUILD_DIR/appcast.xml"', SCRIPT)
+        self.assertIn('cat > "$APPCAST_PATH" <<XML', SCRIPT)
+
+    def test_sparkle_signs_final_notarized_container_bytes(self):
+        steps = [
+            'codesign --sign "$SIGNING_IDENTITY" --timestamp "$DMG_PATH"',
+            'xcrun notarytool submit "$DMG_PATH"',
+            'xcrun stapler staple "$DMG_PATH"',
+            'SIGN_OUTPUT=$("$SIGN_UPDATE" "$DMG_PATH")',
+            '"$SCRIPT_DIR/validate-release.sh"',
+            '# ── Stop after private preparation',
+        ]
+        positions = [SCRIPT.index(step) for step in steps]
+        self.assertEqual(positions, sorted(positions))
+        validator = Path(__file__).with_name("validate-release.sh").read_text()
+        self.assertIn('codesign --verify --strict --verbose=2 "$DMG_PATH"', validator)
+        self.assertIn('xcrun stapler validate "$DMG_PATH"', validator)
+        self.assertIn('spctl --assess --type open --context context:primary-signature', validator)
+
     def test_failure_stops_later_publication_steps(self):
         steps = ["staging", "assets", "feed", "cleanup"]
         for index, step in enumerate(steps):

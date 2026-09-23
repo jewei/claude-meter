@@ -16,27 +16,19 @@ release_symbol_uuids() {
 
 verify_release_symbols() {
     local app="$1" symbols="$2"
-    local executable bundle binary dwarf binary_uuids symbol_uuids
-    for executable in ClaudeMeter ClaudeMeterWidgetExtension; do
-        if [[ "$executable" == "ClaudeMeter" ]]; then
-            bundle="$executable.app"
-            binary="$app/Contents/MacOS/$executable"
-        else
-            bundle="$executable.appex"
-            binary="$app/Contents/PlugIns/$executable.appex/Contents/MacOS/$executable"
-        fi
-        dwarf="$symbols/$bundle.dSYM/Contents/Resources/DWARF/$executable"
-        if [[ ! -f "$binary" || ! -f "$dwarf" ]]; then
-            echo "error: missing binary or dSYM for $executable" >&2
-            return 1
-        fi
-        binary_uuids="$(release_symbol_uuids "$binary")" || return 1
-        symbol_uuids="$(release_symbol_uuids "$dwarf")" || return 1
-        if [[ "$binary_uuids" != "$symbol_uuids" ]]; then
-            echo "error: dSYM UUIDs or architectures do not match $executable" >&2
-            return 1
-        fi
-    done
+    local binary="$app/Contents/MacOS/ClaudeMeter"
+    local dwarf="$symbols/ClaudeMeter.app.dSYM/Contents/Resources/DWARF/ClaudeMeter"
+    local binary_uuids symbol_uuids
+    if [[ ! -f "$binary" || ! -f "$dwarf" ]]; then
+        echo "error: missing binary or dSYM for ClaudeMeter" >&2
+        return 1
+    fi
+    binary_uuids="$(release_symbol_uuids "$binary")" || return 1
+    symbol_uuids="$(release_symbol_uuids "$dwarf")" || return 1
+    if [[ "$binary_uuids" != "$symbol_uuids" ]]; then
+        echo "error: dSYM UUIDs or architectures do not match ClaudeMeter" >&2
+        return 1
+    fi
 }
 
 release_symbols_main() (
@@ -54,9 +46,7 @@ release_symbols_main() (
             verify_release_symbols "$app" "$source"
             mkdir "$temporary/dSYMs"
             # Include only symbols for our shipped executables, from this archive.
-            for bundle in ClaudeMeter.app ClaudeMeterWidgetExtension.appex; do
-                /usr/bin/ditto "$source/$bundle.dSYM" "$temporary/dSYMs/$bundle.dSYM"
-            done
+            /usr/bin/ditto "$source/ClaudeMeter.app.dSYM" "$temporary/dSYMs/ClaudeMeter.app.dSYM"
             /usr/bin/ditto --norsrc -c -k --keepParent "$temporary/dSYMs" "$4"
             ;;
         verify)

@@ -23,8 +23,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     private let thresholds: UsageThresholds
     private let accountConfigs: @Sendable () -> [AccountConfig]
 
-    /// Default backoff when a 429 carries no usable `Retry-After`. Matches the
-    /// app's 60 s poll cadence so we retry on the next cycle.
+    /// Default backoff when a 429 carries no usable `Retry-After`.
+    /// This gate is independent of the global refresh interval.
     fileprivate static let defaultRateLimitBackoff: TimeInterval = 60
     /// An implausible server directive must not disable OAuth for the lifetime of
     /// a long-running app process. Observed valid backoffs are about one hour.
@@ -48,10 +48,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     public init(
         fallback: any ClaudeMeterPipeline,
-        store _: SnapshotStore,
         thresholds: UsageThresholds = .default,
         accountConfigs: @escaping @Sendable () -> [AccountConfig] = {
-            ConfigDirDiscovery.discover(configuredDirs: AppGroupConfig.configuredConfigDirs)
+            ConfigDirDiscovery.discover(configuredDirs: MeterSettings.configuredConfigDirs)
         }
     ) {
         self.fallback = fallback
@@ -63,7 +62,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     /// gate below protects Anthropic, not our request budget, so a user-initiated
     /// refresh must not be able to jump it.
     public func poll(now: Date, kind: RefreshKind = .background) async throws -> ParseResult {
-        let oauthMode = UserDefaults.standard.string(forKey: AppGroupConfig.oauthModeKey) ?? ""
+        let oauthMode = UserDefaults.standard.string(forKey: MeterSettings.oauthModeKey) ?? ""
         guard let mode = ClaudeOAuthMode(rawValue: oauthMode) else {
             // The source toggle is ON (or we wouldn't be in the chain) but Connect
             // was never completed — "disabled" would send the user to the wrong fix.
@@ -85,6 +84,11 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             let reason = Self.keychainFailureReason(keychainResult)
             return try await fallbackResult(kind: kind, now: now, outcome: .skipped, reason: reason)
         }
+        let configs = mode == .auto ? accountConfigs() : []
+        let accountKey = Self.sourceAccountKey(
+            credentialService: credentialSelection.credentials.credentialService,
+            isManual: mode == .manual, accounts: configs)
+        let accountConfig = configs.first { $0.id == accountKey }
         var creds = credentialSelection.credentials
 
         var didRefresh = false
@@ -100,10 +104,10 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 creds = refreshed
             case .deferred(let reason):
                 return try await fallbackResult(
-                    kind: kind, now: now, outcome: .skipped, reason: reason)
+                    kind: kind, now: now, accountKey: accountKey, outcome: .skipped, reason: reason)
             case .failed(let reason):
                 return try await fallbackResult(
-                    kind: kind, now: now, outcome: .failed, reason: reason)
+                    kind: kind, now: now, accountKey: accountKey, outcome: .failed, reason: reason)
             }
             didRefresh = true
         }
@@ -114,21 +118,23 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             return try await fetchAndBuild(
                 token: creds.accessToken,
                 plan: plan,
-                credentialService: creds.credentialService,
+                accountKey: accountKey, accountConfig: accountConfig,
                 now: now,
                 mode: mode,
                 lease: credentialSelection.lease,
                 sourceRefreshToken: credentialSelection.sourceRefreshToken)
         } catch OAuthError.credentialSourceChanged {
             return try await fallbackResult(
-                kind: kind, now: now, outcome: .skipped, reason: .notConnected)
+                kind: kind, now: now, accountKey: accountKey, outcome: .skipped,
+                reason: .notConnected)
         } catch OAuthError.unauthorized {
             // Token rejected despite appearing valid — attempt one refresh, unless we
             // already refreshed this poll (a freshly-refreshed token that still 401s
             // won't be fixed by an immediate second refresh).
             guard !didRefresh else {
                 return try await fallbackResult(
-                    kind: kind, now: now, outcome: .failed, reason: .unauthorized)
+                    kind: kind, now: now, accountKey: accountKey, outcome: .failed,
+                    reason: .unauthorized)
             }
             let refreshed: OAuthCredentials
             switch await Self.refreshCredentials(
@@ -141,10 +147,10 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             case .ready(let value): refreshed = value
             case .deferred(let reason):
                 return try await fallbackResult(
-                    kind: kind, now: now, outcome: .skipped, reason: reason)
+                    kind: kind, now: now, accountKey: accountKey, outcome: .skipped, reason: reason)
             case .failed(let reason):
                 return try await fallbackResult(
-                    kind: kind, now: now, outcome: .failed, reason: reason)
+                    kind: kind, now: now, accountKey: accountKey, outcome: .failed, reason: reason)
             }
             let refreshedPlan = ClaudePlan.displayName(
                 subscriptionType: refreshed.subscriptionType,
@@ -153,32 +159,38 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 return try await fetchAndBuild(
                     token: refreshed.accessToken,
                     plan: refreshedPlan,
-                    credentialService: refreshed.credentialService,
+                    accountKey: accountKey, accountConfig: accountConfig,
                     now: now,
                     mode: mode,
                     lease: credentialSelection.lease,
                     sourceRefreshToken: credentialSelection.sourceRefreshToken)
             } catch OAuthError.credentialSourceChanged {
                 return try await fallbackResult(
-                    kind: kind, now: now, outcome: .skipped, reason: .notConnected)
+                    kind: kind, now: now, accountKey: accountKey, outcome: .skipped,
+                    reason: .notConnected)
             } catch {
                 return try await fallbackResult(
-                    kind: kind, now: now, outcome: .failed, reason: Self.attemptReason(for: error))
+                    kind: kind, now: now, accountKey: accountKey, outcome: .failed,
+                    reason: Self.attemptReason(for: error))
             }
         } catch {
             return try await fallbackResult(
-                kind: kind, now: now, outcome: .failed, reason: Self.attemptReason(for: error))
+                kind: kind, now: now, accountKey: accountKey, outcome: .failed,
+                reason: Self.attemptReason(for: error))
         }
     }
 
     private func fallbackResult(
         kind: RefreshKind,
         now: Date,
+        accountKey: String? = nil,
         outcome: SourceAttempt.Outcome,
         reason: SourceAttempt.Reason
     ) async throws -> ParseResult {
-        try await fallback.poll(now: now, kind: kind).prependingSourceAttempt(
+        var result = try await fallback.poll(now: now, kind: kind).prependingSourceAttempt(
             SourceAttempt(source: .oauth, outcome: outcome, reason: reason))
+        result.oauthAccountKey = accountKey
+        return result
     }
 
     private static func attemptReason(for error: Error) -> SourceAttempt.Reason {
@@ -197,8 +209,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         return .requestFailed
     }
 
-    /// One refresh state machine shared by normal polling, 401 recovery, and
-    /// enrichment. In particular, every failure clears the cached token chain.
+    /// One refresh state machine shared by normal polling and 401 recovery. In particular, every failure clears the cached token chain.
     private static func refreshCredentials(
         _ credentials: OAuthCredentials,
         mode: ClaudeOAuthMode,
@@ -449,7 +460,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         }
         // Refresh can take several seconds. Use a fresh timestamp for the request
         // gate and any Retry-After value returned by the server.
-        let usage = try await requestUsage(token: creds.accessToken)
+        let usage = try await requestUsage(token: creds.accessToken).usage
         return verificationPercentages(from: usage)
     }
 
@@ -459,129 +470,6 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         (
             LimitWindow(percentUsed: usage.fiveHour?.utilization).clampedPercent ?? 0,
             LimitWindow(percentUsed: usage.sevenDay?.utilization).clampedPercent ?? 0
-        )
-    }
-
-    // MARK: - Enrichment
-
-    /// A complete observation of the OAuth-only fields the statusline source cannot
-    /// provide. A non-`nil` enrichment means the request succeeded, so optional
-    /// fields that are `nil` must clear older values. `fetchEnrichment` reserves its
-    /// outer `nil` for "no new observation" (disabled, unavailable, or failed).
-    public struct OAuthEnrichment: Sendable, Equatable {
-        public let opus: LimitWindow?
-        public let scopedWeekly: [ScopedLimitWindow]?
-        public let extraUsage: ExtraUsage?
-        public let plan: String?
-        /// The service that supplied this observation. An absent identity must
-        /// never be inferred from the currently active statusline account.
-        public let credentialService: String?
-
-        public init(
-            opus: LimitWindow?,
-            scopedWeekly: [ScopedLimitWindow]?,
-            extraUsage: ExtraUsage?,
-            plan: String?,
-            credentialService: String? = nil
-        ) {
-            self.opus = opus
-            self.scopedWeekly = scopedWeekly
-            self.extraUsage = extraUsage
-            self.plan = plan
-            self.credentialService = credentialService
-        }
-    }
-
-    /// Typed result for the auxiliary enrichment request. Unlike the optional
-    /// convenience API, this retains why no new observation was available so the
-    /// app can mark a cached enrichment stale without marking the primary
-    /// statusline snapshot stale too.
-    public enum OAuthEnrichmentFetchResult: Sendable, Equatable {
-        case success(OAuthEnrichment)
-        case unavailable(SourceAttempt.Reason)
-    }
-
-    /// Best-effort fetch of the Opus weekly window, extra-usage spend, and plan
-    /// from the OAuth usage API — used to enrich a snapshot produced by another
-    /// source (e.g. the statusline bridge, which omits these). Returns `nil` when
-    /// OAuth isn't configured or the call fails; never throws.
-    public static func fetchEnrichment(now: Date = Date()) async -> OAuthEnrichment? {
-        guard case .success(let enrichment) = await fetchEnrichmentResult(now: now) else {
-            return nil
-        }
-        return enrichment
-    }
-
-    /// Detailed enrichment fetch used by lifecycle-aware callers. A successful
-    /// response remains `.success` even when every optional field is absent: that
-    /// is an explicit empty observation, not a failure.
-    public static func fetchEnrichmentResult(
-        now: Date = Date()
-    ) async -> OAuthEnrichmentFetchResult {
-        let oauthMode = UserDefaults.standard.string(forKey: AppGroupConfig.oauthModeKey) ?? ""
-        guard let mode = ClaudeOAuthMode(rawValue: oauthMode) else {
-            return .unavailable(.notConnected)
-        }
-        guard !OAuthSharedState.isRateLimited(now: now) else {
-            return .unavailable(.rateLimited)
-        }
-        let keychainResult = loadCredentialResult(for: mode)
-        guard
-            let credentialSelection = OAuthSharedState.credentialSelection(
-                from: keychainResult, oauthMode: oauthMode)
-        else {
-            return .unavailable(keychainFailureReason(keychainResult))
-        }
-        var creds = credentialSelection.credentials
-        if creds.isExpired(asOf: now) {
-            switch await refreshCredentials(
-                creds,
-                mode: mode,
-                lease: credentialSelection.lease,
-                sourceRefreshToken: credentialSelection.sourceRefreshToken,
-                now: now)
-            {
-            case .ready(let refreshed):
-                creds = OAuthCredentials(
-                    accessToken: refreshed.accessToken,
-                    refreshToken: refreshed.refreshToken,
-                    expiresAt: refreshed.expiresAt,
-                    subscriptionType: creds.subscriptionType,
-                    rateLimitTier: creds.rateLimitTier,
-                    credentialService: refreshed.credentialService
-                )
-            case .deferred(let reason), .failed(let reason):
-                return .unavailable(reason)
-            }
-        }
-        let usage: UsageResponse
-        do {
-            usage = try await requestUsage(token: creds.accessToken, now: now)
-        } catch {
-            return .unavailable(attemptReason(for: error))
-        }
-        guard
-            automaticSourceIsStillCurrent(
-                mode: mode,
-                lease: credentialSelection.lease,
-                sourceRefreshToken: credentialSelection.sourceRefreshToken)
-        else { return .unavailable(.notConnected) }
-        let opus = usage.sevenDayOpus.flatMap { entry -> LimitWindow? in
-            guard let u = entry.utilization else { return nil }
-            return LimitWindow(percentUsed: u, resetsAt: parseEpochOrISODate(entry.resetsAt))
-                .resolved(asOf: now)
-        }
-        return .success(
-            OAuthEnrichment(
-                opus: opus,
-                scopedWeekly: scopedWindows(from: usage),
-                extraUsage: usage.extraUsage?.model,
-                plan: ClaudePlan.displayName(
-                    subscriptionType: creds.subscriptionType,
-                    rateLimitTier: creds.rateLimitTier
-                ),
-                credentialService: creds.credentialService
-            )
         )
     }
 
@@ -621,10 +509,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         return request
     }
 
-    /// Shared usage GET. Honors the process-wide 429 backoff used by `poll` and
-    /// `fetchEnrichment`.
+    /// Shared usage GET. Honors the process-wide 429 backoff used by all account requests.
     private static func requestUsage(token: String, now: Date = Date()) async throws
-        -> UsageResponse
+        -> (usage: UsageResponse, organizationID: String?)
     {
         guard !OAuthSharedState.isRateLimited(now: now) else { throw OAuthError.rateLimited }
 
@@ -640,15 +527,18 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             }
             throw OAuthError.httpError(http.statusCode)
         }
-        return try JSONDecoder().decode(UsageResponse.self, from: data)
+        return (
+            try JSONDecoder().decode(UsageResponse.self, from: data),
+            http.value(forHTTPHeaderField: "anthropic-organization-id")
+        )
     }
 
     /// Refreshes the access token, **coalescing concurrent refreshes of the same
     /// refresh token into one network request** (single-flight).
     ///
     /// Anthropic *rotates* the refresh token on each refresh, so two overlapping
-    /// refreshes of the same token — `poll` + `fetchEnrichment`, or a wake/reconnect
-    /// `refreshNow` racing the poll loop — would have the second send an
+    /// refreshes of the same token, such as a manual request overlapping a
+    /// background refresh, would have the second send an
     /// already-consumed token and get `invalid_grant`, terminally gating the account
     /// until it changes (a spurious "logged out"). Coalescing makes the second caller
     /// await the first's result and reuse the rotated token instead.
@@ -720,32 +610,37 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     private func fetchAndBuild(
         token: String,
         plan: String?,
-        credentialService: String?,
+        accountKey: String,
+        accountConfig: AccountConfig?,
         now: Date,
         mode: ClaudeOAuthMode,
         lease: OAuthSharedState.CredentialLease,
         sourceRefreshToken: String
     ) async throws -> ParseResult {
-        let usage = try await Self.requestUsage(token: token, now: now)
+        let response = try await Self.requestUsage(token: token, now: now)
         guard
             Self.automaticSourceIsStillCurrent(
                 mode: mode,
                 lease: lease,
                 sourceRefreshToken: sourceRefreshToken)
         else { throw OAuthError.credentialSourceChanged }
-        let needsAccountDiscovery =
-            credentialService != nil
-            && OAuthKeychain.accountKey(forCredentialService: credentialService, accounts: [])
-                == nil
-        let accounts = needsAccountDiscovery ? accountConfigs() : []
-        let accountKey = Self.sourceAccountKey(
-            credentialService: credentialService, isManual: mode == .manual, accounts: accounts)
-        let snapshot = buildSnapshot(usage: usage, plan: plan, accountKey: accountKey, now: now)
+        var snapshot = buildSnapshot(
+            usage: response.usage, plan: plan, accountKey: accountKey, now: now)
+        if let config = accountConfig {
+            let identity = AccountIdentityReader.loadLocal(
+                configDir: config.configDir, home: FileManager.default.homeDirectoryForCurrentUser)
+            snapshot.account?.email = identity?.email
+            snapshot.account?.organization = response.organizationID ?? identity?.organizationUuid
+        }
+        if let organizationID = response.organizationID {
+            snapshot.account?.organization = organizationID
+        }
+        snapshot.accounts?[0].account = snapshot.account
         return ParseResult(
             snapshot: snapshot,
             warnings: [],
             errors: [],
-            rawHash: "",
+            oauthAccountKey: accountKey,
             parserVersion: "oauth-api-1.0",
             sourceAttempts: [
                 SourceAttempt(source: .oauth, outcome: .selected, reason: .freshData)
@@ -810,7 +705,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             createdAt: now,
             lastSuccessfulPollAt: now,
             source: SourceInfo(cliPath: "api.anthropic.com", command: "GET /api/oauth/usage"),
-            account: plan.map { AccountInfo(loginMethod: "OAuth", plan: $0) },
+            account: AccountInfo(loginMethod: "OAuth", plan: plan),
             limits: LimitInfo(
                 currentSession: sessionWindow,
                 currentWeekAllModels: weekWindow,
@@ -820,18 +715,15 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             ),
             state: SnapshotState(status: .ok, severity: severity)
         )
-        if accountKey != "claude" {
-            snapshot.accounts = [
-                AccountUsage(
-                    id: accountKey,
-                    label: ConfigDirDiscovery.label(forKey: accountKey),
-                    account: snapshot.account,
-                    limits: snapshot.limits,
-                    lastSuccessfulPollAt: now,
-                    severity: severity,
-                    isActive: true)
-            ]
-        }
+        snapshot.accounts = [
+            AccountUsage(
+                id: accountKey,
+                label: ConfigDirDiscovery.label(forKey: accountKey),
+                account: snapshot.account,
+                limits: snapshot.limits,
+                lastSuccessfulPollAt: now,
+                severity: severity)
+        ]
         return snapshot
     }
 
@@ -916,7 +808,7 @@ internal struct UsageResponse: Decodable {
         // `seven_day_<model>` fields to entries in the generic `limits` array, and
         // the flat fields have been observed going null as that happens. Derive the
         // same `(key, entry)` shape from `limits` so the rest of the pipeline —
-        // `opusWindow`, `scopedWindows`, enrichment — needs no knowledge of which
+        // `opusWindow`, `scopedWindows` — needs no knowledge of which
         // form the server used. Flat fields always win; `limits` only fills gaps.
         let derived = Self.scopedEntriesFromLimits(
             (try? container.decodeIfPresent([LimitEntry].self, forKey: DynamicKey("limits"))) ?? nil
@@ -1156,7 +1048,7 @@ final class OAuthRateLimitGate: @unchecked Sendable {
 }
 
 /// Process-wide OAuth backoff + in-memory token cache shared by the instance
-/// pipeline and static enrichment fetches.
+/// polling and connection verification.
 private enum OAuthSharedState {
     struct CredentialLease: Sendable {
         fileprivate let revision: UInt64
@@ -1418,7 +1310,7 @@ private enum OAuthSharedState {
                 try OAuthKeychain.deleteManual()
             }
         }
-        UserDefaults.standard.set("", forKey: AppGroupConfig.oauthModeKey)
+        UserDefaults.standard.set("", forKey: MeterSettings.oauthModeKey)
         credentialRevision &+= 1
         cachedCredsByMode.removeAll()
         observedSourceTokensByMode.removeAll()
@@ -1434,7 +1326,7 @@ private enum OAuthSharedState {
         cachedCredsByMode.removeAll()
         observedSourceTokensByMode.removeAll()
         OAuthRefreshGate.recordSuccess()
-        UserDefaults.standard.set("", forKey: AppGroupConfig.oauthModeKey)
+        UserDefaults.standard.set("", forKey: MeterSettings.oauthModeKey)
         if let manualCredentialDeleteOverride {
             try manualCredentialDeleteOverride()
         } else {

@@ -2,10 +2,7 @@ import ClaudeMeterCore
 import Darwin
 import Foundation
 
-/// Shared reader/writer for a Claude Code `settings.json`. Both `StatuslineBridge`
-/// (which manages `statusLine`) and `HookBridge` (which manages `hooks`) mutate the
-/// same physical file, so the parse-with-typed-error and atomic pretty-printed
-/// write live here once instead of being copied into each.
+/// Bounded settings reads and atomic writes for one-time Claude integration migrations.
 enum SettingsFile {
     private static let maximumFileBytes = 4 * 1_024 * 1_024
 

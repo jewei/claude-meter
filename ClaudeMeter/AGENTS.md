@@ -5,108 +5,69 @@ Follow the root [AGENTS.md](../AGENTS.md) and [DESIGN.md](../DESIGN.md).
 ## Presentation
 
 - `PlayfulTheme.swift` owns colors, `PFont`, energy semantics, and 3D modifiers.
-  `PlayfulComponents.swift` owns shared cards, rings, and the activity grid.
+  `PlayfulComponents.swift` owns shared cards and rings.
 - The default display shows energy left, `100 - percentUsed`, with depleting fills.
   `progressionMode` switches all provider numbers and fills between left and used.
   Severity always takes percent used, with default warning 80 and critical 95.
-- Bundle static Fredoka/Nunito faces through the Fonts folder reference in both targets.
-  Each target needs `ATSApplicationFontsPath = Fonts`. `PFont` and widget `WFont` map
-  weights to exact PostScript names. Keep system fonts in the menu bar for its metrics.
+- Bundle static Fredoka/Nunito faces through the Fonts folder reference and
+  `ATSApplicationFontsPath = Fonts`. `PFont` maps weights to PostScript names.
+  Keep system fonts in the menu bar for its metrics.
   Regenerate all 10 AppIcon sizes when changing the SwiftUI-drawn bolt icon.
-- Account names and plans in `AppGroupConfig` are user overrides. Name precedence is
-  override then `friendlyName(label)`. Plan precedence is override, active-account
-  OAuth plan, then per-account OAuth plan.
+- Account names and plans in `MeterSettings` are user overrides. Name precedence is
+  override then `friendlyName(label)`. Plan precedence is override then account OAuth plan.
 - `mainMeterSeverity` and `mainMeterLimitSets` use the selected provider's exact account
   pin, or its nearest-limit account policy. The menu-bar dot uses severity across all
   considered windows, even when the text shows only one window.
-- Appearance settings sync through the App Group. Provider/account/progression changes
-  republish or reload the widget. `selectionRevision` must invalidate old publications
-  after a failed switch or clear. Card style affects the popover; the widget keeps rings.
-  Settings uses its custom tab bar and `SettingsWindowAccessor` for the title.
+- Settings uses Data, Appearance, Advanced, and About tabs and `SettingsWindowAccessor`
+  for the title. Visual severity thresholds belong in Appearance.
 - `PopoverView` owns disclosure state, persistence, and rendering. `PopoverTransitionBody`
   owns measurement, resizing, clipping, interruption, and Reduce Motion. When Codex is
   primary, Claude expands inside one secondary card to show all its accounts and limits.
-- `UsageSpendView` is a `Window` scene, opened from the popover header through
-  `openWindow(id: AppState.usageSpendWindowID)`. It loads through
-  `loadSpendBreakdown(daysBack:)`, which is separate from `costReading` because the poll
-  covers seven days only. Keep presentation rules in `SpendBreakdownFormat` so they stay
-  testable. Complete scans fill quiet days with zero bars; partial scans leave unread
-  days absent. Keep the completed range, scan date, and calendar with the result for
-  chart labels and export. A new request clears the old result and error; a failed scan
-  shows an error with no total or export. The export carries no paths. Keep the header
-  and footer pinned while the chart and model rows scroll.
-  Show one combined estimate with separate Claude and Codex sections. Capture raw Codex
-  home paths and the enabled flag with the request; resolve paths off-main. Source and
-  account changes replace an open window's scan. Keep known costs separate from unknown
-  costs, scan partial state, and missing service-tier assumptions. Unknown costs must
-  remain null in provider-tagged exports, never become a claimed zero. Codex scans stay
-  on demand and do not enter the quota poll or change the Claude cost card.
-  A new window must join the `isSettingsWindowVisible` check in `AppUpdater`, or an
-  `LSUIElement` app drops to `.accessory` and strands it without Cmd-Tab.
-- The cost card opens `ActivityHeatmapGrid` with a Back button through
-  `loadActivityHeatmap`. Load it off-main on demand, never in the quota pipeline.
-  Keep account management in Settings; the popover has no duplicate footer action.
+- Keep account management in Settings; the popover has no duplicate footer action.
 
 The accessibility summary beside `MenuBarText` must distinguish the spoken window from
-severity across all windows. Hide child labels to prevent duplicate announcements. Use
-`RunsOutPhrase.spoken` and omit stale or paused percentages. `MenuBarAccessibility`
-sets the native status-button summary. Keep the public AX title override until a native
+severity across all windows. Hide child labels to prevent duplicate announcements.
+Omit stale or paused percentages. `MenuBarAccessibility` sets the native status-button
+summary. Keep the public AX title override until a native
 proxy check confirms it is unnecessary; SwiftUI labels and AppKit titles can leave that
 proxy reading only compact text.
 
-## Poll work and system monitors
+## Provider lifecycle ownership
 
-- Cost scans run outside the quota task group. Allow one active scan and the latest
-  pending configuration, with a separate one-worker timeout budget. Merge completion
-  only into the current snapshot under its captured generation and source settings.
-  Never change quota timestamps, clear provider errors, or send quota alerts.
-- The cost card uses its own dated `ReadingState`. A new scan must verify persisted
-  totals' root scope before display. Preserve old totals after an empty partial scan
-  only when the verified roots and configuration match. A timeout has no verified
-  scope and clears old totals; a complete empty scan also clears them. Account changes
-  invalidate old cost results immediately, including during the rebuild debounce.
-- `PowerMonitor` stays in the app target. Park polling on `screensDidSleep`, not
-  `willSleep`, because sleep can be canceled. Recheck every 300 s while asleep, refresh
-  immediately on wake, and multiply the 60 s poll interval by two on battery.
-  Keep observer tokens in the nonisolated `ObserverBag` for Swift 6 deinit cleanup.
-- `NetworkMonitor` refreshes only on a lost-to-regained transition, using `wasSatisfied`
-  and a hop to `@MainActor` from its background queue.
-- `MemoryPressureMonitor` trims `CostUsageCache` and `ActivityCache` on warning/critical
-  pressure, then calls `malloc_zone_pressure_relief` off-main. Preserve the cost disk
-  checkpoint. Repopulate touched files later; do not reload the full cache immediately.
-- `AppState.init(pipeline:)` skips all three system monitors and gives `setActive` an
-  isolated defaults suite. Tests must not write `AppSettings.isActive` or save/restore
-  shared pause settings; overlapping tests can leave the installed app paused.
+`UsageStore` owns all four providers' normalized readings, loading, cancellation and
+stale-last-good behavior. AppState must not hold another mutable usage reading.
+RefreshScheduler owns global timing/admission. AppState supplies configuration and forwards
+store change notifications without copying state. All provider presentation consumes Core models; it must not inspect provider wire types.
 
-## Notifications
+Fetches run off-main. Cursor/Grok use the store timeout. Claude and Codex own their
+bounded fetch deadlines. Claude account timing, diagnostics and persistence stay in Providers.
+The store calls `validatePrevious`, publishes changed valid previous accounts, calls `fetch`,
+then accepts through `didAccept` and publishes without suspension after its token check.
+Acceptance only updates memory and queues provider-owned I/O. Clear loading before
+awaiting `waitForPersistence`; no disk work may block MainActor. Check refresh ownership
+after fetch/reconciliation suspensions. Once accepted, writes survive cancellation and
+later refreshes. Providers return data without calling publication code. A newer request
+supersedes only that provider. Provider adapters classify and sanitize failures. Cursor credential
+rejection clears last-good data; temporary failures retain it. Outer stale state applies to
+all retained accounts without rewriting their source observation or its timestamp.
 
-- `NotificationEngine` is an actor. Quota policy takes fresh selected-provider
-  `MainMeterReading` observations and thresholds from `AppGroupConfig`. Baselines must
-  match provider and account identity; a switch starts a new baseline. Keep the old
-  snapshot policy overload for Core compatibility tests. Claude attention hooks are
-  separate from quota alerts.
-- Codex home paths are pins. `observationOwnerID` defines alert ownership. Treat
-  `CodexReadingStore.candidates` as untrusted until the poll verifies ownership off-main.
-  Unknown-owner readings are current-only, with no durable cache or quota alerts.
-- Dedup keys include provider, hashed account, scope, level, and reset epoch. Recognize
-  legacy Claude keys. Critical suppresses warning. With no reset date, use the next
-  local day's start. Mark fired only after `UNUserNotificationCenter.add` succeeds.
-  Do not add sound.
-- Recovery compares resolved current usage with raw previous severity so a reset can
-  trigger a refueled alert. Notification copy uses energy left.
-- Predictive alerts are opt-in and require two consecutive fresh qualifying observations
-  with the same provider, account, scope, and reset epoch bucketed by 5 minutes.
-  Normalize the hashed provider/account identity and recognize legacy keys. Stale,
-  failed, or nonqualifying observations reset the streak. Fire only at normal severity.
-- `SessionEventStore.drain` consumes subagent `Stop` markers with `agent_id` without
-  notifying. Keep subagent permission and rate-limit/billing `StopFailure` events.
-- `TerminalFocusRouter` activates a running terminal before detached exact focus.
-  Route Ghostty by cwd, Terminal/iTerm2 by TTY, and WezTerm by pane ID. Warp only
-  activates. Herdr routes pin its socket and pane ID for `herdr agent focus`; Ghostty
-  uses `HERDR_STARTUP_CWD` for the outer terminal. Never use Herdr's inner TTY to select
-  an outer terminal tab. Equal-cwd Ghostty windows remain ambiguous. Version 2 hook
-  envelopes carry the base64url route; legacy filename routes remain readable. The
-  snippet runs `ps`/`base64` only when `TERM_PROGRAM` is set.
-  Guard scripts with `if application X is running` so a race cannot launch a quit app.
-  Bound subprocess waits to 10 s, then SIGTERM/SIGKILL. AppleScript clients need the
-  Automation entitlement and usage description and can show a one-time system prompt.
+## Refresh scheduling and display sleep
+
+- `RefreshScheduler` owns one 300 s timer and merges queued provider requests. UsageStore's
+  refreshing set suppresses duplicate automatic work; explicit refresh may supersede it.
+- Configuration contains only active state and enabled provider IDs. AppState combines
+  onboarding with pause state. Scheduler forwards enable/disable to UsageStore.
+- Start/resume refreshes enabled providers. Enabling a provider or changing its configuration
+  refreshes only that provider without resetting the timer. Main-meter selection has no
+  scheduling effect. The scheduler does not read UserDefaults.
+- Popover open uses Core's reading freshness helper with a 60 s threshold. Manual refresh
+  bypasses age checks. The visible popover's one-second timer only updates local countdowns.
+- PowerMonitor tracks display sleep and wake. Park on `screensDidSleep`, not `willSleep`,
+  because system sleep can be cancelled. Wake checks freshness at 300 s and resumes the
+  timer. Stop/sleep cancel queued work and active store work.
+  Do not add a battery cadence, reachability monitor or periodic asleep check.
+- Keep observer tokens in the nonisolated `ObserverBag` for Swift 6 deinit cleanup.
+  Scheduler tests inject time, sleep and display state. Use gates, not real poll delays.
+- `AppState.init(usageStore:)` skips system monitors and gives `setActive` an isolated
+  defaults suite. Tests must not write shared pause settings. Aggregate loading comes
+  only from UsageStore; do not mirror it.

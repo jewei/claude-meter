@@ -8,7 +8,6 @@ struct SettingsView: View {
     private static let tabs: [(icon: String, title: String)] = [
         ("cylinder.split.1x2", "Data"),
         ("paintpalette.fill", "Appearance"),
-        ("bell", "Notifications"),
         ("slider.horizontal.3", "Advanced"),
         ("info.circle", "About"),
     ]
@@ -20,9 +19,8 @@ struct SettingsView: View {
             Group {
                 switch selection {
                 case 0: DataSettingsTab(appState: appState)
-                case 1: AppearanceSettingsTab(appState: appState)
-                case 2: NotificationsSettingsTab(appState: appState)
-                case 3: AdvancedSettingsTab(appState: appState)
+                case 1: AppearanceSettingsTab()
+                case 2: AdvancedSettingsTab(appState: appState)
                 default: AboutSettingsTab()
                 }
             }

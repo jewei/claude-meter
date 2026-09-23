@@ -265,38 +265,6 @@ struct ProviderHTTPClientBoundsTests {
     }
 }
 
-/// Demonstrates the testability win: a client can be driven against canned
-/// responses by injecting a stub transport — no network.
-private struct StubTransport: HTTPTransport {
-    let data: Data
-    let status: Int
-    func send(_ request: URLRequest, retry _: HTTPRetryPolicy) async throws -> (
-        Data, HTTPURLResponse
-    ) {
-        let http = HTTPURLResponse(
-            url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
-        return (data, http)
-    }
-}
-
-@Suite("Transport injection")
-struct TransportInjectionTests {
-    @Test func statusClientParsesInjectedResponse() async {
-        let json = #"{"status":{"indicator":"major","description":"Partial outage"}}"#
-        let client = AnthropicStatusClient(
-            transport: StubTransport(data: Data(json.utf8), status: 200))
-        let status = await client.fetch()
-        #expect(status?.level == .major)
-        #expect(status?.description == "Partial outage")
-    }
-
-    @Test func statusClientReturnsNilOnNon200() async {
-        let client = AnthropicStatusClient(
-            transport: StubTransport(data: Data("{}".utf8), status: 503))
-        #expect(await client.fetch() == nil)
-    }
-}
-
 @Suite("Keychain status mapping")
 struct KeychainStatusMappingTests {
     @Test func successWithDataIsFound() {

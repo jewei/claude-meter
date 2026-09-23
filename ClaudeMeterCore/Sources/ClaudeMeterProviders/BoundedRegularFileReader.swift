@@ -104,17 +104,12 @@ enum BoundedRegularFileReader {
             let modificationDate: Date
             fileprivate let signature: EntrySignature
 
+            var isRegularFile: Bool { signature.mode & S_IFMT == S_IFREG }
+
             fileprivate init(_ status: stat) {
                 self.modificationDate = BoundedRegularFileReader.modificationDate(from: status)
                 self.signature = EntrySignature(status)
             }
-        }
-
-        struct File {
-            let data: Data
-            let entry: Entry
-
-            var modificationDate: Date { entry.modificationDate }
         }
 
         private let descriptor: Int32
@@ -221,39 +216,6 @@ enum BoundedRegularFileReader {
             return Entry(status)
         }
 
-        /// Reads one direct child through `openat`. The returned identity belongs
-        /// to the descriptor that supplied the data.
-        func readFile(
-            named name: String,
-            maximumByteCount: Int,
-            symlinkPolicy: SymlinkPolicy = .reject,
-            afterRead: (() -> Void)? = nil
-        ) throws -> File {
-            try Self.validateEntryName(name)
-            guard maximumByteCount >= 0 else { throw ReadError.invalidMaximumSize }
-
-            var flags = O_RDONLY | O_NONBLOCK | O_CLOEXEC
-            if symlinkPolicy == .reject { flags |= O_NOFOLLOW }
-            let fileDescriptor = name.withCString { Darwin.openat(descriptor, $0, flags) }
-            guard fileDescriptor >= 0 else { throw ReadError.openFailed(errno) }
-            defer { Darwin.close(fileDescriptor) }
-
-            let statusBefore = try BoundedRegularFileReader.regularFileStatus(
-                descriptor: fileDescriptor, maximumByteCount: maximumByteCount)
-            let data = try BoundedRegularFileReader.readData(
-                descriptor: fileDescriptor, expectedByteCount: Int(statusBefore.st_size))
-            guard data.count == Int(statusBefore.st_size) else { throw ReadError.fileChanged }
-            afterRead?()
-            var statusAfter = stat()
-            guard Darwin.fstat(fileDescriptor, &statusAfter) == 0 else {
-                throw ReadError.inspectionFailed(errno)
-            }
-            guard ContentSignature(statusAfter) == ContentSignature(statusBefore) else {
-                throw ReadError.fileChanged
-            }
-            return File(data: data, entry: Entry(statusAfter))
-        }
-
         /// Returns true only when this descriptor still names the directory at
         /// `url`. Call this before a destructive operation that must stay below a
         /// specific root path.
@@ -288,42 +250,6 @@ enum BoundedRegularFileReader {
                 return false
             }
             return name.withCString { Darwin.unlinkat(descriptor, $0, 0) } == 0
-        }
-
-        /// Removes the regular file only when it is unchanged since `readFile`.
-        @discardableResult
-        func unlinkFile(named name: String, ifUnchangedSince file: File) -> Bool {
-            unlinkEntry(named: name, ifUnchangedSince: file.entry)
-        }
-
-        /// Restricts this directory to owner-only access. The mode change applies to
-        /// the open descriptor, so a replaced path cannot redirect it. Returns true
-        /// when the directory already excluded group and other access.
-        @discardableResult
-        func restrictToOwner() -> Bool {
-            var status = stat()
-            guard Darwin.fstat(descriptor, &status) == 0 else { return false }
-            guard (status.st_mode & 0o077) != 0 else { return true }
-            return Darwin.fchmod(descriptor, mode_t(0o700)) == 0
-        }
-
-        /// Restricts one direct regular-file child to owner-only access. A symbolic
-        /// link is neither followed nor modified, so an attacker cannot redirect the
-        /// mode change to a file outside this directory.
-        @discardableResult
-        func restrictEntryToOwner(named name: String) -> Bool {
-            guard (try? Self.validateEntryName(name)) != nil else { return false }
-            var status = stat()
-            let inspectionResult = name.withCString {
-                Darwin.fstatat(descriptor, $0, &status, AT_SYMLINK_NOFOLLOW)
-            }
-            guard inspectionResult == 0, (status.st_mode & S_IFMT) == S_IFREG else {
-                return false
-            }
-            guard (status.st_mode & 0o077) != 0 else { return true }
-            return name.withCString {
-                Darwin.fchmodat(descriptor, $0, mode_t(0o600), AT_SYMLINK_NOFOLLOW)
-            } == 0
         }
 
         private static func validateEntryName(_ name: String) throws {

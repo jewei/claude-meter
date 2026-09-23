@@ -6,7 +6,6 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .executable(name: "ClaudeMeter", targets: ["ClaudeMeter"]),
-        .library(name: "ClaudeMeterWidget", targets: ["ClaudeMeterWidget"]),
     ],
     dependencies: [
         .package(path: "ClaudeMeterCore")
@@ -24,17 +23,6 @@ let package = Package(
                 "ClaudeMeter.entitlements",
                 "Fonts",
                 "Info.plist",
-            ]
-        ),
-        .target(
-            name: "ClaudeMeterWidget",
-            dependencies: [
-                .product(name: "ClaudeMeterCore", package: "ClaudeMeterCore")
-            ],
-            path: "ClaudeMeterWidget",
-            exclude: [
-                "ClaudeMeterWidget.entitlements",
-                "ClaudeMeterWidget-Info.plist",
             ]
         ),
     ]

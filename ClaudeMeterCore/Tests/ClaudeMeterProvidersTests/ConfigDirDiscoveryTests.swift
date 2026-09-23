@@ -7,7 +7,7 @@ import Testing
 @Suite("ConfigDirDiscovery")
 struct ConfigDirDiscoveryTests {
 
-    // MARK: - accountKey (must match the bridge bash snippet byte-for-byte)
+    // MARK: - accountKey (stable persisted identity)
 
     @Test func accountKeyStripsLeadingDotAndSanitizes() {
         let home = URL(fileURLWithPath: "/Users/x")

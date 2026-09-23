@@ -17,7 +17,6 @@ public struct AccountConfig: Sendable, Equatable, Identifiable {
     public let configDir: URL
 
     public var settingsPath: URL { configDir.appendingPathComponent("settings.json") }
-    public var projectsPath: URL { configDir.appendingPathComponent("projects") }
 
     public init(id: String, label: String, configDir: URL) {
         self.id = id
@@ -26,15 +25,9 @@ public struct AccountConfig: Sendable, Equatable, Identifiable {
     }
 }
 
-/// Discovers the Claude config directories on this machine and derives their
-/// account keys/labels. The key rule here is the single source of truth and MUST
-/// stay byte-for-byte identical to the bridge bash snippet in `StatuslineBridge`,
-/// because both name the same `~/.claude-meter/sessions/<key>/` subdirectory.
+/// Discovers OAuth config directories and derives stable persisted account keys.
 public enum ConfigDirDiscovery {
-
-    /// ASCII allow-set matching `tr -cd "[:alnum:]._-"` under the C/POSIX locale.
-    /// An explicit set is required: `Character.isLetter`/`isNumber` are Unicode-wide
-    /// and would diverge from `tr`, breaking parity with the bash snippet.
+    /// Keep the historical ASCII key format so existing account pins remain valid.
     private static let allowedScalars: Set<Unicode.Scalar> = {
         var set = Set<Unicode.Scalar>()
         for scalar in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
@@ -49,9 +42,6 @@ public enum ConfigDirDiscovery {
     /// leading `.`, keep only `[A-Za-z0-9._-]`, and fall back to `claude` if empty.
     ///
     /// `~/.claude` → `claude`, `~/.claude-it-oneone` → `claude-it-oneone`.
-    /// Bash equivalent (must match — `LC_ALL=C` forces byte-oriented `tr` so it
-    /// strips multibyte UTF-8 exactly like this ASCII allow-set):
-    /// `A=$(basename "${CLAUDE_CONFIG_DIR:-$HOME/.claude}");A=${A#.};A=$(printf "%s" "$A"|LC_ALL=C tr -cd "[:alnum:]._-");[ -z "$A" ]&&A=claude`
     public static func accountKey(for dir: URL) -> String {
         var name = dir.lastPathComponent
         if name.hasPrefix(".") { name.removeFirst() }
@@ -61,8 +51,7 @@ public enum ConfigDirDiscovery {
     }
 
     /// Human label for an account key. `claude` → `default`; otherwise strip a
-    /// leading `claude-` (`claude-it-oneone` → `it-oneone`). The payload JSON
-    /// carries no org/email, so the dir name is the only stable identity we have.
+    /// leading `claude-` (`claude-it-oneone` → `it-oneone`).
     public static func label(forKey key: String) -> String {
         if key == "claude" { return "default" }
         if key.hasPrefix("claude-"), key.count > "claude-".count {
@@ -134,7 +123,7 @@ public enum ConfigDirDiscovery {
 
         // Resolve key collisions deterministically. The real default always owns the
         // `claude` key; for other collisions an explicitly configured path wins, then
-        // resolved-path order breaks ties. The bridge protocol cannot represent two
+        // resolved-path order breaks ties. The persisted account key cannot represent two
         // directories with the same sanitized key, so one must be selected.
         if isDirectory(defaultDir, fm: fm) { consider(defaultDir) }
         let configuredResolvedPaths = Set(

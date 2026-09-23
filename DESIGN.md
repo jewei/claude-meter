@@ -87,7 +87,7 @@ percentLeft = 100 − resolvedWindow.percentUsed     // clamp 0…100
 
 **Severity stays driven by the existing, user-configurable `UsageThresholds` (percentUsed: warning
 80, critical 95).** We do not invent new bands — keeping one source of truth means the menu-bar dot,
-ring colors, hero state, and notifications always agree, and the user's threshold settings keep
+ring colors and hero state always agree, and the user's threshold settings keep
 working. Expressed as energy:
 
 | Energy band | percentUsed      | percentLeft   | Color         | SF tone  |
@@ -113,33 +113,17 @@ Per-window status line (left side, colored by band):
 | Empty      | "Almost dry — easy now" · "Tapped out"                    |
 
 Hero state follows the selected main provider and account policy. An exact pin wins;
-otherwise the nearest-limit account owns the hero, menu bar, widget, and quota alerts.
+otherwise the nearest-limit account owns the hero and menu bar.
 The subtitle may call out another low account from that provider:
 
 | Overall | Emoji | Headline             | Subline pattern                                   | Hero colors |
 | ------- | ----- | -------------------- | ------------------------------------------------- | ----------- |
-| Full    | 🚀    | "You're cruising"    | Active account healthy; optionally flag a lower other account | green hero  |
-| Low     | ⛽    | "Pace yourself"      | Active account is getting low and its refill phrase | orange hero |
-| Empty   | 🪫    | "Almost tapped out"  | Active account is nearly dry and its refill phrase | red hero    |
-| Tapped  | 🥵    | "Take a breather"    | Active account is out and its refill phrase | red hero    |
+| Full    | 🚀    | "You're cruising"    | Selected account healthy; optionally flag a lower other account | green hero  |
+| Low     | ⛽    | "Pace yourself"      | Selected account is getting low and its refill phrase | orange hero |
+| Empty   | 🪫    | "Almost tapped out"  | Selected account is nearly dry and its refill phrase | red hero    |
+| Tapped  | 🥵    | "Take a breather"    | Selected account is out and its refill phrase | red hero    |
 
 Single account collapses the subline to that account's own status ("Refills in 3h 12m").
-
-### Pace reference
-
-Pace is a neutral, display-only comparison between percent used and percent of the rolling
-window elapsed. It never changes `EnergyBand`, severity, notifications, or threshold colors.
-
-- Bar cards draw a 2pt `ink-muted` marker at the expected position. In usage mode that position
-  is `percentTimeElapsed`; in energy-left mode it mirrors to `100 - percentTimeElapsed`.
-- The bar status phrase becomes "On pace", "12% ahead of pace", or "12% behind pace" when the
-  comparison is available.
-- Ring cards keep their reset phrase and add the same neutral text below the primary 5-hour and
-  weekly rows. Opus and dynamic scoped rows do not repeat it.
-- When straight-line burn projects depletion before reset, `May run out in …` replaces pace copy.
-  The expected-position marker remains neutral, and an early-window guard prevents bursty false alarms.
-- Missing, expired, or implausible reset times produce no marker or pace text. Bar cards retain
-  their existing energy phrase in that case.
 
 ---
 
@@ -213,18 +197,14 @@ when accounts/providers overflow.
 │ ┌──────────────────────────────────────────┐ │  Ring card (other account)
 │ │ ((A))  Personal …                          │ │
 │ └──────────────────────────────────────────┘ │
-│ ┌──────────────────────────────────────────┐ │  Cost card (tap → heatmap)
-│ │ 💸 Last 7 days              $75.68      ›  │ │
-│ └──────────────────────────────────────────┘ │
 └──────────────────────────────────────────────┘
 ```
 
 ### Header
 - Left: 30×30 raised header icon (radius 9, `energy-full` fill, white ⚡/bolt.fill) + "Claude Usage"
   Fredoka 600/18 `ink`.
-- Right: compact relative update time plus 28×28 Usage & Spend, Settings, and Quit buttons.
-  Usage & Spend appears after onboarding, for either selected main provider. The update
-  time truncates when space is limited so all controls remain visible. Opening
+- Right: compact relative update time plus 28×28 Settings and Quit buttons.
+  The update time truncates when space is limited so all controls remain visible. Opening
   the popover already triggers an interactive refresh, so no redundant refresh
   control is shown. Pause/resume lives in Settings.
 
@@ -236,8 +216,8 @@ Hero bg/border swap green→orange→red with severity. Animate color with `.eas
 ### Accounts section
 - Label row: "ACCOUNTS" (label style) left; **ring legend** right — `◌ weekly` (2.5pt ring outline
   dot) + `● 5-hour` (filled dot), Nunito 700/10 `ink-muted`. (Bars variant shows "N connected".)
-- **One ring card per account**, selected nearest/pinned account first. Build a unified `[AccountUsage]`: use
-  `snapshot.accounts` when present, else synthesize a single element from the top-level snapshot.
+- **One ring card per account**, selected nearest/pinned account first. Read normalized
+  `ProviderAccountSnapshot` values from UsageStore for every provider.
 
 ### Ring card (primary — Frame B)
 Chunky card, flex row, gap 14.
@@ -255,58 +235,21 @@ Chunky card, flex row, gap 14.
     available count. Each returned reset shows its title and time to expiry, sorted by expiry.
     Hovering a row shows the exact local expiry date and time. Missing or partial expiry
     details are stated below the count. The section uses the card's existing fonts and colors.
-  - A Claude account with a matching signed-in web offer shows "Usage limit resets",
-    the available count, and each offer's title and time to expiry below its limits.
-    Hovering an offer shows the local expiry date and time. The section links to Claude
-    Settings > Usage to use a reset. Without a matching offer observation, show a compact
-    "Claude limit resets" link card below the Claude accounts or compact secondary card.
-    Do not show a count when the web session or account match is unavailable.
+  - An unavailable or stale Claude account keeps its label and sanitized account error.
+    Use the existing small error text below its quota rows. Unknown values stay unknown.
 
 **Per-account data reality:** label, 5-hr %, week %, reset/refill exist for every account. Email,
-plan badge, and weekly-Opus are OAuth-only → present only on the active account. Never fabricate
+plan badge, weekly Opus, and scoped windows come from each account's OAuth response. Never fabricate
 them; the card degrades gracefully (name + rings + two rows). When Claude is the secondary
 provider, keep one compact summary card: show the nearest-limit account's known plan in its header,
 then expand in place for per-account session/week/Opus/scoped rows and known identity metadata.
+
+Account cards have no local-session indicator or pulsing session-open dot.
 
 ### Energy-bar card (alt — Frame A, keep available)
 Same card; replaces rings with two stacked rows, each: icon (⚡/📅) + label + "78% left", a 14pt
 depleting capsule bar (band color, inner top gloss), and a phrase/reset row. Document but ship rings
 as the default. Appearance → Account cards switches between rings and bars.
-
-### Cost card → activity heatmap
-The "Last 7 days" cost card is **tappable** (chevron affordance): it flips the popover body to a
-GitHub-style **activity punchcard** — 7 rows (Mon–Sun) × 24 columns (hour of day), each cell a
-rounded square shaded in 5 `energy-full` intensity levels by message volume relative to the busiest
-hour (empty = `track`). Weekday labels at left, a 6-hour axis below, and a "Less → More" legend. A
-**Back** button returns to the main view. Data is scanned on demand from local transcripts (last 30
-days, local time); shows "Scanning…" / "No activity" placeholders.
-
----
-
-## Usage and Spend window
-
-Open this separate window from the popover header. Its minimum size is 620×520 points,
-with 22-point padding. Keep the title, estimated total, and 7/30-day picker pinned above
-the scroll area. Keep Copy JSON and the estimate notice pinned below it. Only the
-provider sections scroll. Show one combined estimate in the header, then Claude and
-Codex sections in that order. Each section has an 18-point provider title, its subtotal,
-its notices, daily chart, and model rows. There is no provider picker. A disabled Codex
-section states that its usage is excluded from the total.
-
-Daily bars use `energy-full` for both complete and partial scans. A partial scan shows
-an explicit banner and uses "at least" for the total. Only a complete scan adds zero
-bars for quiet days. The chart's end dates and peak amount use the existing caption
-font with monospaced digits. Omit model rows that have neither tokens nor cost.
-Unknown model costs say "Unknown". A wholly unpriced total says "Cost unknown". Keep
-known subtotals in combined and provider amounts and label them "at least". Use a muted
-minimum-height mark for a day with unknown cost and no known amount; its tooltip and
-accessibility text say "Cost unknown". Missing prices prevent zero-filled quiet days.
-State missing Codex service-tier assumptions in a notice. Keep scan incompleteness and
-unknown pricing as separate notices. JSON export retains these states and provider names.
-
-Starting a scan clears the old chart and total, shows the loading message, and disables
-Copy JSON. A failed scan shows the error in that area. Completed charts, total labels,
-and exports use the range and date captured for the successful scan.
 
 ---
 
@@ -328,42 +271,21 @@ status dot (top-right), severity from the same engine as the rings:
 
 Retain a compact "{percentLeft}% left" text after the glyph for glanceability (design omits it; it's
 trivial to hide via a setting). The **"Menu bar shows"** setting picks nearest limit (default, unsuffixed), `5h`, `7d`,
-`both` (`99% 5h · 73% 7d`), or `forecast` (`20% · out 38m`). Forecast uses the nearest binding
-window and falls back to its percentage when projection is unavailable. The dot color always tracks
-severity across all windows, so a single-window number can differ from the dot.
+`both` (`99% 5h · 73% 7d`). Reset phrases on cards use the provider-reported reset time.
+The dot color always tracks severity across all windows, so a single-window number
+can differ from the dot.
 Pause = dimmed glyph, no dot/number. Reduce Motion disables the pulse. Colors render in the menu bar
 (SwiftUI MenuBarExtra label is not force-templated).
 
 ---
 
-## Notifications (Frame C voice)
+## Settings
 
-macOS can't style the toast (system chrome + app icon only), so "implementing Frame C" = **copy**.
-Keep the existing dedup + threshold logic; only titles/bodies change. Title always "Claude Usage".
-Frame `%` as **% left**. Examples:
-
-Quota notification policy follows the selected main meter. Claude attention-hook notifications
-remain Claude-specific.
-
-- **Low (warning):** "Heads up — {account} is at {left}%. Refills in {refill}. Maybe touch grass? 🌱"
-- **Empty (critical):** "{account} is almost dry ({left}%). {refill} to refuel. Easy now. 🫠"
-- **Tapped out:** "{account} is tapped out. Back in {refill}. Go stretch. 🧘"
-- **Recovered/refueled:** "You're refueled! {account} is back to 100%. Go get 'em. 🎉"
-
-Weekly scope swaps "Refills" → "Resets {day}". No sound (unchanged).
-
----
-
-## Settings & Widget
-
-No design spec ships for these — translate the language faithfully:
 - **Settings:** cream `popover-bg` window, chunky cards per section/data-source, raised primary
-  buttons, Fredoka headings / Nunito body, adaptive dark. Keep the existing tab structure & controls.
-- **Widget (sandboxed):** the depleting-ring look for the selected Claude or Codex account;
-  medium/large show provider/account identity and optional Opus detail. Duplicate the ring component
-  + token hexes into the widget target (design tokens are intentionally not shared across targets —
-  see `Color(widgetHex:)`). Open only `SnapshotStore.appGroup()` and load through Core's
-  provider/account/revision-validating `MainMeterPublication`; degrade to a neutral "no data" ring.
+  buttons, Fredoka headings / Nunito body, adaptive dark. The tabs are Data, Appearance,
+  Advanced, and About. Appearance contains the warning and critical severity sliders;
+  they control menu-bar and card colors. Codex Data settings show enablement, sign-in status,
+  homes and display names. They do not show an OAuth/App Server source picker.
 
 ---
 

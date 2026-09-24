@@ -576,6 +576,31 @@ struct CodexUsageTests {
         }
     }
 
+    @Test func explicitChatGPTModeTakesPrecedenceOverAPIKey() throws {
+        let json =
+            #"{"auth_mode":"chatgpt","OPENAI_API_KEY":"sk-test","tokens":{"access_token":"access","account_id":"account"}}"#
+        let credentials = try CodexOAuthCredentialsStore.parse(data: Data(json.utf8))
+        #expect(credentials.accessToken == "access")
+        #expect(credentials.accountId == "account")
+    }
+
+    @Test(arguments: ["apikey", "api_key"])
+    func explicitAPIKeyModeRejectsStoredOAuthTokens(mode: String) {
+        let json = """
+            {"auth_mode":"\(mode)","tokens":{"access_token":"access"}}
+            """
+        #expect(throws: CodexOAuthCredentialsError.apiKeyOnly) {
+            try CodexOAuthCredentialsStore.parse(data: Data(json.utf8))
+        }
+    }
+
+    @Test func explicitChatGPTModeWithoutTokensNeedsRecovery() {
+        let json = #"{"auth_mode":"chatgpt","OPENAI_API_KEY":"sk-test"}"#
+        #expect(throws: CodexOAuthCredentialsError.missingTokens) {
+            try CodexOAuthCredentialsStore.parse(data: Data(json.utf8))
+        }
+    }
+
     @Test func unreadableOAuthCredentialPathMapsToDomainError() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let authDirectory = home.appendingPathComponent("auth.json")

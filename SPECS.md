@@ -395,6 +395,11 @@ unknown, so direct HTTP is attempted. Unverified claims are never authentication
 Network/DNS failures, timeouts, HTTP 429/5xx, decoding errors and missing quota do not
 launch recovery. They keep normal last-good stale behavior. API-key auth shows unavailable
 subscription quota and cannot retain an earlier subscription observation.
+An explicit `auth_mode: "chatgpt"` takes precedence over a stored `OPENAI_API_KEY`.
+That mode requires OAuth tokens; missing tokens permit credential recovery. Explicit
+API-key mode still rejects subscription quota even when old OAuth tokens remain.
+Without an explicit ChatGPT mode, a nonempty API key selects API-key auth.
+See [upstream mode resolution](https://github.com/openai/codex/blob/7dae8c53d97e61cd774e4d6bcca5243c29ca615c/codex-rs/login/src/auth/manager.rs#L1763-L1780).
 
 Recovery resolves Codex, launches one `codex app-server`, initializes, reads the account
 with `refreshToken: true`, then reads rate limits. Codex handles any credential rotation

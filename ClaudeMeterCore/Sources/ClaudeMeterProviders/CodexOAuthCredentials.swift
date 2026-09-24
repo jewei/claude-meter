@@ -151,12 +151,13 @@ public enum CodexOAuthCredentialsStore {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw CodexOAuthCredentialsError.decodeFailed
         }
-        if let mode = json["auth_mode"] as? String, ["apikey", "api_key"].contains(mode) {
+        let mode = string(json["auth_mode"])
+        if let mode, ["apikey", "api_key"].contains(mode) {
             throw CodexOAuthCredentialsError.apiKeyOnly
         }
-        if let apiKey = json["OPENAI_API_KEY"] as? String,
-            !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
+        // Codex can retain an API key alongside a ChatGPT login. The explicit
+        // auth mode owns selection; infer API-key auth only without ChatGPT mode.
+        if mode != "chatgpt", string(json["OPENAI_API_KEY"]) != nil {
             throw CodexOAuthCredentialsError.apiKeyOnly
         }
         guard let tokens = json["tokens"] as? [String: Any],

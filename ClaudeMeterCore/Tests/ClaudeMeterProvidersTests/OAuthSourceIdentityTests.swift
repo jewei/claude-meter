@@ -38,7 +38,7 @@ extension OAuthPipelineTests {
                 credentialService: nil, isManual: true, accounts: []) == "claude")
     }
 
-    @Test func refreshRetainsTheSelectedCredentialAccount() async throws {
+    @Test func ownerRenewalRetainsTheSelectedCredentialAccount() async throws {
         let defaults = UserDefaults.standard
         let previousMode = defaults.string(forKey: MeterSettings.oauthModeKey)
         defaults.set("auto", forKey: MeterSettings.oauthModeKey)
@@ -76,6 +76,16 @@ extension OAuthPipelineTests {
             fallback: IdentityFallbackPipeline(),
             accountConfigs: { [work] })
 
+        #expect(try await pipeline.poll(now: Date()).snapshot == nil)
+        #expect(await transport.refreshCount == 0)
+        #expect(await transport.usageCount == 0)
+        // Claude Code renews its own tokens. A still-valid token within the
+        // manual refresh buffer remains usable without consuming its refresh token.
+        let renewed = OAuthCredentials(
+            accessToken: "renewed-access", refreshToken: "renewed-refresh",
+            expiresAt: Date().addingTimeInterval(30), subscriptionType: "max",
+            credentialService: service)
+        OAuthPipeline.setAutomaticCredentialLoaderForTesting { .found(renewed) }
         let snapshot = try #require(try await pipeline.poll(now: Date()).snapshot)
         #expect(snapshot.accounts?.first?.id == work.id)
         #expect(snapshot.accounts?.count == 1)
@@ -84,7 +94,7 @@ extension OAuthPipelineTests {
             OAuthPipeline.credentials(
                 from: .temporarilyUnavailable, oauthMode: "auto")?.credentialService == service)
         #expect(snapshot.limits.currentWeekOpus?.percentUsed == 90)
-        #expect(await transport.refreshCount == 1)
+        #expect(await transport.refreshCount == 0)
         #expect(await transport.usageCount == 1)
     }
 }

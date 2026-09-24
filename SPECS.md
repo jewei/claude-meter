@@ -253,11 +253,14 @@ OAuth is used only when mode is `auto` or `manual`.
 - Auto mode reads Claude Code's legacy or hashed Keychain credential entries after the
   user explicitly confirms Connect. Settings preflight is attributes-only.
 - Manual mode stores an app-owned Keychain item and reports save/delete failures.
-- Refreshed tokens are cached in memory. Claude Code's Keychain item is never rewritten.
-- Automatic credentials retain the exact Keychain service through refresh and cache reuse.
+- Automatic mode never consumes refresh tokens or writes Claude Code credentials. It uses
+  access tokens until expiry. Expiry or rejection requires renewal in Claude Code; previous
+  usage stays stale. The next poll reads the renewed credential.
+- Manual mode can rotate tokens, cache them, and save them to its app-owned Keychain item.
+- Automatic credentials retain the exact Keychain service through reads and cache reuse.
   Each usage response belongs to its mapped config account. An unmapped login keeps a
   separate account key. Manual mode supplies the default account slot.
-- Concurrent refreshes share one request. A bounded handoff retains the result for late
+- Concurrent manual refreshes share one request. A bounded handoff retains the result for late
   callers that selected the same one-use token before it was rotated. Credential-generation
   keys prevent a replacement login from using an older result.
 - Refresh failure clears the corresponding in-memory credential cache.
@@ -281,8 +284,8 @@ in `limits[]`; unknown/null windows degrade without failing the whole response. 
 usage minor units are scaled by the response's decimal places.
 
 A successful OAuth response replaces one complete account observation, including absent
-optional fields. There is no second enrichment request. The primary credential has the
-existing token refresh path and is excluded from the secondary request batch.
+optional fields. There is no second enrichment request. The primary credential is excluded from the secondary request batch. Only manual
+credentials have a token refresh path.
 
 Multi-account OAuth runs only in auto mode. It reads each configured directory's
 namespaced credential and local account identity. Secondary accounts retain the existing
@@ -357,11 +360,11 @@ Missing credentials still require sign-in. Errors contain no raw SQLite paths.
 UTF-8, ASCII UTF-16LE blobs and BOM-marked UTF-16 values are decoded before the existing
 whitespace/quote removal. Missing access or refresh values use the read-only, no-UI
 Keychain gateway independently. No detection result is cached.
-Access/refresh caches are bound to the detected account credential identity and are cleared
-immediately on account rotation. Refresh stays in memory. A bounded,
-source-generation-keyed handoff lets late callers reuse one completed token rotation but
-does not cross a detected credential replacement. Cursor errors and staleness appear only
-on its popover/settings/diagnostics surfaces.
+Cursor never consumes refresh tokens, caches rotated credentials, or writes credentials.
+It reads the current access token for each request. Known expired tokens are not sent;
+unknown expiry permits a usage request. Expiry or HTTP 401 requires opening Cursor to
+renew the login. Transport and server failures remain temporary errors. Cursor errors
+and staleness appear only on its popover/settings/diagnostics surfaces.
 
 ### 4.2 Codex
 

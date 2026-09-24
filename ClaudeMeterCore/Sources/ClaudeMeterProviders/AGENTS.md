@@ -65,16 +65,15 @@ Follow the root [AGENTS.md](../../../AGENTS.md). Provider behavior is defined in
 - Disconnect revokes refresh generations under the same lock as cache/mode/deletion.
   A late response must not commit tokens or gate state. Settings verification also
   checks its generation before enabling a source.
-- Auto refresh is memory-only. Never write rotated tokens to Claude Code's Keychain.
-  Keep source refresh-token lineage: a same-lineage rotation wins even with an earlier
-  expiry; a new Keychain source wins regardless of expiry and invalidates the generation.
-  Concurrent callers share one request and a bounded generation-keyed result handoff so
-  late callers cannot reuse a consumed token. Current-generation failures clear their
-  cache; old generations must not clear or replace a new login.
-- Parse `expiresAt` as integer milliseconds and refresh within 60 s of expiry. Reject
-  empty refreshed tokens, retain `subscriptionType`, and clamp `expires_in` to 5 minutes
-  through 7 days. Keep the usage beta/User-Agent headers and token request constants in
-  the existing client; use the shared transport limits.
+- Auto mode never refreshes Claude Code credentials. Use access tokens until expiry,
+  then report login-required and retain stale usage. Re-read the source each poll.
+  Manual mode alone rotates and persists app-owned credentials. Concurrent manual
+  callers share one request and a bounded generation-keyed result handoff. A replaced
+  source invalidates the generation; late work cannot replace a newer login.
+- Parse `expiresAt` as integer milliseconds. Manual mode refreshes within 60 s of
+  expiry. Reject empty refreshed tokens, retain `subscriptionType`, and clamp
+  `expires_in` to 5 minutes through 7 days. Keep the usage beta/User-Agent headers
+  and token request constants in the existing client; use the shared transport limits.
 - Decode `UsageResponse`, not a dictionary of quota entries. `utilization` is already
   0 to 100. Null/empty windows become unknown. Map `five_hour`, `seven_day`, and
   `seven_day_opus` to session/all-models/Opus windows. Other `seven_day_<scope>` windows
@@ -221,6 +220,6 @@ always receives percent used. Neither owns main-meter displays.
 - Decode UTF-8, ASCII UTF-16LE blobs and BOM-marked UTF-16 values. Keep whitespace/quote
   handling and selective access/refresh Keychain fallback. Never cache Keychain detection.
   Keep `totalPercentUsed` authoritative and retain Auto/API percentages.
-- Cursor refresh is memory-only with a bounded source-token-identity/generation handoff.
-  Late callers can reuse a completed rotation; a new or restored source cannot use an
-  old result. Direct users to open Cursor if refresh fails.
+- Cursor never consumes refresh tokens or writes credentials. Read the access token
+  per request. Reject known expired tokens; allow unknown expiry to reach the API.
+  Direct users to open Cursor after expiry or rejection. Preserve transient errors.

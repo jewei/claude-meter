@@ -9,7 +9,7 @@ private enum ClaudeOAuthMode: String {
 /// Pipeline that fetches rate-limit data from the Anthropic OAuth usage API using
 /// Claude Code's own credentials stored in the macOS Keychain.
 ///
-/// Transparently refreshes the access token when expired. Falls through to `fallback`
+/// Refreshes only app-owned manual credentials. Falls through to `fallback`
 /// on any error so callers never see an OAuth-specific failure.
 public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
@@ -91,8 +91,14 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         let accountConfig = configs.first { $0.id == accountKey }
         var creds = credentialSelection.credentials
 
+        if mode == .auto, creds.expiresAt <= now {
+            return try await fallbackResult(
+                kind: kind, now: now, accountKey: accountKey, outcome: .failed,
+                reason: .unauthorized)
+        }
+
         var didRefresh = false
-        if creds.isExpired(asOf: now) {
+        if mode == .manual, creds.isExpired(asOf: now) {
             switch await Self.refreshCredentials(
                 creds,
                 mode: mode,
@@ -131,7 +137,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
             // Token rejected despite appearing valid — attempt one refresh, unless we
             // already refreshed this poll (a freshly-refreshed token that still 401s
             // won't be fixed by an immediate second refresh).
-            guard !didRefresh else {
+            guard mode == .manual, !didRefresh else {
                 return try await fallbackResult(
                     kind: kind, now: now, accountKey: accountKey, outcome: .failed,
                     reason: .unauthorized)
@@ -217,6 +223,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         sourceRefreshToken: String,
         now: Date
     ) async -> RefreshAttempt {
+        guard mode == .manual else { return .failed(.unauthorized) }
         guard OAuthRefreshGate.shouldAttempt(refreshToken: credentials.refreshToken, now: now)
         else {
             return .deferred(
@@ -286,8 +293,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     }
 
     /// A process-local generation cannot observe an external Claude Code login by
-    /// itself. Re-read the automatic source after the refresh suspension and stop
-    /// the old chain before it can commit or supply a usage request.
+    /// itself. Re-read the automatic source after a usage request and reject a
+    /// response from an older login.
     private static func automaticSourceIsStillCurrent(
         mode: ClaudeOAuthMode,
         lease: OAuthSharedState.CredentialLease,
@@ -380,12 +387,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     // MARK: - Settings verification
 
-    /// Verifies credentials by calling the usage API once, refreshing first when
-    /// they're expired. `oauthMode` names the slot the rotated credential is cached
-    /// under — required, because Anthropic rotates the refresh token on every
-    /// refresh: dropping the rotated one here would leave the Keychain holding a
-    /// consumed token, so the very next poll would `invalid_grant` and terminally
-    /// gate the account moments after a "successful" Connect.
+    /// Verifies credentials with the usage API. Only app-owned manual credentials
+    /// can be refreshed. Claude Code must renew its own automatic credentials.
     public static func verify(credentials: OAuthCredentials, oauthMode: String = "auto")
         async throws -> (sessionPct: Double, weekPct: Double)
     {
@@ -413,6 +416,9 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         oauthMode: String,
         beforeRefreshCoordinator: (@Sendable () async -> Void)?
     ) async throws -> (sessionPct: Double, weekPct: Double) {
+        guard let mode = ClaudeOAuthMode(rawValue: oauthMode) else {
+            throw CancellationError()
+        }
         let now = Date()
         guard !OAuthSharedState.isRateLimited(now: now) else { throw OAuthError.rateLimited }
 
@@ -421,7 +427,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 from: .found(credentials), oauthMode: oauthMode)
         else { throw CancellationError() }
         var creds = credentialSelection.credentials
-        if creds.isExpired(asOf: now) {
+        if mode == .auto, creds.expiresAt <= now { throw OAuthError.unauthorized }
+        if mode == .manual, creds.isExpired(asOf: now) {
             let refreshToken = creds.refreshToken
             do {
                 creds = try await coalescedRefresh(
@@ -1122,11 +1129,10 @@ private enum OAuthSharedState {
             observedSourceTokensByMode[oauthMode] = source.refreshToken
             sourceRefreshToken = source.refreshToken
 
-            // A cache entry can hold Anthropic's rotated refresh token while the
-            // Keychain still holds the consumed source token. It is valid only for
-            // that same source lineage. A different Keychain token is a new login
-            // and must win even when an older cache has a later expiry.
-            if let cached = cachedCredsByMode[oauthMode],
+            // Only manual credentials can have a locally rotated chain. For
+            // automatic mode, Claude Code's stored credential always wins.
+            if oauthMode == ClaudeOAuthMode.manual.rawValue,
+                let cached = cachedCredsByMode[oauthMode],
                 cached.sourceRefreshToken == source.refreshToken,
                 cached.credentials.refreshToken != source.refreshToken
                     || cached.credentials.expiresAt > source.expiresAt
@@ -1134,6 +1140,10 @@ private enum OAuthSharedState {
                 credentials = cached.credentials
             } else {
                 credentials = source
+            }
+            if oauthMode == ClaudeOAuthMode.auto.rawValue {
+                cachedCredsByMode[oauthMode] = CachedCredentialChain(
+                    credentials: source, sourceRefreshToken: source.refreshToken)
             }
         case .temporarilyUnavailable:
             guard let cached = cachedCredsByMode[oauthMode] else { return nil }
@@ -1160,7 +1170,7 @@ private enum OAuthSharedState {
         return loader?() ?? OAuthKeychain.loadResult()
     }
 
-    /// Confirms the automatic source after a refresh suspension. A missing,
+    /// Confirms the automatic source after a usage suspension. A missing,
     /// invalid, or replaced source invalidates the old lease. A temporary
     /// Keychain read failure keeps the observed lineage, as it does at poll start.
     static func validateAutomaticCredentialSource(

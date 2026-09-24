@@ -144,14 +144,3 @@ struct CursorPlanInfoResponse: Decodable {
     let planInfo: PlanInfo?
     struct PlanInfo: Decodable { let planName: String? }
 }
-
-/// `oauth/token` refresh response.
-struct CursorOAuthResponse: Decodable {
-    let accessToken: String
-    let refreshToken: String?
-
-    enum CodingKeys: String, CodingKey {
-        case accessToken = "access_token"
-        case refreshToken = "refresh_token"
-    }
-}

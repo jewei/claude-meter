@@ -4,7 +4,9 @@ import Foundation
 /// One-time removal of the commands shipped before attention support was removed.
 /// Call off-main, before other legacy settings migrations.
 public enum LegacyAttentionHookMigration {
-    static let completionKey = "didRemoveLegacyAttentionHooks.v1"
+    // v1 could mark completion after swallowing an event deletion failure.
+    // Recheck its exact owned paths once, including installs that completed v1.
+    static let completionKey = "didRemoveLegacyAttentionHooks.v2"
 
     /// Exact literals from HookBridge at ece8d08. That revision includes every
     /// earlier command back to b7fbe1f. These strings are never executed.
@@ -58,7 +60,7 @@ public enum LegacyAttentionHookMigration {
 
         // The old snippets wrote only here. Reuse descriptor-anchored cleanup:
         // no links are followed, no directories are created, and empty dirs may remain.
-        try? LegacyClaudeFiles.clearManagedSubdirectory(
+        try LegacyClaudeFiles.clearManagedSubdirectory(
             named: "events", in: home.appendingPathComponent(".claude-meter"))
         defaults.set(true, forKey: completionKey)
     }

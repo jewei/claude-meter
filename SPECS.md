@@ -555,12 +555,15 @@ and paths with equal account keys are included.
 The migration preserves user hooks, group metadata, `statusLine`, and unrelated settings.
 It uses bounded settings reads and atomic writes, and writes only after removing an
 exact command match. Missing files need no write. Invalid or inaccessible settings leave
-`didRemoveLegacyAttentionHooks.v1` unset so a later launch can retry. The key is
-set in standard defaults only after all discovered config paths have been checked.
+`didRemoveLegacyAttentionHooks.v2` unset so a later launch can retry. The key is
+set in standard defaults only after all discovered config paths and event cleanup succeed.
+The v2 pass also runs on installations with the old v1 completion key, because v1 could
+silently leave event files behind after a deletion failure.
 
-After config cleanup succeeds, the migration makes one safe attempt to remove old files
-under `~/.claude-meter/events`. It follows no directory links and can leave empty or
-inaccessible directories. It preserves `sessions` and `statusline.json` and creates no
+After config cleanup succeeds, the migration removes old files under
+`~/.claude-meter/events`. It follows no directory links and can leave empty directories.
+Deletion failures or unsafe linked roots leave cleanup incomplete for a later retry.
+It preserves `sessions` and `statusline.json` and creates no
 event storage or watchers.
 
 `LegacyStatuslineMigration` runs after the attention migration at launch. It removes only

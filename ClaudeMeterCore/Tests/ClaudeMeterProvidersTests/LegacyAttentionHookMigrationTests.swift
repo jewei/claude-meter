@@ -307,6 +307,29 @@ struct LegacyAttentionHookMigrationTests {
         }
     }
 
+    @Test(arguments: [false, true])
+    func eventDeletionFailureRetriesEvenAfterV1Completion(previouslyCompleted: Bool) throws {
+        let fixture = try Fixture()
+        _ = try fixture.write(ownedSettings())
+        fixture.defaults.set(previouslyCompleted, forKey: "didRemoveLegacyAttentionHooks.v1")
+        let event = fixture.home.appendingPathComponent(".claude-meter/events/claude/event.json")
+        try FileManager.default.createDirectory(
+            at: event.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("legacy event".utf8).write(to: event)
+        // The user immutable bit makes unlink fail without depending on root or
+        // directory permissions. Remove it before fixture cleanup.
+        #expect(event.path.withCString { Darwin.chflags($0, UInt32(UF_IMMUTABLE)) } == 0)
+        defer { _ = event.path.withCString { Darwin.chflags($0, 0) } }
+        #expect(throws: (any Error).self) { try fixture.run() }
+        #expect(!fixture.completed)
+        #expect(FileManager.default.fileExists(atPath: event.path))
+
+        #expect(event.path.withCString { Darwin.chflags($0, 0) } == 0)
+        try fixture.run()
+        #expect(fixture.completed)
+        #expect(!FileManager.default.fileExists(atPath: event.path))
+    }
+
     @Test(arguments: [".claude-meter", ".claude-meter/events", ".claude-meter/events/claude"])
     func eventCleanupCannotFollowDirectoryLinks(linkPath: String) throws {
         let fixture = try Fixture()
@@ -321,7 +344,12 @@ struct LegacyAttentionHookMigrationTests {
         try FileManager.default.createDirectory(
             at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
-        try fixture.run()
+        if linkPath == ".claude-meter/events/claude" {
+            try fixture.run()
+        } else {
+            #expect(throws: (any Error).self) { try fixture.run() }
+            #expect(!fixture.completed)
+        }
         for relative in ["events/claude/keep.json", "claude/keep.json", "keep.json"] {
             #expect(
                 try Data(contentsOf: outside.appendingPathComponent(relative))

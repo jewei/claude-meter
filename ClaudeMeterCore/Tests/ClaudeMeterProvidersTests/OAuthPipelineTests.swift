@@ -10,9 +10,6 @@ import Testing
 struct OAuthPipelineTests {
     @Test(arguments: [true, false])
     func automaticCredentialsNeverRotate(expired: Bool) async throws {
-        let defaults = UserDefaults.standard
-        let previousMode = defaults.string(forKey: MeterSettings.oauthModeKey)
-        defaults.set("auto", forKey: MeterSettings.oauthModeKey)
         OAuthPipeline.clearCachedCredentials()
         OAuthPipeline.clearRateLimitForTesting()
         let transport = CountingFailingTransport(status: 401, body: "{}")
@@ -25,10 +22,10 @@ struct OAuthPipelineTests {
             OAuthPipeline.setAutomaticCredentialLoaderForTesting(nil)
             OAuthPipeline.setTransportForTesting(nil)
             OAuthPipeline.clearCachedCredentials()
-            defaults.set(previousMode, forKey: MeterSettings.oauthModeKey)
         }
 
-        let pipeline = OAuthPipeline(fallback: OAuthFallbackPipeline(), accountConfigs: { [] })
+        let pipeline = OAuthPipeline(
+            fallback: OAuthFallbackPipeline(), oauthMode: { "auto" }, accountConfigs: { [] })
         let result = try await pipeline.poll(now: Date())
         #expect(result.sourceAttempts.first?.reason == .unauthorized)
         #expect(transport.calls == (expired ? 0 : 1))

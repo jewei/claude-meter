@@ -21,6 +21,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
 
     private let fallback: any ClaudeMeterPipeline
     private let thresholds: UsageThresholds
+    private let readOAuthMode: @Sendable () -> String
     private let accountConfigs: @Sendable () -> [AccountConfig]
 
     /// Default backoff when a 429 carries no usable `Retry-After`.
@@ -49,12 +50,16 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     public init(
         fallback: any ClaudeMeterPipeline,
         thresholds: UsageThresholds = .default,
+        oauthMode: @escaping @Sendable () -> String = {
+            UserDefaults.standard.string(forKey: MeterSettings.oauthModeKey) ?? ""
+        },
         accountConfigs: @escaping @Sendable () -> [AccountConfig] = {
             ConfigDirDiscovery.discover(configuredDirs: MeterSettings.configuredConfigDirs)
         }
     ) {
         self.fallback = fallback
         self.thresholds = thresholds
+        self.readOAuthMode = oauthMode
         self.accountConfigs = accountConfigs
     }
 
@@ -62,7 +67,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     /// gate below protects Anthropic, not our request budget, so a user-initiated
     /// refresh must not be able to jump it.
     public func poll(now: Date, kind: RefreshKind = .background) async throws -> ParseResult {
-        let oauthMode = UserDefaults.standard.string(forKey: MeterSettings.oauthModeKey) ?? ""
+        let oauthMode = readOAuthMode()
         guard let mode = ClaudeOAuthMode(rawValue: oauthMode) else {
             // The source toggle is ON (or we wouldn't be in the chain) but Connect
             // was never completed — "disabled" would send the user to the wrong fix.

@@ -69,7 +69,12 @@ resolved quota usage. Ties retain input order. Unknown usage ranks below known z
 | Grok usage | Credit percentage, reported period end, on-demand spend/cap and prepaid balance | `default`, a provider-local connection slot |
 
 Cursor and Grok output no opaque member ID or reliable plan for Grok. Their slot keys do
-not prove login ownership. Existing credential-change protections remain in Providers.
+not prove login ownership. Providers keep an internal, in-memory SHA-256 credential
+stamp for each accepted reading. Validation clears previous readings when the source
+credential changes. A read-only check after each request rejects a response or stale
+retention from a changed source. The stamp never enters ProviderSnapshot, diagnostics,
+or disk storage. Without a stable member ID, token renewal also invalidates the old
+reading until the new credential succeeds. Metadata-only changes do not change the stamp.
 Codex member/workspace ownership checks still guard last-good restoration and publication;
 the home key alone is not sufficient. No token or credential fingerprint enters the domain.
 Codex email stays omitted. Claude email is display text only, as in the existing cards.
@@ -118,7 +123,8 @@ After acceptance, these events do not revoke the queued write. A thrown fetch fa
 cannot overwrite last-good data. No later state publication occurs after the write wait.
 Providers never call back into publication and return no side-effect closures.
 
-Cursor/Grok use default unchanged-previous reconciliation and no-op acceptance/wait methods. Their
+Cursor/Grok validate credential ownership and accept an in-memory owner stamp. Persistence
+waits remain no-ops. Their
 only concrete lifecycle method fetches a normalized snapshot. Claude and Codex each keep at most one
 pending preflight record and one pending save record, identified by refresh ID. These
 records carry existing archive data, source diagnostics and account checks across
@@ -177,7 +183,9 @@ re-enable. Pause and display sleep cancel store work through the same API.
 
 Provider adapters sanitize errors and classify last-good retention. Cursor missing,
 unauthorized or forbidden credentials clear its value while retaining the last successful
-timestamp. Other Cursor errors and Grok errors preserve last-good data, as before.
+timestamp. Temporary errors preserve last-good data only while its credential owner remains valid.
+Missing or expired Grok credentials clear previous usage. A temporary credential read
+failure can retain the accepted reading when no source change has been observed.
 Cancellation passes through without becoming a provider failure.
 
 Cursor/Grok cards now read normalized windows and balances. Cursor keeps its total and

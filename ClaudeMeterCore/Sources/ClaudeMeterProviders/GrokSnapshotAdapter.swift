@@ -30,21 +30,40 @@ extension GrokUsage {
 
 public struct GrokProviderAdapter: UsageProvider {
     public let id: ProviderID = .grok
-    private let provider: GrokUsageProvider
+    private let owned: CredentialBoundProvider<GrokCredentials>
 
     public init(provider: GrokUsageProvider = GrokUsageProvider()) {
-        self.provider = provider
+        owned = CredentialBoundProvider(
+            id: .grok,
+            load: { try provider.loadCredentials(now: $0) },
+            fingerprint: { CredentialBoundProvider<GrokCredentials>.digest([$0.bearer]) },
+            readUsage: {
+                try await provider.fetchUsage(credentials: $0, now: $1).providerSnapshot()
+            },
+            retainsFailure: { error in
+                switch error {
+                case GrokAuthError.missing, GrokAuthError.loginRequired: false
+                default: true
+                }
+            })
+    }
+
+    @MainActor
+    public func validatePrevious(_ previous: ProviderSnapshot?, now: Date, refreshID: UUID)
+        async throws
+        -> ProviderSnapshot?
+    {
+        try await owned.validatePrevious(previous, now: now, refreshID: refreshID)
     }
 
     public func fetch(
         now: Date, previous: ProviderSnapshot? = nil, refreshID: UUID = UUID()
     ) async throws -> ProviderSnapshot {
-        do {
-            return try await provider.fetchUsage(now: now).providerSnapshot()
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            throw UsageProviderFailure(error)
-        }
+        try await owned.fetch(now: now, previous: previous, refreshID: refreshID)
+    }
+
+    @MainActor
+    public func didAccept(_ snapshot: ProviderSnapshot, refreshID: UUID) {
+        owned.didAccept(snapshot, refreshID: refreshID)
     }
 }

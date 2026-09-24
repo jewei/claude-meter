@@ -41,28 +41,44 @@ extension CursorUsage {
 /// Keeps credential and wire errors behind the normalized fetch contract.
 public struct CursorProviderAdapter: UsageProvider {
     public let id: ProviderID = .cursor
-    private let provider: CursorUsageProvider
+    private let owned: CredentialBoundProvider<CursorCredentials>
 
     public init(provider: CursorUsageProvider = CursorUsageProvider()) {
-        self.provider = provider
+        owned = CredentialBoundProvider(
+            id: .cursor,
+            load: { _ in try provider.loadCredentials() },
+            fingerprint: {
+                CredentialBoundProvider<CursorCredentials>.digest([
+                    $0.accessToken, $0.refreshToken ?? "",
+                ])
+            },
+            readUsage: {
+                try await provider.fetchUsage(credentials: $0, now: $1).providerSnapshot()
+            },
+            retainsFailure: { error in
+                switch error {
+                case CursorError.notDetected, CursorError.unauthorized, CursorError.forbidden: false
+                default: true
+                }
+            })
+    }
+
+    @MainActor
+    public func validatePrevious(_ previous: ProviderSnapshot?, now: Date, refreshID: UUID)
+        async throws
+        -> ProviderSnapshot?
+    {
+        try await owned.validatePrevious(previous, now: now, refreshID: refreshID)
     }
 
     public func fetch(
         now: Date, previous: ProviderSnapshot? = nil, refreshID: UUID = UUID()
     ) async throws -> ProviderSnapshot {
-        do {
-            return try await provider.fetchUsage(now: now).providerSnapshot()
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            let retainsLastGood: Bool
-            switch error {
-            case CursorError.notDetected, CursorError.unauthorized, CursorError.forbidden:
-                retainsLastGood = false
-            default:
-                retainsLastGood = true
-            }
-            throw UsageProviderFailure(error, retainsLastGood: retainsLastGood)
-        }
+        try await owned.fetch(now: now, previous: previous, refreshID: refreshID)
+    }
+
+    @MainActor
+    public func didAccept(_ snapshot: ProviderSnapshot, refreshID: UUID) {
+        owned.didAccept(snapshot, refreshID: refreshID)
     }
 }

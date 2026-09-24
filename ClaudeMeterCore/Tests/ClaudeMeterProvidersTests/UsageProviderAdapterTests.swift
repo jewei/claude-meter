@@ -31,6 +31,99 @@ private struct AdapterTransport: HTTPTransport {
 struct UsageProviderAdapterTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
+    @Test(arguments: [ProviderID.cursor, .grok], [false, true])
+    @MainActor
+    func accountSwitchCannotRetainPreviousUsage(id: ProviderID, switchAfterValidation: Bool)
+        async throws
+    {
+        let source = AdapterCredentialSource()
+        let transport = ChangingAdapterTransport()
+        let provider = sourcedProvider(id, source: source, transport: transport)
+        let firstID = UUID()
+        _ = try await provider.validatePrevious(nil, now: now, refreshID: firstID)
+        let first = try await provider.fetch(now: now, previous: nil, refreshID: firstID)
+        provider.didAccept(first, refreshID: firstID)
+        if !switchAfterValidation { source.token = "account-b" }
+        let secondID = UUID()
+        let previous = try await provider.validatePrevious(first, now: now, refreshID: secondID)
+        #expect(previous == (switchAfterValidation ? first : nil))
+        source.token = "account-b"
+        transport.status = 500
+        do {
+            _ = try await provider.fetch(now: now, previous: previous, refreshID: secondID)
+            Issue.record("Expected network failure")
+        } catch let failure as UsageProviderFailure {
+            if switchAfterValidation { #expect(!failure.retainsLastGood) }
+        }
+    }
+
+    private func sourcedProvider(
+        _ id: ProviderID, source: AdapterCredentialSource, transport: ChangingAdapterTransport
+    ) -> any UsageProvider {
+        if id == .cursor {
+            return CursorProviderAdapter(
+                provider: CursorUsageProvider(
+                    transport: transport,
+                    credentialsLoader: {
+                        CursorCredentials(
+                            accessToken: source.token, refreshToken: nil, email: nil,
+                            membership: "pro")
+                    }))
+        } else {
+            return GrokProviderAdapter(
+                provider: GrokUsageProvider(
+                    transport: transport,
+                    credentialsLoader: { _ in
+                        GrokCredentials(bearer: source.token, email: nil, expiresAt: nil)
+                    }))
+        }
+    }
+
+    @Test(arguments: [ProviderID.cursor, .grok], [200, 500])
+    @MainActor
+    func accountSwitchDuringRequestRejectsOldResponse(id: ProviderID, status: Int) async throws {
+        let source = AdapterCredentialSource()
+        let transport = ChangingAdapterTransport()
+        let provider = sourcedProvider(id, source: source, transport: transport)
+        let firstID = UUID()
+        _ = try await provider.validatePrevious(nil, now: now, refreshID: firstID)
+        let first = try await provider.fetch(now: now, previous: nil, refreshID: firstID)
+        provider.didAccept(first, refreshID: firstID)
+        let secondID = UUID()
+        let previous = try await provider.validatePrevious(first, now: now, refreshID: secondID)
+        #expect(previous == first)
+        transport.status = status
+        transport.onRequest = { source.token = "account-b" }
+        do {
+            _ = try await provider.fetch(now: now, previous: previous, refreshID: secondID)
+            Issue.record("An old login supplied a response after the credential changed")
+        } catch let failure as UsageProviderFailure {
+            #expect(!failure.retainsLastGood)
+        }
+    }
+
+    @Test(arguments: [ProviderID.cursor, .grok])
+    @MainActor
+    func sameCredentialNetworkFailureRetainsAcceptedUsage(id: ProviderID) async throws {
+        let source = AdapterCredentialSource()
+        let transport = ChangingAdapterTransport()
+        let provider = sourcedProvider(id, source: source, transport: transport)
+        let firstID = UUID()
+        _ = try await provider.validatePrevious(nil, now: now, refreshID: firstID)
+        let first = try await provider.fetch(now: now, previous: nil, refreshID: firstID)
+        provider.didAccept(first, refreshID: firstID)
+        let secondID = UUID()
+        let previous = try await provider.validatePrevious(first, now: now, refreshID: secondID)
+        #expect(previous == first)
+        transport.status = 500
+        do {
+            _ = try await provider.fetch(now: now, previous: previous, refreshID: secondID)
+            Issue.record("Expected server failure")
+        } catch let failure as UsageProviderFailure {
+            #expect(failure.retainsLastGood)
+        }
+    }
+
     private func cursor(transport: AdapterTransport) -> CursorProviderAdapter {
         CursorProviderAdapter(
             provider: CursorUsageProvider(
@@ -68,7 +161,7 @@ struct UsageProviderAdapterTests {
         }
     }
 
-    @Test("Cursor and Grok use unchanged previous state and no-op commit defaults")
+    @Test("Cursor and Grok retain accepted usage only for the same credentials")
     @MainActor
     func defaultLifecycle() async throws {
         let providers: [any UsageProvider] = [
@@ -78,10 +171,10 @@ struct UsageProviderAdapterTests {
             let id = UUID()
             #expect(try await provider.validatePrevious(nil, now: now, refreshID: id) == nil)
             let snapshot = try await provider.fetch(now: now, previous: nil, refreshID: id)
+            provider.didAccept(snapshot, refreshID: id)
             let previous = try await provider.validatePrevious(
                 snapshot, now: now, refreshID: UUID())
             #expect(previous == snapshot)
-            provider.didAccept(snapshot, refreshID: id)
             await provider.waitForPersistence()
             #expect(!provider.ownsDeadline)
         }
@@ -146,5 +239,33 @@ struct UsageProviderAdapterTests {
         let failure = UsageProviderFailure(SecretFailure())
         #expect(!failure.message.contains("secret-token"))
         #expect(!failure.message.contains("person@example.com"))
+    }
+}
+
+private final class AdapterCredentialSource: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = "account-a"
+    var token: String {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+}
+
+private final class ChangingAdapterTransport: HTTPTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedStatus = 200
+    private var action: (@Sendable () -> Void)?
+    var onRequest: (@Sendable () -> Void)? {
+        get { lock.withLock { action } }
+        set { lock.withLock { action = newValue } }
+    }
+    var status: Int {
+        get { lock.withLock { storedStatus } }
+        set { lock.withLock { storedStatus = newValue } }
+    }
+    func send(_ request: URLRequest, retry: HTTPRetryPolicy) async throws -> (Data, HTTPURLResponse)
+    {
+        onRequest?()
+        return try await AdapterTransport(status: status).send(request, retry: retry)
     }
 }

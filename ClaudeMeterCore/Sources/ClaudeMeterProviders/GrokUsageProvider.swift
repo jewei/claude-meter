@@ -27,7 +27,14 @@ public final class GrokUsageProvider: @unchecked Sendable {
     }
 
     public func fetchUsage(now: Date = Date()) async throws -> GrokUsage {
-        let credentials = try credentialsLoader(now)
+        try await fetchUsage(credentials: loadCredentials(now: now), now: now)
+    }
+
+    func loadCredentials(now: Date) throws -> GrokCredentials {
+        try credentialsLoader(now)
+    }
+
+    func fetchUsage(credentials: GrokCredentials, now: Date) async throws -> GrokUsage {
         var request = URLRequest(url: Self.billingURL)
         request.httpMethod = "GET"
         request.setValue("Bearer \(credentials.bearer)", forHTTPHeaderField: "Authorization")

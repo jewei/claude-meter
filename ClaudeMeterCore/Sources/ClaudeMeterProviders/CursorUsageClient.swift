@@ -44,7 +44,15 @@ public final class CursorUsageProvider: Sendable {
     }
 
     public func fetchUsage(now: Date = Date()) async throws -> CursorUsage {
+        try await fetchUsage(credentials: loadCredentials(), now: now)
+    }
+
+    func loadCredentials() throws -> CursorCredentials {
         guard let credentials = try credentialsLoader() else { throw CursorError.notDetected }
+        return credentials
+    }
+
+    func fetchUsage(credentials: CursorCredentials, now: Date) async throws -> CursorUsage {
         if let expiry = CursorTokenStore.expiry(of: credentials.accessToken), expiry <= now {
             throw CursorError.unauthorized
         }

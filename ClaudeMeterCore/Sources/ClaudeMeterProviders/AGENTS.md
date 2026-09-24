@@ -14,7 +14,10 @@ Follow the root [AGENTS.md](../../../AGENTS.md). Provider behavior is defined in
 - All four providers implement Core's `UsageProvider` through adapters. Keep
   authentication and wire decoding in the existing clients. Convert errors to sanitized
   `UsageProviderFailure`; pass cancellation through. Cursor missing/rejected credentials
-  set `retainsLastGood` false. Grok retains its existing last-good failure policy.
+  set `retainsLastGood` false. Grok missing/expired credentials also clear last-good data.
+  Cursor/Grok retain readings only for the accepted credential stamp. Keep the stamp
+  in memory, outside normalized models. Validate before fetch and after each response;
+  source changes cannot retain previous usage even on temporary failures.
 
 ## HTTP, files, and secrets
 

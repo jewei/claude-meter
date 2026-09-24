@@ -33,6 +33,79 @@ gh() {
 
 
 class PublicationTests(unittest.TestCase):
+    def run_source_preflight(self, change="", prepare_only=False, after_preflight=""):
+        with tempfile.TemporaryDirectory(prefix="release source ") as directory:
+            root = Path(directory)
+            script = root / "scripts" / "release.sh"
+            script.parent.mkdir()
+            (root / "CHANGELOG.md").write_text("## [Unreleased]\n\nFix usage.\n")
+            (root / "appcast.xml").write_text(
+                '<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">'
+                '<sparkle:shortVersionString>2.17</sparkle:shortVersionString>'
+                '<sparkle:version>10</sparkle:version></rss>'
+            )
+            (root / "source.swift").write_text("original\n")
+            script.write_text(SCRIPT)
+
+            def git(*args):
+                return subprocess.run(
+                    ["git", "-C", directory, *args], check=True,
+                    capture_output=True, text=True, timeout=5,
+                )
+
+            git("init", "-b", "main")
+            git("config", "user.email", "test@example.invalid")
+            git("config", "user.name", "Release Test")
+            git("add", ".")
+            git("commit", "-m", "source")
+            git("remote", "add", "origin", directory)
+            if change in ("unstaged", "staged", "ahead"):
+                (root / "source.swift").write_text("changed\n")
+            if change in ("staged", "ahead"):
+                git("add", "source.swift")
+            if change == "ahead":
+                git("switch", "-c", "candidate")
+                git("commit", "-m", "candidate")
+            if change == "untracked":
+                (root / "extra.swift").write_text("untracked\n")
+            prefix = SCRIPT[:SCRIPT.index("# ── Paths")]
+            return subprocess.run(
+                ["/bin/bash", "-c", "gh() { echo false; }\n" + prefix + after_preflight,
+                 str(script), "2.18", "11", *(["--prepare-only"] if prepare_only else [])],
+                capture_output=True, text=True, timeout=10,
+            )
+
+    def test_release_rejects_dirty_source(self):
+        for change in ("unstaged", "staged", "untracked"):
+            with self.subTest(change=change):
+                result = self.run_source_preflight(change)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("clean worktree", result.stderr)
+
+    def test_publishing_requires_fetched_main(self):
+        result = self.run_source_preflight("ahead")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("fetched origin/main", result.stderr)
+
+    def test_clean_main_and_private_candidate_pass(self):
+        for change, prepare in (("", False), ("ahead", True)):
+            result = self.run_source_preflight(change, prepare)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_source_changes_during_preparation_are_rejected(self):
+        changes = (
+            'echo changed >> "$PROJECT_DIR/source.swift"',
+            'git -C "$PROJECT_DIR" -c commit.gpgsign=false commit --allow-empty -m changed',
+        )
+        for change in changes:
+            result = self.run_source_preflight(
+                after_preflight="\n" + change + "\nrequire_release_source\n")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("error: release", result.stderr)
+        self.assertIn('echo "▶ Archiving…"\nrequire_release_source', SCRIPT)
+        self.assertIn(
+            '"$SYMBOLS_PATH"\nrequire_release_source\n', SCRIPT)
+
     def run_publication(self, failure=""):
         with tempfile.TemporaryDirectory(prefix="release publication ") as directory:
             root = Path(directory)

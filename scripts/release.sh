@@ -73,6 +73,22 @@ TAG="v$VERSION"
 
 echo "▶ Releasing $APP_NAME $VERSION (build $BUILD)"
 
+# ── Source identity ──────────────────────────────────────────────────────────
+# Only committed source may enter a signed artifact. Recheck after the build so
+# edits or checkout changes during signing cannot enter an unrelated release tag.
+require_release_source() {
+    if [[ -n "$(git -C "$PROJECT_DIR" status --porcelain --untracked-files=all)" ]]; then
+        echo "error: release requires a clean worktree, including untracked files." >&2
+        exit 1
+    fi
+    if [[ "$(git -C "$PROJECT_DIR" rev-parse HEAD)" != "$SOURCE_COMMIT" ]]; then
+        echo "error: release source HEAD changed during preparation." >&2
+        exit 1
+    fi
+}
+SOURCE_COMMIT="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+require_release_source
+
 # ── Changelog notes ───────────────────────────────────────────────────────────
 # Capture the [Unreleased] section body now and fail fast if it's empty — no
 # point building for ten minutes only to discover there are no release notes.
@@ -99,6 +115,10 @@ fi
 # GitHub tag can be newer than the recovered feed that installed clients use.
 git -C "$PROJECT_DIR" fetch origin main
 PREVIOUS_FEED_COMMIT="$(git -C "$PROJECT_DIR" rev-parse FETCH_HEAD)"
+if [[ "$PREPARE_ONLY" == "0" && "$SOURCE_COMMIT" != "$PREVIOUS_FEED_COMMIT" ]]; then
+    echo "error: publishing requires HEAD to equal fetched origin/main." >&2
+    exit 1
+fi
 PREVIOUS_FEED_XML="$(git -C "$PROJECT_DIR" show "$PREVIOUS_FEED_COMMIT:appcast.xml")"
 PREV_VERSION="$(printf '%s' "$PREVIOUS_FEED_XML" | xmllint --xpath "string(//*[local-name()='shortVersionString'])" -)"
 PREV_BUILD="$(printf '%s' "$PREVIOUS_FEED_XML" | xmllint --xpath "string(//*[local-name()='version'])" -)"
@@ -127,10 +147,7 @@ ZIP_PATH="$BUILD_DIR/$APP_NAME-notarize.zip"
 DMG_PATH="$BUILD_DIR/$DMG_NAME"
 SYMBOLS_PATH="$BUILD_DIR/$APP_NAME-$VERSION-$BUILD.dSYMs.zip"
 EXPORT_OPTIONS="$BUILD_DIR/ExportOptions.plist"
-APPCAST_PATH="$PROJECT_DIR/appcast.xml"
-if [[ "$PREPARE_ONLY" == "1" ]]; then
-    APPCAST_PATH="$BUILD_DIR/appcast.xml"
-fi
+APPCAST_PATH="$BUILD_DIR/appcast.xml"
 
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
@@ -147,6 +164,7 @@ fi
 # ── Archive ───────────────────────────────────────────────────────────────────
 
 echo "▶ Archiving…"
+require_release_source
 run_xcodebuild archive \
     -project "$PROJECT" \
     -scheme "$SCHEME" \
@@ -269,6 +287,7 @@ XML
 # mounted DMG, or appcast metadata do not agree.
 "$SCRIPT_DIR/release-symbols.sh" package "$APP_PATH" "$ARCHIVE_PATH/dSYMs" "$SYMBOLS_PATH"
 "$SCRIPT_DIR/validate-release.sh" "$APP_PATH" "$DMG_PATH" "$APPCAST_PATH" "$SYMBOLS_PATH"
+require_release_source
 
 # ── Stop after private preparation ───────────────────────────────────────────
 if [[ "$PREPARE_ONLY" == "1" ]]; then
@@ -281,6 +300,7 @@ fi
 # GitHub release so the tag points at the release commit (appcast + changelog).
 
 PBXPROJ="$PROJECT/project.pbxproj"
+cp "$APPCAST_PATH" "$PROJECT_DIR/appcast.xml"
 echo "▶ Promoting CHANGELOG.md…"
 TODAY="$(date -u '+%Y-%m-%d')"
 if [[ -n "$PREV_TAG" ]]; then

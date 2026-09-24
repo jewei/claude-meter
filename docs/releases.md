@@ -21,7 +21,8 @@ xcrun notarytool store-credentials notarytool \
   --keychain "$HOME/Library/Keychains/login.keychain-db"
 ```
 
-Add release notes under `[Unreleased]` in `CHANGELOG.md`, then run:
+Add release notes under `[Unreleased]` in `CHANGELOG.md`. Commit and push all source
+and documentation changes to `main`, then run:
 
 ```bash
 NOTARY_KEYCHAIN="$HOME/Library/Keychains/login.keychain-db" \
@@ -32,8 +33,12 @@ Replace `VERSION` and `BUILD` with the target values. The build must be greater 
 that in the public update feed. Omit `NOTARY_KEYCHAIN` to use the default Keychain
 search. Set `KEYCHAIN_PROFILE` if the credentials use a profile other than `notarytool`.
 
-The script builds, signs, notarizes, and validates the app and DMG. It uses the app
-signing identity for the DMG. It staples the DMG before Sparkle signs the final bytes.
+The script builds, signs, notarizes, and validates the app and DMG. It requires
+source from a clean worktree, including no untracked files. Publishing requires `HEAD`
+to equal the fetched `origin/main` commit. The script checks the same clean source
+again before the archive and after artifact validation. It writes the candidate feed
+under `build/` until those checks pass, then copies it into the release commit.
+It uses the app signing identity for the DMG. It staples the DMG before Sparkle signs the final bytes.
 Validation checks Gatekeeper and the stapled tickets for both containers. It commits the
 version, changelog, and update feed, then pushes a staging branch. It publishes the
 GitHub release assets before pushing the feed to `main`. It removes the staging branch
@@ -56,8 +61,9 @@ Use the same workflow without publication:
 
 This option writes the candidate feed to `build/appcast.xml`. It stops after artifact
 validation. It does not change the project version, changelog or public feed, create a
-commit or tag, push Git refs, or publish assets. Use a clean candidate checkout and set
-the project version and build before the final validation pass. Keep the candidate
+commit or tag, push Git refs, or publish assets. It requires a clean candidate checkout,
+but that checkout can differ from `origin/main`. Version and build arguments apply to
+the archive. Keep the candidate
 artifacts private until publication is authorized.
 
 ## Optional manual update check

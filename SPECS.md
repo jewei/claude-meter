@@ -654,6 +654,12 @@ the Xcode project and committed workspace resolution.
 
 Release publishing must make the signed GitHub asset available before pushing the new
 `appcast.xml` to `main`; users must never observe a feed pointing at a missing artifact.
+Both publishing and private preparation require a clean worktree, including untracked
+files. Publishing requires the source `HEAD` to equal fetched `origin/main`. The source
+must remain clean at that commit before archive creation and after artifact validation.
+Only then may the script change release metadata and create the release commit. Private
+preparation can use another committed source. Candidate feeds stay in `build/` until
+publication preparation passes these checks.
 Release completion requires successful publication of the signed artifacts and feed, then
 removal of the staging branch. A separate macOS account, VM, signed Sparkle upgrade test,
 or upgrade report is not required for this or future releases. Local verification, signing,

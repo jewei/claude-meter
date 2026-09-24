@@ -33,7 +33,7 @@ gh() {
 
 
 class PublicationTests(unittest.TestCase):
-    def run_source_preflight(self, change="", prepare_only=False, after_preflight=""):
+    def run_source_preflight(self, change="", prepare_only=False, after_preflight="", version="2.18"):
         with tempfile.TemporaryDirectory(prefix="release source ") as directory:
             root = Path(directory)
             script = root / "scripts" / "release.sh"
@@ -58,6 +58,7 @@ class PublicationTests(unittest.TestCase):
             git("config", "user.name", "Release Test")
             git("add", ".")
             git("commit", "-m", "source")
+            git("tag", "v2.17")
             git("remote", "add", "origin", directory)
             if change in ("unstaged", "staged", "ahead"):
                 (root / "source.swift").write_text("changed\n")
@@ -68,10 +69,14 @@ class PublicationTests(unittest.TestCase):
                 git("commit", "-m", "candidate")
             if change == "untracked":
                 (root / "extra.swift").write_text("untracked\n")
+            if change == "migration":
+                (root / "LegacyTestMigration.swift").write_text("migration\n")
+                git("add", "LegacyTestMigration.swift")
+                git("commit", "-m", "migration")
             prefix = SCRIPT[:SCRIPT.index("# ── Paths")]
             return subprocess.run(
                 ["/bin/bash", "-c", "gh() { echo false; }\n" + prefix + after_preflight,
-                 str(script), "2.18", "11", *(["--prepare-only"] if prepare_only else [])],
+                 str(script), version, "11", *(["--prepare-only"] if prepare_only else [])],
                 capture_output=True, text=True, timeout=10,
             )
 
@@ -106,7 +111,27 @@ class PublicationTests(unittest.TestCase):
         self.assertIn(
             '"$SYMBOLS_PATH"\nrequire_release_source\n', SCRIPT)
 
-    def run_publication(self, failure=""):
+    def test_major_and_migration_releases_require_live_upgrade(self):
+        for version, change, expected in (("2.18", "", "0"), ("3.0", "", "1"),
+                                          ("2.18", "migration", "1")):
+            with self.subTest(version=version, change=change):
+                result = self.run_source_preflight(
+                    change=change, version=version,
+                    after_preflight='\nprintf "upgrade=%s\\n" "$REQUIRES_UPGRADE_TEST"\n')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("upgrade=" + expected, result.stdout)
+
+    def test_source_inspection_failure_stops_release(self):
+        result = self.run_source_preflight(after_preflight='''
+git() {
+    if [[ "$3" == "status" ]]; then return 1; fi
+    command git "$@"
+}
+require_release_source
+''')
+        self.assertNotEqual(result.returncode, 0)
+
+    def run_publication(self, failure="", requires_upgrade_test=False):
         with tempfile.TemporaryDirectory(prefix="release publication ") as directory:
             root = Path(directory)
             variables = {
@@ -121,6 +146,7 @@ class PublicationTests(unittest.TestCase):
                 "GITHUB_REPO": "test/repository",
                 "RELEASE_NOTES": NOTES,
                 "FAIL_AT": failure,
+                "REQUIRES_UPGRADE_TEST": "1" if requires_upgrade_test else "0",
             }
             shell = "set -euo pipefail\n" + "".join(
                 f"{key}={shlex.quote(value)}\n" for key, value in variables.items()
@@ -141,6 +167,13 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(
             notes, NOTES + "\n\n---\nDownload and open **ClaudeMeter-2.17.dmg** to install.\n"
         )
+
+    def test_required_upgrade_keeps_staging_until_live_verification(self):
+        result, events, _ = self.run_publication(requires_upgrade_test=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(events, ["staging", "assets", "feed"])
+        self.assertIn("verification is pending", result.stdout)
+        self.assertNotIn("Released Claude Meter", result.stdout)
 
     def test_prepare_only_stops_before_repository_changes_and_publication(self):
         tail = SCRIPT[SCRIPT.index("# ── Stop after private preparation"):]

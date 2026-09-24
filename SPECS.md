@@ -672,11 +672,19 @@ Only then may the script change release metadata and create the release commit. 
 preparation can use another committed source. Candidate feeds stay in `build/` until
 publication preparation passes these checks.
 Release completion requires successful publication of the signed artifacts and feed, then
-removal of the staging branch. A separate macOS account, VM, signed Sparkle upgrade test,
-or upgrade report is not required for this or future releases. Local verification, signing,
-notarization, matching debug symbols, DMG integrity, and feed metadata checks remain required.
-Optional manual Sparkle checks do not block publication or trigger automatic feed recovery.
-See `docs/releases.md`.
+removal of the staging branch. Major releases and migration changes also require a real
+signed Sparkle installation and relaunch in a separate macOS test account or VM. The
+script publishes these releases with verification pending and retains the staging branch.
+Verify and attach the live report before removing that branch and declaring completion.
+Other releases can use the lighter gate; `REQUIRE_UPGRADE_TEST=1` requests the live check
+for other risky changes. Failed checks do not automatically restore the public feed.
+
+CI currently checks macOS 26. Before each release, run a signed candidate on macOS 14.
+Test a native Intel installation for every major or migration release and at least once
+each calendar quarter with a release. Record OS version, native architecture, source
+commit, app version/build, artifact hash and smoke-test results. Rosetta alone does not
+verify Intel hardware. Local verification, signing, notarization, matching debug symbols,
+DMG integrity, and feed metadata checks remain required. See `docs/releases.md`.
 
 Tests should be hermetic: temporary directories are unique and cleaned up, wall clocks and
 defaults are injectable where policy depends on them, and live user Keychain or

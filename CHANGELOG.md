@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Automatic Claude and Cursor connections no longer consume refresh tokens owned by
+  Claude Code or Cursor. Renew expired credentials in the owning app. Manual Claude
+  credentials still support refresh.
+- Codex ChatGPT logins work when the auth file also contains an API key.
+- Cursor and Grok no longer retain the previous login's usage after a credential change.
+- Legacy event-file cleanup retries failed deletions, including failures from the
+  previous migration.
+
 ## [3.0] - 2026-09-23
 
 ### Changed

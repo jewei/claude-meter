@@ -2,8 +2,10 @@
 
 Releases require the local checks, Developer ID signing, Apple notarization, matching
 app debug symbols, DMG integrity, and matching update-feed metadata.
-A separate macOS test account, VM, or recorded Sparkle update test is not required for
-this or future releases.
+Major releases and changes to upgrade migrations require an actual signed Sparkle
+installation and relaunch before release completion. Run that check in a separate
+macOS test account or VM and retain its report. Other releases can use the lighter
+artifact gate unless their changes require an update-path test.
 
 ## Prepare and publish
 
@@ -42,8 +44,11 @@ It uses the app signing identity for the DMG. It staples the DMG before Sparkle 
 Validation checks Gatekeeper and the stapled tickets for both containers. It commits the
 version, changelog, and update feed, then pushes a staging branch. It publishes the
 GitHub release assets before pushing the feed to `main`. It removes the staging branch
-and reports completion. There is no upgrade-report wait, upload, or automatic feed
-recovery in this release path.
+and reports completion for releases that do not require a live update test. For major
+releases or changes to `*Migration.swift` or `LegacyClaudeFiles.swift`, the script instead
+reports that verification is pending and retains the staging branch. Set
+`REQUIRE_UPGRADE_TEST=1` for other changes to settings, storage or updater behavior that
+need this check. The script does not wait for a report or automatically restore the feed.
 
 If asset publication fails, the public feed stays on the previous release. If the feed
 push fails, keep the signed assets and staging branch, resolve the push failure, and
@@ -66,12 +71,68 @@ but that checkout can differ from `origin/main`. Version and build arguments app
 the archive. Keep the candidate
 artifacts private until publication is authorized.
 
-## Optional manual update check
+## Required runtime coverage
 
-The existing `scripts/sparkle-upgrade.py run` helper remains available for an optional
-manual test. That helper still requires a fresh macOS test account or VM to protect live
-provider data. Its report is not a release requirement. Do not run its legacy `complete`
-command as part of publication; that command can restore the previous feed.
+CI runs `verify-local.sh` on macOS 26. Its builds do not prove runtime behavior on
+macOS 14 or native Intel hardware. Use a signed private candidate from the release
+source commit for these checks before publishing:
+
+| Environment | Required frequency |
+| --- | --- |
+| macOS 14, the oldest supported OS | Every release |
+| Native Intel Mac running a supported macOS | Every major or migration release; at least once per calendar quarter that has a release |
+| Current macOS on Apple Silicon | Every release |
+
+One Intel Mac on macOS 14 can cover the first two rows. Rosetta is an additional check,
+not evidence of a native Intel run. Use a separate test account or VM without real
+provider credentials. Record the source commit, app version/build, DMG SHA-256, OS
+version, native architecture, test date, and each result in a runtime report.
+
+Check first launch and onboarding, the menu bar and popover, each Settings tab,
+pause/resume, display sleep/wake, and quit/relaunch. Check missing or locked credentials
+without unexpected Keychain prompts. For migration releases, use synthetic old settings
+and event files; confirm owned data is removed and unrelated files remain. Never copy
+live provider data into the test account. Rebuild and repeat affected checks if source
+or build settings change after the candidate test. Attach the runtime report to the
+release. A missing required environment leaves the release checks incomplete.
+
+## Complete a required Sparkle update check
+
+The release script publishes the signed asset before the feed. For major and migration
+releases, publication does not mean verification is complete. Keep the staging branch
+until the following steps pass. The existing helper uses the public feed, so this live
+check runs after publication. It does not provide a pre-publication update gate.
+
+In the fresh test account's active desktop, run:
+
+```bash
+python3 scripts/sparkle-upgrade.py run \
+  --previous-tag vPREVIOUS --version VERSION --build BUILD \
+  --isolated-user TEST_USER --report /tmp/sparkle-upgrade.json
+```
+
+Replace each placeholder with the actual release or test-account value. The helper
+installs the previous signed release. In Settings, select **Check for Updates**, then
+use Sparkle to install and relaunch. Do not manually replace the app. The helper checks
+the new version/build, signing, notarization, process replacement and continued execution.
+For migration releases, also retain the synthetic-data migration results from the runtime
+check; a clean-account updater test alone does not exercise old stored data.
+
+Copy the report to the release checkout, outside tracked source. Verify it against the
+published feed, then attach it and the runtime report before removing the staging branch:
+
+```bash
+python3 scripts/sparkle-upgrade.py verify-report \
+  --previous-tag vPREVIOUS --version VERSION --build BUILD \
+  --feed appcast.xml --report /tmp/sparkle-upgrade.json
+gh release upload vVERSION /tmp/sparkle-upgrade.json /tmp/runtime-smoke.md
+git push origin --delete release-staging/vVERSION
+```
+
+Only then is the release complete. If a check fails, keep the staging branch, record the
+failure and correct the release. Do not run the legacy `complete` helper command; it can
+restore the previous feed automatically. Any feed recovery is a separate release decision.
 
 The synthetic helper tests use temporary files and Git remotes. They remain in the
-local check and do not launch a downloaded app or contact GitHub.
+local check. They do not launch a downloaded app and do not replace the required live
+installation or platform checks.

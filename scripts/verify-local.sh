@@ -13,7 +13,7 @@ echo "▶ Checking release script syntax and publication ordering"
 bash -n "$SCRIPT_DIR/release.sh"
 python3 "$SCRIPT_DIR/test-release-publication.py"
 
-echo "▶ Checking optional signed-upgrade helper fixtures"
+echo "▶ Checking signed-upgrade helper fixtures"
 python3 "$SCRIPT_DIR/test-sparkle-upgrade.py"
 
 echo "▶ Checking Swift formatting"

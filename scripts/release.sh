@@ -3,6 +3,7 @@
 #   version  e.g. 1.1   (default: reads MARKETING_VERSION from project)
 #   build    e.g. 2     (default: git commit count — `git rev-list --count HEAD`)
 #   --prepare-only     Build and validate privately; do not commit or publish.
+#   REQUIRE_UPGRADE_TEST=1 also requires a live update check for other risky changes.
 #
 # Prerequisites:
 #   • Xcode with a valid Developer ID signing identity
@@ -77,11 +78,14 @@ echo "▶ Releasing $APP_NAME $VERSION (build $BUILD)"
 # Only committed source may enter a signed artifact. Recheck after the build so
 # edits or checkout changes during signing cannot enter an unrelated release tag.
 require_release_source() {
-    if [[ -n "$(git -C "$PROJECT_DIR" status --porcelain --untracked-files=all)" ]]; then
+    local source_status source_head
+    source_status="$(git -C "$PROJECT_DIR" status --porcelain --untracked-files=all)"
+    source_head="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+    if [[ -n "$source_status" ]]; then
         echo "error: release requires a clean worktree, including untracked files." >&2
         exit 1
     fi
-    if [[ "$(git -C "$PROJECT_DIR" rev-parse HEAD)" != "$SOURCE_COMMIT" ]]; then
+    if [[ "$source_head" != "$SOURCE_COMMIT" ]]; then
         echo "error: release source HEAD changed during preparation." >&2
         exit 1
     fi
@@ -136,6 +140,21 @@ import sys
 if int(sys.argv[1]) <= int(sys.argv[2]):
     sys.exit("error: the new build must be greater than the advertised build")
 PYBUILD
+
+# Major releases and migration changes require a real signed Sparkle installation.
+# Keep the staging branch until its report has been verified and attached.
+REQUIRES_UPGRADE_TEST=0
+if [[ "${VERSION%%.*}" != "${PREV_VERSION%%.*}" || "${REQUIRE_UPGRADE_TEST:-0}" == "1" ]]; then
+    REQUIRES_UPGRADE_TEST=1
+fi
+if ! git -C "$PROJECT_DIR" rev-parse --verify "${PREV_TAG}^{commit}" >/dev/null 2>&1; then
+    git -C "$PROJECT_DIR" fetch origin "refs/tags/$PREV_TAG:refs/tags/$PREV_TAG"
+fi
+MIGRATION_CHANGES="$(git -C "$PROJECT_DIR" diff --name-only "$PREV_TAG" "$SOURCE_COMMIT" -- \
+    ':(glob)**/*Migration.swift' ':(glob)**/LegacyClaudeFiles.swift')"
+if [[ -n "$MIGRATION_CHANGES" ]]; then
+    REQUIRES_UPGRADE_TEST=1
+fi
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -353,6 +372,12 @@ gh release create "$TAG" "$DMG_PATH" "$SYMBOLS_PATH" \
 # valid feed while the new release is still available for a safe manual retry.
 echo "▶ Publishing release commit to main…"
 git -C "$PROJECT_DIR" push origin HEAD:main
+
+if [[ "$REQUIRES_UPGRADE_TEST" == "1" ]]; then
+    echo "Published $TAG; signed Sparkle verification is pending."
+    echo "Keep $STAGING_BRANCH until the live report passes. Follow docs/releases.md."
+    exit 0
+fi
 
 echo "▶ Removing release staging branch…"
 git -C "$PROJECT_DIR" push origin --delete "$STAGING_BRANCH"

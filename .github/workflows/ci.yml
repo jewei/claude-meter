@@ -16,6 +16,7 @@ jobs:
   verify:
     name: Tests + Debug/Release build
     runs-on: macos-26
+    timeout-minutes: 20
 
     steps:
       - name: Checkout

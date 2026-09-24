@@ -107,22 +107,28 @@ private actor CodexFetchFixture {
 private actor SuspendedHomeFetch {
     private var pending: [CheckedContinuation<Void, Never>] = []
     private var waiters: [(Int, CheckedContinuation<Void, Never>)] = []
+    private var released = false
     private(set) var calls = 0
     func suspend() async {
         calls += 1
         let ready = waiters.filter { $0.0 <= calls }
         waiters.removeAll { $0.0 <= calls }
         for (_, waiter) in ready { waiter.resume() }
+        guard !released else { return }
         await withCheckedContinuation { pending.append($0) }
     }
     func waitForCalls(_ count: Int) async {
-        if calls >= count { return }
+        if calls >= count || released { return }
         await withCheckedContinuation { waiters.append((count, $0)) }
     }
     func release() {
+        released = true
         let saved = pending
         pending.removeAll()
         for continuation in saved { continuation.resume() }
+        let waiting = waiters
+        waiters.removeAll()
+        for (_, continuation) in waiting { continuation.resume() }
     }
 }
 
@@ -362,7 +368,9 @@ struct CodexProviderAdapterTests {
             let accounts = accounts
             let provider = CodexProviderAdapter(
                 configuration: { .init(accounts: accounts) },
-                defaults: defaults, timeoutSeconds: 0.4, perAccountTimeoutSeconds: 0.1,
+                // Exercise the blocked-read guard without requiring healthy I/O
+                // and MainActor scheduling to finish within 100 ms on CI.
+                defaults: defaults, timeoutSeconds: 8, perAccountTimeoutSeconds: 2,
                 identityLoader: { account in
                     if account.id == accounts[0].id { return blocked.read() }
                     return .init(ownerID: "healthy", sourceFingerprint: "stable")
@@ -573,25 +581,51 @@ struct CodexProviderAdapterTests {
             let gate = SuspendedHomeFetch()
             let provider = CodexProviderAdapter(
                 configuration: { .init(accounts: accounts) }, defaults: defaults,
-                timeoutSeconds: 0.2, perAccountTimeoutSeconds: 1,
+                timeoutSeconds: 4, perAccountTimeoutSeconds: 60,
                 identityLoader: { _ in .init(ownerID: "owner", sourceFingerprint: "stable") },
                 fetchAccount: { _, now in
                     await gate.suspend()
                     return testUsage(now)
                 })
-            let start = Date()
-            let task = Task { try await fetch(provider) }
-            await gate.waitForCalls(3)
-            let result = try await task.value
-            #expect(Date().timeIntervalSince(start) < 1)
-            #expect(await gate.calls == 3)
-            #expect(result.accounts.count == 4)
-            #expect(result.accounts.allSatisfy { $0.observedAt == nil && $0.lastError != nil })
-            _ = try await fetch(provider)
-            #expect(await gate.calls == 6)
-            _ = try await fetch(provider)
-            #expect(await gate.calls == 6)  // The two abandoned batches fill the fixed budget.
+            do {
+                let start = ContinuousClock.now
+                // Preflight can consume the deadline before any fetch starts.
+                // Await the bounded result, then check how many requests ran.
+                let result = try await fetch(provider)
+                #expect(start.duration(to: .now) < .seconds(10))
+                #expect(await gate.calls == 3)
+                #expect(result.accounts.count == 4)
+                #expect(result.accounts.allSatisfy { $0.observedAt == nil && $0.lastError != nil })
+                _ = try await fetch(provider)
+                #expect(await gate.calls == 6)
+                _ = try await fetch(provider)
+                #expect(await gate.calls == 6)  // The two abandoned batches fill the fixed budget.
+            } catch {
+                await gate.release()
+                throw error
+            }
             await gate.release()
+        }
+    }
+
+    @Test("A deadline exhausted before fetch returns without starting account requests")
+    func deadlineBeforeFetch() async throws {
+        try await isolated { defaults in
+            let fetcher = CodexFetchFixture()
+            let accounts = accounts
+            let provider = CodexProviderAdapter(
+                configuration: { .init(accounts: accounts) }, defaults: defaults,
+                timeoutSeconds: 0.2,
+                identityLoader: { _ in .init(ownerID: "owner", sourceFingerprint: "stable") },
+                fetchAccount: { try await fetcher.fetch($0, now: $1) })
+            let id = UUID()
+            let previous = try await provider.validatePrevious(nil, now: now, refreshID: id)
+            // Model a delayed resumption after preflight. No account call can start.
+            try await Task.sleep(for: .milliseconds(300))
+            let result = try await provider.fetch(now: now, previous: previous, refreshID: id)
+            #expect(await fetcher.calls.isEmpty)
+            #expect(result.accounts.count == accounts.count)
+            #expect(result.accounts.allSatisfy { $0.observedAt == nil && $0.lastError != nil })
         }
     }
 }

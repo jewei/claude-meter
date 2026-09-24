@@ -156,7 +156,7 @@ Follow the root [AGENTS.md](../../../AGENTS.md). Provider behavior is defined in
   Codex owns token rotation and persistence. Ignore the removed source-mode preference.
 - Only `CodexOAuthCredentialsError.notFound`, `missingTokens`, `decodeFailed`, `unreadable`,
   `expiredAccessToken` and `CodexUsageError.loginRequired` permit App Server recovery.
-  Direct 401/403 map to `loginRequired`. Network errors, deadlines, 429/5xx and invalid
+  Quota-request 401/403 map to `loginRequired`. Network errors, deadlines, 429/5xx and invalid
   usage do not start recovery. API-key auth has no subscription quota and clears old usage.
 - Treat a bounded, numeric JWT `exp` within 60 s as a recovery hint. Unknown expiry uses
   direct HTTP. Claims never authenticate an account. Do not retain refresh-token fields.
@@ -181,8 +181,13 @@ Follow the root [AGENTS.md](../../../AGENTS.md). Provider behavior is defined in
   before shutdown so a response during the grace period cannot win.
 - Keep source/auth-mode metadata in provider diagnostics and the existing Codex archive,
   never ProviderSnapshot. Combined recovery failures preserve both sanitized reasons.
-  Normal direct reads include reset-credit totals when supplied. Detailed reset-credit
-  rows come only from recovery; do not launch a process just to obtain those rows.
+  Normal direct reads include reset-credit totals when supplied. A positive count permits
+  one optional GET for reset-credit details with the same loaded token and account ID.
+  Use a four-second whole-request deadline, an isolated timeout-task budget, and no retries.
+  Attach only available, unexpired rows when the detail total matches the quota total.
+  Missing or invalid expiry stays unknown. Detail failure preserves quota and the count,
+  clears old details, and never triggers auth recovery, including on 401/403. Pass cancellation
+  through. Recovery can also supply details; never launch a process just to obtain them.
 - Positional primary/secondary windows win. Only when both are absent, bucket
   `rateLimitsByLimitId` by duration: at most 24 h or unknown is session-like; longer is
   weekly-like. Select the most-used window per bucket and use its limit ID as the label.

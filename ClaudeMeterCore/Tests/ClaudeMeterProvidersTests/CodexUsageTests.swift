@@ -789,7 +789,7 @@ struct CodexUsageTests {
                 }
               },
               "credits": { "balance": "5" },
-              "rate_limit_reset_credits": { "available_count": 3 }
+              "rate_limit_reset_credits": { "available_count": 0 }
             }
             """
         let transport = RecordingTransport(data: Data(json.utf8), status: 200)
@@ -804,7 +804,7 @@ struct CodexUsageTests {
 
         let usage = try await source.fetchUsage(now: Date(timeIntervalSince1970: 1_700_000_000))
 
-        #expect(usage.rateLimitResets?.availableCount == 3)
+        #expect(usage.rateLimitResets?.availableCount == 0)
         #expect(usage.rateLimitResets?.credits == nil)
         #expect(usage.source == .directOAuth)
         #expect(usage.authMode == .chatGPT)
@@ -817,6 +817,278 @@ struct CodexUsageTests {
                 == "Bearer access-token")
         #expect(
             transport.lastRequest?.value(forHTTPHeaderField: "ChatGPT-Account-Id") == "account-id")
+    }
+
+    @Test(arguments: [
+        ("2027-02-01T00:00:00Z", 1_801_440_000.0),
+        ("2027-02-01T00:00:00.123456Z", 1_801_440_000.123456),
+    ])
+    func directOAuthFetchesResetExpiryWithTheSameCredentials(
+        expiry: String, expectedEpoch: TimeInterval
+    ) async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let transport = ResetDetailsTransport {
+            let json = Self.resetDetailsJSON.replacingOccurrences(
+                of: "2027-02-01T00:00:00.123456Z", with: expiry)
+            return (Data(json.utf8), 200)
+        }
+        let credentials = ResetCredentialsLoader()
+        let source = CodexDirectOAuthSource(
+            transport: transport, credentialsLoader: { credentials.load() })
+        let usage = try await source.fetchUsage(now: now)
+        let account = usage.providerAccountSnapshot(id: "test-home", label: "Codex")
+        let resets = try #require(account.balances.first { $0.id == "usage-resets" })
+
+        #expect(usage.primaryWindow?.usedPercent == 12)
+        #expect(usage.updatedAt == now)
+        #expect(usage.source == .directOAuth)
+        #expect(resets.value == 3)
+        #expect(resets.details?.count == 2)
+        #expect(resets.details?.first?.title == "Full reset")
+        let expiresAt = try #require(resets.details?.first?.expiresAt)
+        #expect(abs(expiresAt.timeIntervalSince1970 - expectedEpoch) < 0.001)
+        #expect(resets.details?.last?.expiresAt == nil)
+        #expect(credentials.loadCount == 1)
+
+        let requests = await transport.requests
+        #expect(
+            requests.map { $0.url?.path } == [
+                "/backend-api/wham/usage", "/backend-api/wham/rate-limit-reset-credits",
+            ])
+        for request in requests {
+            #expect(request.httpMethod == "GET")
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer token-1")
+            #expect(request.value(forHTTPHeaderField: "ChatGPT-Account-Id") == "account-1")
+        }
+        let detailsRequest = try #require(requests.last)
+        #expect(detailsRequest.timeoutInterval == 4)
+        #expect(detailsRequest.cachePolicy == .reloadIgnoringLocalCacheData)
+        #expect(detailsRequest.value(forHTTPHeaderField: "OpenAI-Beta") == "codex-1")
+        #expect(detailsRequest.value(forHTTPHeaderField: "originator") == "Codex Desktop")
+    }
+
+    @Test(arguments: [401, 403, 404, 429, 500])
+    func resetDetailsHTTPFailurePreservesQuotaWithoutRecovery(status: Int) async throws {
+        let transport = ResetDetailsTransport { (Data(), status) }
+        let recovery = StubCodexSource(usage: Self.usage(source: .appServer), availability: true)
+        let provider = CodexUsageProvider(
+            appServerSource: recovery, oauthSource: Self.resetDetailsSource(transport))
+        let usage = try await provider.fetchUsage()
+        #expect(usage.primaryWindow?.usedPercent == 12)
+        #expect(usage.rateLimitResets?.availableCount == 3)
+        #expect(usage.rateLimitResets?.credits == nil)
+        #expect(recovery.fetchCount == 0)
+        #expect(await transport.requests.count == 2)
+    }
+
+    @Test(arguments: [
+        "not JSON", #"{"available_count":3,"credits":"invalid"}"#,
+        #"{"available_count":3}"#,
+        #"{"available_count":-1,"credits":[]}"#,
+        #"{"available_count":2,"credits":[{"status":"available","title":"Other count"}]}"#,
+    ])
+    func unusableResetDetailsPreserveTheReportedCount(json: String) async throws {
+        let transport = ResetDetailsTransport { (Data(json.utf8), 200) }
+        let usage = try await Self.resetDetailsSource(transport).fetchUsage()
+        #expect(usage.primaryWindow?.usedPercent == 12)
+        #expect(usage.rateLimitResets?.availableCount == 3)
+        #expect(usage.rateLimitResets?.credits == nil)
+    }
+
+    @Test(arguments: [
+        "null", "1e308", "{}", "\"invalid\"", "\"3000-01-01T00:00:00Z\"",
+        "\"1969-12-31T23:59:59Z\"",
+    ])
+    func invalidResetExpiryStaysUnknown(expiry: String) async throws {
+        let transport = ResetDetailsTransport {
+            let json = """
+                {"available_count":3,"credits":[
+                  {"status":"available","title":"Reset","expires_at":\(expiry)}
+                ]}
+                """
+            return (Data(json.utf8), 200)
+        }
+        let usage = try await Self.resetDetailsSource(transport).fetchUsage()
+        #expect(usage.rateLimitResets?.availableCount == 3)
+        #expect(usage.rateLimitResets?.credits?.count == 1)
+        #expect(usage.rateLimitResets?.credits?.first?.expiresAt == nil)
+        // The accepted reading must remain safe for snapshot persistence.
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        _ = try encoder.encode(usage)
+    }
+
+    @Test(arguments: ["null", #"{"available_count":0}"#])
+    func resetDetailsAreSkippedWithoutAvailableResets(metadata: String) async throws {
+        let transport = ResetDetailsTransport(resetMetadata: metadata) {
+            Issue.record("Reset details must not be requested")
+            return (Data(), 200)
+        }
+        _ = try await Self.resetDetailsSource(transport).fetchUsage()
+        #expect(await transport.requests.count == 1)
+    }
+
+    @Test func resetDetailsNetworkFailureClearsEarlierExpiry() async throws {
+        let transport = ResetDetailsTransport { (Data(Self.resetDetailsJSON.utf8), 200) }
+        let source = Self.resetDetailsSource(transport)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let first = try await source.fetchUsage(now: now)
+        #expect(first.rateLimitResets?.credits?.count == 2)
+        await transport.failDetails()
+        let usage = try await source.fetchUsage(now: now.addingTimeInterval(300))
+        #expect(usage.primaryWindow?.usedPercent == 12)
+        #expect(usage.rateLimitResets?.availableCount == 3)
+        #expect(usage.rateLimitResets?.credits == nil)
+    }
+
+    @Test func resetDetailsTransportCancellationStopsTheRefresh() async {
+        let transport = ResetDetailsTransport { throw CancellationError() }
+        await #expect(throws: CancellationError.self) {
+            _ = try await Self.resetDetailsSource(transport).fetchUsage()
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func resetDetailsDeadlineAndCancellationDoNotWaitForTransport(cancel: Bool) async throws {
+        let entered = ResetDetailsGate()
+        let release = ResetDetailsGate()
+        let transport = ResetDetailsTransport {
+            entered.signal()
+            await release.wait()
+            return (Data(Self.resetDetailsJSON.utf8), 200)
+        }
+        let source = Self.resetDetailsSource(transport, timeout: cancel ? 30 : 0.05)
+        let task = Task { try await source.fetchUsage() }
+        let watchdog = Task.detached {
+            try? await Task.sleep(for: .seconds(10))
+            if !Task.isCancelled { release.signal() }
+        }
+        defer {
+            watchdog.cancel()
+            release.signal()
+            entered.signal()
+            task.cancel()
+        }
+        if cancel {
+            try await Timeout.run(seconds: 5) { await entered.wait() }
+            task.cancel()
+            await #expect(throws: CancellationError.self) { _ = try await task.value }
+        } else {
+            let usage = try await task.value
+            #expect(usage.primaryWindow?.usedPercent == 12)
+            #expect(usage.rateLimitResets?.availableCount == 3)
+            #expect(usage.rateLimitResets?.credits == nil)
+        }
+        #expect(!release.isReleased)
+    }
+
+    private static let resetDetailsJSON = """
+        {"available_count":3,"credits":[
+          {"status":"available","title":"Full reset","expires_at":"2027-02-01T00:00:00.123456Z"},
+          {"status":"available","title":"No expiry","expires_at":null},
+          {"status":"available","title":"Expired","expires_at":"2020-01-01T00:00:00Z"},
+          {"status":"available","title":"Expires now","expires_at":"2027-01-15T08:00:00Z"},
+          {"status":"redeemed","expires_at":"2028-01-01T00:00:00Z"},
+          {"status":"redeeming","expires_at":"2028-01-01T00:00:00Z"},
+          {"status":"expired","expires_at":"2028-01-01T00:00:00Z"},
+          {"status":"future_status","expires_at":"2028-01-01T00:00:00Z"}
+        ]}
+        """
+
+    private static func resetDetailsSource(
+        _ transport: any HTTPTransport, timeout: TimeInterval = 4
+    ) -> CodexDirectOAuthSource {
+        CodexDirectOAuthSource(
+            transport: transport,
+            credentialsLoader: {
+                CodexOAuthCredentials(
+                    accessToken: "test-token", idToken: nil, accountId: "test-account")
+            }, resetCreditsTimeout: timeout)
+    }
+
+    private actor ResetDetailsTransport: HTTPTransport {
+        let resetMetadata: String
+        let details: @Sendable () async throws -> (Data, Int)
+        var requests: [URLRequest] = []
+        private var detailsFailed = false
+
+        init(
+            resetMetadata: String = #"{"available_count":3}"#,
+            details: @escaping @Sendable () async throws -> (Data, Int)
+        ) {
+            self.resetMetadata = resetMetadata
+            self.details = details
+        }
+
+        func failDetails() { detailsFailed = true }
+
+        func send(_ request: URLRequest, retry: HTTPRetryPolicy) async throws -> (
+            Data, HTTPURLResponse
+        ) {
+            requests.append(request)
+            #expect(retry.maxRetries == 0)
+            let data: Data
+            let status: Int
+            if request.url?.path == "/backend-api/wham/usage" {
+                data = Data(
+                    """
+                    {"rate_limit":{"primary_window":{"used_percent":12}},
+                     "rate_limit_reset_credits":\(resetMetadata)}
+                    """.utf8)
+                status = 200
+            } else {
+                if detailsFailed { throw URLError(.notConnectedToInternet) }
+                (data, status) = try await details()
+            }
+            return (
+                data,
+                HTTPURLResponse(
+                    url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+            )
+        }
+    }
+
+    private final class ResetCredentialsLoader: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        var loadCount: Int { lock.withLock { count } }
+
+        func load() -> CodexOAuthCredentials {
+            lock.withLock {
+                count += 1
+                return CodexOAuthCredentials(
+                    accessToken: "token-\(count)", idToken: nil, accountId: "account-\(count)")
+            }
+        }
+    }
+
+    private final class ResetDetailsGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var released = false
+        private var continuation: CheckedContinuation<Void, Never>?
+        var isReleased: Bool { lock.withLock { released } }
+
+        func wait() async {
+            await withCheckedContinuation { continuation in
+                lock.lock()
+                if released {
+                    lock.unlock()
+                    continuation.resume()
+                } else {
+                    self.continuation = continuation
+                    lock.unlock()
+                }
+            }
+        }
+
+        func signal() {
+            lock.lock()
+            released = true
+            let waiter = continuation
+            continuation = nil
+            lock.unlock()
+            waiter?.resume()
+        }
     }
 
     private static func usage(source: CodexUsageSource) -> CodexUsage {

@@ -371,7 +371,8 @@ detail rows cannot be decoded. Direct OAuth quota decoding remains strict.
 
 Codex is opt-in and supports one implicit `CODEX_HOME` plus explicitly configured homes.
 Each home has its own display name and quota observation. Normal refresh reads access
-credentials from that home's `auth.json` and makes one direct HTTP usage request.
+credentials from that home's `auth.json` and makes one direct HTTP usage request. When
+that response reports available usage resets, it also requests their expiry details.
 It starts no Codex process. There is no source picker; old `codexSourceMode` values are ignored.
 
 Claude Meter never consumes the Codex refresh token, rotates Codex credentials, or writes
@@ -386,7 +387,7 @@ Recovery is permitted only for these typed direct failures:
 
 - `CodexOAuthCredentialsError.notFound`, `missingTokens`, `decodeFailed`, `unreadable`,
   or `expiredAccessToken`.
-- `CodexUsageError.loginRequired`, produced by HTTP 401/403.
+- `CodexUsageError.loginRequired`, produced by HTTP 401/403 from the quota request.
 
 A numeric access-token JWT expiry within 60 seconds skips the direct request. Parsing is
 bounded to 64 KiB and accepted date bounds. Malformed, absent or nonnumeric expiry means
@@ -418,10 +419,18 @@ windows by reported duration (up to 24 hours is short/session; longer is weekly)
 to primary/secondary position only when duration is absent.
 
 Codex account cards show available usage resets. Direct usage reads the authoritative
-`rate_limit_reset_credits.available_count` from the same quota response. Recovery may also
-supply detail rows through `rateLimitResetCredits`. Missing detail rows remain unknown;
-normal direct refresh does not make an extra request or retain old expiry details. Ring cards
-show the count and each returned reset's title and time to expiry. Bar cards show the count
+`rate_limit_reset_credits.available_count` from the same quota response. A positive count
+permits one read-only GET to `/backend-api/wham/rate-limit-reset-credits`, using the same
+access token and account ID loaded for the quota request. It uses the shared HTTP transport,
+no retries, a four-second whole-request deadline, and a separate bounded timeout-task budget.
+There is no extra timer, credential reload, token rotation, or process launch for details.
+Direct detail rows include only available, unexpired resets. Missing or invalid expiry dates stay unknown;
+accepted dates use `PersistedDateBounds`. The detail response's count must match the quota
+count before its rows can be attached. Missing, malformed, failed, or timed-out details keep
+valid quota and its reset count, including on HTTP 401/403. They do not trigger auth recovery
+or retain old expiry details. Cancellation stops the refresh and preserves the existing reading.
+Recovery may also supply detail rows through `rateLimitResetCredits`. Ring cards show the
+count and each returned reset's title and time to expiry. Bar cards show the count
 when collapsed and reveal the rows when expanded. Expiry rows are sorted by date; a tooltip
 shows the exact local date and time. Missing expiry details remain explicit. Reset credits
 are display-only; the app never consumes them.

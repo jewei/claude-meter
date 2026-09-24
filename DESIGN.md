@@ -233,6 +233,8 @@ Chunky card, flex row, gap 14.
   - week row: same, followed by a shared `ResetPhrase` duration such as "· in 6d 7h".
   - Codex cards add a full-width section below the rings for "Usage limit resets" and the
     available count. Each returned reset shows its title and time to expiry, sorted by expiry.
+    Direct OAuth detail rows include available, unexpired resets. A missing or invalid expiry
+    date stays unknown. The reported total can exceed the number of detail rows.
     Hovering a row shows the exact local expiry date and time. Missing or partial expiry
     details are stated below the count. The section uses the card's existing fonts and colors.
   - An unavailable or stale Claude account keeps its label and sanitized account error.

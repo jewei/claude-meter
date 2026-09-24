@@ -513,6 +513,52 @@ public struct CodexOAuthUsageResponse: Decodable, Sendable {
     }
 }
 
+/// Optional reset inventory returned separately from the direct quota response.
+struct CodexOAuthResetCreditsResponse: Decodable, Sendable {
+    let availableCount: Int
+    let credits: [Credit]?
+
+    private enum CodingKeys: String, CodingKey {
+        case availableCount = "available_count"
+        case credits
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        availableCount = try container.decode(Int.self, forKey: .availableCount)
+        credits = try? container.decodeIfPresent([Credit].self, forKey: .credits)
+    }
+
+    func availableCredits(asOf now: Date) -> [CodexRateLimitResetCredit]? {
+        credits?.compactMap { credit in
+            guard credit.status == "available" else { return nil }
+            if let expiresAt = credit.expiresAt, expiresAt <= now { return nil }
+            return CodexRateLimitResetCredit(title: credit.title, expiresAt: credit.expiresAt)
+        }
+    }
+
+    struct Credit: Decodable, Sendable {
+        let status: String?
+        let title: String?
+        let expiresAt: Date?
+
+        private enum CodingKeys: String, CodingKey {
+            case status, title
+            case expiresAt = "expires_at"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            status = try? container.decodeIfPresent(String.self, forKey: .status)
+            title = try? container.decodeIfPresent(String.self, forKey: .title)
+            let expiry = try? container.decodeIfPresent(String.self, forKey: .expiresAt)
+            expiresAt = expiry.flatMap(ProviderDate.parseISO8601).flatMap {
+                boundedProviderDate(timeIntervalSince1970: $0.timeIntervalSince1970)
+            }
+        }
+    }
+}
+
 public enum CodexUsageError: Error, LocalizedError, Equatable, Sendable {
     case noUsageData
     case cliNotFound

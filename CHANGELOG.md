@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1] - 2026-09-25
+
 ### Added
 
 - Claude account cards show usage-limit resets, such as a model-launch reset, with the
@@ -773,7 +775,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v3.0.2...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v3.1...HEAD
+[3.1]: https://github.com/jewei/claude-meter/compare/v3.0.2...v3.1
 [3.0.2]: https://github.com/jewei/claude-meter/compare/v3.0.1...v3.0.2
 [3.0.1]: https://github.com/jewei/claude-meter/compare/v3.0...v3.0.1
 [3.0]: https://github.com/jewei/claude-meter/compare/v2.18...v3.0

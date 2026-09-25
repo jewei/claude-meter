@@ -19,9 +19,9 @@ record() {
 }
 git() {
     case "$*" in
-        *"--delete release-staging/v2.17") record cleanup ;;
+        *"--delete release-staging/$TAG") record cleanup ;;
         *"push origin HEAD:main") record feed ;;
-        *"push origin release-commit:refs/heads/release-staging/v2.17") record staging ;;
+        *"push origin release-commit:refs/heads/release-staging/$TAG") record staging ;;
         *) return 99 ;;
     esac
 }
@@ -58,7 +58,6 @@ class PublicationTests(unittest.TestCase):
             git("config", "user.name", "Release Test")
             git("add", ".")
             git("commit", "-m", "source")
-            git("tag", "v2.17")
             git("remote", "add", "origin", directory)
             if change in ("unstaged", "staged", "ahead"):
                 (root / "source.swift").write_text("changed\n")
@@ -111,15 +110,12 @@ class PublicationTests(unittest.TestCase):
         self.assertIn(
             '"$SYMBOLS_PATH"\nrequire_release_source\n', SCRIPT)
 
-    def test_major_and_migration_releases_require_live_upgrade(self):
-        for version, change, expected in (("2.18", "", "0"), ("3.0", "", "1"),
-                                          ("2.18", "migration", "1")):
+    def test_major_and_migration_releases_pass_source_preflight(self):
+        for version, change in (("2.18", ""), ("3.0", ""), ("2.18", "migration")):
             with self.subTest(version=version, change=change):
                 result = self.run_source_preflight(
-                    change=change, version=version,
-                    after_preflight='\nprintf "upgrade=%s\\n" "$REQUIRES_UPGRADE_TEST"\n')
+                    change=change, version=version)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn("upgrade=" + expected, result.stdout)
 
     def test_source_inspection_failure_stops_release(self):
         result = self.run_source_preflight(after_preflight='''
@@ -131,22 +127,21 @@ require_release_source
 ''')
         self.assertNotEqual(result.returncode, 0)
 
-    def run_publication(self, failure="", requires_upgrade_test=False):
+    def run_publication(self, failure="", version="2.17"):
         with tempfile.TemporaryDirectory(prefix="release publication ") as directory:
             root = Path(directory)
             variables = {
                 "PROJECT_DIR": directory,
                 "BUILD_DIR": directory,
                 "RELEASE_COMMIT": "release-commit",
-                "TAG": "v2.17",
-                "VERSION": "2.17",
-                "DMG_PATH": str(root / "ClaudeMeter-2.17.dmg"),
-                "DMG_NAME": "ClaudeMeter-2.17.dmg",
+                "TAG": "v" + version,
+                "VERSION": version,
+                "DMG_PATH": str(root / f"ClaudeMeter-{version}.dmg"),
+                "DMG_NAME": f"ClaudeMeter-{version}.dmg",
                 "SYMBOLS_PATH": str(root / "symbols.zip"),
                 "GITHUB_REPO": "test/repository",
                 "RELEASE_NOTES": NOTES,
                 "FAIL_AT": failure,
-                "REQUIRES_UPGRADE_TEST": "1" if requires_upgrade_test else "0",
             }
             shell = "set -euo pipefail\n" + "".join(
                 f"{key}={shlex.quote(value)}\n" for key, value in variables.items()
@@ -160,20 +155,15 @@ require_release_source
             return result, events, notes.read_text() if notes.exists() else None
 
     def test_success_publishes_assets_before_feed_and_removes_staging(self):
-        result, events, notes = self.run_publication()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(events, ["staging", "assets", "feed", "cleanup"])
-        self.assertIn("Released Claude Meter 2.17", result.stdout)
-        self.assertEqual(
-            notes, NOTES + "\n\n---\nDownload and open **ClaudeMeter-2.17.dmg** to install.\n"
-        )
-
-    def test_required_upgrade_keeps_staging_until_live_verification(self):
-        result, events, _ = self.run_publication(requires_upgrade_test=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(events, ["staging", "assets", "feed"])
-        self.assertIn("verification is pending", result.stdout)
-        self.assertNotIn("Released Claude Meter", result.stdout)
+        for version in ("2.17", "3.0"):
+            with self.subTest(version=version):
+                result, events, notes = self.run_publication(version=version)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(events, ["staging", "assets", "feed", "cleanup"])
+                self.assertIn("Released Claude Meter " + version, result.stdout)
+                self.assertEqual(
+                    notes, NOTES + f"\n\n---\nDownload and open **ClaudeMeter-{version}.dmg** to install.\n"
+                )
 
     def test_prepare_only_stops_before_repository_changes_and_publication(self):
         tail = SCRIPT[SCRIPT.index("# ── Stop after private preparation"):]

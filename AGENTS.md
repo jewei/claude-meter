@@ -7,7 +7,7 @@ Report in ASD-STE100 Simplified Technical English.
 - [SPECS.md](SPECS.md) defines behavior, settings, persistence, and system boundaries.
   It is also the glossary and decision record. There is no `CONTEXT.md` or ADR directory.
 - [DESIGN.md](DESIGN.md) defines the UI system.
-- [docs/releases.md](docs/releases.md) defines release and signed-candidate checks.
+- [docs/releases.md](docs/releases.md) defines release and artifact checks.
 - [Issue workflow](docs/agents/issue-tracker.md) defines GitHub issue and triage conventions.
 - Before you change code in these directories, read their rules:
   [app](ClaudeMeter/AGENTS.md), [providers](ClaudeMeterCore/Sources/ClaudeMeterProviders/AGENTS.md).

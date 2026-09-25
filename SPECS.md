@@ -666,6 +666,8 @@ Application Support data by default.
 A release publishes the signed GitHub assets before it pushes the new `appcast.xml` to
 `main`, so the feed never points at a missing artifact. Releases require a clean source
 commit, signing, notarization, matching debug symbols, DMG integrity, matching feed
-metadata, and signed-candidate runtime checks on the supported platforms. Major and
-migration releases also require a live Sparkle update in an isolated macOS account or VM.
-[docs/releases.md](docs/releases.md) defines the procedure and required coverage.
+metadata, and the local verification gate. Publication completes after the assets and
+feed are public and the staging branch is removed. Manual platform and live Sparkle
+update tests are optional for all releases, including major and migration releases;
+no separate test host or report is required. [docs/releases.md](docs/releases.md)
+defines the procedure.

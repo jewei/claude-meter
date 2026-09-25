@@ -175,10 +175,11 @@ These rules cover implementation constraints.
 - Combined recovery failures keep both sanitized reasons. Source and auth-mode metadata
   stay in diagnostics and the archive, never in `ProviderSnapshot`.
 
-### Batches and decoding
+### Fetches and decoding
 
-- Each home has its own provider and OAuth read. Run batches of three under one 60 s
-  provider deadline with an isolated timeout-task budget.
+- Each home has its own provider and OAuth read. Run at most three at once, and start
+  the next home when a slot frees. All homes share one 60 s provider deadline with an
+  isolated timeout-task budget.
 - A positive reset-credit count permits one detail GET with the same token and account ID:
   a 4 s deadline, an isolated timeout-task budget, and no retries. Attach only available,
   unexpired rows, and only when the detail total matches the quota total. Detail failure

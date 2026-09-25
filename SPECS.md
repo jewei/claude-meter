@@ -376,8 +376,8 @@ and staleness appear only on its popover/settings/diagnostics surfaces.
 
 Codex is opt-in and supports one implicit `CODEX_HOME` plus explicitly configured homes.
 Each home has its own display name and quota observation. A rename changes labels only;
-it starts no refresh. Normal refresh reads access
-credentials from that home's `auth.json` and makes one direct HTTP usage request. When
+it starts no refresh. Normal refresh reads access credentials from that home's
+`auth.json` and makes one direct HTTP usage request. When
 that response reports available usage resets, it also requests their expiry details.
 It starts no Codex process and has no source picker.
 
@@ -429,7 +429,8 @@ restored after ownership checks on the first refresh. `CodexProviderAdapter` own
 and save work; UsageStore accepts the save with final publication. A failed refresh
 retains that reading and records the attempt error/time separately from the last-success
 time; observation staleness remains age-based. Healthy accounts continue updating when
-another account fails. Accounts run in batches of three, but all batches share one
+another account fails. At most three accounts run at once; a free slot starts the next
+account, so a stalled account does not delay the others. All accounts share one
 60-second provider deadline. Main-meter normalization classifies windows by reported
 duration: up to 24 hours is session, longer is weekly. Primary/secondary position is the
 fallback only when duration is absent.

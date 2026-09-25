@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A slow Codex account no longer delays usage checks for the other Codex accounts.
 - Renaming a Codex account no longer restarts the Codex usage check for each keystroke.
 
 ## [3.0.1] - 2026-09-25

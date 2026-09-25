@@ -304,21 +304,17 @@ public final class CodexProviderAdapter: UsageProvider, Sendable {
         async -> [String: Attempt]
     {
         var result: [String: Attempt] = [:]
-        var index = 0
-        while index < config.accounts.count, !Task.isCancelled {
-            let remaining = deadline - ProcessInfo.processInfo.systemUptime
-            guard remaining > 0 else {
-                for account in config.accounts[index...] {
-                    result[account.id] = Attempt(
-                        result: .failure(TimeoutError(seconds: timeoutSeconds)), attemptedAt: Date()
-                    )
-                }
-                break
-            }
-            let end = min(index + 3, config.accounts.count)
-            let accountTimeout = min(perAccountTimeoutSeconds, remaining)
-            await withTaskGroup(of: (String, Attempt).self) { group in
-                for account in config.accounts[index..<end] {
+        var pending = config.accounts[...]
+        // At most three requests run at once. A free slot starts the next account at
+        // once, so one stalled account does not hold back the others.
+        await withTaskGroup(of: (String, Attempt).self) { group in
+            var running = 0
+            while true {
+                while running < 3, let account = pending.first, !Task.isCancelled {
+                    let remaining = deadline - ProcessInfo.processInfo.systemUptime
+                    guard remaining > 0 else { break }
+                    pending.removeFirst()
+                    let accountTimeout = min(perAccountTimeoutSeconds, remaining)
                     group.addTask { [budget, fetchAccount] in
                         let value: Result<CodexUsage, Error>
                         do {
@@ -331,10 +327,19 @@ public final class CodexProviderAdapter: UsageProvider, Sendable {
                         } catch { value = .failure(error) }
                         return (account.id, Attempt(result: value, attemptedAt: Date()))
                     }
+                    running += 1
                 }
-                for await (id, attempt) in group { result[id] = attempt }
+                guard let (id, attempt) = await group.next() else { break }
+                running -= 1
+                result[id] = attempt
             }
-            index = end
+        }
+        // Accounts left without a slot ran out of provider deadline.
+        if !Task.isCancelled {
+            for account in pending {
+                result[account.id] = Attempt(
+                    result: .failure(TimeoutError(seconds: timeoutSeconds)), attemptedAt: Date())
+            }
         }
         return result
     }

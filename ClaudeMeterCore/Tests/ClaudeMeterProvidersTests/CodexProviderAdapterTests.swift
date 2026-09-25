@@ -132,6 +132,16 @@ private actor SuspendedHomeFetch {
     }
 }
 
+private actor InFlightCounter {
+    private var active = 0
+    private(set) var peak = 0
+    func enter() {
+        active += 1
+        peak = max(peak, active)
+    }
+    func leave() { active -= 1 }
+}
+
 private func testUsage(_ now: Date) -> CodexUsage {
     CodexUsage(
         primaryWindow: CodexLimitWindow(
@@ -571,7 +581,7 @@ struct CodexProviderAdapterTests {
         }
     }
 
-    @Test("One deadline bounds batches and abandoned fetch work")
+    @Test("One deadline bounds account fetches and abandoned fetch work")
     func deadlines() async throws {
         try await isolated { defaults in
             let accounts = (0..<4).map {
@@ -599,12 +609,45 @@ struct CodexProviderAdapterTests {
                 _ = try await fetch(provider)
                 #expect(await gate.calls == 6)
                 _ = try await fetch(provider)
-                #expect(await gate.calls == 6)  // The two abandoned batches fill the fixed budget.
+                #expect(await gate.calls == 6)  // Six abandoned fetches fill the fixed budget.
             } catch {
                 await gate.release()
                 throw error
             }
             await gate.release()
+        }
+    }
+
+    @Test("A stalled account does not hold back later accounts")
+    func rollingAccountFetches() async throws {
+        try await isolated { defaults in
+            let accounts = (0..<6).map {
+                CodexAccount(
+                    home: URL(fileURLWithPath: "/test/\($0)"), isImplicit: false, customName: nil)
+            }
+            let stalledID = accounts[2].id
+            let lastID = accounts[5].id
+            let gate = SuspendedHomeFetch()
+            let counter = InFlightCounter()
+            let provider = CodexProviderAdapter(
+                configuration: { .init(accounts: accounts) }, defaults: defaults,
+                timeoutSeconds: 5,
+                identityLoader: { _ in .init(ownerID: "owner", sourceFingerprint: "stable") },
+                fetchAccount: { account, now in
+                    await counter.enter()
+                    // Only a free slot lets the last account start and release the stall.
+                    if account.id == stalledID { await gate.suspend() }
+                    if account.id == lastID { await gate.release() }
+                    await counter.leave()
+                    return testUsage(now)
+                })
+            let start = ContinuousClock.now
+            let result = try await fetch(provider)
+            await gate.release()
+            #expect(start.duration(to: .now) < .seconds(2))
+            #expect(result.accounts.count == 6)
+            #expect(result.accounts.allSatisfy { $0.observedAt != nil })
+            #expect(await counter.peak <= 3)
         }
     }
 

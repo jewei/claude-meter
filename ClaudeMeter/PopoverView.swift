@@ -14,6 +14,8 @@ struct PopoverView: View {
     @AppStorage(MeterSettings.cardStyleKey) private var cardStyle = "rings"
     @AppStorage(MeterSettings.progressionModeKey) private var progressionMode = "left"
     @AppStorage(MeterSettings.mainMeterProviderKey) private var mainMeterProvider = "claude"
+    @AppStorage(MeterSettings.menuBarAccountKey) private var claudeAccountPin = ""
+    @AppStorage(MeterSettings.codexMainMeterAccountKey) private var codexAccountPin = ""
     @AppStorage(AppSettings.oauthModeKey) private var oauthMode = ""
     @State private var now = Date()
     // Tracks whether the popover window is on screen (the view is retained,
@@ -24,6 +26,10 @@ struct PopoverView: View {
     /// Expanded non-Claude provider cards, mirrored from `AppSettings` so toggling
     /// re-renders. Empty by default — see `AppSettings.expandedProviderCards`.
     @State private var expandedCards: Set<String> = AppSettings.expandedProviderCards
+    /// Saved card order; empty means the automatic order. Reloaded on each open,
+    /// so a reset in Settings takes effect.
+    @State private var cardOrder: [String] = AppSettings.popoverCardOrder
+    @State private var draggedCardID: String?
 
     private var usageThresholds: UsageThresholds {
         AppState.currentThresholds()
@@ -33,15 +39,8 @@ struct PopoverView: View {
 
     static let cursorCardID = "cursor"
     static let grokCardID = "grok"
-    static let claudeSecondaryCardID = "secondary:claude"
-    static let codexSecondaryCardID = "secondary:codex"
     static func codexCardID(_ accountID: String) -> String { "codex:\(accountID)" }
-
-    struct SecondaryProviderPresentation {
-        let model: AccountCardModel?
-        let displayedPercent: Double?
-        let band: EnergyBand
-    }
+    static func claudeCardID(_ accountID: String) -> String { "claude:\(accountID)" }
 
     private func isExpanded(_ id: String) -> Bool { expandedCards.contains(id) }
 
@@ -137,6 +136,7 @@ struct PopoverView: View {
         .onAppear {
             isVisible = true
             now = Date()
+            cardOrder = AppSettings.popoverCardOrder
         }
         .onDisappear { isVisible = false }
     }
@@ -245,35 +245,47 @@ struct PopoverView: View {
 
     // MARK: - Data state
 
+    /// One card in the popover's account list. The ID is the persisted order key.
+    enum PopoverCard: Hashable, Identifiable {
+        case claudeAccount(String)
+        case claudeExtraUsage
+        case codexAccount(String)
+        case cursor
+        case grok
+
+        var id: String {
+            switch self {
+            case .claudeAccount(let accountID): PopoverView.claudeCardID(accountID)
+            case .claudeExtraUsage: "claude-extra-usage"
+            case .codexAccount(let accountID): PopoverView.codexCardID(accountID)
+            case .cursor: PopoverView.cursorCardID
+            case .grok: PopoverView.grokCardID
+            }
+        }
+    }
+
     @ViewBuilder
     private var dataState: some View {
         VStack(spacing: 12) {
-            if selectedProvider == .claude {
-                claudeProviderSection(isPrimary: true)
-                codexProviderSection(isPrimary: false)
-            } else {
-                codexProviderSection(isPrimary: true)
-                claudeProviderSection(isPrimary: false)
-            }
-            if hasCursor, let cursor = appState.cursorSnapshot?.accounts.first {
-                cursorNotices()
-                cursorCard(cursor)
-            }
-            if hasGrok, let grok = appState.grokSnapshot?.accounts.first {
-                grokNotices()
-                grokCard(grok)
-            }
+            primaryHeader
+            cardList
         }
         .padding(.horizontal, 15)
         .padding(.top, 2)
         .padding(.bottom, 12)
     }
 
+    private var showsClaude: Bool {
+        appState.claudeSnapshot != nil && AppSettings.oauthSourceEnabled
+    }
+
+    /// Notices and hero for the selected provider. The hero always follows the
+    /// pinned or nearest-limit account, whatever the card order.
     @ViewBuilder
-    private func claudeProviderSection(isPrimary: Bool) -> some View {
-        if appState.claudeSnapshot != nil, AppSettings.oauthSourceEnabled {
-            let models = accountModels
-            if isPrimary {
+    private var primaryHeader: some View {
+        switch selectedProvider {
+        case .claude:
+            if showsClaude {
                 claudeNotices()
                 if appState.mainMeterReading == nil {
                     selectedMeterUnavailable(provider: .claude)
@@ -287,34 +299,15 @@ struct PopoverView: View {
                                     : "Claude data is out of date"
                             )
                             : HeroSummary.make(
-                                models: primaryOrdered(models),
+                                models: primaryOrdered(accountModels),
                                 thresholds: usageThresholds,
                                 now: now))
                 }
-                accountsSection(primaryOrdered(models))
-
-                if let selected = appState.claudeAccounts.first(where: {
-                    $0.id == appState.mainMeterReading?.accountID
-                }),
-                    let extra = selected.balances.first(where: { $0.id == "extra-usage" }),
-                    extra.value != nil || extra.limit != nil
-                {
-                    extraUsageCard(
-                        extra,
-                        percent: selected.windows.first { $0.id == "extra-usage" }?.usedPercent)
-                }
             } else {
-                claudeSecondaryCard(models)
+                selectedMeterUnavailable(provider: .claude)
             }
-        } else if isPrimary {
-            selectedMeterUnavailable(provider: .claude)
-        }
-    }
-
-    @ViewBuilder
-    private func codexProviderSection(isPrimary: Bool) -> some View {
-        if codexSourceEnabled {
-            if isPrimary {
+        case .codex:
+            if codexSourceEnabled {
                 ForEach(orderedCodexReadings) { reading in
                     codexNotices(reading)
                 }
@@ -330,112 +323,271 @@ struct PopoverView: View {
                                 thresholds: usageThresholds,
                                 now: now))
                 }
-                if !codexAccountModels.isEmpty {
-                    let style = Self.accountCardStyle(
-                        requested: cardStyleValue,
-                        provider: .codex)
-                    VStack(spacing: 10) {
-                        accountSectionHeader("ACCOUNTS", style: style)
-                        ForEach(orderedCodexReadings) { reading in
-                            codexAccountCard(reading, style: style)
+            } else {
+                selectedMeterUnavailable(provider: .codex)
+            }
+            // With no Claude account rows there is no card to carry the failure.
+            if showsClaude, appState.claudeAccounts.isEmpty, appState.lastError != nil {
+                noticeBanner(
+                    "Claude refresh failed · no usage data",
+                    systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
+            }
+        }
+    }
+
+    /// The automatic order: the selected provider's pinned or nearest-limit account
+    /// first, then its other accounts, the other provider, Cursor, and Grok.
+    private var defaultCards: [PopoverCard] {
+        var claude: [PopoverCard] = []
+        if showsClaude {
+            let models =
+                selectedProvider == .claude ? primaryOrdered(accountModels) : accountModels
+            claude = models.map { .claudeAccount($0.id) }
+            if selectedProvider == .claude, selectedClaudeExtraUsage != nil {
+                claude.append(.claudeExtraUsage)
+            }
+        }
+        let codex: [PopoverCard] =
+            codexSourceEnabled ? orderedCodexReadings.map { .codexAccount($0.id) } : []
+        var cards = selectedProvider == .claude ? claude + codex : codex + claude
+        if hasCursor { cards.append(.cursor) }
+        if hasGrok { cards.append(.grok) }
+        return cards
+    }
+
+    /// The card of the account that owns the hero and menu bar.
+    private var mainMeterCardID: String? {
+        appState.mainMeterReading.map {
+            selectedProvider == .claude
+                ? Self.claudeCardID($0.accountID) : Self.codexCardID($0.accountID)
+        }
+    }
+
+    private var orderedCards: [PopoverCard] {
+        let cards = defaultCards
+        let byID = Dictionary(cards.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return Self.orderedCardIDs(
+            defaultIDs: cards.map(\.id), savedOrder: cardOrder, mainCardID: mainMeterCardID
+        )
+        .compactMap { byID[$0] }
+    }
+
+    /// Saved cards keep their saved order; cards without a saved position follow in
+    /// the automatic order. Saved IDs of hidden cards are skipped, not dropped. The
+    /// main meter's card is always first, so the first card matches the menu bar.
+    nonisolated static func orderedCardIDs(
+        defaultIDs: [String], savedOrder: [String], mainCardID: String?
+    ) -> [String] {
+        let present = Set(defaultIDs)
+        var seen = Set<String>()
+        let saved = savedOrder.filter { present.contains($0) && seen.insert($0).inserted }
+        var ids = saved + defaultIDs.filter { !seen.contains($0) }
+        if let mainCardID, let index = ids.firstIndex(of: mainCardID), index > 0 {
+            ids.remove(at: index)
+            ids.insert(mainCardID, at: 0)
+        }
+        return ids
+    }
+
+    /// The main-meter provider and account pin that a first card stands for.
+    /// Cursor, Grok, and extra usage cannot own the menu bar.
+    static func mainMeterSelection(for card: PopoverCard) -> (MainMeterProvider, String)? {
+        switch card {
+        case .claudeAccount(let accountID): (.claude, accountID)
+        case .codexAccount(let accountID): (.codex, accountID)
+        case .claudeExtraUsage, .cursor, .grok: nil
+        }
+    }
+
+    /// Moves `movedID` to the position of `targetID` in the visible order. Hidden
+    /// saved IDs stay in the result, after the visible ones.
+    nonisolated static func movingCard(
+        _ movedID: String, to targetID: String, visibleOrder: [String], savedOrder: [String]
+    ) -> [String]? {
+        guard movedID != targetID,
+            let from = visibleOrder.firstIndex(of: movedID),
+            let to = visibleOrder.firstIndex(of: targetID)
+        else { return nil }
+        var order = visibleOrder
+        order.remove(at: from)
+        order.insert(movedID, at: to)
+        let visible = Set(order)
+        return order + savedOrder.filter { !visible.contains($0) }
+    }
+
+    /// After a move, the first card is the main meter: its provider, pinned. This
+    /// also repairs a main meter whose pinned account is gone. A move that would put a card with no main meter first
+    /// is refused.
+    private func moveCard(_ movedID: String, to targetID: String, cards: [PopoverCard]) {
+        let visibleOrder = cards.map(\.id)
+        guard
+            let order = Self.movingCard(
+                movedID, to: targetID, visibleOrder: visibleOrder, savedOrder: cardOrder),
+            let first = cards.first(where: { $0.id == order.first }),
+            let selection = Self.mainMeterSelection(for: first)
+        else { return }
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
+            cardOrder = order
+            if first.id != mainMeterCardID {
+                mainMeterProvider = selection.0.rawValue
+                if selection.0 == .claude {
+                    claudeAccountPin = selection.1
+                } else {
+                    codexAccountPin = selection.1
+                }
+            }
+        }
+        AppSettings.popoverCardOrder = order
+    }
+
+    @ViewBuilder
+    private var cardList: some View {
+        let cards = orderedCards
+        if !cards.isEmpty {
+            let ids = cards.map(\.id)
+            let models = Dictionary(
+                accountModels.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let readings = Dictionary(
+                orderedCodexReadings.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let style = Self.accountCardStyle(requested: cardStyleValue, provider: selectedProvider)
+            VStack(spacing: 10) {
+                accountSectionHeader("ACCOUNTS", style: style)
+                ForEach(Array(cards.enumerated()), id: \.element.id) { index, card in
+                    cardView(card, models: models, readings: readings, style: style)
+                        .onDrag {
+                            draggedCardID = card.id
+                            // An empty string: a drop outside the popover gets no account key.
+                            return NSItemProvider(object: "" as NSString)
                         }
-                    }
-                }
-            } else {
-                sectionLabel("CODEX")
-                secondaryProviderCard(
-                    name: "Codex",
-                    models: codexAccountModels,
-                    hasError: orderedCodexReadings.contains(where: { $0.lastError != nil }),
-                    isStale: orderedCodexReadings.contains(where: {
-                        $0.observedAt != nil
-                            && MeterSettings.isSnapshotStale(lastPollAt: $0.observedAt, now: now)
-                    }),
-                    cardID: Self.codexSecondaryCardID
-                ) {
-                    codexMark
+                        .onDrop(
+                            of: [.plainText],
+                            delegate: CardDropDelegate(
+                                targetID: card.id,
+                                draggedID: draggedCardID,
+                                move: { moveCard($0, to: card.id, cards: cards) })
+                        )
+                        .accessibilityAction(named: "Move up") {
+                            if index > 0 {
+                                moveCard(card.id, to: ids[index - 1], cards: cards)
+                            }
+                        }
+                        .accessibilityAction(named: "Move down") {
+                            if index + 1 < ids.count {
+                                moveCard(card.id, to: ids[index + 1], cards: cards)
+                            }
+                        }
                 }
             }
-        } else if isPrimary {
-            selectedMeterUnavailable(provider: .codex)
         }
     }
 
-    private func claudeSecondaryCard(_ models: [AccountCardModel]) -> some View {
-        VStack(spacing: 10) {
-            secondaryProviderCard(
-                name: "Claude",
-                models: models,
-                hasError: appState.lastError != nil,
-                isStale: appState.claudeIsStale,
-                cardID: Self.claudeSecondaryCardID
-            ) {
-                claudeMark
-            }
-
-        }
-    }
-
-    private func secondaryProviderCard<Mark: View>(
-        name: String,
-        models: [AccountCardModel],
-        hasError: Bool,
-        isStale: Bool,
-        cardID: String? = nil,
-        @ViewBuilder mark: () -> Mark
+    @ViewBuilder
+    private func cardView(
+        _ card: PopoverCard,
+        models: [String: AccountCardModel],
+        readings: [String: ProviderAccountSnapshot],
+        style: MeterSettings.CardStyle
     ) -> some View {
-        let presentation = Self.secondaryProviderPresentation(
-            from: models,
-            showsUsage: showsUsage,
-            thresholds: usageThresholds,
-            asOf: now)
-        let displayedPercent = presentation.displayedPercent
-        let band = presentation.band
-        let tint: Color = band == .full ? .pfEnergyFull : band.color
-        let detail = Self.secondaryProviderDetail(
-            hasError: hasError,
-            isStale: isStale,
-            accountCount: models.count)
-        let expanded = cardID.map(isExpanded) ?? false
-        return VStack(alignment: .leading, spacing: 8) {
-            if let cardID {
-                Button {
-                    toggleCard(cardID)
-                } label: {
-                    secondaryProviderHeader(
-                        name: name,
-                        plan: presentation.model?.plan,
-                        displayedPercent: displayedPercent,
-                        band: band,
-                        tint: tint,
-                        expanded: expanded,
-                        mark: mark)
+        switch card {
+        case .claudeAccount(let accountID):
+            if let model = models[accountID] {
+                if style == .bars {
+                    claudeAccountCard(model)
+                } else {
+                    AccountRingCard(
+                        model: model, now: now, thresholds: usageThresholds, usage: showsUsage)
                 }
-                .buttonStyle(.plain)
-                .help(expanded ? "Hide \(name) details" : "Show \(name) details")
-            } else {
-                secondaryProviderHeader(
-                    name: name,
-                    plan: presentation.model?.plan,
-                    displayedPercent: displayedPercent,
-                    band: band,
-                    tint: tint,
-                    expanded: nil,
-                    mark: mark)
             }
-            EnergyBar(
-                fraction: (displayedPercent ?? 0) / 100,
-                color: tint,
-                height: 12)
-            Text(detail)
-                .font(PFont.body(11, .semibold))
-                .foregroundStyle(Color.pfInkMuted)
-            if let cardID, expanded {
-                Group {
-                    Divider().overlay(Color.pfCardBorder)
-                    secondaryAccountDetails(models)
+        case .claudeExtraUsage:
+            if let usage = selectedClaudeExtraUsage {
+                extraUsageCard(usage.balance, percent: usage.percent)
+            }
+        case .codexAccount(let accountID):
+            if let reading = readings[accountID] {
+                codexAccountCard(reading, style: style)
+            }
+        case .cursor:
+            if let cursor = appState.cursorSnapshot?.accounts.first {
+                VStack(spacing: 10) {
+                    cursorNotices()
+                    cursorCard(cursor)
                 }
-                .popoverDisclosure(id: cardID)
+            }
+        case .grok:
+            if let grok = appState.grokSnapshot?.accounts.first {
+                VStack(spacing: 10) {
+                    grokNotices()
+                    grokCard(grok)
+                }
+            }
+        }
+    }
+
+    private var selectedClaudeExtraUsage: (balance: BalanceItem, percent: Double?)? {
+        guard
+            let selected = appState.claudeAccounts.first(where: {
+                $0.id == appState.mainMeterReading?.accountID
+            }),
+            let extra = selected.balances.first(where: { $0.id == "extra-usage" }),
+            extra.value != nil || extra.limit != nil
+        else { return nil }
+        return (extra, selected.windows.first { $0.id == "extra-usage" }?.usedPercent)
+    }
+
+    private func claudeAccountCard(_ model: AccountCardModel) -> some View {
+        let session = model.session.resolved(asOf: now)
+        let band = session.energyBand(thresholds: usageThresholds, asOf: now)
+        let tint: Color = band == .full ? .pfEnergyFull : band.color
+        let cardID = Self.claudeCardID(model.id)
+        let expanded = isExpanded(cardID)
+        // Selected-provider failures show as notices above the hero.
+        let isSecondary = selectedProvider != .claude
+        let status = Self.accountCardStatus(
+            accountError: model.lastError,
+            hasProviderError: isSecondary && appState.claudeRefreshError != nil,
+            isStale: isSecondary && appState.claudeIsStale)
+        return VStack(alignment: .leading, spacing: 8) {
+            Button {
+                toggleCard(cardID)
+            } label: {
+                HStack(spacing: 7) {
+                    claudeMark
+                    Text(model.label)
+                        .font(PFont.display(14, .semibold))
+                        .foregroundStyle(Color.pfInk)
+                        .lineLimit(1)
+                    if let plan = model.plan { PlanBadge(plan: plan) }
+                    if model.isDuplicateLogin { DuplicateLoginBadge() }
+                    disclosure(expanded)
+                    Spacer(minLength: 4)
+                    Text(session.displayText(usage: showsUsage, asOf: now) ?? "—")
+                        .font(PFont.display(14, .bold))
+                        .foregroundStyle(band == .full ? Color.pfInk : tint)
+                        .monospacedDigit()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(expanded ? "Hide \(model.label) details" : "Show \(model.label) details")
+            ForEach(
+                Self.barWindows(session: model.session, weekly: model.week, asOf: now),
+                id: \.label
+            ) { row in
+                windowBarRow(row)
+            }
+            if let resets = model.usageResets {
+                Text(Self.usageResetsSummary(resets))
+                    .font(PFont.body(11, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+            }
+            if let status {
+                Text(status.text)
+                    .font(PFont.body(11, .semibold))
+                    .foregroundStyle(status.isFailure ? Color.pfEnergyLow : Color.pfInkMuted)
+            }
+            if expanded {
+                claudeAccountDetails(model)
+                    .popoverDisclosure(id: cardID)
             }
         }
         .padding(.horizontal, 14)
@@ -443,65 +595,80 @@ struct PopoverView: View {
         .chunkyCard()
     }
 
-    private func secondaryProviderHeader<Mark: View>(
-        name: String,
-        plan: String?,
-        displayedPercent: Double?,
-        band: EnergyBand,
-        tint: Color,
-        expanded: Bool?,
-        @ViewBuilder mark: () -> Mark
-    ) -> some View {
-        HStack(spacing: 7) {
-            mark()
-            Text(name)
-                .font(PFont.display(14, .semibold))
-                .foregroundStyle(Color.pfInk)
-            if let plan { PlanBadge(plan: plan) }
-            if let expanded { disclosure(expanded) }
-            Spacer(minLength: 4)
-            Text(displayedPercent.map { "\(Int($0.rounded()))%" } ?? "—")
-                .font(PFont.display(14, .bold))
-                .foregroundStyle(band == .full ? Color.pfInk : tint)
-                .monospacedDigit()
-        }
-        .contentShape(Rectangle())
-    }
-
-    private func secondaryAccountDetails(_ models: [AccountCardModel]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(models) { model in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 7) {
-                        Text(model.label)
-                            .font(PFont.display(12, .semibold))
-                            .foregroundStyle(Color.pfInk)
-                            .lineLimit(1)
-                        if let plan = model.plan { PlanBadge(plan: plan) }
-                        if model.isDuplicateLogin { DuplicateLoginBadge() }
-                        Spacer(minLength: 0)
-                    }
-                    if let subtitle = model.subtitle {
-                        Text(subtitle)
-                            .font(PFont.body(10, .semibold))
-                            .foregroundStyle(Color.pfInkMuted)
-                            .lineLimit(1)
-                    }
-                    secondaryLimitRow("5-hr", window: model.session)
-                    secondaryLimitRow("week", window: model.week)
-                    if let opus = model.opus {
-                        secondaryLimitRow("opus", window: opus)
-                    }
-                    ForEach(model.scoped) { scoped in
-                        secondaryLimitRow(scoped.displayName.lowercased(), window: scoped.window)
-                    }
-                    if let resets = model.rateLimitResets {
-                        CodexUsageResetsView(resets: resets, now: now)
-                    }
-
+    private func claudeAccountDetails(_ model: AccountCardModel) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if model.opus != nil || !model.scoped.isEmpty {
+                Divider().overlay(Color.pfCardBorder)
+                if let opus = model.opus {
+                    secondaryLimitRow("opus", window: opus)
+                }
+                ForEach(model.scoped) { scoped in
+                    secondaryLimitRow(scoped.displayName.lowercased(), window: scoped.window)
                 }
             }
+            UsageResetsView(resets: model.usageResets, now: now)
         }
+    }
+
+    struct BarWindow {
+        let label: String
+        let window: LimitWindow
+    }
+
+    /// A bar card's quota rows: session, then weekly, each only when it reports a
+    /// value. With neither, one unknown session row keeps the bar in place.
+    nonisolated static func barWindows(
+        session: LimitWindow?, weekly: LimitWindow?, asOf now: Date
+    ) -> [BarWindow] {
+        let rows = [
+            session.map { BarWindow(label: "Session", window: $0) },
+            weekly.map { BarWindow(label: "Weekly", window: $0) },
+        ].compactMap { $0 }.filter { $0.window.resolved(asOf: now).percentUsed != nil }
+        return rows.isEmpty ? [BarWindow(label: "Session", window: LimitWindow())] : rows
+    }
+
+    /// One quota window: its bar, then its value and reset time.
+    private func windowBarRow(_ row: BarWindow) -> some View {
+        let resolved = row.window.resolved(asOf: now)
+        let band = resolved.energyBand(thresholds: usageThresholds, asOf: now)
+        let tint: Color = band == .full ? .pfEnergyFull : band.color
+        let value = resolved.displayText(usage: showsUsage, asOf: now)
+        let reset = resolved.resetsAt.flatMap { ResetPhrase.spoken(until: $0, asOf: now) }
+        return VStack(alignment: .leading, spacing: 4) {
+            EnergyBar(
+                fraction: resolved.displayFraction(usage: showsUsage, asOf: now),
+                color: tint,
+                height: 12)
+            HStack(spacing: 6) {
+                Text(
+                    value.map { "\(row.label) · \($0) \(showsUsage ? "used" : "left")" }
+                        ?? "\(row.label) · —")
+                Spacer(minLength: 4)
+                if let reset { Text("Resets \(reset)") }
+            }
+            .font(PFont.body(11, .semibold))
+            .foregroundStyle(Color.pfInkMuted)
+            .monospacedDigit()
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(row.label)
+        .accessibilityValue(
+            [
+                value.map { "\($0) \(showsUsage ? "used" : "left")" } ?? "percentage unknown",
+                accessibilityEnergyBand(band),
+                reset.map { "resets \($0)" },
+            ].compactMap { $0 }.joined(separator: ", "))
+    }
+
+    nonisolated static func accountCardStatus(
+        accountError: String?,
+        hasProviderError: Bool,
+        isStale: Bool
+    ) -> (text: String, isFailure: Bool)? {
+        if let accountError { return (accountError, true) }
+        if hasProviderError { return ("Refresh failed · showing last known data", true) }
+        if isStale { return ("Data may be stale", false) }
+        return nil
     }
 
     private func secondaryLimitRow(_ label: String, window: LimitWindow) -> some View {
@@ -528,55 +695,6 @@ struct PopoverView: View {
         }
     }
 
-    nonisolated static func secondaryProviderPlan(
-        from models: [AccountCardModel],
-        asOf now: Date
-    ) -> String? {
-        secondaryProviderBinding(from: models, asOf: now)?.model.plan
-    }
-
-    nonisolated static func secondaryProviderPresentation(
-        from models: [AccountCardModel],
-        showsUsage: Bool,
-        thresholds: UsageThresholds,
-        asOf now: Date
-    ) -> SecondaryProviderPresentation {
-        guard let binding = secondaryProviderBinding(from: models, asOf: now) else {
-            return SecondaryProviderPresentation(
-                model: nil,
-                displayedPercent: nil,
-                band: .unknown)
-        }
-        return SecondaryProviderPresentation(
-            model: binding.model,
-            displayedPercent: showsUsage ? 100 - binding.left : binding.left,
-            band: binding.model.band(thresholds, now))
-    }
-
-    private nonisolated static func secondaryProviderBinding(
-        from models: [AccountCardModel],
-        asOf now: Date
-    ) -> (model: AccountCardModel, left: Double)? {
-        models.compactMap { model in
-            model.bindingLeft(now).map { (model: model, left: $0) }
-        }.min { $0.left < $1.left }
-    }
-
-    nonisolated static func secondaryProviderDetail(
-        hasError: Bool,
-        isStale: Bool,
-        accountCount: Int
-    ) -> String {
-        if hasError {
-            return accountCount == 0
-                ? "Refresh failed · no usage data"
-                : "Refresh failed · showing last known data"
-        }
-        if isStale { return "Data may be stale" }
-        if accountCount == 0 { return "No usage data" }
-        return accountCount == 1 ? "1 account" : "\(accountCount) accounts"
-    }
-
     private func selectedMeterUnavailable(provider: MainMeterProvider) -> some View {
         HeroView(
             summary: HeroSummary.unavailable(
@@ -587,7 +705,7 @@ struct PopoverView: View {
 
     @ViewBuilder
     private func claudeNotices() -> some View {
-        if appState.lastError != nil {
+        if appState.claudeRefreshError != nil {
             noticeBanner(
                 pollErrorText, systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
         }
@@ -624,26 +742,6 @@ struct PopoverView: View {
 
     // MARK: - Accounts
 
-    private func accountsSection(
-        _ models: [AccountCardModel],
-        title: String = "ACCOUNTS",
-        provider: MainMeterProvider = .claude
-    ) -> some View {
-        let style = Self.accountCardStyle(requested: cardStyleValue, provider: provider)
-        return VStack(spacing: 10) {
-            accountSectionHeader(title, style: style)
-            ForEach(models) { model in
-                if style == .bars {
-                    AccountBarCard(
-                        model: model, now: now, thresholds: usageThresholds, usage: showsUsage)
-                } else {
-                    AccountRingCard(
-                        model: model, now: now, thresholds: usageThresholds, usage: showsUsage)
-                }
-            }
-        }
-    }
-
     private func accountSectionHeader(
         _ title: String,
         style: MeterSettings.CardStyle
@@ -670,17 +768,6 @@ struct PopoverView: View {
         return ordered
     }
 
-    private func sectionLabel(_ title: String) -> some View {
-        HStack {
-            Text(title)
-                .font(PFont.body(11, .heavy))
-                .tracking(0.9)
-                .foregroundStyle(Color.pfSectionLabel)
-            Spacer()
-        }
-        .padding(.horizontal, 2)
-    }
-
     private var orderedCodexReadings: [ProviderAccountSnapshot] {
         let selectedID = selectedProvider == .codex ? appState.mainMeterReading?.accountID : nil
         return appState.codexAccounts.sorted { lhs, rhs in
@@ -700,7 +787,7 @@ struct PopoverView: View {
             return nil
         }
         var model = AccountCardModel(mainMeterReading: normalized)
-        model.rateLimitResets = reading.balances.first { $0.id == "usage-resets" }
+        model.usageResets = reading.balances.first { $0.id == "usage-resets" }
         return model
     }
 
@@ -717,6 +804,7 @@ struct PopoverView: View {
                 subtitle: account.subtitle, session: limit(windows.first { $0.kind == .session }),
                 week: limit(windows.first { $0.kind == .weekly }),
                 opus: windows.first { $0.id == "seven_day_opus" }.map { limit($0) },
+                usageResets: account.balances.first { $0.id == "usage-resets" },
                 scoped: windows.filter { $0.kind == .scoped && $0.id != "seven_day_opus" }.map {
                     ScopedLimitWindow(id: $0.id, window: limit($0))
                 },
@@ -890,6 +978,8 @@ struct PopoverView: View {
     // MARK: - Codex card (usage-based, local to the popover)
 
     @ViewBuilder
+    /// Selected-provider failures show as notices above the hero, so only the
+    /// other provider's cards carry them.
     private func codexAccountCard(
         _ reading: ProviderAccountSnapshot,
         style: MeterSettings.CardStyle
@@ -900,8 +990,8 @@ struct PopoverView: View {
                 now: now,
                 thresholds: usageThresholds,
                 usage: showsUsage)
-        } else if reading.observedAt != nil {
-            codexCard(reading)
+        } else {
+            codexCard(reading, showsStatus: selectedProvider != .codex)
         }
     }
 
@@ -918,12 +1008,26 @@ struct PopoverView: View {
         }
     }
 
-    private func codexCard(_ account: ProviderAccountSnapshot) -> some View {
+    /// `showsStatus` puts the error or stale line in the card. The primary
+    /// section shows these as notices above the cards instead.
+    private func codexCard(
+        _ account: ProviderAccountSnapshot,
+        showsStatus: Bool = false
+    ) -> some View {
         let primary = account.windows.first { $0.id == "primary" }
+        let status =
+            showsStatus
+            ? Self.accountCardStatus(
+                accountError: account.lastError,
+                hasProviderError: false,
+                isStale: account.observedAt != nil
+                    && MeterSettings.isSnapshotStale(lastPollAt: account.observedAt, now: now))
+            : nil
         let displayPercent = codexDisplayPercent(primary)
         let band = EnergyBand(severity: primary?.severity(thresholds: usageThresholds) ?? .unknown)
         let tint: Color = band == .full ? .pfEnergyFull : band.color
         let cardID = Self.codexCardID(account.id)
+        let resets = account.balances.first { $0.id == "usage-resets" }
         let expanded = isExpanded(cardID)
         return VStack(alignment: .leading, spacing: 8) {
             Button {
@@ -954,21 +1058,24 @@ struct PopoverView: View {
             .help(
                 expanded
                     ? "Hide \(account.label) details" : "Show \(account.label) details")
-            EnergyBar(fraction: (displayPercent ?? 0) / 100, color: tint, height: 12)
-            // Reset timing stays visible when collapsed — one line, and without it
-            // a red "93%" tells you you're nearly out but not when it comes back.
+            // Reset timing stays visible when collapsed: without it a red "93%"
+            // tells you you're nearly out but not when it comes back.
+            ForEach(Self.codexBarWindows(account, asOf: now), id: \.label) { row in
+                windowBarRow(row)
+            }
             if let subtitle = codexSubtitle(account) {
                 Text(subtitle)
                     .font(PFont.body(11, .semibold))
                     .foregroundStyle(Color.pfInkMuted)
             }
+            if let status {
+                Text(status.text)
+                    .font(PFont.body(11, .semibold))
+                    .foregroundStyle(status.isFailure ? Color.pfEnergyLow : Color.pfInkMuted)
+            }
             if expanded {
-                Group {
-                    if let resets = account.balances.first(where: { $0.id == "usage-resets" }) {
-                        CodexUsageResetsView(resets: resets, now: now)
-                    }
-                }
-                .popoverDisclosure(id: cardID)
+                UsageResetsView(resets: resets, now: now)
+                    .popoverDisclosure(id: cardID)
             }
         }
         .padding(.horizontal, 14)
@@ -980,14 +1087,21 @@ struct PopoverView: View {
         window?.displayPercent(showUsage: showsUsage)
     }
 
+    nonisolated static func codexBarWindows(
+        _ account: ProviderAccountSnapshot, asOf now: Date
+    ) -> [BarWindow] {
+        func limit(_ kind: UsageWindowKind) -> LimitWindow? {
+            account.windows.first { $0.kind == kind }.map {
+                LimitWindow(
+                    percentUsed: $0.isOverLimit ? 101 : $0.usedPercent, resetsAt: $0.resetAt)
+            }
+        }
+        return barWindows(session: limit(.session), weekly: limit(.weekly), asOf: now)
+    }
+
+    /// Credits and usage resets; the bars carry the quota windows and reset times.
     private func codexSubtitle(_ account: ProviderAccountSnapshot) -> String? {
         var parts: [String] = []
-        if let secondary = account.windows.first(where: { $0.id == "secondary" }),
-            let percent = codexDisplayPercent(secondary)
-        {
-            let modeLabel = showsUsage ? "used" : "left"
-            parts.append("\(secondary.title) \(Int(percent.rounded()))% \(modeLabel)")
-        }
         if let credits = account.balances.first(where: { $0.id == "credits" }) {
             if credits.displayText == "Unlimited" {
                 parts.append("Unlimited credits")
@@ -998,17 +1112,15 @@ struct PopoverView: View {
                 parts.append("\(formatted) credits")
             }
         }
-        if let reset = account.windows.first(where: { $0.id == "primary" })?.resetAt,
-            let phrase = ResetPhrase.spoken(until: reset, asOf: now)
-        {
-            parts.append("Resets \(phrase)")
-        }
         if let resets = account.balances.first(where: { $0.id == "usage-resets" }) {
-            parts.append(
-                "\(resets.value.map { NSDecimalNumber(decimal: $0).intValue } ?? 0) usage resets available"
-            )
+            parts.append(Self.usageResetsSummary(resets))
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    nonisolated static func usageResetsSummary(_ resets: BalanceItem) -> String {
+        let count = resets.value.map { NSDecimalNumber(decimal: $0).intValue } ?? 0
+        return count == 1 ? "1 usage reset available" : "\(count) usage resets available"
     }
 
     private static var codexCreditsFormatter: NumberFormatter {
@@ -1191,7 +1303,7 @@ struct PopoverView: View {
         statusState(
             emoji: "⚠️",
             title: "Couldn't read \(selectedProvider.displayName)",
-            message: appState.mainMeterError ?? "Open Settings and check the selected meter.",
+            message: appState.mainMeterError ?? "Open Settings and check Data.",
             primaryTitle: "Open Settings",
             primary: openSettingsAndCompleteOnboarding)
     }
@@ -1321,6 +1433,26 @@ struct PopoverView: View {
         appState.oauthCredentialIssue != nil || oauthMode.isEmpty
     }
 
+}
+
+/// Moves the dragged card to this card's position when the pointer enters it, so
+/// the list reorders live. The order is saved at each move, so a drag that ends
+/// outside the popover keeps the last position.
+private struct CardDropDelegate: DropDelegate {
+    let targetID: String
+    let draggedID: String?
+    let move: (String) -> Void
+
+    func dropEntered(info: DropInfo) {
+        guard let draggedID, draggedID != targetID else { return }
+        move(draggedID)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool { draggedID != nil }
 }
 
 #Preview {

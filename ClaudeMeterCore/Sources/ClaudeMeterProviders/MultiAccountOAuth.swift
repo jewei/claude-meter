@@ -249,7 +249,8 @@ extension MultiAccountOAuth {
             currentWeekAllModels: window(usage.sevenDay) ?? LimitWindow(),
             currentWeekOpus: window(usage.sevenDayOpus),
             scopedWeekly: OAuthPipeline.scopedWindows(from: usage),
-            extraUsage: usage.extraUsage?.model)
+            extraUsage: usage.extraUsage?.model,
+            usageResets: usage.usageResets?.grants(asOf: fetchedAt))
         let severity = [
             usage.fiveHour?.utilization, usage.sevenDay?.utilization,
             usage.sevenDayOpus?.utilization,

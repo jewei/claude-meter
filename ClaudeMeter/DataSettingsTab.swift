@@ -354,6 +354,104 @@ enum AccountTrackingPolicy {
     }
 }
 
+// MARK: - Shared account-folder parts
+//
+// Claude config dirs and Codex homes are the same idea: one folder, one account.
+// Both sections use these parts so they look and behave alike.
+
+/// One account folder: avatar, editable display name, path, and trailing controls.
+private struct AccountFolderRow<Trailing: View>: View {
+    let id: String
+    let letter: String
+    let placeholder: String
+    @Binding var name: String
+    let path: String
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        HStack(spacing: 12) {
+            RaisedTile(fill: avatarColorForID(id), size: 40, radius: 11) {
+                Text(letter)
+                    .font(PFont.display(17, .bold))
+                    .foregroundStyle(.white)
+            }
+            VStack(alignment: .leading, spacing: 5) {
+                TextField(placeholder, text: $name)
+                    .textFieldStyle(.plain)
+                    .font(PFont.display(15, .semibold))
+                    .foregroundStyle(Color.pfInk)
+                    .help("Display name shown in the popover")
+                HStack(spacing: 4) {
+                    Image(systemName: "folder").font(.system(size: 9, weight: .semibold))
+                    Text(path)
+                        .font(.system(size: 11, design: .monospaced))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .foregroundStyle(Color.pfInkMuted)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.pfTrack.opacity(0.7)))
+            }
+            Spacer(minLength: 8)
+            trailing()
+        }
+        .padding(12)
+        .chunkyCard(fill: .pfPopover, radius: 16)
+    }
+}
+
+private struct AddFolderButton: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: "folder.badge.plus").font(.system(size: 13, weight: .bold))
+                Text(title).font(PFont.display(13, .semibold))
+            }
+            .foregroundStyle(Color.pfInk)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .chunkyCard(radius: 12)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct AccountFolderError: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(PFont.body(11, .semibold))
+            .foregroundStyle(.red)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct AccountFolderNote: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(PFont.body(12, .semibold))
+            .foregroundStyle(Color.pfInkMuted)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.pfPopover))
+    }
+}
+
+private func accountLetter(_ name: String) -> String {
+    String(name.first(where: { $0.isLetter || $0.isNumber }) ?? Character("C")).uppercased()
+}
+
 private struct ConfigDirAccountsSection: View {
     let appState: AppState
 
@@ -373,37 +471,16 @@ private struct ConfigDirAccountsSection: View {
                 }
             }
 
-            Button {
-                addCustomDir()
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "folder.badge.plus").font(.system(size: 13, weight: .bold))
-                    Text("Add config directory…").font(PFont.display(13, .semibold))
-                }
-                .foregroundStyle(Color.pfInk)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .chunkyCard(radius: 12)
-            }
-            .buttonStyle(.plain)
+            AddFolderButton(title: "Add config directory…") { addCustomDir() }
 
             if let addError {
-                Text(addError)
-                    .font(PFont.body(11, .semibold))
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
+                AccountFolderError(text: addError)
             }
 
-            Text(
-                "Each config directory supplies separate Claude OAuth credentials. The menu bar uses your pinned account, or the account nearest its limit. The popover shows the other accounts."
+            AccountFolderNote(
+                text:
+                    "Each config directory supplies separate Claude OAuth credentials. The menu bar uses your pinned account, or the account nearest its limit. The popover shows the other accounts."
             )
-            .font(PFont.body(12, .semibold))
-            .foregroundStyle(Color.pfInkMuted)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.pfPopover))
         }
         .padding(.top, 2)
         .onAppear { reload() }
@@ -414,36 +491,13 @@ private struct ConfigDirAccountsSection: View {
         let display =
             (names[account.id]?.isEmpty == false)
             ? names[account.id]! : account.label.friendlyAccountLabel
-        let letter = String(
-            display.drop(while: { !$0.isLetter && !$0.isNumber }).first ?? Character("C")
-        ).uppercased()
-        return HStack(spacing: 12) {
-            RaisedTile(fill: avatarColorForID(account.id), size: 40, radius: 11) {
-                Text(letter)
-                    .font(PFont.display(17, .bold))
-                    .foregroundStyle(.white)
-            }
-            VStack(alignment: .leading, spacing: 5) {
-                TextField(account.label.friendlyAccountLabel, text: nameBinding(for: account.id))
-                    .textFieldStyle(.plain)
-                    .font(PFont.display(15, .semibold))
-                    .foregroundStyle(Color.pfInk)
-                    .help("Display name shown in the popover")
-                HStack(spacing: 4) {
-                    Image(systemName: "folder").font(.system(size: 9, weight: .semibold))
-                    Text(account.configDir.path)
-                        .font(.system(size: 11, design: .monospaced))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                .foregroundStyle(Color.pfInkMuted)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(Color.pfTrack.opacity(0.7)))
-            }
-            Spacer(minLength: 8)
+        return AccountFolderRow(
+            id: account.id,
+            letter: accountLetter(display),
+            placeholder: account.label.friendlyAccountLabel,
+            name: nameBinding(for: account.id),
+            path: account.configDir.path
+        ) {
             planMenu(for: account.id)
             Toggle("", isOn: enabledBinding(for: account.id))
                 .toggleStyle(.switch)
@@ -453,8 +507,6 @@ private struct ConfigDirAccountsSection: View {
                 .disabled(isDefault)
                 .help(isDefault ? "The default account is always tracked" : "Track this account")
         }
-        .padding(12)
-        .chunkyCard(fill: .pfPopover, radius: 16)
     }
 
     private func enabledBinding(for key: String) -> Binding<Bool> {
@@ -567,35 +619,15 @@ private struct CodexHomesSection: View {
     @State private var addError: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 12) {
             ForEach(appState.codexConfiguration) { account in
-                HStack(spacing: 12) {
-                    RaisedTile(fill: avatarColorForID(account.id), size: 40, radius: 11) {
-                        Text(accountLetter(account))
-                            .font(PFont.display(17, .bold))
-                            .foregroundStyle(.white)
-                    }
-                    VStack(alignment: .leading, spacing: 5) {
-                        TextField(account.defaultName, text: nameBinding(for: account))
-                            .textFieldStyle(.plain)
-                            .font(PFont.display(15, .semibold))
-                            .foregroundStyle(Color.pfInk)
-                            .help("Display name shown in the popover")
-                        HStack(spacing: 4) {
-                            Image(systemName: "folder").font(.system(size: 9, weight: .semibold))
-                            Text(account.home.path)
-                                .font(.system(size: 11, design: .monospaced))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                        .foregroundStyle(Color.pfInkMuted)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(Color.pfTrack.opacity(0.7)))
-                    }
-                    Spacer()
+                AccountFolderRow(
+                    id: account.id,
+                    letter: accountLetter(names[account.id] ?? account.displayName),
+                    placeholder: account.defaultName,
+                    name: nameBinding(for: account),
+                    path: account.home.path
+                ) {
                     if account.isImplicit {
                         Text("Default")
                             .font(.caption.weight(.semibold))
@@ -605,16 +637,18 @@ private struct CodexHomesSection: View {
                             .buttonStyle(.borderless)
                     }
                 }
-                .padding(12)
-                .chunkyCard(fill: .pfPopover, radius: 16)
             }
-            Button("Add Codex home…") { addHome() }
-                .buttonStyle(.borderless)
+
+            AddFolderButton(title: "Add Codex home…") { addHome() }
+
             if let addError {
-                Text(addError).foregroundStyle(.red)
+                AccountFolderError(text: addError)
             }
-            Text("Each folder is a separate CODEX_HOME. Accounts keep independent quotas.")
-                .foregroundStyle(.secondary)
+
+            AccountFolderNote(
+                text:
+                    "Each Codex home supplies separate Codex credentials. Accounts keep independent quotas, and each account has its own card in the popover."
+            )
         }
         .onAppear {
             homes = AppSettings.configuredCodexHomes
@@ -635,12 +669,6 @@ private struct CodexHomesSection: View {
                 AppSettings.codexAccountNames = names
                 appState.codexAccountNamesDidChange()
             })
-    }
-
-    private func accountLetter(_ account: CodexAccount) -> String {
-        let name = names[account.id] ?? account.displayName
-        return String(name.first(where: { $0.isLetter || $0.isNumber }) ?? Character("C"))
-            .uppercased()
     }
 
     private func addHome() {

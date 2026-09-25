@@ -64,7 +64,7 @@ resolved quota usage. Ties retain input order. Unknown usage ranks below known z
 
 | Provider output | Domain mapping | Account identity |
 | --- | --- | --- |
-| Claude snapshot/account array | Session, weekly, Opus and other scoped windows; plan, email subtitle; extra-usage amount, limit, currency and paused state | Existing config account key, including the existing unmapped OAuth key; never email |
+| Claude snapshot/account array | Session, weekly, Opus and other scoped windows; plan, email subtitle (not shown on cards); extra-usage amount, limit, currency and paused state; usage-limit reset grants | Existing config account key, including the existing unmapped OAuth key; never email |
 | Codex reading per home | Session/weekly windows classified by duration; plan, credits and reset allowances | Existing canonical home path used by account pins |
 | Cursor usage | Authoritative billing percentage, optional Auto/API rows, billing end, plan and period spend/limit | `default`, a provider-local connection slot |
 | Grok usage | Credit percentage, reported period end, on-demand spend/cap and prepaid balance | `default`, a provider-local connection slot |
@@ -78,7 +78,7 @@ or disk storage. Without a stable member ID, token renewal also invalidates the 
 reading until the new credential succeeds. Metadata-only changes do not change the stamp.
 Codex member/workspace ownership checks still guard last-good restoration and publication;
 the home key alone is not sufficient. No token or credential fingerprint enters the domain.
-Codex email stays omitted. Claude email is display text only, as in the existing cards.
+Codex email stays omitted. Popover cards do not show the Claude email.
 
 Balance amounts use `Decimal` in the stated unit. They need not be money. Optional limits
 retain live spend/budget pairs. `displayText` retains non-numeric states such as unlimited
@@ -290,6 +290,20 @@ limits, `extra_usage`, and plan metadata. Flat scoped fields win over equivalent
 in `limits[]`; unknown/null windows degrade without failing the whole response. Extra
 usage minor units are scaled by the response's decimal places.
 
+The usage request adds the `cedar_ember=1` query flag, as claude.ai's usage page does;
+without it the response omits the allowance. The usage response's `cedar_ember.grants`
+list holds usage-limit reset grants. The server decides eligibility by client surface
+from the User-Agent, so the usage request uses Claude Code's own format,
+`claude-cli/<version> (external, cli)` (changed decision: the old `claude-code/<version>`
+value was kept; it reads `eligible: false, ineligible_reason: "surface"` with no grants).
+An unrecognized surface is unknown, so the card says "Not reported". Any other
+ineligibility means the account is outside the program: "0 available". Each grant
+has a label, `resets_left`, and optional `starts_at`/`ends_at` times. The account keeps
+started, unexpired grants with resets left, as a `usage-resets` balance: the total count
+plus one expiry detail row per reset. Counts are bounded to 99 per grant. An invalid expiry
+date stays unknown. A malformed grant is skipped; a malformed allowance leaves the quota
+windows intact. Resets are display-only; the app never uses a reset.
+
 A successful OAuth response replaces one complete account observation, including absent
 optional fields. There is no second enrichment request. The primary credential is
 excluded from the secondary request batch. Only manual credentials have a token refresh
@@ -487,7 +501,11 @@ Reset countdowns use provider-reported reset timestamps minus the current time.
 
 The menu-bar dot uses the highest severity from the selected main provider across all
 binding windows of the pinned account, or all of that provider's accounts when unpinned.
-Its number follows `menuBarWindow`: nearest, short/session, long/weekly, or both.
+Its number follows `menuBarWindow`: short/session (default), long/weekly, or both.
+(Changed decision: a `nearest` window mode was the default. The first card now picks the
+account, so the window mode has no `nearest`.) When the account reports no session value,
+the session choice shows the weekly window with a `7d` suffix; the spoken summary names
+the weekly window. A missing, invalid, or `nearest` stored value reads as `5h`.
 A single-window number may intentionally differ from the all-window dot. Selecting
 a provider or account with no reading produces an explicit unavailable/error state,
 never fallback.
@@ -499,14 +517,44 @@ omit the percentage.
 
 The popover is 360 points wide with a screen-derived scrolling height. Header controls
 are Settings and Quit. Opening checks reading freshness; there is no separate refresh button.
-The selected provider owns the hero and first account section. An exact account pin wins;
-otherwise the account nearest its limit owns every primary surface. The other eligible
-provider remains visible below as one compact secondary summary. When Claude is secondary,
-the summary shows the nearest account's plan when known and expands in place to reveal each
-account's session, weekly, Opus/scoped windows, reset timing, and known identity metadata.
-The secondary Codex summary also expands to show each account's limits and usage limit resets.
-Primary Claude and Codex ring cards are always expanded. Codex bar cards, secondary summaries,
-Cursor, and Grok cards remember their expanded state.
+The selected provider owns the hero. An exact account pin wins; otherwise the account
+nearest its limit owns every primary surface. One "ACCOUNTS" list below the hero holds one
+card per account for Claude, Codex, Cursor, and Grok, with no provider section labels; the
+provider logo names the provider. There is no provider summary card.
+
+Card order is a user choice (changed decision: the order below the first card was fixed).
+The first card is always the main-meter account, so the first card, hero, menu bar, and
+header time agree. The automatic order continues with the selected provider's other
+accounts and Claude extra usage, then the other provider's accounts, Cursor, and Grok.
+Dragging a card in the popover saves the complete visible order in `popoverCardOrder` at
+each move. A move that makes a Claude or Codex account the first card selects that
+provider as the main meter and pins that account, through the existing main-meter
+settings. After any move, a first card that is not the main meter becomes it, which also
+repairs a pin to a removed account. A move that would put Cursor, Grok, or extra usage
+first is refused, because they cannot own the menu bar. Appearance has no main-meter
+provider or account picker (changed decision); the drag is the only way to choose. Saved cards keep their saved order, a card with no saved position follows in
+the automatic order, and a hidden card keeps its saved ID for its return. VoiceOver has
+"Move up" and "Move down" actions. Appearance → Account cards → "Use automatic order"
+clears the saved order and both account pins, so the first card is again the selected
+provider's account nearest its limit.
+The drag payload is an empty string, so a drop outside the popover carries no account key.
+
+The Appearance card style applies to every Claude and Codex account card, whatever its
+position or provider: rings, or the collapsible bar card. A bar card shows one bar for the session window and one for the
+weekly window, each only when the account reports a value; with neither, one unknown
+session bar remains. Each bar has its value and reset time below it. A Claude bar card shows the name, known plan, session
+percentage, the bars, and available usage resets. It expands in place to reveal the
+Opus/scoped windows with reset timing and the usage limit resets with their expiry. Claude
+ring cards also show the usage limit resets. The provider-wide "Refresh failed" notice and
+card line use only a failed Claude refresh; one account's failure, such as an expired
+login, shows only on that account's card.
+Every Claude and Codex bar card expands to show usage limit resets. When the provider
+reports no reset allowance for the account, the section says "Not reported" and shows no
+count. Each card shows its account error. For the provider that is not selected, a
+card also shows a failed provider refresh or stale data; for the selected provider these
+are notices above the hero. With no Claude account rows, a notice states the refresh
+failure. Ring cards are always expanded. Bar, Cursor, and Grok cards remember their
+expanded state.
 The header timestamp belongs only to the selected reading. There is no footer or Add
 Account button.
 
@@ -530,16 +578,17 @@ Appearance includes the visual warning and critical thresholds.
 | --- | --- | --- |
 | `cardStyle` | `rings`, `bars` | `rings` |
 | `progressionMode` | `left`, `used` | `left` |
-| `mainMeterProvider` | `claude`, `codex` | `claude` |
-| `menuBarAccount` | nearest or Claude account key | nearest |
-| `codexMainMeterAccount` | nearest or Codex home id | nearest |
-| `menuBarWindow` | `nearest`, `5h`, `7d`, `both` | `nearest` |
+| `mainMeterProvider` | `claude`, `codex`; set by dragging a card to the top | `claude` |
+| `menuBarAccount` | nearest or Claude account key; set by dragging | nearest |
+| `codexMainMeterAccount` | nearest or Codex home id; set by dragging | nearest |
+| `popoverCardOrder` | card IDs in dragged order | empty (automatic) |
+| `menuBarWindow` | `5h`, `7d`, `both` | `5h` |
 | warning threshold | percent used | 80 |
 | critical threshold | percent used | 95 |
 | stale interval | seconds, 600 through 24 h | 600 |
 
 Startup and Appearance settings replace an invalid menu-bar mode, including the old
-`forecast` value, with `nearest` in standard defaults.
+`forecast` value and the removed `nearest` value, with `5h` in standard defaults.
 
 Account names/plans are user overrides. Display precedence is name override then friendly
 config label; plan override then account OAuth plan.

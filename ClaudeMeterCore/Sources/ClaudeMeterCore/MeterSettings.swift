@@ -74,11 +74,15 @@ public enum MeterSettings {
         case used
     }
 
+    /// The first card picks the account, so the window choice has no "nearest"
+    /// mode; a stored "nearest" repairs to the default.
     public enum MenuBarWindow: String, Sendable, CaseIterable {
-        case nearest
+        /// The 5-hour window, or the weekly window when there is no 5-hour window.
         case fiveHour = "5h"
         case sevenDay = "7d"
         case both
+
+        public static let defaultValue: MenuBarWindow = .fiveHour
     }
 
     public enum MenuBarAccountSelection: Sendable, Equatable {
@@ -107,7 +111,7 @@ public enum MeterSettings {
     /// Claude keeps the legacy menu-bar account key so existing pins migrate without work.
     public static let menuBarAccountKey = "menuBarAccount"  // "" / "nearest" | account key
     public static let codexMainMeterAccountKey = "codexMainMeterAccount"
-    /// "nearest" | "5h" | "7d" | "both"
+    /// "5h" | "7d" | "both"
     public static let menuBarWindowKey = "menuBarWindow"
     /// Opt-in diagnostic log file.
     public static let fileLoggingEnabledKey = "fileLoggingEnabled"
@@ -137,7 +141,7 @@ public enum MeterSettings {
         if defaults.object(forKey: menuBarWindowKey) != nil,
             MenuBarWindow(rawValue: defaults.string(forKey: menuBarWindowKey) ?? "") == nil
         {
-            defaults.set(MenuBarWindow.nearest.rawValue, forKey: menuBarWindowKey)
+            defaults.set(MenuBarWindow.defaultValue.rawValue, forKey: menuBarWindowKey)
         }
     }
 

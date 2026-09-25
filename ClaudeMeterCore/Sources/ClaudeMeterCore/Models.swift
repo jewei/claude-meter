@@ -130,6 +130,33 @@ public struct AccountInfo: Codable, Equatable, Sendable {
 
 // MARK: - Limits
 
+/// One Claude usage-limit reset grant. A reset clears the current limit windows
+/// before their normal reset time. Display-only: Claude Meter never uses a reset.
+public struct UsageResetGrant: Codable, Equatable, Sendable {
+    /// Upper bound on the count kept per grant; the API reports small numbers.
+    public static let maximumResetsLeft = 99
+
+    public var title: String
+    public var resetsLeft: Int
+    /// Grant expiry, distinct from a quota window's reset time.
+    public var expiresAt: Date?
+
+    public init(title: String, resetsLeft: Int, expiresAt: Date?) {
+        self.title = title
+        self.resetsLeft = min(Self.maximumResetsLeft, max(0, resetsLeft))
+        self.expiresAt = expiresAt
+    }
+
+    /// Stored counts pass through the same bound as live counts.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            title: try container.decode(String.self, forKey: .title),
+            resetsLeft: try container.decode(Int.self, forKey: .resetsLeft),
+            expiresAt: try container.decodeIfPresent(Date.self, forKey: .expiresAt))
+    }
+}
+
 /// A scoped weekly window keyed by its raw API name (`seven_day_sonnet`, …).
 public struct ScopedLimitWindow: Codable, Equatable, Sendable, Identifiable {
     /// Raw API key, e.g. `seven_day_sonnet`.
@@ -180,19 +207,24 @@ public struct LimitInfo: Codable, Equatable, Sendable {
     public var scopedWeekly: [ScopedLimitWindow]?
     /// Monthly pay-as-you-go overage spend (`extra_usage`), when enabled on the plan.
     public var extraUsage: ExtraUsage?
+    /// Available usage-limit reset grants. `nil` when the API reports no reset
+    /// allowance or on older snapshots; empty when the allowance has no resets left.
+    public var usageResets: [UsageResetGrant]?
 
     public init(
         currentSession: LimitWindow = LimitWindow(),
         currentWeekAllModels: LimitWindow = LimitWindow(),
         currentWeekOpus: LimitWindow? = nil,
         scopedWeekly: [ScopedLimitWindow]? = nil,
-        extraUsage: ExtraUsage? = nil
+        extraUsage: ExtraUsage? = nil,
+        usageResets: [UsageResetGrant]? = nil
     ) {
         self.currentSession = currentSession
         self.currentWeekAllModels = currentWeekAllModels
         self.currentWeekOpus = currentWeekOpus
         self.scopedWeekly = scopedWeekly
         self.extraUsage = extraUsage
+        self.usageResets = usageResets
     }
 
     /// Windows that participate in severity and menu-bar binding.
@@ -206,6 +238,14 @@ public struct LimitInfo: Codable, Equatable, Sendable {
             result.append(LimitWindowDescriptor(scope: .weeklyOpus, window: currentWeekOpus))
         }
         return result
+    }
+
+    /// The 5-hour session window when it reports a value; otherwise the all-models
+    /// weekly window, for a plan with no session window such as Codex Pro.
+    public func sessionOrWeekly(asOf now: Date) -> LimitWindowDescriptor {
+        currentSession.percentLeft(asOf: now) != nil
+            ? LimitWindowDescriptor(scope: .session, window: currentSession)
+            : LimitWindowDescriptor(scope: .weekly, window: currentWeekAllModels)
     }
 
     /// Display percent for the window with the highest resolved usage — matches

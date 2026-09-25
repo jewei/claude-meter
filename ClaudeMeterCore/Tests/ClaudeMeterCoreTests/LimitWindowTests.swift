@@ -5,6 +5,26 @@ import Testing
 
 @Suite("LimitWindow display")
 struct LimitWindowDisplayTests {
+    @Test("The 5-hour menu-bar choice falls back to the weekly window")
+    func sessionOrWeekly() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let both = LimitInfo(
+            currentSession: LimitWindow(percentUsed: 10),
+            currentWeekAllModels: LimitWindow(percentUsed: 40))
+        #expect(both.sessionOrWeekly(asOf: now).scope == .session)
+        #expect(both.sessionOrWeekly(asOf: now).window.percentUsed == 10)
+
+        let weeklyOnly = LimitInfo(currentWeekAllModels: LimitWindow(percentUsed: 17))
+        #expect(weeklyOnly.sessionOrWeekly(asOf: now).scope == .weekly)
+        #expect(weeklyOnly.sessionOrWeekly(asOf: now).window.percentUsed == 17)
+
+        // An expired current session is a fresh window, not a missing one.
+        let expired = LimitInfo(
+            currentSession: LimitWindow(percentUsed: 90, resetsAt: now.addingTimeInterval(-1)),
+            currentWeekAllModels: LimitWindow(percentUsed: 40))
+        #expect(expired.sessionOrWeekly(asOf: now).scope == .session)
+    }
+
     @Test("Formats whole percent") func whole() {
         let w = LimitWindow(percentUsed: 25)
         #expect(w.displayPercent == "25%")

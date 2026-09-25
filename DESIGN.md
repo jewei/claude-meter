@@ -96,19 +96,6 @@ agree. To show orange earlier, lower the warning threshold in Settings.
 | Tapped out  | `≥ 100`          | `0%`          | `energy-empty`, "0" |
 | Unknown     | nil              | —             | `track` gray  |
 
-### Energy phrases
-
-The per-window status line uses finer steps than the color bands, by percent left:
-
-| Percent left | 5-hour phrase           | Weekly phrase           |
-| ------------ | ----------------------- | ----------------------- |
-| 80–100       | "Full tank ⚡️"          | "Loads left"            |
-| 50–80        | "Tons of energy"        | "Loads left"            |
-| 30–50        | "Half a tank"           | "Half a tank"           |
-| 15–30        | "Getting low"           | "Getting low"           |
-| 5–15         | "Running low"           | "Running low"           |
-| 0–5          | "Almost dry — easy now" | "Almost dry — easy now" |
-
 ### Hero
 
 The selected main provider and its account policy drive the hero. An exact pin wins;
@@ -146,7 +133,6 @@ maps roles and weights to their faces. The menu bar uses system fonts.
 | Role           | Spec (Nunito)                          | Use                                        |
 | -------------- | -------------------------------------- | ------------------------------------------ |
 | Metric label   | Nunito 700, 13 (ring rows 11)          | "5-Hour Energy", "Weekly Fuel", "5-hr"     |
-| Status phrase  | Nunito 700, 11                         | "Tons of energy" (colored)                 |
 | Caption/meta   | Nunito 600, 11                         | "Refills in 3h 12m", "you@oneone.com"      |
 | Section label  | Nunito 800, 11, tracking 0.09em, upper | "ACCOUNTS"                                 |
 
@@ -216,8 +202,12 @@ border change green → orange → red with severity, animated with `.easeInOut(
 
 - Label row: "ACCOUNTS" (section label) on the left. The **ring legend** is on the right:
   `◌ weekly` (2.5pt ring outline dot) and `● 5-hour` (filled dot), Nunito 700/10 `ink-muted`.
-- **One ring card per account**, with the pinned or nearest-limit account first. Cards read
-  normalized `ProviderAccountSnapshot` values from UsageStore.
+- **One card per account** for every provider, in one list. The first card is always the
+  main-meter account, the one the menu bar shows. The user can drag cards to a new
+  position; the list reorders live with `.easeInOut(0.18)`, and the order is saved. A
+  Claude or Codex card dragged to the top becomes the main meter; Cursor, Grok, and extra
+  usage cannot go to the top. Cards read normalized
+  `ProviderAccountSnapshot` values from UsageStore.
 
 ### Ring card (default)
 
@@ -230,30 +220,46 @@ Chunky card, flex row, gap 14.
 - Right column:
   - Name (Fredoka 600/15 `ink`) and a plan badge pill on the right, **only when the plan
     is known**.
-  - Subtitle (Nunito 700/11 `ink-muted`): the email when known; otherwise empty.
   - 5-hr row: 9×9 rounded dot (band color) · "5-hr" (Nunito 700/11 `ink`) · "78%" (Fredoka
     800/11, band color) · "· 3h 12m" (Nunito 600/11 `ink-muted`).
   - Week row: the same, with a `ResetPhrase` duration such as "· 6d 7h".
   - An unavailable or stale account keeps its label and shows its sanitized error in small
     text below its quota rows. Unknown values stay unknown.
-- Codex cards add a full-width "Usage limit resets" section below the rings, with the
+- Codex cards, and Claude cards with a reset allowance, add a full-width "Usage limit
+  resets" section below the rings or bars, with the
   available count. Each returned reset shows its title and time to expiry, sorted by
   expiry; hovering shows the exact local date and time. Missing or partial expiry details
   are stated below the count. The total can exceed the number of rows.
 
-Label, 5-hour and weekly values, and reset times exist for every account. Email, plan
-badge, weekly Opus, and scoped windows come only from the account's OAuth response; never
-fabricate them. Without them, the card shows name, rings, and two rows.
+Label, 5-hour and weekly values, and reset times exist for every account. Plan badge,
+weekly Opus, and scoped windows come only from the account's OAuth response; never
+fabricate them. Without them, the card shows name, rings, and two rows. No card shows the
+account email.
 
-When Claude is the secondary provider, it shows one compact summary card with the
-nearest-limit account's known plan. It expands in place to show per-account
-session/week/Opus/scoped rows and known identity metadata.
+### Bar card (Appearance → Account cards → Energy bars)
 
-### Energy-bar card (alternative)
+Every Claude and Codex account card uses this one layout, whatever its position or
+provider. It is collapsible and has no section label; the provider logo names the provider:
 
-Appearance → Account cards switches from rings to bars. The same card replaces the rings
-with two stacked rows. Each row has an icon (⚡ or 📅), a label, "78% left", a 14pt
-depleting capsule bar (band color, inner top gloss), and a phrase/reset row.
+- Header: provider mark, account name (Fredoka 600/14), plan badge when known, "same
+  login" chip when needed, disclosure chevron, and the headline
+  percentage (Fredoka 700/14): Claude session, Codex primary window.
+- One 12pt `EnergyBar` per reported window: session, then weekly. Below each bar, Nunito
+  600/11 `ink-muted`: "Session · 60% left" on the left and "Resets in 2h 53m" on the
+  right. With no reported value, one "Session · —" bar remains.
+- Caption: credits (Codex), then "1 usage reset available" when the account has a reset
+  allowance.
+- The account's own error in `energy-low`. A card of the provider that is not selected also
+  shows a failed provider refresh, or "Data may be stale" in `ink-muted`; for the selected
+  provider these are notices above the hero.
+- Expanded: Opus and scoped dot rows after a divider (Claude), then the "Usage limit
+  resets" section: a divider, "Usage limit resets … 1 available", and one row per reset
+  with its time to expiry. With no reset data from the provider, the section reads
+  "Usage limit resets … Not reported". Every bar card has the chevron.
+
+The only difference between providers is the number of bars: Codex Pro reports only a
+weekly window. With no Claude account rows, a notice states the refresh failure. No
+provider has a summary card.
 
 ---
 
@@ -278,8 +284,9 @@ It runs three times when the main meter becomes critical, then the dot stays sta
 state that can last days must not keep the status item redrawing. Loading and stale
 periods do not start a new pulse.
 
-A compact percentage follows the glyph. The **Menu bar shows** setting picks the nearest
-limit (default, no suffix), `5h`, `7d`, or both (`99% 5h · 73% 7d`). The dot tracks
+A compact percentage follows the glyph. The **Menu bar shows** setting picks `5h`
+(default), `7d`, or both (`99% 5h · 73% 7d`). The first card picks the account. `5h` shows the
+weekly value with a `7d` suffix when the account has no 5-hour window, such as Codex Pro. The dot tracks
 severity across all windows, so a single-window number can differ from the dot. Colors
 render in the menu bar because the SwiftUI `MenuBarExtra` label is not forced to a template.
 
@@ -292,6 +299,12 @@ data source, raised primary buttons, Fredoka headings, Nunito body, and adaptive
 mode. The tabs are Data, Appearance, Advanced, and About. Appearance holds the warning and
 critical sliders that set menu-bar and card colors. Codex Data settings show enablement,
 sign-in status, homes, and display names.
+
+Claude config directories and Codex homes are both "one folder, one account" lists, and
+they share one set of parts: an account row (avatar tile, editable display name, folder
+path chip, trailing controls), a chunky "Add …" button with `folder.badge.plus`, red
+Nunito 700/11 error text, and a note in a `popover-bg` box. A new folder list uses the
+same parts.
 
 ---
 
@@ -331,7 +344,7 @@ Reduce Motion removes the pulse, spin, and value animations; colors and values c
 
 1. Rings and bars expose a label that names the account or window, and a value such as
    "78 percent".
-2. Status phrases state the band in text, not by color alone.
+2. Bars and rings state the band in their accessibility value, not by color alone.
 3. The hero reads as one element: "headline. subline".
 4. Every game button has an `.accessibilityLabel` for its action; the minimum target is 28×28.
 5. Contrast is at least 4.5:1 in light and dark mode. Check `ink` and `ink-muted` on `card-bg`.

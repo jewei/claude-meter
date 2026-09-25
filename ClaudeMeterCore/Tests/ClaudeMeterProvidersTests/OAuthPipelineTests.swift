@@ -51,6 +51,64 @@ struct OAuthPipelineTests {
         #expect(usage.sevenDay?.utilization == 61.0)
     }
 
+    @Test func decodesUsageResetGrantsAndKeepsOnlyAvailableOnes() throws {
+        let json = """
+            {"five_hour":{"utilization":92.0,"resets_at":"2026-09-25T06:09:59.915182+00:00"},
+             "cedar_ember":{"eligible":true,"grants":[
+              {"id":"launch","label":"Launch reset","resets_total":1,"resets_left":1,
+               "starts_at":"2026-09-22T16:00:00+00:00","ends_at":"2026-10-22T16:00:00+00:00"},
+              {"label":"Used","resets_left":0,"ends_at":"2026-10-22T16:00:00+00:00"},
+              {"label":"Expired","resets_left":1,"ends_at":"2026-09-01T00:00:00+00:00"},
+              {"label":"Later","resets_left":1,"starts_at":"2026-12-01T00:00:00+00:00"},
+              {"label":"Malformed","resets_left":"one"},
+              {"label":"  ","resets_left":500,"ends_at":"not a date"}]}}
+            """
+        let usage = try JSONDecoder().decode(UsageResponse.self, from: Data(json.utf8))
+        let now = try #require(ProviderDate.parseISO8601("2026-09-25T06:00:00Z"))
+        let grants = try #require(usage.usageResets?.grants(asOf: now))
+
+        #expect(usage.fiveHour?.utilization == 92)
+        #expect(
+            grants == [
+                UsageResetGrant(
+                    title: "Launch reset", resetsLeft: 1,
+                    expiresAt: ProviderDate.parseISO8601("2026-10-22T16:00:00+00:00")),
+                UsageResetGrant(
+                    title: "Usage reset", resetsLeft: UsageResetGrant.maximumResetsLeft,
+                    expiresAt: nil),
+            ])
+    }
+
+    @Test func unrecognizedSurfaceIsUnknownButOutsideProgramIsZero() throws {
+        let json = """
+            {"five_hour":{"utilization":10.0},
+             "cedar_ember":{"eligible":false,"ineligible_reason":"surface","grants":[]}}
+            """
+        let usage = try JSONDecoder().decode(UsageResponse.self, from: Data(json.utf8))
+        #expect(usage.usageResets?.grants(asOf: Date()) == nil)
+
+        let outsideProgram = """
+            {"cedar_ember":{"eligible":false,"ineligible_reason":"tier","grants":[{"resets_left":1}]}}
+            """
+        let tier = try JSONDecoder().decode(UsageResponse.self, from: Data(outsideProgram.utf8))
+        #expect(tier.usageResets?.grants(asOf: Date()) == [])
+
+        let eligibleEmpty = """
+            {"cedar_ember":{"eligible":true,"grants":[]}}
+            """
+        let used = try JSONDecoder().decode(UsageResponse.self, from: Data(eligibleEmpty.utf8))
+        #expect(used.usageResets?.grants(asOf: Date()) == [])
+    }
+
+    @Test func malformedResetAllowanceKeepsQuotaWindows() throws {
+        let json = """
+            {"five_hour":{"utilization":10.0},"cedar_ember":{"grants":"none"}}
+            """
+        let usage = try JSONDecoder().decode(UsageResponse.self, from: Data(json.utf8))
+        #expect(usage.fiveHour?.utilization == 10)
+        #expect(usage.usageResets == nil)
+    }
+
     @Test func verificationPercentagesUseApiPercentScale() throws {
         let json = """
             {"five_hour":{"utilization":81.0},"seven_day":{"utilization":61.0}}

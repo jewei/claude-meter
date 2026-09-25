@@ -11,6 +11,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Claude account cards show usage-limit resets, such as a model-launch reset, with the
+  time left to use each one.
+- Drag cards in the popover to change their order. The first card is the main meter: the
+  menu bar, hero, and header time follow it. Settings → Appearance → Account cards →
+  Use automatic order restores the default order.
+- Bar cards show a Session bar and a Weekly bar when the account reports both windows.
+
+### Changed
+
+- Each account has its own card, for Claude and Codex alike. Provider labels and
+  provider summary cards are removed.
+- With Energy bars, all Claude and Codex cards use one collapsible layout.
+- The menu bar shows the 5-hour value by default. When an account has no 5-hour window,
+  such as Codex Pro, it shows the weekly value.
+- Appearance no longer has Main meter, Main meter follows, or the Nearest menu-bar
+  option. Drag a card to the top to choose the main meter. A saved Nearest setting
+  changes to 5h.
+- Popover cards no longer show the account email.
+- Claude config directories and Codex homes in Data settings use the same layout and
+  add button.
+
+### Fixed
+
+- An expired login on one Claude account no longer shows "Refresh failed" for all Claude
+  accounts.
+- "1 usage reset available" is now singular.
+
 ## [3.0.2] - 2026-09-25
 
 ### Changed

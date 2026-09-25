@@ -97,12 +97,27 @@ enum AppSettings {
     /// Stores the *expanded* set rather than the collapsed one so the empty
     /// default means "all collapsed" — the popover has to fit a 13" screen
     /// alongside however many Claude accounts someone runs, and each provider
-    /// card's header already carries its headline percentage. Claude account cards
-    /// are never collapsible: they're the point of the app.
+    /// card's header already carries its headline percentage. Primary Claude
+    /// account cards are never collapsible: they're the point of the app.
     static var expandedProviderCards: Set<String> {
         get { Set(UserDefaults.standard.stringArray(forKey: expandedProviderCardsKey) ?? []) }
         set {
             UserDefaults.standard.set(Array(newValue).sorted(), forKey: expandedProviderCardsKey)
+        }
+    }
+
+    static let popoverCardOrderKey = "popoverCardOrder"
+
+    /// Card IDs in the order the user dragged them in the popover. Empty means the
+    /// automatic order. IDs of hidden cards stay, so they return to their place.
+    static var popoverCardOrder: [String] {
+        get { UserDefaults.standard.stringArray(forKey: popoverCardOrderKey) ?? [] }
+        set {
+            if newValue.isEmpty {
+                UserDefaults.standard.removeObject(forKey: popoverCardOrderKey)
+            } else {
+                UserDefaults.standard.set(newValue, forKey: popoverCardOrderKey)
+            }
         }
     }
 

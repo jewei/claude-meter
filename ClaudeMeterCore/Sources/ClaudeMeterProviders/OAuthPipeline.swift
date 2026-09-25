@@ -44,7 +44,10 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
     /// refresh-token chain. Anthropic normally returns one hour.
     static let minimumTokenLifetimeSeconds = 5 * 60
     static let maximumTokenLifetimeSeconds = 7 * 24 * 60 * 60
-    private static let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
+    /// `cedar_ember=1` asks for the usage-limit reset allowance; claude.ai's own
+    /// usage page sends the same flag. Without it the response omits `cedar_ember`.
+    private static let usageURL = URL(
+        string: "https://api.anthropic.com/api/oauth/usage?cedar_ember=1")!
     private static let tokenURL = URL(string: "https://console.anthropic.com/v1/oauth/token")!
 
     public init(
@@ -660,9 +663,11 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         )
     }
 
-    /// The usage endpoint is Claude Code-internal; identify as the CLI so Anthropic
-    /// doesn't reject an unrecognized client. Version is best-effort insurance.
-    static let userAgent = "claude-code/2.1.0"
+    /// The usage endpoint is Claude Code-internal; identify as the CLI, in Claude
+    /// Code's own `claude-cli/<version> (external, cli)` format. Anthropic decides
+    /// reset-grant eligibility by client surface: the old `claude-code/<version>`
+    /// form reads `eligible: false, ineligible_reason: "surface"` with no grants.
+    static let userAgent = "claude-cli/2.1.280 (external, cli)"
 
     /// Absolute time to resume from a `Retry-After` header, or `nil` when absent,
     /// unparseable, or in the past. Delegates to the transport's single parser so
@@ -703,6 +708,7 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
         let opusWindow = usage.sevenDayOpus.map { Self.window(from: $0) }
         let scoped = Self.scopedWindows(from: usage)
         let extra = usage.extraUsage.map(\.model)
+        let resets = usage.usageResets?.grants(asOf: now)
 
         // The binding limit can be any window; aggregate all reported percentages
         // (including Opus weekly) so the menu-bar icon reflects the real ceiling.
@@ -723,7 +729,8 @@ public final class OAuthPipeline: ClaudeMeterPipeline, @unchecked Sendable {
                 currentWeekAllModels: weekWindow,
                 currentWeekOpus: opusWindow,
                 scopedWeekly: scoped,
-                extraUsage: extra
+                extraUsage: extra,
+                usageResets: resets
             ),
             state: SnapshotState(status: .ok, severity: severity)
         )
@@ -797,6 +804,8 @@ internal struct UsageResponse: Decodable {
     /// Weekly Opus-only window — often the binding limit for Max subscribers.
     let sevenDayOpus: QuotaEntry?
     let extraUsage: ExtraUsageEntry?
+    /// Usage-limit reset allowance. The API names it `cedar_ember`.
+    let usageResets: UsageResetsEntry?
     /// Any other `seven_day_<scope>` windows (sonnet, cowork, …), key-sorted.
     /// Keys with a non-quota shape are skipped rather than failing the decode.
     let scopedWeekly: [(key: String, entry: QuotaEntry)]
@@ -815,6 +824,8 @@ internal struct UsageResponse: Decodable {
         sevenDay = try? container.decodeIfPresent(QuotaEntry.self, forKey: DynamicKey("seven_day"))
         extraUsage = try? container.decodeIfPresent(
             ExtraUsageEntry.self, forKey: DynamicKey("extra_usage"))
+        usageResets = try? container.decodeIfPresent(
+            UsageResetsEntry.self, forKey: DynamicKey("cedar_ember"))
 
         // Model-scoped weekly windows are migrating from dedicated
         // `seven_day_<model>` fields to entries in the generic `limits` array, and
@@ -896,6 +907,70 @@ internal struct LimitScopeModel: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case displayName = "display_name"
+    }
+}
+
+/// `cedar_ember`: the usage-limit reset allowance. Each grant decodes on its own
+/// terms, so one malformed grant cannot hide the others or the quota windows.
+/// `cedar_ember`: the usage-limit reset allowance. Each grant decodes on its own
+/// terms, so one malformed grant cannot hide the others or the quota windows.
+internal struct UsageResetsEntry: Decodable {
+    let grants: [Grant]?
+    /// `false` when the account is outside the program. With `ineligible_reason:
+    /// "surface"` the server did not recognize the client, so the count is unknown.
+    let eligible: Bool?
+    let ineligibleReason: String?
+
+    struct Grant: Decodable {
+        let label: String?
+        let resetsLeft: Int?
+        let startsAt: String?
+        let endsAt: String?
+
+        enum CodingKeys: String, CodingKey {
+            case label
+            case resetsLeft = "resets_left"
+            case startsAt = "starts_at"
+            case endsAt = "ends_at"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            label = try? container.decodeIfPresent(String.self, forKey: .label)
+            resetsLeft = try? container.decodeIfPresent(Int.self, forKey: .resetsLeft)
+            startsAt = try? container.decodeIfPresent(String.self, forKey: .startsAt)
+            endsAt = try? container.decodeIfPresent(String.self, forKey: .endsAt)
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case grants, eligible
+        case ineligibleReason = "ineligible_reason"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        grants = try container.decodeIfPresent([Grant].self, forKey: .grants)
+        eligible = try? container.decodeIfPresent(Bool.self, forKey: .eligible)
+        ineligibleReason = try? container.decodeIfPresent(String.self, forKey: .ineligibleReason)
+    }
+
+    /// Started, unexpired grants with resets left. An account outside the program has
+    /// none. `nil` when the client surface was not recognized or there is no grant
+    /// list: the count is unknown, not zero. Invalid expiry dates stay unknown.
+    func grants(asOf now: Date) -> [UsageResetGrant]? {
+        if eligible == false { return ineligibleReason == "surface" ? nil : [] }
+        guard let grants else { return nil }
+        return grants.compactMap { grant in
+            guard let left = grant.resetsLeft, left > 0 else { return nil }
+            if let startsAt = parseEpochOrISODate(grant.startsAt), startsAt > now { return nil }
+            let expiresAt = parseEpochOrISODate(grant.endsAt)
+            if let expiresAt, expiresAt <= now { return nil }
+            let label = grant.label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return UsageResetGrant(
+                title: label.isEmpty ? "Usage reset" : label, resetsLeft: left,
+                expiresAt: expiresAt)
+        }
     }
 }
 

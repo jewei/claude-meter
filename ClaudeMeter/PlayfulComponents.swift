@@ -229,8 +229,8 @@ struct AccountCardModel: Identifiable {
     var session: LimitWindow
     var week: LimitWindow
     var opus: LimitWindow?
-    /// Popover-only Codex details, kept outside the persisted main-meter model.
-    var rateLimitResets: BalanceItem? = nil
+    /// Popover-only usage-limit resets, kept outside the persisted main-meter model.
+    var usageResets: BalanceItem? = nil
     /// Scoped weekly windows (`seven_day_sonnet`, …) — display-only rows below
     /// Opus; they don't influence the card's band or the reset summary.
     var scoped: [ScopedLimitWindow] = []
@@ -356,12 +356,6 @@ struct AccountRingCard: View {
                         if model.isDuplicateLogin { DuplicateLoginBadge() }
                         if let plan = model.plan { PlanBadge(plan: plan) }
                     }
-                    if let subtitle = model.subtitle {
-                        Text(subtitle)
-                            .font(PFont.body(11, .bold))
-                            .foregroundStyle(Color.pfInkMuted)
-                            .lineLimit(1)
-                    }
                     metricRow("5-hr", window: model.session, band: sBand)
                     metricRow("week", window: model.week, band: wBand)
                     if let opus = model.opus {
@@ -377,8 +371,8 @@ struct AccountRingCard: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilityText)
-            if let resets = model.rateLimitResets {
-                CodexUsageResetsView(resets: resets, now: now)
+            if let resets = model.usageResets {
+                UsageResetsView(resets: resets, now: now)
             }
             if let error = model.lastError {
                 Text(error).font(PFont.body(11, .semibold)).foregroundStyle(Color.pfEnergyLow)
@@ -461,16 +455,18 @@ struct AccountRingCard: View {
 
 }
 
-struct CodexUsageResetsView: View {
-    let resets: BalanceItem
+/// `resets` is nil when the provider reported no reset allowance for the account.
+/// The section then states that, and shows no count.
+struct UsageResetsView: View {
+    let resets: BalanceItem?
     let now: Date
 
     private var availableCount: Int {
-        resets.value.map { NSDecimalNumber(decimal: $0).intValue } ?? 0
+        resets?.value.map { NSDecimalNumber(decimal: $0).intValue } ?? 0
     }
 
     private var credits: [BalanceDetail] {
-        (resets.details ?? []).sorted {
+        (resets?.details ?? []).sorted {
             ($0.expiresAt ?? .distantFuture) < ($1.expiresAt ?? .distantFuture)
         }
     }
@@ -482,7 +478,7 @@ struct CodexUsageResetsView: View {
                 Text("Usage limit resets")
                     .font(PFont.body(11, .bold))
                 Spacer(minLength: 4)
-                Text("\(availableCount) available")
+                Text(resets == nil ? "Not reported" : "\(availableCount) available")
                     .font(PFont.body(11, .bold))
                     .monospacedDigit()
             }
@@ -530,101 +526,6 @@ struct CodexUsageResetsView: View {
         guard let expiresAt = credit.expiresAt else { return "Expiry date not provided" }
         guard let phrase = ResetPhrase.spoken(until: expiresAt, asOf: now) else { return "Expired" }
         return "Expires \(phrase)"
-    }
-}
-
-// MARK: - Account bar card (energy-bar variant)
-
-struct AccountBarCard: View {
-    let model: AccountCardModel
-    let now: Date
-    var thresholds: UsageThresholds = .default
-    var usage: Bool = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                RaisedTile(fill: model.avatarColor, size: 38, radius: 11) {
-                    Text(model.avatarLetter).font(PFont.display(17, .bold)).foregroundStyle(.white)
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 8) {
-                        Text(model.label)
-                            .font(PFont.display(15, .semibold)).foregroundStyle(Color.pfInk)
-                            .lineLimit(1)
-                    }
-                    if let subtitle = model.subtitle {
-                        Text(subtitle)
-                            .font(PFont.body(11, .bold)).foregroundStyle(Color.pfInkMuted)
-                            .lineLimit(1)
-                    }
-                }
-                Spacer(minLength: 4)
-                if model.isDuplicateLogin { DuplicateLoginBadge() }
-                if let plan = model.plan { PlanBadge(plan: plan) }
-            }
-            barSection("5-Hour Energy", icon: "⚡️", window: model.session, kind: .session)
-            barSection("Weekly Fuel", icon: "📅", window: model.week, kind: .weekly)
-            if let opus = model.opus {
-                barSection("Weekly Opus", icon: "🧠", window: opus, kind: .weekly)
-            }
-            ForEach(model.scoped) { scoped in
-                barSection(
-                    "Weekly \(scoped.displayName)", icon: "📊", window: scoped.window,
-                    kind: .weekly)
-            }
-            if let error = model.lastError {
-                Text(error).font(PFont.body(11, .semibold)).foregroundStyle(Color.pfEnergyLow)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 13)
-        .chunkyCard()
-        .accessibilityElement(children: .combine)
-    }
-
-    @ViewBuilder
-    private func barSection(
-        _ label: String, icon: String, window: LimitWindow, kind: LimitWindowScope
-    ) -> some View {
-        let band = window.energyBand(thresholds: thresholds, asOf: now)
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 7) {
-                Text(icon).font(.system(size: 13))
-                Text(label).font(PFont.body(13, .bold)).foregroundStyle(Color.pfInk)
-                Spacer(minLength: 4)
-                Text(window.displayText(usage: usage, asOf: now) ?? "—")
-                    .font(PFont.display(14, .bold)).foregroundStyle(band.color).monospacedDigit()
-                Text(usage ? "used" : "left")
-                    .font(PFont.body(12, .bold)).foregroundStyle(Color.pfInkMuted)
-            }
-            EnergyBar(
-                fraction: window.displayFraction(usage: usage, asOf: now),
-                color: band.color
-            )
-            HStack {
-                if let left = window.percentLeft(asOf: now) {
-                    Text(energyPhrase(left: left, kind: kind))
-                        .font(PFont.body(11, .bold)).foregroundStyle(band.color)
-                } else {
-                    Text("Waiting for usage")
-                        .font(PFont.body(11, .bold)).foregroundStyle(Color.pfInkMuted)
-                }
-                Spacer(minLength: 4)
-                if let reset = resetText(window, kind: kind) {
-                    Text(reset)
-                        .font(PFont.body(11, .semibold)).foregroundStyle(Color.pfInkMuted)
-                        .monospacedDigit()
-                }
-            }
-        }
-    }
-
-    private func resetText(_ window: LimitWindow, kind: LimitWindowScope) -> String? {
-        guard let date = window.resolved(asOf: now).resetsAt,
-            let phrase = ResetPhrase.spoken(until: date, asOf: now)
-        else { return nil }
-        return kind == .session ? "Refills \(phrase)" : "Resets \(phrase)"
     }
 }
 
@@ -806,7 +707,7 @@ struct HeroView: View {
     }
 }
 
-private func accessibilityEnergyBand(_ band: EnergyBand) -> String {
+func accessibilityEnergyBand(_ band: EnergyBand) -> String {
     switch band {
     case .full: "full energy"
     case .low: "low energy"

@@ -154,19 +154,6 @@ extension LimitWindow {
     }
 }
 
-/// Flavor phrase for a per-window energy level. Finer-grained than the color
-/// band — it's mood text. `kind` lets 5-hour vs weekly read a little differently.
-func energyPhrase(left: Double, kind: LimitWindowScope) -> String {
-    switch left {
-    case 80...: return kind == .session ? "Full tank ⚡️" : "Loads left"
-    case 50..<80: return kind == .session ? "Tons of energy" : "Loads left"
-    case 30..<50: return "Half a tank"
-    case 15..<30: return "Getting low"
-    case 5..<15: return "Running low"
-    default: return "Almost dry — easy now"
-    }
-}
-
 // MARK: - Chunky 3D treatments
 
 /// White card with a 2pt border and a darker bottom "lip" — the Duolingo 3D sit.

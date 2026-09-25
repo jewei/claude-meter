@@ -118,7 +118,12 @@ private actor SourceIdentityTransport: HTTPTransport {
                 #"{"access_token":"rotated-access","refresh_token":"rotated-refresh","expires_in":3600}"#
         } else {
             usageCount += 1
-            #expect(request.url?.absoluteString == "https://api.anthropic.com/api/oauth/usage")
+            #expect(
+                request.url?.absoluteString
+                    == "https://api.anthropic.com/api/oauth/usage?cedar_ember=1")
+            // Reset grants need Claude Code's own User-Agent format.
+            let agent = request.value(forHTTPHeaderField: "User-Agent") ?? ""
+            #expect(agent.hasPrefix("claude-cli/") && agent.hasSuffix(" (external, cli)"))
             body =
                 #"{"five_hour":{"utilization":10},"seven_day":{"utilization":20},"seven_day_opus":{"utilization":90}}"#
         }
@@ -184,7 +189,8 @@ extension OAuthPipelineTests {
         } else {
             #expect(result.accounts.first?.observedAt == nil)
         }
-        #expect(await transport.urls == ["https://api.anthropic.com/api/oauth/usage"])
+        #expect(
+            await transport.urls == ["https://api.anthropic.com/api/oauth/usage?cedar_ember=1"])
     }
 }
 

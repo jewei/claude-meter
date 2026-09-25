@@ -16,7 +16,7 @@ struct MeterSettingsTests {
             source.removePersistentDomain(forName: sourceName)
         }
         source.set(stored, forKey: MeterSettings.menuBarWindowKey)
-        let expected = ["forecast", "unknown"].contains(stored) ? "nearest" : stored
+        let expected = ["forecast", "unknown", "nearest"].contains(stored) ? "5h" : stored
 
         MeterSettings.repairMenuBarWindow(defaults: source)
         #expect(source.string(forKey: MeterSettings.menuBarWindowKey) == expected)
@@ -27,7 +27,7 @@ struct MeterSettingsTests {
         #expect(source.object(forKey: MeterSettings.menuBarWindowKey) == nil)
         #expect(
             MeterSettings.MenuBarWindow.allCases.map(\.rawValue) == [
-                "nearest", "5h", "7d", "both",
+                "5h", "7d", "both",
             ])
     }
 

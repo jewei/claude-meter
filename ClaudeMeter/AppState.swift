@@ -48,6 +48,9 @@ final class AppState: ObservableObject {
     var lastError: String? {
         usageStore.reading(for: .claude)?.error ?? claudeAccounts.compactMap(\.lastError).first
     }
+    /// A failure of the whole Claude refresh. One account's failure, such as an
+    /// expired login, stays on that account and does not count here.
+    var claudeRefreshError: String? { usageStore.reading(for: .claude)?.error }
     var lastPolledAt: Date? { usageStore.reading(for: .claude)?.lastPolledAt }
     var claudeDiagnostics: ClaudeDiagnostics {
         (usageStore.provider(for: .claude) as? ClaudeProviderAdapter)?.diagnostics

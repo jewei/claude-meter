@@ -50,8 +50,10 @@ matching `PBXFileReference`, `PBXBuildFile`, group, and build-phase entries with
   writes stay ordered per provider and survive caller cancellation. Cancellation keeps
   existing readings; disable clears them and rejects late work.
 - `MeterSettings` owns app settings in standard defaults. The selected Claude or Codex
-  meter owns the hero, first section, menu bar, and header time. Missing selected data
-  or a missing pinned account stays unavailable; show no other provider or account.
+  meter owns the hero, first card, menu bar, and header time. Dragging an account card to
+  the top is the only way to select it; the other cards keep the user's saved order.
+  Missing selected data or a missing pinned account stays unavailable; show no other
+  provider or account.
 - `RefreshScheduler` owns timing, pending requests, and display sleep/wake. It receives
   `RefreshConfiguration` from AppState and never reads UserDefaults. The refresh policy is
   in SPECS.md; keep one global cadence, with no battery, reachability, or per-provider timer.

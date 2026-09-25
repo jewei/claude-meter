@@ -304,7 +304,7 @@ struct AppLogicTests {
             observedAt: now)
         func summary(_ time: Date) -> String {
             MenuBarText.accessibilitySummary(
-                provider: .claude, reading: reading, progression: .left, selection: .nearest,
+                provider: .claude, reading: reading, progression: .left, selection: .fiveHour,
                 isActive: true, isStale: false, isLoading: false, severity: .warning, now: time)
         }
         #expect(
@@ -440,8 +440,8 @@ struct AppLogicTests {
         #expect(meter.limits.currentSession.percentUsed == 25)
         #expect(meter.observedAt == now)
         let model = try #require(PopoverView.codexAccountModel(account))
-        #expect(model.rateLimitResets?.value == 3)
-        #expect(model.rateLimitResets?.details?.first?.expiresAt == now)
+        #expect(model.usageResets?.value == 3)
+        #expect(model.usageResets?.details?.first?.expiresAt == now)
     }
 
     @Test("A normalized weekly primary window remains weekly")
@@ -603,52 +603,6 @@ struct AppLogicTests {
                 == "Last checked \(Int.max / 86_400)d ago")
     }
 
-    @Test("Secondary provider badge follows the nearest-limit account")
-    func secondaryProviderPlanFollowsNearestLimit() {
-        let models = [
-            AccountCardModel(
-                id: "roomy", label: "Roomy", plan: "Pro", subtitle: nil,
-                session: LimitWindow(percentUsed: 10),
-                week: LimitWindow(percentUsed: 20), opus: nil),
-            AccountCardModel(
-                id: "nearest", label: "Nearest", plan: "Max 5x", subtitle: nil,
-                session: LimitWindow(percentUsed: 80),
-                week: LimitWindow(percentUsed: 70), opus: nil),
-        ]
-
-        #expect(
-            PopoverView.secondaryProviderPlan(
-                from: models,
-                asOf: Date(timeIntervalSince1970: 100)) == "Max 5x")
-    }
-
-    @Test("Secondary providers do not present unknown limits as full")
-    func unknownSecondaryProviderPresentation() {
-        let models = [
-            AccountCardModel(
-                id: "unknown",
-                label: "Unknown",
-                plan: "Pro",
-                subtitle: nil,
-                session: LimitWindow(),
-                week: LimitWindow(),
-                opus: nil)
-        ]
-        let now = Date(timeIntervalSince1970: 100)
-
-        let presentation = PopoverView.secondaryProviderPresentation(
-            from: models,
-            showsUsage: false,
-            thresholds: UsageThresholds(),
-            asOf: now)
-
-        #expect(models[0].bindingLeft(now) == nil)
-        #expect(presentation.model == nil)
-        #expect(presentation.displayedPercent == nil)
-        #expect(presentation.band == .unknown)
-        #expect(PopoverView.secondaryProviderPlan(from: models, asOf: now) == nil)
-    }
-
     @Test("Color slider accessibility adjustments use its step and bounds")
     func colorSliderAccessibilityAdjustment() {
         #expect(
@@ -686,16 +640,106 @@ struct AppLogicTests {
             PopoverView.shouldRenderProviderSections(
                 hasAnyData: false,
                 hasCodexLifecycle: true))
+    }
+
+    @Test("Bar cards show a session bar and a weekly bar when both report a value")
+    func barCardWindows() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let session = LimitWindow(percentUsed: 85, resetsAt: now.addingTimeInterval(41 * 60))
+        let weekly = LimitWindow(percentUsed: 20)
+
         #expect(
-            PopoverView.secondaryProviderDetail(
-                hasError: true,
-                isStale: false,
-                accountCount: 0) == "Refresh failed · no usage data")
+            PopoverView.barWindows(session: session, weekly: weekly, asOf: now).map(\.label)
+                == ["Session", "Weekly"])
         #expect(
-            PopoverView.secondaryProviderDetail(
-                hasError: true,
-                isStale: false,
-                accountCount: 1) == "Refresh failed · showing last known data")
+            PopoverView.barWindows(session: nil, weekly: weekly, asOf: now).map(\.label)
+                == ["Weekly"])
+        #expect(
+            PopoverView.barWindows(session: session, weekly: LimitWindow(), asOf: now)
+                .map(\.label) == ["Session"])
+        let unknown = PopoverView.barWindows(
+            session: LimitWindow(), weekly: LimitWindow(), asOf: now)
+        #expect(unknown.map(\.label) == ["Session"])
+        #expect(unknown.first?.window.percentUsed == nil)
+
+        let codex = ProviderAccountSnapshot(
+            id: "home", label: "My Codex", plan: nil, subtitle: nil,
+            windows: [
+                UsageWindow(
+                    id: "primary", title: "Weekly", kind: .weekly, usedPercent: 17,
+                    resetAt: nil)
+            ],
+            balances: [], observedAt: now, isStale: false)
+        #expect(PopoverView.codexBarWindows(codex, asOf: now).map(\.label) == ["Weekly"])
+    }
+
+    @Test("Usage reset counts read as singular or plural")
+    func usageResetsSummary() {
+        #expect(
+            PopoverView.usageResetsSummary(
+                BalanceItem(id: "usage-resets", title: "Usage limit resets", value: 1))
+                == "1 usage reset available")
+        #expect(
+            PopoverView.usageResetsSummary(
+                BalanceItem(id: "usage-resets", title: "Usage limit resets", value: 2))
+                == "2 usage resets available")
+    }
+
+    @Test("Secondary account cards keep failure and stale states visible")
+    func secondaryAccountCardStatus() {
+        #expect(
+            PopoverView.accountCardStatus(
+                accountError: "Login required", hasProviderError: true, isStale: true)?.text
+                == "Login required")
+        #expect(
+            PopoverView.accountCardStatus(
+                accountError: nil, hasProviderError: true, isStale: false)?.text
+                == "Refresh failed · showing last known data")
+        #expect(
+            PopoverView.accountCardStatus(
+                accountError: nil, hasProviderError: false, isStale: true)?.isFailure == false)
+        #expect(
+            PopoverView.accountCardStatus(
+                accountError: nil, hasProviderError: false, isStale: false) == nil)
+    }
+
+    @Test("A saved card order wins, new cards follow, and hidden cards keep their place")
+    func popoverCardOrder() {
+        let automatic = ["claude:work", "claude:personal", "codex:home", "cursor"]
+        #expect(
+            PopoverView.orderedCardIDs(defaultIDs: automatic, savedOrder: [], mainCardID: nil)
+                == automatic)
+        #expect(
+            PopoverView.orderedCardIDs(
+                defaultIDs: automatic,
+                savedOrder: ["cursor", "grok", "claude:personal", "cursor"], mainCardID: nil)
+                == ["cursor", "claude:personal", "claude:work", "codex:home"])
+        // The main meter's card is always first, whatever the saved order.
+        #expect(
+            PopoverView.orderedCardIDs(
+                defaultIDs: automatic,
+                savedOrder: ["cursor", "claude:personal", "codex:home"],
+                mainCardID: "codex:home")
+                == ["codex:home", "cursor", "claude:personal", "claude:work"])
+        #expect(
+            PopoverView.mainMeterSelection(for: .codexAccount("home")).map { "\($0.0):\($0.1)" }
+                == "codex:home")
+        #expect(PopoverView.mainMeterSelection(for: .cursor) == nil)
+        #expect(PopoverView.mainMeterSelection(for: .claudeExtraUsage) == nil)
+
+        let visible = ["cursor", "claude:personal", "claude:work"]
+        #expect(
+            PopoverView.movingCard(
+                "claude:work", to: "cursor", visibleOrder: visible,
+                savedOrder: ["cursor", "grok", "claude:personal", "claude:work"])
+                == ["claude:work", "cursor", "claude:personal", "grok"])
+        #expect(
+            PopoverView.movingCard(
+                "cursor", to: "claude:work", visibleOrder: visible, savedOrder: [])
+                == ["claude:personal", "claude:work", "cursor"])
+        #expect(
+            PopoverView.movingCard(
+                "cursor", to: "cursor", visibleOrder: visible, savedOrder: []) == nil)
     }
 
     @Test("Chunking preserves order and the final partial chunk")

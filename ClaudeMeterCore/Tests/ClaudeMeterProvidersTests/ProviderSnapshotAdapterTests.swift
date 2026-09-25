@@ -17,6 +17,34 @@ struct ProviderSnapshotAdapterTests {
             state: SnapshotState(status: .ok, severity: .normal), accounts: accounts)
     }
 
+    @Test("Claude usage resets map to one detail row per reset and survive the disk format")
+    func claudeUsageResetsRoundTrip() throws {
+        let expiry = now.addingTimeInterval(86_400)
+        let grants = [
+            UsageResetGrant(title: "Launch", resetsLeft: 2, expiresAt: expiry),
+            UsageResetGrant(title: "Bonus", resetsLeft: 1, expiresAt: nil),
+        ]
+        var source = claude()
+        source.limits.usageResets = grants
+        let snapshot = ClaudeSnapshotAdapter.snapshot(source)
+        let balance = try #require(
+            snapshot.accounts.first?.balances.first { $0.id == "usage-resets" })
+
+        #expect(balance.value == 3)
+        #expect(balance.details?.map(\.title) == ["Launch", "Launch", "Bonus"])
+
+        let stored = try #require(
+            ClaudeSnapshotAdapter.legacySnapshot(snapshot, organizations: [:], now: now))
+        #expect(stored.accounts?.first?.limits.usageResets == grants)
+    }
+
+    @Test("A stored reset count cannot exceed the grant bound")
+    func storedUsageResetCountIsBounded() throws {
+        let json = #"{"title":"Launch","resetsLeft":-5}"#
+        let grant = try JSONDecoder().decode(UsageResetGrant.self, from: Data(json.utf8))
+        #expect(grant.resetsLeft == 0)
+    }
+
     @Test("Claude maps one legacy-format account without copying source metadata")
     func claudeSingle() throws {
         let result = ClaudeSnapshotAdapter.snapshot(claude())

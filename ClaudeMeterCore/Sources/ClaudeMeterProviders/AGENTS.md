@@ -71,8 +71,9 @@ These rules cover implementation constraints.
   generation, so late work cannot replace a newer login.
 - Parse `expiresAt` as integer milliseconds. Manual mode refreshes within 60 s of expiry,
   rejects empty refreshed tokens, keeps `subscriptionType`, and clamps `expires_in` to
-  5 minutes through 7 days. Keep the usage beta and User-Agent headers and token constants
-  in the existing client.
+  5 minutes through 7 days. Keep the usage beta header and token constants in the
+  existing client. The User-Agent keeps Claude Code's `claude-cli/<version> (external, cli)`
+  format: reset-grant eligibility depends on it.
 - Decode `UsageResponse`, not a dictionary. `utilization` is already 0 to 100; null or
   empty windows are unknown. `five_hour`, `seven_day`, and `seven_day_opus` map to
   session, all-models, and Opus. Other `seven_day_<scope>` windows are display-only and
@@ -81,7 +82,9 @@ These rules cover implementation constraints.
   word of the model display name. Flat fields win; generic entries fill gaps. Ignore the
   mirrored `session` and `weekly_all` entries.
 - A response replaces the complete account observation; missing optional fields clear
-  old values. `extra_usage` minor units divide by `10^decimal_places`. Disabled extra
+  old values. `extra_usage` minor units divide by `10^decimal_places`. `cedar_ember.grants`
+  are usage-limit resets, returned only for `?cedar_ember=1`: decode each grant leniently and keep only started, unexpired
+  grants with resets left. Never call an endpoint that uses a reset. Disabled extra
   usage can still report spending.
 - `OAuthCredentialIssue` owns Settings and popover copy; actionable credential failures
   direct users to `claude login`. Keep rejected refresh tokens distinct from temporary

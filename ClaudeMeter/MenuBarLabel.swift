@@ -43,7 +43,7 @@ enum MenuBarText {
         let details: String
         switch selection {
         case .fiveHour:
-            details = describe(.init(scope: .session, window: reading.limits.currentSession))
+            details = describe(reading.limits.sessionOrWeekly(asOf: now))
         case .sevenDay:
             details = describe(.init(scope: .weekly, window: reading.limits.currentWeekAllModels))
         case .both:
@@ -51,16 +51,6 @@ enum MenuBarText {
                 describe(.init(scope: .session, window: reading.limits.currentSession)),
                 describe(.init(scope: .weekly, window: reading.limits.currentWeekAllModels)),
             ].joined(separator: " ")
-        case .nearest:
-            let nearest = reading.limits.bindingWindows.filter {
-                $0.window.percentLeft(asOf: now) != nil
-            }.max {
-                ($0.window.resolved(asOf: now).percentUsed ?? -1)
-                    < ($1.window.resolved(asOf: now).percentUsed ?? -1)
-            }
-            details =
-                nearest.map(describe)
-                ?? "Usage unavailable."
         }
         let status: String
         switch severity {
@@ -119,7 +109,8 @@ struct MenuBarLabel: View {
     @AppStorage(MeterSettings.mainMeterProviderKey) private var mainMeterProvider = "claude"
     @AppStorage(MeterSettings.menuBarAccountKey) private var claudeAccountPin = ""
     @AppStorage(MeterSettings.codexMainMeterAccountKey) private var codexAccountPin = ""
-    @AppStorage(MeterSettings.menuBarWindowKey) private var menuBarWindow = "nearest"
+    @AppStorage(MeterSettings.menuBarWindowKey) private var menuBarWindow =
+        MeterSettings.MenuBarWindow.defaultValue.rawValue
     /// Set when the main meter becomes critical. The label lives for the whole app
     /// session, so a loading spinner or a stale period does not start a new pulse.
     @State private var criticalPulseStart: Date?
@@ -132,7 +123,7 @@ struct MenuBarLabel: View {
     }
 
     private var selectedWindow: MeterSettings.MenuBarWindow {
-        MeterSettings.MenuBarWindow(rawValue: menuBarWindow) ?? .nearest
+        MeterSettings.MenuBarWindow(rawValue: menuBarWindow) ?? .defaultValue
     }
 
     var body: some View {
@@ -275,10 +266,10 @@ struct MenuBarLabel: View {
         let now = Date()
         switch selectedWindow {
         case .fiveHour:
+            guard let window = appState.mainMeterReading?.limits.sessionOrWeekly(asOf: now)
+            else { return nil }
             return part(
-                appState.mainMeterReading?.limits.currentSession,
-                suffix: "5h",
-                now: now)
+                window.window, suffix: window.scope == .session ? "5h" : "7d", now: now)
         case .sevenDay:
             return part(
                 appState.mainMeterReading?.limits.currentWeekAllModels,
@@ -291,8 +282,6 @@ struct MenuBarLabel: View {
                 part(limits?.currentWeekAllModels, suffix: "7d", now: now),
             ].compactMap { $0 }
             return parts.isEmpty ? nil : parts.joined(separator: " · ")
-        case .nearest:
-            return nearestText(now: now)
         }
     }
 
@@ -306,16 +295,5 @@ struct MenuBarLabel: View {
     private func part(_ window: LimitWindow?, suffix: String, now: Date) -> String? {
         guard let left = window?.percentLeft(asOf: now) else { return nil }
         return "\(Int(displayed(left).rounded()))% \(suffix)"
-    }
-
-    /// Lowest energy-left across every window of every menu-bar account — the
-    /// nearest limit. No window suffix (it may come from any window/account).
-    private func nearestText(now: Date) -> String? {
-        let lefts = appState.mainMeterLimitSets.flatMap { limits in
-            limits.bindingWindows.compactMap { $0.window.percentLeft(asOf: now) }
-        }
-        guard let minLeft = lefts.min() else { return nil }
-        // "Used" mode shows the max usage (= the nearest limit, inverted).
-        return "\(Int(displayed(minLeft).rounded()))%"
     }
 }

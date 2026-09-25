@@ -5,15 +5,15 @@ import SwiftUI
 struct AppearanceSettingsTab: View {
     @AppStorage(MeterSettings.cardStyleKey) private var cardStyle = "rings"
     @AppStorage(MeterSettings.progressionModeKey) private var progressionMode = "left"
-    @AppStorage(MeterSettings.mainMeterProviderKey) private var mainMeterProvider = "claude"
     @AppStorage(MeterSettings.menuBarAccountKey) private var claudeMainMeterAccount = ""
     @AppStorage(MeterSettings.codexMainMeterAccountKey) private var codexMainMeterAccount = ""
-    @AppStorage(MeterSettings.menuBarWindowKey) private var menuBarWindow = "nearest"
+    @AppStorage(MeterSettings.menuBarWindowKey) private var menuBarWindow =
+        MeterSettings.MenuBarWindow.defaultValue.rawValue
 
     @AppStorage("warningThresholdPercent") private var warningThresholdPercent = 80.0
     @AppStorage("criticalThresholdPercent") private var criticalThresholdPercent = 95.0
 
-    @State private var accounts: [AccountConfig] = []
+    @State private var hasCustomCardOrder = !AppSettings.popoverCardOrder.isEmpty
 
     var body: some View {
         ScrollView {
@@ -24,27 +24,42 @@ struct AppearanceSettingsTab: View {
                     .padding(.horizontal, 4)
 
                 settingCard(
-                    icon: "bolt.circle.fill", color: Color(hex: "4FC51C"),
-                    title: "Main meter",
-                    subtitle: "The provider that owns the hero and menu bar."
-                ) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        segmented(
-                            $mainMeterProvider,
-                            [("claude", "Claude"), ("codex", "Codex")])
-                        if selectedProvider == .codex && !AppSettings.codexSourceEnabled {
-                            Text("Turn on Codex in Data settings to start this meter.")
-                                .font(PFont.body(11, .semibold))
-                                .foregroundStyle(Color.pfEnergyLow)
-                        }
-                    }
-                }
-
-                settingCard(
                     icon: "chart.bar.xaxis", color: Color(hex: "C77DFF"),
                     title: "Account cards", subtitle: "How each account's usage is drawn."
                 ) {
-                    segmented($cardStyle, [("rings", "Rings"), ("bars", "Energy bars")])
+                    VStack(alignment: .leading, spacing: 10) {
+                        segmented($cardStyle, [("rings", "Rings"), ("bars", "Energy bars")])
+                        HStack(spacing: 10) {
+                            Text(
+                                hasCustomCardOrder
+                                    ? "Your order is saved. Drag cards in the popover to change it."
+                                    : "Drag cards in the popover to change their order."
+                            )
+                            .font(PFont.body(11, .semibold))
+                            .foregroundStyle(Color.pfInkMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 8)
+                            if hasCustomCardOrder {
+                                Button {
+                                    // The first card is the main meter; with no pin it is
+                                    // the account nearest its limit again.
+                                    AppSettings.popoverCardOrder = []
+                                    claudeMainMeterAccount = ""
+                                    codexMainMeterAccount = ""
+                                    hasCustomCardOrder = false
+                                } label: {
+                                    Text("Use automatic order")
+                                        .font(PFont.display(12, .semibold))
+                                        .foregroundStyle(Color.pfInk)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 7)
+                                        .chunkyCard(radius: 10)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Put the account nearest its limit first again")
+                            }
+                        }
+                    }
                 }
 
                 settingCard(
@@ -55,23 +70,14 @@ struct AppearanceSettingsTab: View {
                 }
 
                 settingCard(
-                    icon: "menubar.rectangle", color: Color(hex: "FF9D0A"),
-                    title: "Main meter follows",
-                    subtitle:
-                        "Which \(selectedProvider.displayName) account the primary meter tracks."
-                ) {
-                    menuBarPicker
-                }
-
-                settingCard(
                     icon: "gauge.with.dots.needle.bottom.50percent", color: Color(hex: "4FC51C"),
-                    title: "Main meter shows",
+                    title: "Menu bar shows",
                     subtitle: "Choose which usage percentage appears in the menu bar."
                 ) {
                     segmented(
                         $menuBarWindow,
                         [
-                            ("nearest", "Nearest"), ("5h", "5h"), ("7d", "7d"),
+                            ("5h", "5h"), ("7d", "7d"),
                             ("both", "Both"),
                         ])
                 }
@@ -96,7 +102,7 @@ struct AppearanceSettingsTab: View {
             warningThresholdPercent = thresholds.warning
             criticalThresholdPercent = thresholds.critical
             MeterSettings.repairMenuBarWindow()
-            reloadAccounts()
+            hasCustomCardOrder = !AppSettings.popoverCardOrder.isEmpty
         }
         .onChange(of: warningThresholdPercent) { _, newWarning in
             if criticalThresholdPercent <= newWarning {
@@ -198,72 +204,4 @@ struct AppearanceSettingsTab: View {
         }
     }
 
-    private var selectedProvider: MainMeterProvider {
-        MainMeterProvider(rawValue: mainMeterProvider) ?? .claude
-    }
-
-    private var selectedAccount: Binding<String> {
-        selectedProvider == .claude ? $claudeMainMeterAccount : $codexMainMeterAccount
-    }
-
-    private var menuBarPicker: some View {
-        Menu {
-            Button("Nearest limit") { selectedAccount.wrappedValue = "" }
-            if !mainMeterAccounts.isEmpty {
-                Divider()
-                ForEach(mainMeterAccounts, id: \.id) { account in
-                    Button(account.label) { selectedAccount.wrappedValue = account.id }
-                }
-            }
-        } label: {
-            HStack {
-                Text(currentMenuBarLabel)
-                    .font(PFont.display(14, .semibold)).foregroundStyle(Color.pfInk)
-                Spacer()
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 11, weight: .bold)).foregroundStyle(Color.pfInkMuted)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.pfPopover)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(Color.pfCardBorder, lineWidth: 1.5))
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-    }
-
-    private var currentMenuBarLabel: String {
-        let selection = selectedAccount.wrappedValue
-        if selection.isEmpty || selection == "nearest" { return "Nearest limit" }
-        return mainMeterAccounts.first(where: { $0.id == selection })?.label
-            ?? "Selected account unavailable"
-    }
-
-    private var mainMeterAccounts: [(id: String, label: String)] {
-        switch selectedProvider {
-        case .claude:
-            return accounts.map { ($0.id, displayName($0)) }
-        case .codex:
-            return AppSettings.codexAccounts().map { ($0.id, $0.displayName) }
-        }
-    }
-
-    private func displayName(_ account: AccountConfig) -> String {
-        MeterSettings.accountName(forKey: account.id) ?? account.label.friendlyAccountLabel
-    }
-
-    private func reloadAccounts() {
-        let configured = MeterSettings.configuredConfigDirs
-        let disabled = Set(MeterSettings.disabledAccountKeys)
-        Task.detached(priority: .userInitiated) {
-            let found = ConfigDirDiscovery.discover(
-                configuredDirs: configured, disabledKeys: disabled)
-            await MainActor.run { self.accounts = found }
-        }
-    }
 }

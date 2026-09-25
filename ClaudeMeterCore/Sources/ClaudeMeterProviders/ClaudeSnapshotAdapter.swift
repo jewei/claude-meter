@@ -64,11 +64,41 @@ public enum ClaudeSnapshotAdapter {
                     unit: extra.currency?.uppercased(),
                     displayText: extra.isEnabled ? nil : "Paused"))
         }
+        if let grants = limits.usageResets {
+            // One detail row per reset, so the detail count matches the total.
+            balances.append(
+                BalanceItem(
+                    id: "usage-resets", title: "Usage limit resets",
+                    value: Decimal(grants.reduce(0) { $0 + $1.resetsLeft }), unit: "resets",
+                    details: grants.flatMap { grant in
+                        Array(
+                            repeating: BalanceDetail(
+                                title: grant.title, expiresAt: grant.expiresAt),
+                            count: grant.resetsLeft)
+                    }))
+        }
         return ProviderAccountSnapshot(
             id: source.id, label: source.label, plan: source.account?.plan,
             subtitle: source.account?.email, windows: windows, balances: balances,
             observedAt: source.lastSuccessfulPollAt ?? fallbackObservedAt,
             isStale: sourceIsStale || source.isStale == true)
+    }
+
+    /// Folds the per-reset detail rows back into grants for the disk format.
+    static func resetGrants(from details: [BalanceDetail]) -> [UsageResetGrant] {
+        var grants: [UsageResetGrant] = []
+        for detail in details {
+            if let last = grants.last, last.title == detail.title,
+                last.expiresAt == detail.expiresAt
+            {
+                grants[grants.count - 1].resetsLeft += 1
+            } else {
+                grants.append(
+                    UsageResetGrant(title: detail.title, resetsLeft: 1, expiresAt: detail.expiresAt)
+                )
+            }
+        }
+        return grants
     }
 
     /// Compatibility is confined to disk serialization. Runtime selection uses accounts only.
@@ -91,6 +121,9 @@ public enum ClaudeSnapshotAdapter {
                     utilization: value.windows.first { $0.id == "extra-usage" }?.usedPercent,
                     currency: $0.unit)
             }
+            let resets = value.balances.first { $0.id == "usage-resets" }.map {
+                Self.resetGrants(from: $0.details ?? [])
+            }
             let limits = LimitInfo(
                 currentSession: limit(value.windows.first { $0.kind == .session }),
                 currentWeekAllModels: limit(value.windows.first { $0.kind == .weekly }),
@@ -100,7 +133,8 @@ public enum ClaudeSnapshotAdapter {
                 scopedWeekly: value.windows.filter {
                     $0.kind == .scoped && $0.id != "seven_day_opus"
                 }.map { ScopedLimitWindow(id: $0.id, window: limit($0)) },
-                extraUsage: extra)
+                extraUsage: extra,
+                usageResets: resets)
             return AccountUsage(
                 id: value.id, label: value.label,
                 account: AccountInfo(

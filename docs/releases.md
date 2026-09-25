@@ -1,11 +1,9 @@
 # Signed release verification
 
 Releases require the local checks, Developer ID signing, Apple notarization, matching
-app debug symbols, DMG integrity, and matching update-feed metadata.
-Major releases and changes to upgrade migrations require an actual signed Sparkle
-installation and relaunch before release completion. Run that check in a separate
-macOS test account or VM and retain its report. Other releases can use the lighter
-artifact gate unless their changes require an update-path test.
+app debug symbols, DMG integrity, and matching update-feed metadata. Major releases and
+upgrade-migration changes also require a real signed Sparkle installation and relaunch in
+a separate macOS test account or VM, with a retained report.
 
 ## Prepare and publish
 
@@ -35,20 +33,26 @@ Replace `VERSION` and `BUILD` with the target values. The build must be greater 
 that in the public update feed. Omit `NOTARY_KEYCHAIN` to use the default Keychain
 search. Set `KEYCHAIN_PROFILE` if the credentials use a profile other than `notarytool`.
 
-The script builds, signs, notarizes, and validates the app and DMG. It requires
-source from a clean worktree, including no untracked files. Publishing requires `HEAD`
-to equal the fetched `origin/main` commit. The script checks the same clean source
-again before the archive and after artifact validation. It writes the candidate feed
-under `build/` until those checks pass, then copies it into the release commit.
-It uses the app signing identity for the DMG. It staples the DMG before Sparkle signs the final bytes.
-Validation checks Gatekeeper and the stapled tickets for both containers. It commits the
-version, changelog, and update feed, then pushes a staging branch. It publishes the
-GitHub release assets before pushing the feed to `main`. It removes the staging branch
-and reports completion for releases that do not require a live update test. For major
-releases or changes to `*Migration.swift` or `LegacyClaudeFiles.swift`, the script instead
-reports that verification is pending and retains the staging branch. Set
-`REQUIRE_UPGRADE_TEST=1` for other changes to settings, storage or updater behavior that
-need this check. The script does not wait for a report or automatically restore the feed.
+The script runs these steps:
+
+1. Check that the worktree is clean, with no untracked files. Publishing also requires
+   `HEAD` to equal the fetched `origin/main`. The script repeats this check before the
+   archive and after artifact validation.
+2. Build, sign, and notarize the app. Sign the DMG with the app signing identity, notarize
+   and staple it, then let Sparkle sign the final bytes. Validation checks Gatekeeper and
+   the stapled tickets on both containers.
+3. Write the candidate feed under `build/`. After the checks pass, copy it into the
+   release commit with the version and changelog, and push a staging branch.
+4. Publish the GitHub release assets, including a versioned `.dSYMs.zip` whose symbol
+   UUIDs match the shipped binary. Then push the feed to `main`.
+5. For an ordinary release, remove the staging branch and report completion. For a major
+   release, or a change to `*Migration.swift` or `LegacyClaudeFiles.swift`, report that
+   verification is pending and keep the staging branch. Set `REQUIRE_UPGRADE_TEST=1` to
+   get the same result for other settings, storage, or updater changes.
+
+The script does not wait for a report and never restores the feed automatically. Keep the
+dSYM archive for crash analysis; the next release build replaces the local `build/`
+directory.
 
 If asset publication fails, the public feed stays on the previous release. If the feed
 push fails, keep the signed assets and staging branch, resolve the push failure, and
@@ -64,12 +68,10 @@ Use the same workflow without publication:
 ./scripts/release.sh VERSION BUILD --prepare-only
 ```
 
-This option writes the candidate feed to `build/appcast.xml`. It stops after artifact
-validation. It does not change the project version, changelog or public feed, create a
-commit or tag, push Git refs, or publish assets. It requires a clean candidate checkout,
-but that checkout can differ from `origin/main`. Version and build arguments apply to
-the archive. Keep the candidate
-artifacts private until publication is authorized.
+This option stops after artifact validation and writes the candidate feed to
+`build/appcast.xml`. It changes no version, changelog, feed, commit, tag, or Git ref, and
+publishes nothing. The checkout must be clean but can differ from `origin/main`. Keep the
+candidate artifacts private until publication is authorized.
 
 ## Required runtime coverage
 

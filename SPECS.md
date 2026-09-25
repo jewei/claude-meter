@@ -31,13 +31,14 @@ The app is local-first:
 | `ClaudeMeterCore` | Normalized snapshot models, storage, thresholds, reset formatting; no UI or provider I/O |
 | `ClaudeMeterProviders` | OAuth/Keychain/HTTP and all four provider adapters |
 
-The app depends on Core and Providers. Providers depends on Core. Provider-specific wire formats do not enter Core.
+The app depends on Core and Providers. Providers depends on Core. Provider-specific wire
+formats do not enter Core.
 
 `AppState` is the main-actor composition root and presentation/settings coordinator.
-`RefreshScheduler` owns global timing and admission through explicit `RefreshConfiguration`.
-All provider usage lifecycle belongs to `UsageStore`,
-which publishes Core `ReadingState<ProviderSnapshot>`. AppState owns no mutable provider readings.
-`MainMeterReading` holds the selected provider quota data for app presentation. It is not
+`RefreshScheduler` owns global timing and admission through explicit
+`RefreshConfiguration`. `UsageStore` owns all provider usage lifecycle and publishes Core
+`ReadingState<ProviderSnapshot>`. AppState owns no mutable provider readings.
+`MainMeterReading` holds the selected provider quota data for presentation and is not
 persisted.
 
 ### Shared provider domain
@@ -106,9 +107,9 @@ Core's `UsageProvider` has explicit validation, fetch and acceptance stages:
 3. `didAccept(_:refreshID:)` updates in-memory metadata and enqueues ordered persistence.
 4. `waitForPersistence()` asynchronously waits for already accepted writes.
 
-UsageStore supplies the same refresh ID to validation, fetch and acceptance. It checks the active token,
-enabled state and cancellation before reconciliation, after reconciliation, before fetch,
-and after fetch. It publishes a changed reconciled value before fetching. An unchanged
+UsageStore supplies the same refresh ID to validation, fetch and acceptance. It checks
+the active token, enabled state and cancellation before reconciliation, after
+reconciliation, before fetch, and after fetch. It publishes a changed reconciled value before fetching. An unchanged
 value keeps its existing outer reading error/freshness. A nil reconciled value clears it.
 The store checks the token, accepts through `didAccept`, then publishes the final value
 without suspension. This orders ownership stamps and diagnostics before observation.
@@ -123,10 +124,9 @@ After acceptance, these events do not revoke the queued write. A thrown fetch fa
 cannot overwrite last-good data. No later state publication occurs after the write wait.
 Providers never call back into publication and return no side-effect closures.
 
-Cursor/Grok validate credential ownership and accept an in-memory owner stamp. Persistence
-waits remain no-ops. Their
-only concrete lifecycle method fetches a normalized snapshot. Claude and Codex each keep at most one
-pending preflight record and one pending save record, identified by refresh ID. These
+Cursor/Grok validate credential ownership and accept an in-memory owner stamp; their
+persistence waits are no-ops. Claude and Codex each keep at most one pending preflight
+record and one pending save record, identified by refresh ID. These
 records carry existing archive data, source diagnostics and account checks across
 stages. They are consumed by fetch/commit or replaced at the next reconciliation; they
 never supply an independent last-good usage cache. Old stages cannot replace newer
@@ -155,10 +155,9 @@ batch deadline and bounded workers. Claude owns its discovery, primary OAuth and
 account deadlines. Neither has a redundant outer timeout. All admitted
 providers start before the store awaits their results. Failures remain independent.
 
-RefreshScheduler owns the global timer and display sleep/wake handling.
-It sends the admitted provider set to one UsageStore refresh call. Store observation forwards through
-AppState to the existing views; there is no copied store state or event stream. The store
-has no disk persistence.
+RefreshScheduler sends the admitted provider set to one UsageStore refresh call. Store
+observation forwards through AppState to the views; there is no copied store state or
+event stream. The store has no disk persistence.
 
 A success publishes a current reading with the snapshot's observation time. A transient
 failure retains the complete previous snapshot and successful timestamp as stale. Without
@@ -188,12 +187,11 @@ Missing or expired Grok credentials clear previous usage. A temporary credential
 failure can retain the accepted reading when no source change has been observed.
 Cancellation passes through without becoming a provider failure.
 
-Cursor/Grok cards now read normalized windows and balances. Cursor keeps its total and
-Auto/API percentages, plan, billing reset and spend text. Its limit stays available in the
-balance but does not form a displayed ratio because bonus credit affects the percentage.
-Grok keeps its credit percentage, reset and on-demand spend/cap text. Prepaid balance stays
-in the snapshot; this phase adds no new card row. Metadata visibility and card layout stay
-unchanged. Settings credential preflight remains separate from quota fetching.
+Cursor and Grok cards read normalized windows and balances. Cursor shows its total and
+Auto/API percentages, plan, billing reset and spend text. Its limit stays in the balance
+but forms no displayed ratio, because bonus credit affects the percentage. Grok shows its
+credit percentage, reset and on-demand spend/cap text. Its prepaid balance stays in the
+snapshot with no card row. Settings credential preflight is separate from quota fetching.
 
 ### Global refresh scheduler
 
@@ -213,8 +211,9 @@ and never reads UserDefaults. It owns no provider values, credentials or storage
 - Enabling a provider refreshes only that provider. Disabling cancels it and clears its
   reading. Credentials/account/source changes invalidate and refresh only the affected
   provider. These actions do not restart the timer or refresh unrelated providers.
-- Display sleep cancels the timer, queued requests and active store work. There are no periodic asleep checks. Wake refreshes missing, failed, stale or
-  at least 300 s old readings, then starts a new 300 s timer. Recent data needs no extra fetch.
+- Display sleep cancels the timer, queued requests and active store work, with no
+  periodic asleep checks. Wake refreshes missing, failed, stale or at least 300 s old
+  readings, then starts a new 300 s timer. Recent data needs no extra fetch.
 - Network changes do not trigger refresh. Normal cycles, popover open and manual refresh
   handle recovery. Authentication retries and backoff remain provider-owned.
 
@@ -292,8 +291,9 @@ in `limits[]`; unknown/null windows degrade without failing the whole response. 
 usage minor units are scaled by the response's decimal places.
 
 A successful OAuth response replaces one complete account observation, including absent
-optional fields. There is no second enrichment request. The primary credential is excluded from the secondary request batch. Only manual
-credentials have a token refresh path.
+optional fields. There is no second enrichment request. The primary credential is
+excluded from the secondary request batch. Only manual credentials have a token refresh
+path.
 
 Multi-account OAuth runs only in auto mode. It reads each configured directory's
 namespaced credential and local account identity. Secondary accounts retain the existing
@@ -307,9 +307,6 @@ Secondary request times are provider metadata, not a usage cache. Accounts not d
 UsageStore's previous normalized observation and timestamp. The shared 429 gate and token
 rotation remain independent of refresh acceptance. Interactive refresh cannot bypass them.
 
-Optional Claude web reset offers and the separate web sign-in are removed. They reported
-reset grants, not usage, balance or authoritative quota reset times.
-
 ### 3.2 Snapshot and staleness
 
 `ClaudeReadingStore` owns legacy snapshot I/O. `SnapshotStore` atomically writes Claude's
@@ -318,9 +315,11 @@ reset grants, not usage, balance or authoritative quota reset times.
 UsageStore acceptance. Validation, store creation, upgrade import and writes run on one
 provider-local serial queue. The queue preserves accepted write order. UsageStore publishes
 before awaiting disk completion. A rejected result cannot write; cancellation after acceptance
-does not revoke a queued write. Bounded reads, atomic writes and per-store circuit breakers
-also apply to restoration. Startup onboarding can check this archive asynchronously for
-existing-user evidence without taking ownership of usage state.
+does not revoke a queued write. `SnapshotStore` reads accept regular files up to 4 MiB
+within 2 s; writes have a 10 s limit. A timeout opens that store's circuit breaker.
+Restoration uses the same bounds. Atomic writes have no explicit `fsync`. Startup
+onboarding can check this archive asynchronously for existing-user evidence without
+taking ownership of usage state.
 
 On upgrade, a one-time import checks the former
 `~/Library/Group Containers/group.com.jewei.claudemeter/Library/Application Support/ClaudeMeter/current.json`.
@@ -331,9 +330,8 @@ copy the old widget publication or error record. Startup also requests this impo
 through the same Claude storage queue when Claude is disabled. A separate cleanup
 may remove the legacy source only after this completion key is set.
 
-`lastSuccessfulPollAt` changes only after a usable successful poll. Data is stale after
-600 seconds by default unless explicitly marked stale earlier. Claude notices use Claude staleness;
-an optional provider's stale state cannot make the Claude card stale.
+`lastSuccessfulPollAt` changes only after a usable successful poll. Claude notices use
+Claude staleness; an optional provider's stale state cannot make the Claude card stale.
 
 Top-level fields mirror the first account only at the legacy persistence boundary. Each account
 has its own quota, metadata, observation time, and stale flag. Old JSON session, activity,
@@ -376,15 +374,15 @@ and staleness appear only on its popover/settings/diagnostics surfaces.
 
 ### 4.2 Codex
 
-Malformed optional credit, reset, or plan metadata does not discard valid quota windows.
-Unusable metadata stays unknown. A valid reset count remains available when optional
-detail rows cannot be decoded. Direct OAuth quota decoding remains strict.
-
 Codex is opt-in and supports one implicit `CODEX_HOME` plus explicitly configured homes.
 Each home has its own display name and quota observation. Normal refresh reads access
 credentials from that home's `auth.json` and makes one direct HTTP usage request. When
 that response reports available usage resets, it also requests their expiry details.
-It starts no Codex process. There is no source picker; old `codexSourceMode` values are ignored.
+It starts no Codex process and has no source picker.
+
+Malformed optional credit, reset, or plan metadata does not discard valid quota windows.
+Unusable metadata stays unknown. A valid reset count remains available when optional
+detail rows cannot be decoded. Direct OAuth quota decoding remains strict.
 
 Claude Meter never consumes the Codex refresh token, rotates Codex credentials, or writes
 Codex auth storage. Codex owns that state. Upstream Codex reloads credentials before a
@@ -427,12 +425,13 @@ reported API-key mode stops the subscription quota request.
 
 Last-good readings are persisted per resolved Codex home, without account email, and are
 restored after ownership checks on the first refresh. `CodexProviderAdapter` owns restore
-and save work; UsageStore accepts the save with final publication. A failed refresh retains that reading and records the attempt error/time
-separately from the last-success time; observation staleness remains age-based. Healthy
-accounts continue updating when another account fails. Accounts run in batches of three,
-but all batches share one 60-second provider deadline. Main-meter normalization classifies
-windows by reported duration (up to 24 hours is short/session; longer is weekly), falling back
-to primary/secondary position only when duration is absent.
+and save work; UsageStore accepts the save with final publication. A failed refresh
+retains that reading and records the attempt error/time separately from the last-success
+time; observation staleness remains age-based. Healthy accounts continue updating when
+another account fails. Accounts run in batches of three, but all batches share one
+60-second provider deadline. Main-meter normalization classifies windows by reported
+duration: up to 24 hours is session, longer is weekly. Primary/secondary position is the
+fallback only when duration is absent.
 
 Codex account cards show available usage resets. Direct usage reads the authoritative
 `rate_limit_reset_credits.available_count` from the same quota response. A positive count
@@ -506,12 +505,14 @@ account's session, weekly, Opus/scoped windows, reset timing, and known identity
 The secondary Codex summary also expands to show each account's limits and usage limit resets.
 Primary Claude and Codex ring cards are always expanded. Codex bar cards, secondary summaries,
 Cursor, and Grok cards remember their expanded state.
-The header timestamp belongs only to the selected reading. There is no footer or Add Account button.
+The header timestamp belongs only to the selected reading. There is no footer or Add
+Account button.
 
 First-run onboarding pauses polling and directs the user to Settings. Existing users skip
 onboarding when a snapshot exists, an attributes-only OAuth lookup finds a credential, Cursor
-state exists, or an enabled Codex home has `auth.json`/`config.toml`. A temporarily unavailable Keychain is not credential evidence. Rendering
-onboarding never reads credential contents or secret Keychain data.
+state exists, or an enabled Codex home has `auth.json`/`config.toml`. A temporarily
+unavailable Keychain is not credential evidence. Rendering onboarding never reads
+credential contents or secret Keychain data.
 
 All rolling-window reset/refill copy uses Core `ResetPhrase`: minutes below one hour, hours
 below 48 hours, and days plus remaining whole hours from 48 hours, such as `6d 7h`. Zero
@@ -521,9 +522,7 @@ hours are omitted. Surfaces never introduce their own date/weekday formatter.
 
 Settings uses a custom tab bar with Data, Appearance, Advanced, and About.
 Appearance includes the visual warning and critical thresholds.
-`MeterSettings` reads and writes standard defaults. Existing settings already have
-standard copies, so removing App Group mirroring requires no settings migration.
-Old shared defaults and widget files remain unused.
+`MeterSettings` reads and writes standard defaults.
 
 | Key | Domain value | Default |
 | --- | --- | --- |
@@ -535,10 +534,10 @@ Old shared defaults and widget files remain unused.
 | `menuBarWindow` | `nearest`, `5h`, `7d`, `both` | `nearest` |
 | warning threshold | percent used | 80 |
 | critical threshold | percent used | 95 |
-| stale interval | seconds, minimum 600 | 600 |
+| stale interval | seconds, 600 through 24 h | 600 |
 
-Startup and Appearance settings change the removed `forecast` value, or any invalid
-menu-bar mode, to `nearest` in standard defaults.
+Startup and Appearance settings replace an invalid menu-bar mode, including the old
+`forecast` value, with `nearest` in standard defaults.
 
 Account names/plans are user overrides. Display precedence is name override then friendly
 config label; plan override then account OAuth plan.
@@ -546,10 +545,15 @@ Configured paths are canonicalized and account disabling never removes the defau
 
 ### Upgrade cleanup
 
+There is no minimum supported upgrade version. Until one is chosen, keep each migration,
+its completion key, the App Group snapshot import, and old snapshot decoding. Never
+delete, rename, or reset an earlier completion key.
+
 `LegacyAttentionHookMigration` removes the six exact historical Claude Meter hook
 commands from `hooks.Stop`, `hooks.Notification`, and `hooks.StopFailure`. It runs
-off-main once at launch, including when usage polling is paused or its sources are disabled. It scans the previous config scope: `~/.claude`,
-plausible immediate `~/.claude-*` directories, and configured paths. Disabled accounts
+off-main once at launch, including when usage polling is paused or its sources are
+disabled. It scans the previous config scope: `~/.claude`, plausible immediate
+`~/.claude-*` directories, and configured paths. Disabled accounts
 and paths with equal account keys are included.
 
 The migration preserves user hooks, group metadata, `statusLine`, and unrelated settings.
@@ -626,9 +630,7 @@ use isolated homes/defaults; hosted tests cannot invoke live cleanup.
 ## 7. Networking, Keychain, and diagnostics
 
 OAuth and other direct provider requests use `ProviderHTTPClient.shared` or an injected
-`HTTPTransport`. The separate Claude reset read runs in a signed-in WebKit page, with
-same-origin browser requests and WebKit-managed cookies. The direct provider session is
-ephemeral and cookie-less. It has a ten-second idle timeout, an
+`HTTPTransport`. The provider session is ephemeral and cookie-less. It has a ten-second idle timeout, an
 eight-MiB response cap, and a 30-second hard deadline for the complete send, including retry
 waits. A chunk receiver rejects an oversized declared `Content-Length` before body receipt
 and cancels a streamed response when it crosses the cap. A dedicated timeout-task budget
@@ -651,41 +653,19 @@ Advanced settings, is written to `~/Library/Logs/ClaudeMeter/` at `0600`
 inside a `0700` directory, rotates once at 4 MiB, and is deleted when the user turns the
 setting off. Diagnostics keep showing present state only.
 
-## 8. Verification and maintenance
+## 8. Verification and release
 
-The authoritative local/CI gate is:
+`./scripts/verify-local.sh` is the local and CI gate. It runs strict Swift formatting
+checks, all Core and Provider package tests, and unsigned Debug and Release app builds.
+The Xcode project and the committed workspace resolution pin Sparkle exactly.
 
-```bash
-./scripts/verify-local.sh
-```
+Tests are hermetic. Temporary directories are unique and cleaned up. Wall clocks and
+defaults are injectable where policy depends on them. Tests never read live Keychain or
+Application Support data by default.
 
-It runs strict Swift formatting checks, all Core/Provider package tests, and unsigned Debug
-and Release app builds. CI invokes this script directly. Sparkle is exactly pinned by
-the Xcode project and committed workspace resolution.
-
-Release publishing must make the signed GitHub asset available before pushing the new
-`appcast.xml` to `main`; users must never observe a feed pointing at a missing artifact.
-Both publishing and private preparation require a clean worktree, including untracked
-files. Publishing requires the source `HEAD` to equal fetched `origin/main`. The source
-must remain clean at that commit before archive creation and after artifact validation.
-Only then may the script change release metadata and create the release commit. Private
-preparation can use another committed source. Candidate feeds stay in `build/` until
-publication preparation passes these checks.
-Release completion requires successful publication of the signed artifacts and feed, then
-removal of the staging branch. Major releases and migration changes also require a real
-signed Sparkle installation and relaunch in a separate macOS test account or VM. The
-script publishes these releases with verification pending and retains the staging branch.
-Verify and attach the live report before removing that branch and declaring completion.
-Other releases can use the lighter gate; `REQUIRE_UPGRADE_TEST=1` requests the live check
-for other risky changes. Failed checks do not automatically restore the public feed.
-
-CI currently checks macOS 26. Before each release, run a signed candidate on macOS 14.
-Test a native Intel installation for every major or migration release and at least once
-each calendar quarter with a release. Record OS version, native architecture, source
-commit, app version/build, artifact hash and smoke-test results. Rosetta alone does not
-verify Intel hardware. Local verification, signing, notarization, matching debug symbols,
-DMG integrity, and feed metadata checks remain required. See `docs/releases.md`.
-
-Tests should be hermetic: temporary directories are unique and cleaned up, wall clocks and
-defaults are injectable where policy depends on them, and live user Keychain or
-Application Support data is never read by default.
+A release publishes the signed GitHub assets before it pushes the new `appcast.xml` to
+`main`, so the feed never points at a missing artifact. Releases require a clean source
+commit, signing, notarization, matching debug symbols, DMG integrity, matching feed
+metadata, and signed-candidate runtime checks on the supported platforms. Major and
+migration releases also require a live Sparkle update in an isolated macOS account or VM.
+[docs/releases.md](docs/releases.md) defines the procedure and required coverage.

@@ -1,9 +1,9 @@
 ---
 name: Claude Meter — macOS Menu Bar Design System
-medium: SwiftUI (MenuBarExtra .window). Source of truth: Claude Usage Popup.dc.html (Claude Design handoff).
+medium: SwiftUI (MenuBarExtra .window). Tokens are implemented in ClaudeMeter/PlayfulTheme.swift.
 fonts:
-  display: Fredoka # headings, numbers, avatars, plan badges (rounded, chunky). SF Rounded fallback.
-  body: Nunito # labels, captions, body. System fallback.
+  display: Fredoka # headings, numbers, avatars, plan badges (rounded, chunky)
+  body: Nunito # labels, captions, body
 colors-light:
   # Shell & surfaces
   popover-bg: "#FBF9F2" # warm cream
@@ -32,7 +32,7 @@ colors-light:
   plan-pro-bg: "#E7F8DC"
   plan-free-fg: "#8A8676"
   plan-free-bg: "#EFECE0"
-colors-dark: # faithful warm-dark counterpart (the design ships light only; these are ours)
+colors-dark: # warm-dark counterpart; the original design is light only
   popover-bg: "#201E18"
   popover-border: "#3A372E"
   card-bg: "#2A2820"
@@ -57,91 +57,91 @@ colors-dark: # faithful warm-dark counterpart (the design ships light only; thes
 radius: { popover: 22, card: 18, badge-pill: 999, avatar: 11, header-icon: 9, button: 14 }
 ---
 
-## Brand & Personality
+## Brand and personality
 
-Claude Meter is a **playful, high-energy, Duolingo-flavored** menu-bar app. The mental model is a
-**fuel/energy gauge**: every limit is framed as **energy remaining**, not consumption. You're
-"cruising" when tanks are full and nudged to "touch grass" when one runs dry. The tone is
-encouraging and a little cheeky; never scolding.
+Claude Meter is a **playful, high-energy, Duolingo-flavored** menu-bar app. The mental
+model is a **fuel gauge**: every limit is **energy remaining**, not consumption. The tone
+is encouraging and a little cheeky, never scolding.
 
-Visual language: **warm cream surfaces, bright candy greens/oranges/reds, fat rounded type,
-circular activity rings, and "chunky 3D" cards** (a thick bottom border + inset highlight that make
-elements look pressable, like game buttons). It should feel like a friendly companion in the menu
-bar, not a dashboard.
-
-The app never appears in the Dock. Its footprint is the status-bar item and the popover.
+Visual language: **warm cream surfaces, bright candy greens/oranges/reds, fat rounded
+type, circular activity rings, and chunky 3D cards** (a thick bottom border and inset
+highlight make elements look pressable, like game buttons). It is a friendly companion
+in the menu bar, not a dashboard. The app has no Dock icon; its footprint is the
+status-bar item and the popover.
 
 ---
 
-## The Energy Model (most important concept)
+## The energy model
 
-**Display everything as "% left" (energy remaining), even though the data layer stores `percentUsed`.**
+**Display energy left, even though the data layer stores `percentUsed`.**
 
 ```
 percentLeft = 100 − resolvedWindow.percentUsed     // clamp 0…100
 ```
 
-- Rings and bars **deplete**: the arc/fill length == `percentLeft`. Full ring = lots of energy.
+- Rings and bars **deplete**: arc or fill length is `percentLeft`. A full ring is lots of energy.
 - The big number is `percentLeft` followed by a muted " left".
-- A just-reset rolling window reads **100% left** (it refilled), via `LimitWindow.resolved(asOf:)`.
+- A just-reset rolling window reads **100% left**, through `resolved(asOf:)`.
+- Appearance → progression mode can switch every number and fill to percent used.
 
-**Severity stays driven by the existing, user-configurable `UsageThresholds` (percentUsed: warning
-80, critical 95).** We do not invent new bands — keeping one source of truth means the menu-bar dot,
-ring colors and hero state always agree, and the user's threshold settings keep
-working. Expressed as energy:
+**Severity comes from the user's `UsageThresholds` on percent used (warning 80, critical
+95).** The menu-bar dot, ring colors, and hero state share this one source, so they always
+agree. To show orange earlier, lower the warning threshold in Settings.
 
-| Energy band | percentUsed      | percentLeft   | Color         | SF tone  |
-| ----------- | ---------------- | ------------- | ------------- | -------- |
-| Full        | `< warning` (80) | `> 20%`       | `energy-full` | green    |
-| Low         | `80…<95`         | `5–20%`       | `energy-low`  | orange   |
-| Empty       | `≥ 95`           | `≤ 5%`        | `energy-empty`| red      |
-| Tapped out  | `≥ 100`          | `0%`          | `energy-empty`| red, "0" |
-| Unknown     | nil              | —             | track gray    | —        |
+| Energy band | percentUsed      | percentLeft   | Color         |
+| ----------- | ---------------- | ------------- | ------------- |
+| Full        | `< warning` (80) | `> 20%`       | `energy-full` |
+| Low         | `80…<95`         | `5–20%`       | `energy-low`  |
+| Empty       | `≥ 95`           | `≤ 5%`        | `energy-empty`|
+| Tapped out  | `≥ 100`          | `0%`          | `energy-empty`, "0" |
+| Unknown     | nil              | —             | `track` gray  |
 
-The screenshot's sample colors imply orange earlier (~"half a tank"); that's illustrative sample
-data. If the user wants a naggier gauge, they raise the orange band by lowering `warning` in
-Settings — no code change.
+### Energy phrases
 
-### Energy phrases & mascot (Full Duolingo voice)
+The per-window status line uses finer steps than the color bands, by percent left:
 
-Per-window status line (left side, colored by band):
+| Percent left | 5-hour phrase           | Weekly phrase           |
+| ------------ | ----------------------- | ----------------------- |
+| 80–100       | "Full tank ⚡️"          | "Loads left"            |
+| 50–80        | "Tons of energy"        | "Loads left"            |
+| 30–50        | "Half a tank"           | "Half a tank"           |
+| 15–30        | "Getting low"           | "Getting low"           |
+| 5–15         | "Running low"           | "Running low"           |
+| 0–5          | "Almost dry — easy now" | "Almost dry — easy now" |
 
-| Band       | 5-hour / weekly phrase examples                          |
-| ---------- | -------------------------------------------------------- |
-| Full       | "Tons of energy" · "Loads left" · "Full tank"            |
-| Low        | "Half a tank" · "Getting low" · "Running on fumes soon"  |
-| Empty      | "Almost dry — easy now" · "Tapped out"                    |
+### Hero
 
-Hero state follows the selected main provider and account policy. An exact pin wins;
+The selected main provider and its account policy drive the hero. An exact pin wins;
 otherwise the nearest-limit account owns the hero and menu bar.
-The subtitle may call out another low account from that provider:
 
-| Overall | Emoji | Headline             | Subline pattern                                   | Hero colors |
-| ------- | ----- | -------------------- | ------------------------------------------------- | ----------- |
-| Full    | 🚀    | "You're cruising"    | Selected account healthy; optionally flag a lower other account | green hero  |
-| Low     | ⛽    | "Pace yourself"      | Selected account is getting low and its refill phrase | orange hero |
-| Empty   | 🪫    | "Almost tapped out"  | Selected account is nearly dry and its refill phrase | red hero    |
-| Tapped  | 🥵    | "Take a breather"    | Selected account is out and its refill phrase | red hero    |
+| Band       | Emoji | Headline            | Hero colors |
+| ---------- | ----- | ------------------- | ----------- |
+| Full       | 🚀    | "You're cruising"   | green       |
+| Low        | ⛽️    | "Pace yourself"     | orange      |
+| Empty      | 🪫    | "Almost tapped out" | red         |
+| Tapped out | 🥵    | "Take a breather"   | red         |
+| Unknown    | 🛰️    | "Warming up"        | neutral     |
 
-Single account collapses the subline to that account's own status ("Refills in 3h 12m").
+One account: the subline speaks to its most constrained window, such as "Plenty in the
+tank · refills 3h 12m" or "Getting low · refills 1h 8m". Several accounts: the subline
+counts fresh accounts and flags the lowest other one, such as "2 fresh · buildbot low
+(1h 8m)", or reads "All 3 accounts fresh 🎉".
 
 ---
 
 ## Typography
 
-Two Google fonts, both rounded. Bundle the TTFs (OFL) under `ClaudeMeter/Fonts/` and register via
-`ATSApplicationFontsPath`. **Until bundled, fall back to `.system(design: .rounded)` for Fredoka and
-`.system(design: .default)` for Nunito** — a `Font` helper centralizes this so swapping in the real
-faces is one edit.
+Fredoka and Nunito, both rounded, are bundled OFL TTFs in `ClaudeMeter/Fonts/`. `PFont`
+maps roles and weights to their faces. The menu bar uses system fonts.
 
 | Role           | Spec (Fredoka)                         | Use                                        |
 | -------------- | -------------------------------------- | ------------------------------------------ |
-| Hero title     | Fredoka 600, 18                        | "You're cruising", "Claude Usage"          |
+| Hero title     | Fredoka 600, 18                        | "You're cruising", "Claude Meter"          |
 | Account name   | Fredoka 600, 15                        | "Work"                                     |
 | Big number     | Fredoka 700–800, 14 (ring rows 11)     | "78%"                                      |
 | Avatar letter  | Fredoka 700, 17 (ring center 19)       | "W"                                        |
 | Plan badge     | Fredoka 700, 10–11                     | "MAX 20×"                                  |
-| Add-account    | Fredoka 700, 14                        | primary button                            |
+| Primary button | Fredoka 700, 14                        | "Open Settings"                            |
 
 | Role           | Spec (Nunito)                          | Use                                        |
 | -------------- | -------------------------------------- | ------------------------------------------ |
@@ -150,49 +150,47 @@ faces is one edit.
 | Caption/meta   | Nunito 600, 11                         | "Refills in 3h 12m", "you@oneone.com"      |
 | Section label  | Nunito 800, 11, tracking 0.09em, upper | "ACCOUNTS"                                 |
 
-All changing numerics use `.monospacedDigit()`.
+All changing numbers use `.monospacedDigit()`.
 
 ---
 
-## The Chunky-3D Recipe
+## The chunky 3D recipe
 
-The signature look. Three reusable treatments:
+The signature look has three reusable treatments:
 
-1. **Chunky card** — `RoundedRectangle(cornerRadius: 18)` filled `card-bg`, stroked `card-border`
-   2pt, plus a **4pt bottom edge**. SwiftUI has no per-side border, so layer a 2pt full stroke and
-   add the thicker bottom via an overlay capsule/edge or a 2pt-offset shadow:
-   `.shadow(color: cardBorder, radius: 0, y: 2)` reads as the bottom lip. Padding 13×14.
-2. **Raised avatar / header icon** — rounded square (radius 11 / 9), solid brand fill, white glyph,
-   inner bottom highlight `.overlay(alignment:.bottom){ Rectangle().fill(.black.opacity(0.13)).frame(height:3) }`
-   clipped to the shape (the `inset 0 -3px` press effect).
-3. **Raised primary button** — `energy-full` fill, white Fredoka, radius 14, with a **solid colored
-   drop shadow** `.shadow(color: energy-full-shadow, radius: 0, y: 4)` (Duolingo's signature button).
-   On press, translate down 2pt and shrink the shadow to y:2.
+1. **Chunky card**: `RoundedRectangle(cornerRadius: 18)` filled `card-bg`, a 2pt
+   `card-border` stroke, and a **4pt bottom lip**. SwiftUI has no per-side border, so a
+   `.shadow(color: cardBorder, radius: 0, y: 2)` makes the lip. Padding 13×14.
+2. **Raised avatar or header icon**: rounded square (radius 11 or 9), solid brand fill,
+   white glyph, and a 3pt `black.opacity(0.13)` inner bottom highlight clipped to the shape.
+3. **Raised primary button**: `energy-full` fill, white Fredoka, radius 14, and a **solid
+   colored drop shadow** `.shadow(color: energy-full-shadow, radius: 0, y: 4)`. On press,
+   it moves down 2pt and the shadow shrinks to y: 2.
 
-Progress bars/rings get an inner top gloss: `inset 0 2px 0 rgba(255,255,255,.45)` → a 2pt white
-capsule overlay at the top of the fill.
+Progress bars and rings get an inner top gloss: a 2pt white capsule overlay at 45%
+opacity on top of the fill.
 
 ---
 
-## Popover Anatomy
+## Popover anatomy
 
-Width **360pt**. Background `popover-bg`, radius 22, border `popover-border` 2pt.
-Internal padding is 15pt. The body uses a screen-derived height cap and scrolls
-when accounts/providers overflow.
+Width **360pt**. Background `popover-bg`, radius 22, border `popover-border` 2pt, internal
+padding 15pt. The body has a screen-derived height cap and scrolls when accounts or
+providers overflow.
 
 ```
 ┌──────────────────────────────────────────────┐
 │ [⚡] Claude Meter       2m ago       (⚙) (⏻) │  Header
 │ ┌──────────────────────────────────────────┐ │
-│ │ (🚀)  You're cruising                      │ │  Hero (combined health)
-│ │       2 accounts fresh · buildbot low (1h) │ │
+│ │ (🚀)  You're cruising                      │ │  Hero
+│ │       2 fresh · buildbot low (1h 8m)       │ │
 │ └──────────────────────────────────────────┘ │
 │  ACCOUNTS                    ◌ weekly ● 5-hour │  Section label + ring legend
 │ ┌──────────────────────────────────────────┐ │
-│ │ ((W))  Work                     [MAX 20×]  │ │  Ring card (active)
+│ │ ((W))  Work                     [MAX 20×]  │ │  Ring card (selected)
 │ │        you@oneone.com                      │ │
 │ │        ▪ 5-hr 78% · 3h 12m                 │ │
-│ │        ▪ week 64% · 29 Jun                 │ │
+│ │        ▪ week 64% · 6d 7h                  │ │
 │ └──────────────────────────────────────────┘ │
 │ ┌──────────────────────────────────────────┐ │  Ring card (other account)
 │ │ ((A))  Personal …                          │ │
@@ -201,128 +199,137 @@ when accounts/providers overflow.
 ```
 
 ### Header
-- Left: 30×30 raised header icon (radius 9, `energy-full` fill, white ⚡/bolt.fill) + "Claude Usage"
-  Fredoka 600/18 `ink`.
-- Right: compact relative update time plus 28×28 Settings and Quit buttons.
-  The update time truncates when space is limited so all controls remain visible. Opening
-  the popover already triggers an interactive refresh, so no redundant refresh
-  control is shown. Pause/resume lives in Settings.
+
+- Left: 30×30 raised header icon (radius 9, `energy-full` fill, white `bolt.fill`) and
+  "Claude Meter" in Fredoka 600/18 `ink`.
+- Right: the compact relative update time, then 28×28 Settings and Quit buttons. The time
+  truncates first, so all controls stay visible. Opening the popover starts an
+  interactive refresh, so there is no refresh button. Pause/resume is in Settings.
 
 ### Hero
-The selected Claude or Codex meter drives the hero. State follows the table above. Layout: 46×46 white circle (border = hero-border) holding the
-mascot emoji, then headline (Fredoka 600/18 `hero-ink`) + subline (Nunito 700/12 `hero-subink`).
-Hero bg/border swap green→orange→red with severity. Animate color with `.easeInOut(0.3)`.
+
+A 46×46 white circle (border `hero-border`) holds the mascot emoji, then the headline
+(Fredoka 600/18 `hero-ink`) and subline (Nunito 700/12 `hero-subink`). Background and
+border change green → orange → red with severity, animated with `.easeInOut(0.3)`.
 
 ### Accounts section
-- Label row: "ACCOUNTS" (label style) left; **ring legend** right — `◌ weekly` (2.5pt ring outline
-  dot) + `● 5-hour` (filled dot), Nunito 700/10 `ink-muted`. (Bars variant shows "N connected".)
-- **One ring card per account**, selected nearest/pinned account first. Read normalized
-  `ProviderAccountSnapshot` values from UsageStore for every provider.
 
-### Ring card (primary — Frame B)
+- Label row: "ACCOUNTS" (section label) on the left. The **ring legend** is on the right:
+  `◌ weekly` (2.5pt ring outline dot) and `● 5-hour` (filled dot), Nunito 700/10 `ink-muted`.
+- **One ring card per account**, with the pinned or nearest-limit account first. Cards read
+  normalized `ProviderAccountSnapshot` values from UsageStore.
+
+### Ring card (default)
+
 Chunky card, flex row, gap 14.
-- **ActivityRings** 88×88: outer ring (weekly) radius 34, inner ring (5-hour) radius 24, stroke 8pt
-  round-cap; track `track`; value arc colored by that window's band; **arc length = percentLeft**;
-  start at top (rotate −90). Center: avatar letter, Fredoka 700/19 `ink`.
+
+- **ActivityRings** 88×88: outer ring (weekly) radius 34, inner ring (5-hour) radius 24,
+  stroke 8pt, round caps. Track `track`; the value arc takes that window's band color;
+  **arc length is percentLeft**; it starts at the top. Center: avatar letter, Fredoka
+  700/19 `ink`.
 - Right column:
-  - Name (Fredoka 600/15 `ink`) + plan badge pill (right). **Plan badge only when known** (active
-    OAuth account); omit otherwise.
-  - Subtitle (Nunito 700/11 `ink-muted`): email when known, else nothing (or the config-dir key).
-  - 5-hr row: 9×9 rounded dot (band color) · "5-hr" (Nunito 700/11 `ink`) · "78%" (Fredoka 800/11
-    band color) · "· 3h 12m" (Nunito 600/11 `ink-muted`).
-  - week row: same, followed by a shared `ResetPhrase` duration such as "· in 6d 7h".
-  - Codex cards add a full-width section below the rings for "Usage limit resets" and the
-    available count. Each returned reset shows its title and time to expiry, sorted by expiry.
-    Direct OAuth detail rows include available, unexpired resets. A missing or invalid expiry
-    date stays unknown. The reported total can exceed the number of detail rows.
-    Hovering a row shows the exact local expiry date and time. Missing or partial expiry
-    details are stated below the count. The section uses the card's existing fonts and colors.
-  - An unavailable or stale Claude account keeps its label and sanitized account error.
-    Use the existing small error text below its quota rows. Unknown values stay unknown.
+  - Name (Fredoka 600/15 `ink`) and a plan badge pill on the right, **only when the plan
+    is known**.
+  - Subtitle (Nunito 700/11 `ink-muted`): the email when known; otherwise empty.
+  - 5-hr row: 9×9 rounded dot (band color) · "5-hr" (Nunito 700/11 `ink`) · "78%" (Fredoka
+    800/11, band color) · "· 3h 12m" (Nunito 600/11 `ink-muted`).
+  - Week row: the same, with a `ResetPhrase` duration such as "· 6d 7h".
+  - An unavailable or stale account keeps its label and shows its sanitized error in small
+    text below its quota rows. Unknown values stay unknown.
+- Codex cards add a full-width "Usage limit resets" section below the rings, with the
+  available count. Each returned reset shows its title and time to expiry, sorted by
+  expiry; hovering shows the exact local date and time. Missing or partial expiry details
+  are stated below the count. The total can exceed the number of rows.
 
-**Per-account data reality:** label, 5-hr %, week %, reset/refill exist for every account. Email,
-plan badge, weekly Opus, and scoped windows come from each account's OAuth response. Never fabricate
-them; the card degrades gracefully (name + rings + two rows). When Claude is the secondary
-provider, keep one compact summary card: show the nearest-limit account's known plan in its header,
-then expand in place for per-account session/week/Opus/scoped rows and known identity metadata.
+Label, 5-hour and weekly values, and reset times exist for every account. Email, plan
+badge, weekly Opus, and scoped windows come only from the account's OAuth response; never
+fabricate them. Without them, the card shows name, rings, and two rows.
 
-Account cards have no local-session indicator or pulsing session-open dot.
+When Claude is the secondary provider, it shows one compact summary card with the
+nearest-limit account's known plan. It expands in place to show per-account
+session/week/Opus/scoped rows and known identity metadata.
 
-### Energy-bar card (alt — Frame A, keep available)
-Same card; replaces rings with two stacked rows, each: icon (⚡/📅) + label + "78% left", a 14pt
-depleting capsule bar (band color, inner top gloss), and a phrase/reset row. Document but ship rings
-as the default. Appearance → Account cards switches between rings and bars.
+### Energy-bar card (alternative)
+
+Appearance → Account cards switches from rings to bars. The same card replaces the rings
+with two stacked rows. Each row has an icon (⚡ or 📅), a label, "78% left", a 14pt
+depleting capsule bar (band color, inner top gloss), and a phrase/reset row.
 
 ---
 
-## Menu Bar Icon (Frame C)
+## Menu bar icon
 
-**The icon mirrors the selected main provider's nearest-limit account** so a glance says whether
-it's safe to fire a big prompt. It never falls back to another provider. Bolt glyph + a colored
-status dot (top-right), severity from the same engine as the rings:
+**The icon mirrors the selected main provider's pinned or nearest-limit account**, so a
+glance says whether a big prompt is safe. It never falls back to another provider.
 
-| State       | Glyph         | Dot                          |
-| ----------- | ------------- | ---------------------------- |
-| All good    | bolt          | green `energy-full`          |
-| Low         | bolt          | orange `energy-low`          |
-| Critical    | bolt          | red `energy-empty`, **pulsing** (scale 1→1.4, opacity 1→.5, 1.2s) |
-| Tapped out  | bolt, 55% op  | red pill badge with "0"      |
-| Stale       | bolt          | gray dot                     |
-| Loading     | spinning ⟳    | —                            |
-| Error       | bolt.trianglebadge.exclamationmark | —       |
+| State      | Glyph                                   | Badge and text                                   |
+| ---------- | --------------------------------------- | ------------------------------------------------ |
+| Full       | `bolt.fill`                             | green `energy-full` dot                          |
+| Low        | `bolt.fill`                             | orange `energy-low` dot                          |
+| Critical   | `bolt.fill`                             | red `energy-empty` dot, **pulsing**              |
+| Tapped out | `bolt.fill`                             | red pill badge with "0"                          |
+| Stale      | `bolt.fill`                             | gray dot; no percentage                          |
+| Loading    | spinning `arrow.clockwise`              | —                                                |
+| Error      | `bolt.trianglebadge.exclamationmark.fill` | shown when there is no reading and an error    |
+| Paused     | whole item at 55% opacity, secondary color | no dot, no percentage                         |
 
-Retain a compact "{percentLeft}% left" text after the glyph for glanceability (design omits it; it's
-trivial to hide via a setting). The **"Menu bar shows"** setting picks nearest limit (default, unsuffixed), `5h`, `7d`,
-`both` (`99% 5h · 73% 7d`). Reset phrases on cards use the provider-reported reset time.
-The dot color always tracks severity across all windows, so a single-window number
-can differ from the dot.
-Pause = dimmed glyph, no dot/number. Reduce Motion disables the pulse. Colors render in the menu bar
-(SwiftUI MenuBarExtra label is not force-templated).
+The critical pulse scales 1 → 1.35 and fades to 55% opacity over 1.2 s, capped at 12 fps.
+
+A compact percentage follows the glyph. The **Menu bar shows** setting picks the nearest
+limit (default, no suffix), `5h`, `7d`, or both (`99% 5h · 73% 7d`). The dot tracks
+severity across all windows, so a single-window number can differ from the dot. Colors
+render in the menu bar because the SwiftUI `MenuBarExtra` label is not forced to a template.
 
 ---
 
 ## Settings
 
-- **Settings:** cream `popover-bg` window, chunky cards per section/data-source, raised primary
-  buttons, Fredoka headings / Nunito body, adaptive dark. The tabs are Data, Appearance,
-  Advanced, and About. Appearance contains the warning and critical severity sliders;
-  they control menu-bar and card colors. Codex Data settings show enablement, sign-in status,
-  homes and display names. They do not show an OAuth/App Server source picker.
+The Settings window uses a cream `popover-bg` background, chunky cards per section and
+data source, raised primary buttons, Fredoka headings, Nunito body, and adaptive dark
+mode. The tabs are Data, Appearance, Advanced, and About. Appearance holds the warning and
+critical sliders that set menu-bar and card colors. Codex Data settings show enablement,
+sign-in status, homes, and display names.
 
 ---
 
-## Non-data States
+## Non-data states
 
-Reuse the playful shell; center a mascot + line:
-- **Onboarding:** 🚀 "Welcome!" + "Connect a source to start your engines." → Open Settings.
-- **Paused:** 😴 "Paused" + "Flip the switch to refuel the gauge."
-- **No sources:** 🔌 "No data methods on" + Open Settings.
-- **Loading:** spinner + "Checking your tanks…".
-- **Error / stale:** ⚠️ friendly line + recovery button; stale desaturates rings + shows "Data may be
-  stale".
+These states reuse the playful shell with a centered mascot and one line:
+
+| State      | Emoji and title                | Message and action                                            |
+| ---------- | ------------------------------ | ------------------------------------------------------------- |
+| Onboarding | 🚀 "Welcome to Claude Meter"   | "Connect a data source to start your engines." → "Get started →" |
+| Paused     | 😴 "Paused"                    | "Hit play below to refuel the gauge."                         |
+| No sources | 🔌 "No data methods on"        | "Turn on at least one method in Settings → Data." → "Open Settings" |
+| No usage   | 🪫 "No usage yet"              | Setup guidance for the enabled sources                        |
+| Loading    | spinner                        | "Checking your tanks…", or "Checking Codex…" for one source   |
+
+Stale data shows "Data may be stale". A failed refresh shows "Refresh failed · showing
+last known data" or "Refresh failed · no usage data".
 
 ---
 
 ## Animation
 
-| Trigger              | Animation                                                     |
-| -------------------- | ------------------------------------------------------------ |
-| Ring/bar value       | `.easeOut(0.5)` on arc length / fill width                   |
-| Severity color       | `.easeInOut(0.3)` on color                                   |
-| Critical dot pulse   | `.easeInOut(1.2).repeatForever` scale+opacity (TimelineView) |
-| Button press         | translate y +2, shadow y 4→2, `.spring(response:0.2)`        |
-| Refresh spin         | continuous rotation via `TimelineView(.animation)`           |
-| Hero state change    | `.easeInOut(0.3)`                                            |
+| Trigger            | Animation                                                         |
+| ------------------ | ----------------------------------------------------------------- |
+| Ring/bar value     | `.easeOut(0.5)` on arc length or fill width                       |
+| Severity color     | `.easeInOut(0.3)` on color                                        |
+| Critical dot pulse | 1.2 s sine scale and opacity in a `TimelineView`, at most 12 fps  |
+| Button press       | move down 2pt, shadow y 4 → 2, `.spring(response: 0.2)`           |
+| Loading spin       | linear 1 s rotation, repeated                                     |
+| Hero state change  | `.easeInOut(0.3)`                                                 |
 
-Reduce Motion: drop the pulse and continuous spins; keep instant color/value swaps.
+Reduce Motion removes the pulse, spin, and value animations; colors and values change at once.
 
 ---
 
 ## Accessibility
 
-1. Rings/bars: `.accessibilityValue("78 percent left")` + `.accessibilityLabel("Work, 5-hour energy")`.
-2. Convey band in text, not color alone: VO reads "Work, 5-hour, 78 percent left, plenty".
-3. Combined hero announced: "You're cruising. 2 accounts fresh, buildbot low, refills in 1 hour 8 minutes".
-4. All game buttons have `.accessibilityLabel` describing the action; min target 28×28.
-5. Contrast ≥ 4.5:1 in both light and dark — verify `ink`/`ink-muted` on `card-bg`.
-6. Respect Reduce Motion (pulse/spin) and Increase Contrast (thicken borders).
+1. Rings and bars expose a label that names the account or window, and a value such as
+   "78 percent".
+2. Status phrases state the band in text, not by color alone.
+3. The hero reads as one element: "headline. subline".
+4. Every game button has an `.accessibilityLabel` for its action; the minimum target is 28×28.
+5. Contrast is at least 4.5:1 in light and dark mode. Check `ink` and `ink-muted` on `card-bg`.
+6. The menu-bar summary rules are in [ClaudeMeter/AGENTS.md](ClaudeMeter/AGENTS.md).

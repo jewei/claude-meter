@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-09-25
+
 ### Added
 
 - Codex account cards show available usage resets and their expiry details during
@@ -730,7 +732,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings panel and diagnostics view.
 - Sparkle auto-update support.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v3.0...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v3.0.1...HEAD
+[3.0.1]: https://github.com/jewei/claude-meter/compare/v3.0...v3.0.1
 [3.0]: https://github.com/jewei/claude-meter/compare/v2.18...v3.0
 [2.18]: https://github.com/jewei/claude-meter/compare/v2.17...v2.18
 [2.17]: https://github.com/jewei/claude-meter/compare/v2.16...v2.17

@@ -120,6 +120,12 @@ struct MenuBarLabel: View {
     @AppStorage(MeterSettings.menuBarAccountKey) private var claudeAccountPin = ""
     @AppStorage(MeterSettings.codexMainMeterAccountKey) private var codexAccountPin = ""
     @AppStorage(MeterSettings.menuBarWindowKey) private var menuBarWindow = "nearest"
+    /// Set when the main meter becomes critical. The label lives for the whole app
+    /// session, so a loading spinner or a stale period does not start a new pulse.
+    @State private var criticalPulseStart: Date?
+
+    static let criticalPulsePeriod: TimeInterval = 1.2
+    static let criticalPulseCount = 3
 
     private var progression: MeterSettings.ProgressionMode {
         MeterSettings.ProgressionMode(rawValue: progressionMode) ?? .left
@@ -154,6 +160,19 @@ struct MenuBarLabel: View {
         .accessibilityLabel(accessibilitySummary)
         .task(id: accessibilitySummary) {
             await MenuBarAccessibility.publish(accessibilitySummary)
+        }
+        .task(id: appState.mainMeterSeverity) {
+            // Announce the change, then settle: a state that can last days must not
+            // keep the status item redrawing.
+            guard appState.mainMeterSeverity == .critical else {
+                criticalPulseStart = nil
+                return
+            }
+            criticalPulseStart = Date()
+            let duration = Self.criticalPulsePeriod * Double(Self.criticalPulseCount)
+            // A cancelled task must not clear the pulse of the task that replaced it.
+            do { try await Task.sleep(for: .seconds(duration)) } catch { return }
+            criticalPulseStart = nil
         }
     }
 
@@ -193,7 +212,11 @@ struct MenuBarLabel: View {
         } else {
             switch appState.mainMeterSeverity {
             case .critical:
-                if reduceMotion { dot(.pfEnergyEmpty) } else { pulsingDot(.pfEnergyEmpty) }
+                if let start = criticalPulseStart, !reduceMotion {
+                    pulsingDot(.pfEnergyEmpty, start: start)
+                } else {
+                    dot(.pfEnergyEmpty)
+                }
             case .warning:
                 dot(.pfEnergyLow)
             case .normal:
@@ -211,12 +234,13 @@ struct MenuBarLabel: View {
             .offset(x: 3, y: -3)
     }
 
-    private func pulsingDot(_ color: Color) -> some View {
+    private func pulsingDot(_ color: Color, start: Date) -> some View {
         // Capped at 12 fps — an uncapped .animation schedule runs the status
         // item's display link at full refresh rate for a 1.2 s pulse.
         TimelineView(.animation(minimumInterval: 1 / 12)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            let phase = (sin(t * 2 * .pi / 1.2) + 1) / 2  // 0…1 over 1.2s
+            let t = context.date.timeIntervalSince(start)
+            // 0…1…0 per period: each pulse starts and ends at the static dot.
+            let phase = (1 - cos(t * 2 * .pi / Self.criticalPulsePeriod)) / 2
             Circle()
                 .fill(color)
                 .frame(width: 6, height: 6)

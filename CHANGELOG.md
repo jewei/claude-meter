@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The critical menu-bar dot pulses three times when a limit becomes critical, then
+  stays still.
+
 ### Fixed
 
 - Renaming a Codex account no longer restarts the Codex usage check for each keystroke.

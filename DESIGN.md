@@ -266,7 +266,7 @@ glance says whether a big prompt is safe. It never falls back to another provide
 | ---------- | --------------------------------------- | ------------------------------------------------ |
 | Full       | `bolt.fill`                             | green `energy-full` dot                          |
 | Low        | `bolt.fill`                             | orange `energy-low` dot                          |
-| Critical   | `bolt.fill`                             | red `energy-empty` dot, **pulsing**              |
+| Critical   | `bolt.fill`                             | red `energy-empty` dot, pulses 3 times on entry  |
 | Tapped out | `bolt.fill`                             | red pill badge with "0"                          |
 | Stale      | `bolt.fill`                             | gray dot; no percentage                          |
 | Loading    | spinning `arrow.clockwise`              | —                                                |
@@ -274,6 +274,9 @@ glance says whether a big prompt is safe. It never falls back to another provide
 | Paused     | whole item at 55% opacity, secondary color | no dot, no percentage                         |
 
 The critical pulse scales 1 → 1.35 and fades to 55% opacity over 1.2 s, capped at 12 fps.
+It runs three times when the main meter becomes critical, then the dot stays static. A
+state that can last days must not keep the status item redrawing. Loading and stale
+periods do not start a new pulse.
 
 A compact percentage follows the glyph. The **Menu bar shows** setting picks the nearest
 limit (default, no suffix), `5h`, `7d`, or both (`99% 5h · 73% 7d`). The dot tracks
@@ -315,7 +318,7 @@ last known data" or "Refresh failed · no usage data".
 | ------------------ | ----------------------------------------------------------------- |
 | Ring/bar value     | `.easeOut(0.5)` on arc length or fill width                       |
 | Severity color     | `.easeInOut(0.3)` on color                                        |
-| Critical dot pulse | 1.2 s sine scale and opacity in a `TimelineView`, at most 12 fps  |
+| Critical dot pulse | three 1.2 s scale and opacity cycles in a `TimelineView`, ≤ 12 fps |
 | Button press       | move down 2pt, shadow y 4 → 2, `.spring(response: 0.2)`           |
 | Loading spin       | linear 1 s rotation, repeated                                     |
 | Hero state change  | `.easeInOut(0.3)`                                                 |

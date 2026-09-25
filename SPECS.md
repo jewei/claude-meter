@@ -547,9 +547,11 @@ Configured paths are canonicalized and account disabling never removes the defau
 
 ### Upgrade cleanup
 
-There is no minimum supported upgrade version. Until one is chosen, keep each migration,
-its completion key, the App Group snapshot import, and old snapshot decoding. Never
-delete, rename, or reset an earlier completion key.
+The minimum supported upgrade version for 4.0 is 3.0. Keep each migration, its
+completion key, the App Group snapshot import, and old snapshot decoding in every 3.x
+release. Never delete, rename, or reset an earlier completion key in 3.x. In 4.0, remove
+the code that only 2.x installs need. The 4.0 release must let a 2.x install get the
+last 3.x release first, and its notes must say so.
 
 `LegacyAttentionHookMigration` removes the six exact historical Claude Meter hook
 commands from `hooks.Stop`, `hooks.Notification`, and `hooks.StopFailure`. It runs

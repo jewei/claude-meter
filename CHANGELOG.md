@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Codex account cards show available usage resets and their expiry details during
+  normal usage checks.
+
 ### Fixed
 
 - Automatic Claude and Cursor connections no longer consume refresh tokens owned by

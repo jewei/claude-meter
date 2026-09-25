@@ -568,7 +568,7 @@ private struct CodexHomesSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            ForEach(AppSettings.codexAccounts()) { account in
+            ForEach(appState.codexConfiguration) { account in
                 HStack(spacing: 12) {
                     RaisedTile(fill: avatarColorForID(account.id), size: 40, radius: 11) {
                         Text(accountLetter(account))
@@ -633,7 +633,7 @@ private struct CodexHomesSection: View {
                     names[account.id] = value
                 }
                 AppSettings.codexAccountNames = names
-                appState.codexConfigurationDidChange()
+                appState.codexAccountNamesDidChange()
             })
     }
 
@@ -661,7 +661,7 @@ private struct CodexHomesSection: View {
             return
         }
         addError = nil
-        let existing = Set(AppSettings.codexAccounts().map(\.id))
+        let existing = Set(appState.codexConfiguration.map(\.id))
         guard !existing.contains(url.path) else { return }
         homes.append(url.path)
         AppSettings.configuredCodexHomes = homes

@@ -375,7 +375,8 @@ and staleness appear only on its popover/settings/diagnostics surfaces.
 ### 4.2 Codex
 
 Codex is opt-in and supports one implicit `CODEX_HOME` plus explicitly configured homes.
-Each home has its own display name and quota observation. Normal refresh reads access
+Each home has its own display name and quota observation. A rename changes labels only;
+it starts no refresh. Normal refresh reads access
 credentials from that home's `auth.json` and makes one direct HTTP usage request. When
 that response reports available usage resets, it also requests their expiry details.
 It starts no Codex process and has no source picker.

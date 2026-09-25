@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Renaming a Codex account no longer restarts the Codex usage check for each keystroke.
+
 ## [3.0.1] - 2026-09-25
 
 ### Added

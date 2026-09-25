@@ -21,12 +21,17 @@ final class AppState: ObservableObject {
     /// First-run onboarding blocks polling until the user chooses Get Started.
     private var onboardingIsComplete: Bool
 
+    /// Configured Codex homes, canonicalized when the configuration changes so that
+    /// rendering does no path resolution. The adapter resolves its own copy for each
+    /// refresh; this list only labels and orders accounts.
+    private(set) var codexConfiguration: [CodexAccount] = AppSettings.codexAccounts()
+
     var codexIsLoading: Bool { usageStore.refreshing.contains(.codex) }
     var codexAccounts: [ProviderAccountSnapshot] {
         let accounts = usageStore.reading(for: .codex)?.value?.accounts ?? []
         let byID = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
         // Settings own labels/order. A removed pin becomes unavailable immediately.
-        return AppSettings.codexAccounts().compactMap { configuration in
+        return codexConfiguration.compactMap { configuration in
             guard var account = byID[configuration.id] else { return nil }
             account.label = configuration.displayName
             return account
@@ -318,7 +323,17 @@ final class AppState: ObservableObject {
 
     func codexConfigurationDidChange() {
         objectWillChange.send()
+        codexConfiguration = AppSettings.codexAccounts()
         refreshScheduler.refresh([.codex])
+    }
+
+    /// A rename changes labels only. It needs no path resolution and no refresh.
+    func codexAccountNamesDidChange() {
+        objectWillChange.send()
+        let names = AppSettings.codexAccountNames
+        codexConfiguration = codexConfiguration.map {
+            CodexAccount(home: $0.home, isImplicit: $0.isImplicit, customName: names[$0.id])
+        }
     }
 
     func claudeConfigurationDidChange() {

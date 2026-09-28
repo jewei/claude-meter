@@ -188,19 +188,20 @@ struct AppLogicTests {
         let iterations = 500
         var report: [String] = []
         for count in [1, 5, 20] {
-            let accounts = (0..<count).map { index in
-                ProviderAccountSnapshot(
+            let accounts: [ProviderAccountSnapshot] = (0..<count).map { index in
+                let sessionPercent = Double(index * 7 % 100)
+                let weeklyPercent = Double(index * 11 % 100)
+                let session = UsageWindow(
+                    id: "primary", title: "5h", kind: .session,
+                    usedPercent: sessionPercent,
+                    resetAt: now.addingTimeInterval(3600))
+                let week = UsageWindow(
+                    id: "secondary", title: "7d", kind: .weekly,
+                    usedPercent: weeklyPercent,
+                    resetAt: now.addingTimeInterval(86400))
+                return ProviderAccountSnapshot(
                     id: "synthetic-\(index)", label: "Account \(index)",
-                    windows: [
-                        UsageWindow(
-                            id: "primary", title: "5h", kind: .session,
-                            usedPercent: Double(index * 7 % 100),
-                            resetAt: now.addingTimeInterval(3600)),
-                        UsageWindow(
-                            id: "secondary", title: "7d", kind: .weekly,
-                            usedPercent: Double(index * 11 % 100),
-                            resetAt: now.addingTimeInterval(86400)),
-                    ], observedAt: now)
+                    windows: [session, week], observedAt: now)
             }
             var samples: [Double] = []
             var checksum = 0

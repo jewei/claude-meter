@@ -1,7 +1,7 @@
 # Claude Meter
 
-A macOS menu bar app that shows your coding quota at a glance. Claude, Codex, Cursor, and
-Grok usage appear as playful, color-coded **energy rings**, across every account.
+Claude Meter shows coding quota for Claude, Codex, Cursor, and Grok in the macOS menu
+bar. Account cards show energy left with colored rings or bars.
 
 <table>
   <tr>
@@ -14,57 +14,58 @@ Grok usage appear as playful, color-coded **energy rings**, across every account
   </tr>
 </table>
 
-## Features
+## Quota display
 
-- **Menu bar meter**: a bolt, a nearest-limit status dot, and your energy-left percentage.
-- **Playful popover**: a health hero and per-account **activity rings** (weekly and
-  5-hour), with countdowns from provider-reported reset times.
-- **Multiple accounts**: run several `CLAUDE_CONFIG_DIR` accounts or Codex homes side by
-  side. Give each a display name and plan badge.
-- **Four providers**: Claude or Codex owns the main meter. Cursor billing-period usage and
-  Grok CLI credits have their own cards.
-- **Private**: no transcript scanning or cost estimation. Provider credentials stay in
-  their own apps and are read-only; only manually entered Claude OAuth tokens are stored,
-  in macOS Keychain. Diagnostics are sanitized before display or persistence.
+The app includes these display and account options:
+
+- A menu-bar bolt, a status dot for the nearest limit, and an energy-left percentage.
+- A hero that summarizes quota and account cards with weekly and 5-hour limit windows.
+  Reset countdowns use provider-reported times.
+- Multiple `CLAUDE_CONFIG_DIR` accounts and Codex homes, with custom names and plan
+  badges.
+- A main meter for Claude or Codex, plus separate cards for Cursor usage and Grok CLI
+  credits.
 - Launch at login and automatic updates.
 
 Usage refreshes every five minutes while the display is awake. Opening the popover
 refreshes missing, failed, stale, or at least one-minute-old readings. Display sleep
 stops refresh work.
 
-Codex usage comes directly from its OAuth sign-in. Codex keeps ownership of its
-credentials, and API-key sign-ins supply no ChatGPT subscription quota.
-When sign-in recovery is needed, Claude Meter can start a temporary Codex process;
-Codex can then refresh and save its own credentials. Upgrades can also remove obsolete
-Claude Meter integration entries. See [provider setup and recovery](docs/providers.md).
+## Credentials and privacy
 
-## Requirements
+Claude Meter reads provider quota without scanning transcripts or estimating costs.
+Provider apps own their credentials. Claude Meter writes only manually entered Claude
+OAuth credentials to its own macOS Keychain entry. Diagnostics remove sensitive data
+before display or storage.
+
+Codex usage comes from its OAuth sign-in. API-key sign-ins supply no ChatGPT
+subscription quota. If sign-in recovery is necessary, Claude Meter can start a temporary
+Codex process. Codex can then refresh and save its own credentials. Upgrades can remove
+obsolete Claude Meter integration entries. [Provider credentials and
+recovery](docs/providers.md) describes credential sources, recovery, and cleanup.
+
+## System requirements
+
+The app requires the following:
 
 - macOS 14+
-- For Claude: a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sign-in, or
-  manually supplied OAuth credentials
+- For Claude: a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sign-in,
+  or manually supplied OAuth credentials
 
-## Install
+## Installation and development guides
 
-1. Download the latest **`ClaudeMeter-<version>.dmg`** from the
-   [releases page](https://github.com/jewei/claude-meter/releases/latest).
-2. Open the DMG and drag **Claude Meter** into your **Applications** folder.
-3. Launch it — the meter appears in your menu bar (there's no Dock icon).
+These guides cover installation, builds, and measurements:
 
-The app is Developer ID signed and notarized by Apple, so it opens without Gatekeeper
-warnings. Sparkle delivers updates automatically.
+- [Install Claude Meter](docs/install.md).
+- [Build and test Claude Meter](docs/development.md).
+- [Measure performance](docs/performance.md).
 
-## Build
+The release app has a Developer ID signature and Apple notarization. Sparkle provides
+automatic updates.
 
-```bash
-./scripts/verify-local.sh  # formatting, all package tests, Debug + Release unsigned builds
-```
+## Project documents
 
-For a faster focused check, run `swift test --package-path ClaudeMeterCore`.
-See [performance checks](docs/performance.md) for the synthetic presentation benchmark,
-runtime sampler, and measurement limits.
-
-## Docs
+These documents define the product and development process:
 
 - [SPECS.md](SPECS.md): behavior specification
 - [DESIGN.md](DESIGN.md): UI design system and tokens
@@ -78,5 +79,5 @@ runtime sampler, and measurement limits.
 
 ## Disclaimer
 
-Claude Meter is an independent, community project. It is not affiliated with,
-endorsed by, or sponsored by Anthropic. "Claude" is a trademark of Anthropic.
+Claude Meter is an independent, community project. It is not affiliated with, endorsed
+by, or sponsored by Anthropic. "Claude" is a trademark of Anthropic.

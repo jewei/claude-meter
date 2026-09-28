@@ -1,27 +1,63 @@
-# Provider setup and recovery
+# Provider credentials and recovery
 
-Enable each provider in Settings → Data. Account labels do not prove which account is
-signed in; the credentials and config dir determine ownership.
+Providers are enabled in **Settings**, under **Data**. Credentials and the config dir
+determine account ownership. Account labels do not prove which account is signed in.
 
-| Source | Sign-in and credential source | Recovery |
+Each source uses the following credentials:
+
+| Source | Credential source | Credential owner |
 | --- | --- | --- |
-| Claude automatic | Sign in with Claude Code, then connect automatic OAuth. Each config dir uses its own Claude Code Keychain entry. | Run `claude login` for the affected config dir. Claude Meter does not refresh Claude Code tokens. |
-| Claude manual | Connect manually supplied OAuth credentials in Settings. Claude Meter stores them in its own Keychain entry. | Claude Meter can refresh these app-owned credentials. Reconnect if the refresh token is rejected. Disconnect removes only this entry. |
-| Codex | Sign in with Codex using a subscription account. Add other Codex homes in Settings. The normal read uses each home's auth file. | For a missing, unreadable, expired, or rejected sign-in, Claude Meter can start one temporary `codex app-server`. Codex owns refresh and credential storage. If recovery fails, sign in with Codex for that home. API-key sign-ins provide no subscription-quota reading. |
-| Cursor | Sign in with Cursor, then enable Cursor in Settings. Claude Meter reads its local state database, with a read-only Keychain fallback. | Open Cursor and sign in again when credentials expire or are rejected. Claude Meter does not refresh them. |
-| Grok | Sign in with the Grok CLI, then enable Grok in Settings. Claude Meter reads the CLI auth file. | Open Grok or run `grok login` when sign-in expires. Claude Meter does not refresh it. |
+| Claude automatic | Each config dir's Claude Code Keychain entry, connected through automatic OAuth | Claude Code |
+| Claude manual | Manually supplied OAuth credentials in Claude Meter's Keychain entry | Claude Meter |
+| Codex | Each configured home's auth file with a subscription sign-in | Codex |
+| Cursor | Local state database, with a read-only Keychain fallback | Cursor |
+| Grok | Grok CLI auth file | Grok CLI |
 
-Ordinary Codex network errors, server errors, rate limits, and missing quota do not start
-the recovery process. It exits after the recovery attempt. A sign-in stored only in
-another process's memory cannot be recovered by a new process.
+## Claude recovery
 
-A temporary refresh failure can retain the last successful observation. Its time does
-not advance. Cards show the error, and expired stale limit windows become unknown.
-Pause keeps readings; disabling a provider clears them. A missing pinned account stays
-unavailable until you select another account by moving its card to the top.
+Automatic mode requires a Claude Code sign-in. An expired or rejected credential needs
+`claude login` for the affected config dir. Claude Meter does not refresh Claude Code
+tokens.
 
-“Read-only” describes provider usage reads and credentials owned by other apps. Manual
-Claude OAuth is app-owned and can be updated. Codex can update its own credentials during
-recovery. One-time upgrade migrations remove obsolete Claude Meter hooks, statusline
-entries, and owned artifacts. They do not install new integration commands or remove
-provider credentials. Diagnostics are sanitized before display, copying, or persistence.
+Manual mode accepts OAuth credentials in **Settings**. Claude Meter stores and refreshes
+these credentials in its own Keychain entry. A rejected refresh token requires
+reconnection. Disconnect removes only that app-owned entry.
+
+## Codex recovery
+
+Codex requires a subscription sign-in. **Settings** supports additional Codex homes.
+API-key sign-ins provide no subscription-quota reading.
+
+For a missing, unreadable, expired, or rejected sign-in, Claude Meter can start one
+temporary `codex app-server`. Codex owns refresh and credential storage. The process
+exits after the recovery attempt. Failed recovery requires a new Codex sign-in for that
+home. A new process cannot recover a sign-in stored only in another process's memory.
+
+Network errors, server errors, rate limits, and missing quota do not start recovery.
+
+## Cursor and Grok recovery
+
+Cursor requires a local Cursor sign-in. Expired or rejected credentials require the user
+to open Cursor and sign in again. Claude Meter does not refresh Cursor credentials.
+
+Grok requires a Grok CLI sign-in. Expiry requires the user to open Grok or run `grok
+login`. Claude Meter does not refresh Grok credentials.
+
+## Retained readings
+
+A temporary refresh failure can retain the last successful observation without changing
+its time. Cards show the error, and expired stale limit windows become unknown. Pause
+keeps readings. Disabling a provider clears them.
+
+A missing pinned account stays unavailable until another account is selected by a drag
+to the top of the list.
+
+## Read-only limits and upgrade cleanup
+
+"Read-only" describes provider usage reads and credentials owned by other apps. Manual
+Claude OAuth is app-owned and can be updated. Codex can update its own credentials
+during recovery.
+
+One-time upgrade migrations remove obsolete Claude Meter hooks, statusline entries, and
+owned artifacts. They do not install integration commands or remove provider
+credentials. Diagnostics remove sensitive data before display, copying, or storage.

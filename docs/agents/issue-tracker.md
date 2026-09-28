@@ -1,8 +1,8 @@
-# GitHub issue workflow
+# Manage GitHub issues
 
-Issues and product requirements live in this repository's GitHub Issues. Use `gh`
-from the clone so it selects the repository. Triage work through issues; use PRs for
-code review.
+Issues and product requirements live in this repository's GitHub Issues. Use `gh` from
+the clone so it selects the repository. Use issues to evaluate and assign work. Use PRs
+for code review.
 
 ## Read and identify work
 
@@ -23,7 +23,7 @@ gh api repos/{owner}/{repo}/issues/42 --jq 'if has("pull_request") then "pr" els
 ```
 
 For PR author association, use `gh api repos/{owner}/{repo}/pulls` and its
-`author_association` field; `gh pr list --json` does not expose that field.
+`author_association` field. `gh pr list --json` does not expose that field.
 
 ## Create and update work
 
@@ -44,15 +44,15 @@ Use native relationships, not body text such as "Blocked by #12":
 | --- | --- | --- |
 | Parent | `--parent <parent>` | `--parent <parent>` |
 | Sub-issue | Create with a parent | On parent: `--add-sub-issue <child>` |
-| Dependency | `--blocked-by <n>` / `--blocking <n>` | `--add-blocked-by <n>` / `--add-blocking <n>` |
+| Dependency | `--blocked-by <n>` or `--blocking <n>` | `--add-blocked-by <n>` or `--add-blocking <n>` |
 
 The edit flags also have `--remove-*` forms. A skill request to publish to the issue
-tracker means create a GitHub issue; a request to fetch a ticket means read that issue.
+tracker means create a GitHub issue. A request to fetch a ticket means read that issue.
 
 ## Triage labels
 
-Keep exactly one triage label on each issue. New issues start with `needs-triage`;
-fully specified work may start with `ready-for-agent`.
+Keep exactly one triage label on each issue. Start new issues with `needs-triage`. For
+fully specified work, you can start with `ready-for-agent`.
 
 | Label | Meaning |
 | --- | --- |
@@ -62,9 +62,9 @@ fully specified work may start with `ready-for-agent`.
 | `ready-for-human` | Requires human implementation |
 | `wontfix` | Will not be implemented |
 
-Change state with `gh issue edit <n> --add-label <new> --remove-label <old>`.
-Only `wontfix` is a GitHub default. Check `gh label list` on a fresh fork. If missing,
-create the other labels:
+Change state with `gh issue edit <n> --add-label <new> --remove-label <old>`. Only
+`wontfix` is a GitHub default. Check `gh label list` on a fresh fork. If the other
+labels are missing, create them:
 
 ```bash
 gh label create needs-triage --color d4c5f9 --description "A maintainer needs to evaluate this"

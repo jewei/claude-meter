@@ -48,11 +48,12 @@ final class CodexIdentityReadGate: @unchecked Sendable {
 public final class CodexProviderAdapter: UsageProvider, Sendable {
     public let id: ProviderID = .codex
     public let ownsDeadline = true
-    private let configuration: @MainActor @Sendable () async -> CodexConfiguration
+    private let configuration: @MainActor @Sendable () async throws -> CodexConfiguration
     private let persistence: CodexReadingStore
     private let identityLoader: CodexIdentityLoadOperation
     private let identityGate = CodexIdentityReadGate()
     private let budget = Timeout.TaskBudget(limit: 6)
+    private let preflightBudget = Timeout.TaskBudget(limit: 2)
     private let timeoutSeconds: TimeInterval
     private let perAccountTimeoutSeconds: TimeInterval
     private let fetchAccount: @Sendable (CodexAccount, Date) async throws -> CodexUsage
@@ -77,7 +78,7 @@ public final class CodexProviderAdapter: UsageProvider, Sendable {
 
     @MainActor
     public init(
-        configuration: @escaping @MainActor @Sendable () async -> CodexConfiguration,
+        configuration: @escaping @MainActor @Sendable () async throws -> CodexConfiguration,
         defaults: UserDefaults = .standard,
         timeoutSeconds: TimeInterval = 60,
         perAccountTimeoutSeconds: TimeInterval = 60,
@@ -101,21 +102,44 @@ public final class CodexProviderAdapter: UsageProvider, Sendable {
     public func validatePrevious(
         _ previous: ProviderSnapshot?, now: Date, refreshID: UUID
     ) async throws -> ProviderSnapshot? {
+        do {
+            return try await preparePrevious(previous, now: now, refreshID: refreshID)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            try Task.checkCancellation()
+            // Preflight did not verify the current owner. Old quota cannot be
+            // retained merely because configuration or archive access failed.
+            throw UsageProviderFailure(error, retainsLastGood: false)
+        }
+    }
+
+    @MainActor private func preparePrevious(
+        _ previous: ProviderSnapshot?, now: Date, refreshID: UUID
+    ) async throws -> ProviderSnapshot? {
         try Task.checkCancellation()
         activeRefreshID = refreshID
         preflight = nil
         pendingSave = nil
-        let config = await configuration()
-        try Task.checkCancellation()
-        guard activeRefreshID == refreshID else { throw CancellationError() }
         let timeout = timeoutSeconds.isFinite ? max(0, timeoutSeconds) : 0
         let deadline = ProcessInfo.processInfo.systemUptime + timeout
         let allowance = min(2, timeout / 4)
-        let archive = await persistence.entries()
+        let config = try await Timeout.run(seconds: timeout, budget: preflightBudget) {
+            [configuration] in try await configuration()
+        }
+        try Task.checkCancellation()
+        guard activeRefreshID == refreshID else { throw CancellationError() }
+        let remaining = deadline - ProcessInfo.processInfo.systemUptime
+        guard remaining > 0 else { throw TimeoutError(seconds: timeout) }
+        let archive = try await Timeout.run(seconds: remaining, budget: preflightBudget) {
+            [persistence] in await persistence.entries()
+        }
         try Task.checkCancellation()
         guard activeRefreshID == refreshID else { throw CancellationError() }
         let owners = persistence.owners
-        let before = await identities(config.accounts, timeout: allowance)
+        let before = await identities(
+            config.accounts,
+            timeout: min(allowance, max(0, deadline - ProcessInfo.processInfo.systemUptime)))
         try Task.checkCancellation()
         guard activeRefreshID == refreshID else { throw CancellationError() }
         let previousByID = Dictionary(

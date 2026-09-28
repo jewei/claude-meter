@@ -58,10 +58,13 @@ struct HTTPRetryPolicyTests {
         #expect(!HTTPRetryPolicy.none.shouldRetry(attempt: 0, method: "GET", status: 429))
     }
 
-    @Test func honorsRetryAfterCappedAtMax() {
+    @Test func preservesServerDelayBeyondLocalBackoffCap() {
         let policy = HTTPRetryPolicy(maxRetries: 2, baseDelay: 1, maxDelay: 8)
         #expect(policy.delay(attempt: 0, retryAfter: "5") == 5)
-        #expect(policy.delay(attempt: 0, retryAfter: "100") == 8)  // capped
+        #expect(policy.delay(attempt: 0, retryAfter: "100") == 100)
+        let now = Date(timeIntervalSince1970: 784_111_777)
+        #expect(
+            policy.delay(attempt: 0, retryAfter: "Sun, 06 Nov 1994 08:51:37 GMT", now: now) == 120)
     }
 
     @Test func exponentialBackoffWhenNoRetryAfter() {
@@ -114,6 +117,58 @@ struct HTTPRetryPolicyTests {
 
 @Suite("ProviderHTTPClient bounds")
 struct ProviderHTTPClientBoundsTests {
+    @Test func longRetryAfterReturnsOriginalResponseWithoutRetry() async throws {
+        let count = HTTPAttemptCounter()
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let client = ProviderHTTPClient(
+            session: session, maximumResponseByteCount: 8, resourceTimeoutSeconds: 1,
+            responseLoader: { request, _, _ in
+                await count.record()
+                return (
+                    Data("busy".utf8),
+                    HTTPURLResponse(
+                        url: request.url!, statusCode: 503,
+                        httpVersion: nil, headerFields: ["Retry-After": "120"])!
+                )
+            })
+        let (data, response) = try await client.send(
+            URLRequest(url: URL(string: "https://provider-http.test/retry")!), retry: .transient)
+        #expect(response.statusCode == 503)
+        #expect(data == Data("busy".utf8))
+        #expect(await count.calls == 1)
+    }
+
+    @Test func cancellationDuringRetryWaitDoesNotSendAgain() async {
+        let count = HTTPAttemptCounter()
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let client = ProviderHTTPClient(
+            session: session, maximumResponseByteCount: 8, resourceTimeoutSeconds: 30,
+            responseLoader: { request, _, _ in
+                await count.record()
+                return (
+                    Data(),
+                    HTTPURLResponse(
+                        url: request.url!, statusCode: 503,
+                        httpVersion: nil, headerFields: ["Retry-After": "20"])!
+                )
+            },
+            retrySleep: { seconds in
+                await count.beginWait()
+                try await Task.sleep(for: .seconds(seconds))
+            })
+        let task = Task {
+            try await client.send(
+                URLRequest(url: URL(string: "https://provider-http.test/cancel-retry")!),
+                retry: .transient)
+        }
+        await count.waitForRetry()
+        task.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await task.value }
+        #expect(await count.calls == 1)
+    }
+
     @Test func rejectsOversizedDeclaredContentLengthBeforeBodyReceipt() {
         let response = HTTPURLResponse(
             url: URL(string: "https://provider-http.test/declared")!,
@@ -262,6 +317,24 @@ struct ProviderHTTPClientBoundsTests {
         #expect(
             ProviderHTTPClient.declaredLengthExceedsLimit(response, maximumByteCount: 8)
         )
+    }
+}
+
+private actor HTTPAttemptCounter {
+    private(set) var calls = 0
+    private var startedWait = false
+    private var waiter: CheckedContinuation<Void, Never>?
+    func record() {
+        calls += 1
+    }
+    func beginWait() {
+        startedWait = true
+        waiter?.resume()
+        waiter = nil
+    }
+    func waitForRetry() async {
+        if startedWait { return }
+        await withCheckedContinuation { waiter = $0 }
     }
 }
 

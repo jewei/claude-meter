@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Account headers, bars, and rings agree when a limit window resets. Stale expired
+  windows remain unknown, and ring cards retain account errors and stale status.
+- Hero reset text names the limiting window, so an earlier reset of another window
+  does not imply that quota is available again.
+- Codex configuration and archive preflight have bounded waits. Startup and Codex home
+  checks run off the UI thread, and late configuration results cannot replace newer ones.
+- Automatic retries preserve server wait times instead of shortening them to eight seconds.
+
 ## [3.1] - 2026-09-25
 
 ### Added

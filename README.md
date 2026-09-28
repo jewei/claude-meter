@@ -34,6 +34,9 @@ stops refresh work.
 
 Codex usage comes directly from its OAuth sign-in. Codex keeps ownership of its
 credentials, and API-key sign-ins supply no ChatGPT subscription quota.
+When sign-in recovery is needed, Claude Meter can start a temporary Codex process;
+Codex can then refresh and save its own credentials. Upgrades can also remove obsolete
+Claude Meter integration entries. See [provider setup and recovery](docs/providers.md).
 
 ## Requirements
 
@@ -58,6 +61,8 @@ warnings. Sparkle delivers updates automatically.
 ```
 
 For a faster focused check, run `swift test --package-path ClaudeMeterCore`.
+See [performance checks](docs/performance.md) for the synthetic presentation benchmark,
+runtime sampler, and measurement limits.
 
 ## Docs
 

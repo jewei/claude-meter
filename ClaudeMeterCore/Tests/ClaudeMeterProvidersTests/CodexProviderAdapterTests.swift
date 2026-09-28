@@ -14,6 +14,24 @@ private final class CountingCodexDefaults: UserDefaults, @unchecked Sendable {
     }
 }
 
+private final class BlockedArchiveDefaults: UserDefaults, @unchecked Sendable {
+    private let lock = NSLock()
+    private let release = DispatchSemaphore(value: 0)
+    private var reads = 0
+    var readCount: Int { lock.withLock { reads } }
+    override func data(forKey key: String) -> Data? {
+        guard key == "codexLastGoodReadings.v1" else { return super.data(forKey: key) }
+        let first = lock.withLock {
+            reads += 1
+            return reads == 1
+        }
+        #expect(!Thread.isMainThread)
+        if first && !Thread.isMainThread { release.wait() }
+        return nil
+    }
+    func finish() { release.signal() }
+}
+
 /// Only the first archive write blocks. Queue-order and executor checks do not
 /// depend on how long it takes the test to resume on MainActor.
 private final class GatedCodexDefaults: UserDefaults, @unchecked Sendable {
@@ -161,6 +179,65 @@ private func testUsage(_ now: Date) -> CodexUsage {
 @Suite("Codex normalized provider", .timeLimit(.minutes(1)))
 @MainActor
 struct CodexProviderAdapterTests {
+    @Test("Blocked configuration expires and repeated refreshes keep only two workers")
+    func blockedConfiguration() async throws {
+        try await isolated { defaults in
+            let gate = SuspendedHomeFetch()
+            let accounts = accounts
+            let provider = CodexProviderAdapter(
+                configuration: {
+                    await gate.suspend()
+                    return .init(accounts: accounts)
+                }, defaults: defaults, timeoutSeconds: 0.05)
+            for _ in 0..<6 {
+                await #expect(throws: (any Error).self) {
+                    _ = try await provider.validatePrevious(nil, now: now, refreshID: UUID())
+                }
+            }
+            #expect(await gate.calls == 2)
+            await gate.release()
+        }
+    }
+
+    @Test("Cancellation releases a blocked configuration wait")
+    func cancelConfiguration() async throws {
+        try await isolated { defaults in
+            let gate = SuspendedHomeFetch()
+            let provider = CodexProviderAdapter(
+                configuration: {
+                    await gate.suspend()
+                    return .init(accounts: [])
+                }, defaults: defaults, timeoutSeconds: 10)
+            let task = Task {
+                try await provider.validatePrevious(nil, now: now, refreshID: UUID())
+            }
+            await gate.waitForCalls(1)
+            task.cancel()
+            await #expect(throws: CancellationError.self) { _ = try await task.value }
+            await gate.release()
+        }
+    }
+
+    @Test("A blocked archive read expires without adding an unbounded queue backlog")
+    func blockedArchive() async throws {
+        let suite = "CodexBlockedArchive-\(UUID().uuidString)"
+        let defaults = BlockedArchiveDefaults(suiteName: suite)!
+        defer {
+            defaults.finish()
+            defaults.removePersistentDomain(forName: suite)
+        }
+        let accounts = accounts
+        let provider = CodexProviderAdapter(
+            configuration: { .init(accounts: accounts) }, defaults: defaults,
+            timeoutSeconds: 0.1)
+        for _ in 0..<6 {
+            await #expect(throws: (any Error).self) {
+                _ = try await provider.validatePrevious(nil, now: now, refreshID: UUID())
+            }
+        }
+        #expect(defaults.readCount == 1)
+    }
+
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
     private let accounts = ["personal", "work"].map { (name: String) in
         CodexAccount(

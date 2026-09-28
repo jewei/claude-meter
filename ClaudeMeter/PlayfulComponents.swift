@@ -238,6 +238,17 @@ struct AccountCardModel: Identifiable {
     /// quota shown twice, as reported by Claude provider diagnostics.
     var isDuplicateLogin: Bool = false
     var lastError: String? = nil
+    var providerError: String? = nil
+    var isStale: Bool = false
+
+    func status(showsProviderStatus: Bool) -> (text: String, isFailure: Bool)? {
+        if let lastError { return (lastError, true) }
+        if showsProviderStatus, providerError != nil {
+            return ("Refresh failed · showing last known data", true)
+        }
+        if showsProviderStatus, isStale { return ("Data may be stale", false) }
+        return nil
+    }
     var avatarLetter: String {
         let trimmed = label.drop(while: { !$0.isLetter && !$0.isNumber })
         return String(trimmed.first ?? Character("C")).uppercased()
@@ -257,27 +268,26 @@ struct AccountCardModel: Identifiable {
             .compactMap { $0 }.min()
     }
 
-    /// Soonest upcoming refill/reset across this account's windows.
-    func soonestReset(_ now: Date) -> Date? {
-        [
-            session.resolved(asOf: now).resetsAt,
-            week.resolved(asOf: now).resetsAt,
-            opus?.resolved(asOf: now).resetsAt,
-        ]
-        .compactMap { $0 }.filter { $0 > now }.min()
-    }
-}
-
-extension AccountCardModel {
-    init(mainMeterReading reading: MainMeterReading) {
-        self.init(
-            id: reading.accountID,
-            label: reading.accountLabel,
-            plan: reading.plan,
-            subtitle: nil,
-            session: reading.limits.currentSession,
-            week: reading.limits.currentWeekAllModels,
-            opus: reading.limits.currentWeekOpus)
+    /// Name the most constrained window; another window's earlier reset cannot
+    /// remove this limit. On equal usage, show the later reset.
+    func limitingReset(_ now: Date) -> String? {
+        let windows =
+            [("Session", session), ("Weekly", week)]
+            + (opus.map { [("Opus", $0)] } ?? [])
+        let limiting = windows.map { ($0.0, $0.1.resolved(asOf: now)) }
+            .filter { $0.1.percentUsed != nil }
+            .max {
+                if $0.1.percentUsed != $1.1.percentUsed {
+                    return ($0.1.percentUsed ?? -1) < ($1.1.percentUsed ?? -1)
+                }
+                guard let left = $0.1.resetsAt else { return false }
+                guard let right = $1.1.resetsAt else { return true }
+                return left < right
+            }
+        guard let (label, window) = limiting, let reset = window.resetsAt,
+            let phrase = ResetPhrase.spoken(until: reset, asOf: now)
+        else { return nil }
+        return "\(label) resets \(phrase)"
     }
 }
 
@@ -333,6 +343,7 @@ struct AccountRingCard: View {
     var thresholds: UsageThresholds = .default
     /// `true` shows usage (rings fill); `false` shows energy left (rings deplete).
     var usage: Bool = false
+    var showsProviderStatus: Bool = false
 
     var body: some View {
         let sBand = model.session.energyBand(thresholds: thresholds, asOf: now)
@@ -374,8 +385,9 @@ struct AccountRingCard: View {
             if let resets = model.usageResets {
                 UsageResetsView(resets: resets, now: now)
             }
-            if let error = model.lastError {
-                Text(error).font(PFont.body(11, .semibold)).foregroundStyle(Color.pfEnergyLow)
+            if let status = model.status(showsProviderStatus: showsProviderStatus) {
+                Text(status.text).font(PFont.body(11, .semibold))
+                    .foregroundStyle(status.isFailure ? Color.pfEnergyLow : Color.pfInkMuted)
             }
         }
         .padding(.horizontal, 14)
@@ -597,13 +609,13 @@ struct HeroSummary {
         // Single account → speak to its own most-constrained window.
         if models.count == 1 {
             let band = active.band(thresholds, now)
-            let when = active.soonestReset(now).map { describeReset($0, now: now) }
+            let when = active.limitingReset(now)
             switch band {
             case .full:
-                return when.map { "Plenty in the tank · refills \($0)" } ?? "Plenty in the tank 🎉"
-            case .low: return when.map { "Getting low · refills \($0)" } ?? "Getting low"
+                return when.map { "Plenty in the tank · \($0)" } ?? "Plenty in the tank 🎉"
+            case .low: return when.map { "Getting low · \($0)" } ?? "Getting low"
             case .empty, .tappedOut:
-                return when.map { "Almost dry · refills \($0)" } ?? "Almost dry"
+                return when.map { "Almost dry · \($0)" } ?? "Almost dry"
             case .unknown: return "Warming up…"
             }
         }
@@ -622,8 +634,7 @@ struct HeroSummary {
         if let low = lowest {
             let word = low.band(thresholds, now) == .low ? "low" : "nearly dry"
             let refill =
-                low.soonestReset(now)
-                .map { " (\(ResetPhrase.duration(until: $0, asOf: now) ?? "soon"))" } ?? ""
+                low.limitingReset(now).map { " · \($0)" } ?? ""
             let unknownSuffix = unknownDescription(unknown).map { " · \($0)" } ?? ""
             if fresh == 0 { return "\(low.label) is \(word)\(refill)\(unknownSuffix)" }
             let freshWord = fresh == 1 ? "1 fresh" : "\(fresh) fresh"

@@ -99,6 +99,16 @@ struct PopoverView: View {
         (MeterSettings.ProgressionMode(rawValue: progressionMode) ?? .left) == .used
     }
 
+    private var meterState: AppState.MainMeterSourceState { appState.mainMeterState(asOf: now) }
+
+    private var claudeReadings: [ProviderAccountSnapshot] {
+        appState.presentationAccounts(for: .claude, asOf: now)
+    }
+
+    private var codexRefreshError: String? {
+        appState.codexConfigurationError ?? appState.usageStore.reading(for: .codex)?.error
+    }
+
     private var selectedProvider: MainMeterProvider {
         MainMeterProvider(rawValue: mainMeterProvider) ?? .claude
     }
@@ -218,17 +228,19 @@ struct PopoverView: View {
 
     @ViewBuilder
     private var mainContent: some View {
-        if needsOnboarding {
+        if appState.isCheckingExistingUser {
+            loadingState
+        } else if needsOnboarding {
             onboardingContent
         } else if !appState.isActive {
             if hasAnyData { dataState } else { inactiveState }
         } else if !appState.hasEnabledDataSource {
             noSourcesState
-        } else if !hasAnyData && appState.mainMeterIsLoading {
+        } else if !hasAnyData && meterState.isLoading {
             loadingState
         } else if hasProviderState {
             dataState
-        } else if appState.mainMeterReading == nil, appState.mainMeterError != nil {
+        } else if meterState.selected == nil, meterState.error != nil {
             mainMeterErrorState
         } else if appState.lastError != nil {
             errorState
@@ -268,6 +280,12 @@ struct PopoverView: View {
     private var dataState: some View {
         VStack(spacing: 12) {
             primaryHeader
+            if selectedProvider != .codex, codexSourceEnabled, orderedCodexReadings.isEmpty,
+                let error = codexRefreshError
+            {
+                noticeBanner(
+                    error, systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
+            }
             cardList
         }
         .padding(.horizontal, 15)
@@ -287,11 +305,11 @@ struct PopoverView: View {
         case .claude:
             if showsClaude {
                 claudeNotices()
-                if appState.mainMeterReading == nil {
+                if meterState.selected == nil {
                     selectedMeterUnavailable(provider: .claude)
                 } else {
                     HeroView(
-                        summary: appState.mainMeterIsStale
+                        summary: meterState.isStale
                             ? HeroSummary.stale(
                                 providerName: "Claude",
                                 recovery: oauthMode.isEmpty
@@ -308,14 +326,18 @@ struct PopoverView: View {
             }
         case .codex:
             if codexSourceEnabled {
+                if let error = codexRefreshError {
+                    noticeBanner(
+                        error, systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
+                }
                 ForEach(orderedCodexReadings) { reading in
                     codexNotices(reading)
                 }
-                if appState.mainMeterReading == nil {
+                if meterState.selected == nil {
                     selectedMeterUnavailable(provider: .codex)
                 } else {
                     HeroView(
-                        summary: appState.mainMeterIsStale
+                        summary: meterState.isStale
                             ? HeroSummary.stale(
                                 providerName: "Codex", recovery: "Codex data is out of date")
                             : HeroSummary.make(
@@ -357,7 +379,7 @@ struct PopoverView: View {
 
     /// The card of the account that owns the hero and menu bar.
     private var mainMeterCardID: String? {
-        appState.mainMeterReading.map {
+        meterState.selected.map {
             selectedProvider == .claude
                 ? Self.claudeCardID($0.accountID) : Self.codexCardID($0.accountID)
         }
@@ -495,7 +517,8 @@ struct PopoverView: View {
                     claudeAccountCard(model)
                 } else {
                     AccountRingCard(
-                        model: model, now: now, thresholds: usageThresholds, usage: showsUsage)
+                        model: model, now: now, thresholds: usageThresholds, usage: showsUsage,
+                        showsProviderStatus: selectedProvider != .claude)
                 }
             }
         case .claudeExtraUsage:
@@ -526,7 +549,7 @@ struct PopoverView: View {
     private var selectedClaudeExtraUsage: (balance: BalanceItem, percent: Double?)? {
         guard
             let selected = appState.claudeAccounts.first(where: {
-                $0.id == appState.mainMeterReading?.accountID
+                $0.id == meterState.selected?.accountID
             }),
             let extra = selected.balances.first(where: { $0.id == "extra-usage" }),
             extra.value != nil || extra.limit != nil
@@ -542,10 +565,7 @@ struct PopoverView: View {
         let expanded = isExpanded(cardID)
         // Selected-provider failures show as notices above the hero.
         let isSecondary = selectedProvider != .claude
-        let status = Self.accountCardStatus(
-            accountError: model.lastError,
-            hasProviderError: isSecondary && appState.claudeRefreshError != nil,
-            isStale: isSecondary && appState.claudeIsStale)
+        let status = model.status(showsProviderStatus: isSecondary)
         return VStack(alignment: .leading, spacing: 8) {
             Button {
                 toggleCard(cardID)
@@ -660,17 +680,6 @@ struct PopoverView: View {
             ].compactMap { $0 }.joined(separator: ", "))
     }
 
-    nonisolated static func accountCardStatus(
-        accountError: String?,
-        hasProviderError: Bool,
-        isStale: Bool
-    ) -> (text: String, isFailure: Bool)? {
-        if let accountError { return (accountError, true) }
-        if hasProviderError { return ("Refresh failed · showing last known data", true) }
-        if isStale { return ("Data may be stale", false) }
-        return nil
-    }
-
     private func secondaryLimitRow(_ label: String, window: LimitWindow) -> some View {
         let resolved = window.resolved(asOf: now)
         let band = resolved.energyBand(thresholds: usageThresholds, asOf: now)
@@ -699,7 +708,7 @@ struct PopoverView: View {
         HeroView(
             summary: HeroSummary.unavailable(
                 providerName: provider.displayName,
-                detail: appState.mainMeterError
+                detail: meterState.error
                     ?? "Turn on \(provider.displayName) in Data settings"))
     }
 
@@ -719,7 +728,7 @@ struct PopoverView: View {
                     ? "key.slash.fill" : "clock.arrow.circlepath",
                 tint: issue.needsUserAction ? .pfEnergyLow : .pfInkMuted)
         }
-        if appState.claudeIsStale {
+        if claudeReadings.contains(where: \.isStale) {
             let message =
                 oauthMode.isEmpty
                 ? "Claude data is stale — connect OAuth in Settings"
@@ -758,7 +767,7 @@ struct PopoverView: View {
     }
 
     private func primaryOrdered(_ models: [AccountCardModel]) -> [AccountCardModel] {
-        guard let selectedID = appState.mainMeterReading?.accountID,
+        guard let selectedID = meterState.selected?.accountID,
             let index = models.firstIndex(where: { $0.id == selectedID }),
             index != models.startIndex
         else { return models }
@@ -769,8 +778,8 @@ struct PopoverView: View {
     }
 
     private var orderedCodexReadings: [ProviderAccountSnapshot] {
-        let selectedID = selectedProvider == .codex ? appState.mainMeterReading?.accountID : nil
-        return appState.codexAccounts.sorted { lhs, rhs in
+        let selectedID = selectedProvider == .codex ? meterState.selected?.accountID : nil
+        return appState.presentationAccounts(for: .codex, asOf: now).sorted { lhs, rhs in
             if lhs.id == selectedID { return true }
             if rhs.id == selectedID { return false }
             return lhs.label.localizedCaseInsensitiveCompare(rhs.label)
@@ -779,38 +788,25 @@ struct PopoverView: View {
     }
 
     private var codexAccountModels: [AccountCardModel] {
-        orderedCodexReadings.compactMap(Self.codexAccountModel)
+        orderedCodexReadings.compactMap {
+            Self.codexAccountModel($0, now: now, providerError: codexRefreshError)
+        }
     }
 
-    static func codexAccountModel(_ reading: ProviderAccountSnapshot) -> AccountCardModel? {
-        guard let normalized = MainMeterReading(account: reading, provider: .codex) else {
-            return nil
-        }
-        var model = AccountCardModel(mainMeterReading: normalized)
-        model.usageResets = reading.balances.first { $0.id == "usage-resets" }
-        return model
+    static func codexAccountModel(
+        _ reading: ProviderAccountSnapshot, now: Date = Date(), providerError: String? = nil
+    ) -> AccountCardModel? {
+        guard reading.observedAt != nil else { return nil }
+        return AccountCardModel(account: reading, now: now, providerError: providerError)
     }
 
     private var accountModels: [AccountCardModel] {
-        appState.claudeAccounts.map { account in
-            let windows = account.resolvedWindows(asOf: now)
-            func limit(_ window: UsageWindow?) -> LimitWindow {
-                LimitWindow(
-                    percentUsed: window?.isOverLimit == true ? 101 : window?.usedPercent,
-                    resetsAt: window?.resetAt)
-            }
-            return AccountCardModel(
-                id: account.id, label: account.label, plan: account.plan,
-                subtitle: account.subtitle, session: limit(windows.first { $0.kind == .session }),
-                week: limit(windows.first { $0.kind == .weekly }),
-                opus: windows.first { $0.id == "seven_day_opus" }.map { limit($0) },
-                usageResets: account.balances.first { $0.id == "usage-resets" },
-                scoped: windows.filter { $0.kind == .scoped && $0.id != "seven_day_opus" }.map {
-                    ScopedLimitWindow(id: $0.id, window: limit($0))
-                },
-                isDuplicateLogin: appState.claudeDiagnostics.duplicateAccountKeys.contains(
-                    account.id),
-                lastError: account.lastError)
+        claudeReadings.map { account in
+            var model = AccountCardModel(
+                account: account, now: now, providerError: appState.claudeRefreshError)
+            model.isDuplicateLogin = appState.claudeDiagnostics.duplicateAccountKeys.contains(
+                account.id)
+            return model
         }
     }
 
@@ -984,12 +980,15 @@ struct PopoverView: View {
         _ reading: ProviderAccountSnapshot,
         style: MeterSettings.CardStyle
     ) -> some View {
-        if style == .rings, let model = Self.codexAccountModel(reading) {
+        if style == .rings,
+            let model = Self.codexAccountModel(reading, now: now, providerError: codexRefreshError)
+        {
             AccountRingCard(
                 model: model,
                 now: now,
                 thresholds: usageThresholds,
-                usage: showsUsage)
+                usage: showsUsage,
+                showsProviderStatus: selectedProvider != .codex)
         } else {
             codexCard(reading, showsStatus: selectedProvider != .codex)
         }
@@ -1001,7 +1000,7 @@ struct PopoverView: View {
             noticeBanner(
                 "\(reading.label): \(error)",
                 systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
-        } else if MeterSettings.isSnapshotStale(lastPollAt: reading.observedAt, now: now) {
+        } else if reading.isStale {
             noticeBanner(
                 "\(reading.label) data may be outdated",
                 systemImage: "clock.fill", tint: .pfInkMuted)
@@ -1014,15 +1013,10 @@ struct PopoverView: View {
         _ account: ProviderAccountSnapshot,
         showsStatus: Bool = false
     ) -> some View {
-        let primary = account.windows.first { $0.id == "primary" }
-        let status =
-            showsStatus
-            ? Self.accountCardStatus(
-                accountError: account.lastError,
-                hasProviderError: false,
-                isStale: account.observedAt != nil
-                    && MeterSettings.isSnapshotStale(lastPollAt: account.observedAt, now: now))
-            : nil
+        let account = account.forPresentation(asOf: now)
+        let primary = Self.codexHeadlineWindow(account, asOf: now)
+        let model = AccountCardModel(account: account, now: now, providerError: codexRefreshError)
+        let status = model.status(showsProviderStatus: showsStatus)
         let displayPercent = codexDisplayPercent(primary)
         let band = EnergyBand(severity: primary?.severity(thresholds: usageThresholds) ?? .unknown)
         let tint: Color = band == .full ? .pfEnergyFull : band.color
@@ -1083,6 +1077,14 @@ struct PopoverView: View {
         .chunkyCard()
     }
 
+    nonisolated static func codexHeadlineWindow(
+        _ account: ProviderAccountSnapshot, asOf now: Date
+    ) -> UsageWindow? {
+        let account = account.forPresentation(asOf: now)
+        guard let primary = account.windows.first(where: { $0.id == "primary" }) else { return nil }
+        return account.bindingWindow(primary.kind)
+    }
+
     private func codexDisplayPercent(_ window: UsageWindow?) -> Double? {
         window?.displayPercent(showUsage: showsUsage)
     }
@@ -1091,7 +1093,7 @@ struct PopoverView: View {
         _ account: ProviderAccountSnapshot, asOf now: Date
     ) -> [BarWindow] {
         func limit(_ kind: UsageWindowKind) -> LimitWindow? {
-            account.windows.first { $0.kind == kind }.map {
+            account.forPresentation(asOf: now).bindingWindow(kind).map {
                 LimitWindow(
                     percentUsed: $0.isOverLimit ? 101 : $0.usedPercent, resetsAt: $0.resetAt)
             }
@@ -1123,12 +1125,12 @@ struct PopoverView: View {
         return count == 1 ? "1 usage reset available" : "\(count) usage resets available"
     }
 
-    private static var codexCreditsFormatter: NumberFormatter {
+    private static let codexCreditsFormatter: NumberFormatter = {
         let f = NumberFormatter()
         f.numberStyle = .decimal
         f.maximumFractionDigits = 1
         return f
-    }
+    }()
 
     // MARK: - Grok card (usage-based, local to the popover)
 
@@ -1303,7 +1305,7 @@ struct PopoverView: View {
         statusState(
             emoji: "⚠️",
             title: "Couldn't read \(selectedProvider.displayName)",
-            message: appState.mainMeterError ?? "Open Settings and check Data.",
+            message: meterState.error ?? "Open Settings and check Data.",
             primaryTitle: "Open Settings",
             primary: openSettingsAndCompleteOnboarding)
     }
@@ -1393,7 +1395,7 @@ struct PopoverView: View {
     }
 
     private var updatedText: String {
-        Self.updatedText(lastPollAt: appState.mainMeterLastSuccessfulAt, now: now)
+        Self.updatedText(lastPollAt: meterState.selected?.observedAt, now: now)
     }
 
     nonisolated static func updatedText(lastPollAt: Date?, now: Date) -> String {

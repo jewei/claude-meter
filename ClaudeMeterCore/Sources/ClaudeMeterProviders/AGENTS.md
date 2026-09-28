@@ -28,7 +28,9 @@ These rules cover implementation constraints.
   streamed-overflow cancellation, and dedicated `Timeout.TaskBudget`. Redirects keep
   the same HTTPS origin; credentials never go to another origin.
 - `.transient` retries only idempotent requests and selected transient errors, never 429.
-  It honors `Retry-After` and caps backoff at 8 s. OAuth uses `.none` and its own gate.
+  It honors `Retry-After` and caps only client-generated backoff at 8 s. A server delay
+  beyond the remaining send deadline returns the original response without retry.
+  OAuth uses `.none` and its own gate.
 - All `SecItem*` calls go through `KeychainGateway` with no-UI policy. Tests fail closed
   unless `CLAUDE_METER_ALLOW_LIVE_KEYCHAIN_TESTS=1`. Keep the dyld loaded-framework check
   for XCTest/Testing: process names and bundle paths miss `swiftpm-testing-helper`.

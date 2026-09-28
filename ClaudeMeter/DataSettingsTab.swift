@@ -613,10 +613,12 @@ private struct ConfigDirAccountsSection: View {
 }
 
 private struct CodexHomesSection: View {
-    let appState: AppState
+    @ObservedObject var appState: AppState
     @State private var homes: [String] = []
     @State private var names: [String: String] = [:]
     @State private var addError: String?
+    @State private var homeTask: Task<Void, Never>?
+    @State private var isUpdating = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -641,8 +643,11 @@ private struct CodexHomesSection: View {
 
             AddFolderButton(title: "Add Codex home…") { addHome() }
 
-            if let addError {
-                AccountFolderError(text: addError)
+            if appState.codexConfigurationIsLoading || isUpdating {
+                ProgressView().controlSize(.small)
+            }
+            if let error = addError ?? appState.codexConfigurationError {
+                AccountFolderError(text: error)
             }
 
             AccountFolderNote(
@@ -650,7 +655,15 @@ private struct CodexHomesSection: View {
                     "Each Codex home supplies separate Codex credentials. Accounts keep independent quotas, and each account has its own card in the popover."
             )
         }
+        .disabled(isUpdating)
+        .onDisappear {
+            homeTask?.cancel()
+            isUpdating = false
+        }
         .onAppear {
+            if appState.codexConfiguration.isEmpty, !appState.codexConfigurationIsLoading {
+                appState.codexConfigurationDidChange()
+            }
             homes = AppSettings.configuredCodexHomes
             names = AppSettings.codexAccountNames
         }
@@ -679,31 +692,67 @@ private struct CodexHomesSection: View {
         panel.prompt = "Add"
         panel.message = "Choose a Codex home containing auth.json or config.toml."
         guard panel.runModal() == .OK, let selected = panel.url else { return }
-        let url = selected.standardizedFileURL.resolvingSymlinksInPath()
-        let fileManager = FileManager.default
-        guard
-            fileManager.fileExists(atPath: url.appendingPathComponent("auth.json").path)
-                || fileManager.fileExists(atPath: url.appendingPathComponent("config.toml").path)
-        else {
-            addError = "That folder does not look like a Codex home."
-            return
-        }
-        addError = nil
         let existing = Set(appState.codexConfiguration.map(\.id))
-        guard !existing.contains(url.path) else { return }
-        homes.append(url.path)
-        AppSettings.configuredCodexHomes = homes
-        appState.codexConfigurationDidChange()
+        editHomes { homes in
+            let url = selected.standardizedFileURL.resolvingSymlinksInPath()
+            let files = FileManager.default
+            guard
+                files.fileExists(atPath: url.appendingPathComponent("auth.json").path)
+                    || files.fileExists(atPath: url.appendingPathComponent("config.toml").path)
+            else { throw HomeError.invalid }
+            return existing.contains(url.path) || homes.contains(url.path)
+                ? homes : homes + [url.path]
+        }
     }
 
     private func remove(_ account: CodexAccount) {
-        homes.removeAll {
-            URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath().path
-                == account.id
+        editHomes(removing: account.id) { homes in
+            homes.filter {
+                URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath().path
+                    != account.id
+            }
         }
-        AppSettings.configuredCodexHomes = homes
-        names.removeValue(forKey: account.id)
-        AppSettings.codexAccountNames = names
-        appState.codexConfigurationDidChange()
+    }
+
+    private func editHomes(
+        removing accountID: String? = nil,
+        _ operation: @escaping @Sendable ([String]) throws -> [String]
+    ) {
+        homeTask?.cancel()
+        let original = AppSettings.configuredCodexHomes
+        isUpdating = true
+        addError = nil
+        homeTask = Task {
+            do {
+                let updated = try await Timeout.run(
+                    seconds: 5, budget: AppSettings.configurationBudget
+                ) {
+                    try operation(original)
+                }
+                guard !Task.isCancelled else { return }
+                guard AppSettings.configuredCodexHomes == original else {
+                    isUpdating = false
+                    return
+                }
+                if let accountID {
+                    var currentNames = AppSettings.codexAccountNames
+                    currentNames.removeValue(forKey: accountID)
+                    names = currentNames
+                    AppSettings.codexAccountNames = currentNames
+                }
+                homes = updated
+                AppSettings.configuredCodexHomes = updated
+                appState.codexConfigurationDidChange()
+            } catch {
+                guard !Task.isCancelled else { return }
+                addError = DiagnosticsSanitizer.sanitize(error.localizedDescription)
+            }
+            if !Task.isCancelled { isUpdating = false }
+        }
+    }
+
+    private enum HomeError: LocalizedError {
+        case invalid
+        var errorDescription: String? { "That folder does not look like a Codex home." }
     }
 }

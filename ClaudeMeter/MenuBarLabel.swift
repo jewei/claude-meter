@@ -127,19 +127,21 @@ struct MenuBarLabel: View {
     }
 
     var body: some View {
+        let now = Date()
+        let state = appState.mainMeterState(asOf: now)
         let accessibilitySummary = MenuBarText.accessibilitySummary(
-            provider: appState.mainMeterProvider,
-            reading: appState.mainMeterReading,
+            provider: state.provider,
+            reading: state.selected,
             progression: progression,
             selection: selectedWindow,
             isActive: appState.isActive,
-            isStale: appState.mainMeterIsStale,
-            isLoading: appState.mainMeterIsLoading,
-            severity: appState.mainMeterSeverity,
-            now: Date())
+            isStale: state.isStale,
+            isLoading: state.isLoading,
+            severity: state.severity,
+            now: now)
         HStack(spacing: 4) {
-            iconView
-            if let text = leftText {
+            iconView(state)
+            if let text = leftText(state, now: now) {
                 Text(text)
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .monospacedDigit()
@@ -152,10 +154,10 @@ struct MenuBarLabel: View {
         .task(id: accessibilitySummary) {
             await MenuBarAccessibility.publish(accessibilitySummary)
         }
-        .task(id: appState.mainMeterSeverity) {
+        .task(id: state.severity) {
             // Announce the change, then settle: a state that can last days must not
             // keep the status item redrawing.
-            guard appState.mainMeterSeverity == .critical else {
+            guard state.severity == .critical else {
                 criticalPulseStart = nil
                 return
             }
@@ -170,16 +172,16 @@ struct MenuBarLabel: View {
     // MARK: - Icon
 
     @ViewBuilder
-    private var iconView: some View {
-        if appState.mainMeterIsLoading {
+    private func iconView(_ state: AppState.MainMeterSourceState) -> some View {
+        if state.isLoading {
             Image(systemName: "arrow.clockwise")
                 .font(.system(size: 12, weight: .bold))
                 .rotationEffect(.degrees(360))
                 .animation(
                     reduceMotion
                         ? nil : .linear(duration: 1).repeatForever(autoreverses: false),
-                    value: appState.mainMeterIsLoading)
-        } else if showsErrorIcon {
+                    value: state.isLoading)
+        } else if state.selected == nil && state.error != nil {
             Image(systemName: "bolt.trianglebadge.exclamationmark.fill")
                 .font(.system(size: 12, weight: .semibold))
                 .symbolRenderingMode(.hierarchical)
@@ -187,21 +189,21 @@ struct MenuBarLabel: View {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: "bolt.fill")
                     .font(.system(size: 13, weight: .bold))
-                statusBadge
+                statusBadge(state)
             }
         }
     }
 
     @ViewBuilder
-    private var statusBadge: some View {
+    private func statusBadge(_ state: AppState.MainMeterSourceState) -> some View {
         if !appState.isActive {
             EmptyView()
-        } else if appState.mainMeterIsStale {
+        } else if state.isStale {
             dot(Color.secondary)
-        } else if appState.mainMeterSeverity == .overLimit {
+        } else if state.severity == .overLimit {
             tappedOutBadge
         } else {
-            switch appState.mainMeterSeverity {
+            switch state.severity {
             case .critical:
                 if let start = criticalPulseStart, !reduceMotion {
                     pulsingDot(.pfEnergyEmpty, start: start)
@@ -251,32 +253,27 @@ struct MenuBarLabel: View {
             .offset(x: 5, y: -4)
     }
 
-    private var showsErrorIcon: Bool {
-        appState.mainMeterReading == nil && appState.mainMeterError != nil
-    }
-
     // MARK: - Main-meter number
 
-    private var leftText: String? {
+    private func leftText(_ state: AppState.MainMeterSourceState, now: Date) -> String? {
         // Hide stale numbers so cached quota cannot be mistaken for a fresh reading.
-        guard appState.isActive, !appState.mainMeterIsStale else { return nil }
+        guard appState.isActive, !state.isStale else { return nil }
         _ = mainMeterProvider
         _ = claudeAccountPin
         _ = codexAccountPin
-        let now = Date()
         switch selectedWindow {
         case .fiveHour:
-            guard let window = appState.mainMeterReading?.limits.sessionOrWeekly(asOf: now)
+            guard let window = state.selected?.limits.sessionOrWeekly(asOf: now)
             else { return nil }
             return part(
                 window.window, suffix: window.scope == .session ? "5h" : "7d", now: now)
         case .sevenDay:
             return part(
-                appState.mainMeterReading?.limits.currentWeekAllModels,
+                state.selected?.limits.currentWeekAllModels,
                 suffix: "7d",
                 now: now)
         case .both:
-            let limits = appState.mainMeterReading?.limits
+            let limits = state.selected?.limits
             let parts = [
                 part(limits?.currentSession, suffix: "5h", now: now),
                 part(limits?.currentWeekAllModels, suffix: "7d", now: now),

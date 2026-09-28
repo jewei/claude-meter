@@ -24,7 +24,12 @@ final class AppState: ObservableObject {
     /// Configured Codex homes, canonicalized when the configuration changes so that
     /// rendering does no path resolution. The adapter resolves its own copy for each
     /// refresh; this list only labels and orders accounts.
-    private(set) var codexConfiguration: [CodexAccount] = AppSettings.codexAccounts()
+    @Published private(set) var codexConfiguration: [CodexAccount] = []
+    @Published private(set) var codexConfigurationError: String?
+    @Published private(set) var codexConfigurationIsLoading = false
+    @Published private(set) var isCheckingExistingUser = false
+    private var configurationTask: Task<Void, Never>?
+    private var configurationGeneration = UUID()
 
     var codexIsLoading: Bool { usageStore.refreshing.contains(.codex) }
     var codexAccounts: [ProviderAccountSnapshot] {
@@ -91,28 +96,51 @@ final class AppState: ObservableObject {
         MeterSettings.resolvedMainMeterProvider()
     }
 
-    private struct MainMeterSourceState {
+    struct MainMeterSourceState {
+        let provider: MainMeterProvider
         let readings: [MainMeterReading]
         let selected: MainMeterReading?
         let isLoading: Bool
         let error: String?
+        let severity: UsageSeverity
+        var isStale: Bool { selected?.sourceMarkedStale ?? false }
     }
 
-    private var mainMeterSourceState: MainMeterSourceState {
+    func presentationAccounts(for provider: ProviderID, asOf now: Date) -> [ProviderAccountSnapshot]
+    {
+        let state = usageStore.reading(for: provider)
+        let accounts: [ProviderAccountSnapshot]
+        switch provider {
+        case .claude: accounts = claudeAccounts
+        case .codex: accounts = codexAccounts
+        case .cursor, .grok: accounts = state?.value?.accounts ?? []
+        }
+        return accounts.map {
+            $0.forPresentation(asOf: now, providerIsStale: state?.isStale == true)
+        }
+    }
+
+    func mainMeterState(asOf now: Date) -> MainMeterSourceState {
         let provider = mainMeterProvider
         let enabled =
             provider == .claude ? AppSettings.oauthSourceEnabled : AppSettings.codexSourceEnabled
-        let loading = provider == .claude ? claudeIsLoading : codexIsLoading
+        let loading =
+            provider == .claude ? claudeIsLoading : codexIsLoading || codexConfigurationIsLoading
         guard enabled else {
             return MainMeterSourceState(
+                provider: provider,
                 readings: [], selected: nil, isLoading: loading,
-                error: "\(provider.displayName) is not enabled in Data settings.")
+                error: "\(provider.displayName) is not enabled in Data settings.",
+                severity: .unknown)
         }
-        let accounts = provider == .claude ? claudeAccounts : codexAccounts
+        let providerID: ProviderID = provider == .claude ? .claude : .codex
+        let accounts = presentationAccounts(for: providerID, asOf: now)
         let selected = ProviderAccountSelection.primary(
             from: accounts,
-            pinnedAccountID: Self.pinnedAccountID(for: provider), asOf: Date())
-        let reading = selected.flatMap { MainMeterReading(account: $0, provider: provider) }
+            pinnedAccountID: Self.pinnedAccountID(for: provider), asOf: now)
+        let reading = selected.flatMap {
+            MainMeterReading(account: $0, provider: provider, now: now)
+        }
         let error: String?
         if let pin = Self.pinnedAccountID(for: provider) {
             error =
@@ -126,10 +154,22 @@ final class AppState: ObservableObject {
                 accounts.compactMap(\.lastError).first
                 ?? (reading == nil ? "\(provider.displayName) has no usage reading." : nil)
         }
+        let readings = accounts.compactMap {
+            MainMeterReading(account: $0, provider: provider, now: now)
+        }
+        let considered = MainMeterPolicy.considered(
+            readings, pinnedAccountID: Self.pinnedAccountID(for: provider))
+        let severity = considered.reduce(UsageSeverity.unknown) {
+            UsageSeverity.highest($0, $1.severity(thresholds: Self.currentThresholds(), asOf: now))
+        }
         return MainMeterSourceState(
-            readings: accounts.compactMap { MainMeterReading(account: $0, provider: provider) },
-            selected: reading, isLoading: loading, error: error)
+            provider: provider, readings: readings,
+            selected: reading, isLoading: loading,
+            error: (provider == .codex ? codexConfigurationError : nil)
+                ?? usageStore.reading(for: providerID)?.error ?? error, severity: severity)
     }
+
+    private var mainMeterSourceState: MainMeterSourceState { mainMeterState(asOf: Date()) }
 
     /// All usable readings for the selected provider. Ordering is stable; the
     /// selection policy chooses the nearest or explicitly pinned account.
@@ -150,22 +190,11 @@ final class AppState: ObservableObject {
     }
 
     var mainMeterSeverity: UsageSeverity {
-        let thresholds = Self.currentThresholds()
-        let now = Date()
-        return mainMeterLimitSets.reduce(.unknown) { result, limits in
-            limits.bindingWindows.reduce(result) { current, descriptor in
-                UsageSeverity.highest(
-                    current,
-                    thresholds.severity(
-                        for: descriptor.window.resolved(asOf: now).percentUsed))
-            }
-        }
+        mainMeterSourceState.severity
     }
 
     var mainMeterIsStale: Bool {
-        guard let reading = mainMeterReading else { return false }
-        return reading.sourceMarkedStale
-            || MeterSettings.isSnapshotStale(lastPollAt: reading.observedAt)
+        mainMeterSourceState.isStale
     }
 
     var mainMeterLastSuccessfulAt: Date? { mainMeterReading?.observedAt }
@@ -191,10 +220,10 @@ final class AppState: ObservableObject {
                     thresholds: MeterSettings.currentThresholds())
             }),
             CodexProviderAdapter(configuration: {
-                await Task.detached(priority: .utility) {
-                    CodexConfiguration(
-                        accounts: AppSettings.codexAccounts())
-                }.value
+                let paths = AppSettings.codexHomePaths()
+                let names = AppSettings.codexAccountNames
+                return try await CodexConfiguration(
+                    accounts: AppSettings.loadCodexAccounts(paths: paths, names: names))
             }), CursorProviderAdapter(), GrokProviderAdapter(),
         ])
         self.refreshScheduler = RefreshScheduler(usageStore: usageStore)
@@ -233,17 +262,39 @@ final class AppState: ObservableObject {
         self.appUpdater = appUpdater
         appUpdater.appState = self
         observeUsageStore()
-        if !onboardingIsComplete, hasExistingUserEvidence {
-            onboardingIsComplete = true
-            UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
-        }
+        if AppSettings.codexSourceEnabled { codexConfigurationDidChange() }
         if !onboardingIsComplete {
+            isCheckingExistingUser = true
+            let codexPaths = AppSettings.codexSourceEnabled ? AppSettings.codexHomePaths() : []
             Task { [weak self] in
-                guard let self,
-                    let provider = self.usageStore.provider(for: .claude) as? ClaudeProviderAdapter,
-                    await provider.hasPersistedObservation()
-                else { return }
-                self.completeOnboarding()
+                let evidence =
+                    (try? await Timeout.run(seconds: 5, budget: AppSettings.evidenceBudget) {
+                        Self.existingUserEvidenceIsPresent(
+                            snapshotExists: false,
+                            automaticOAuthAvailability: OAuthKeychain.credentialAvailability(),
+                            manualOAuthAvailability: OAuthKeychain.manualCredentialAvailability(),
+                            cursorStateExists: CursorTokenStore.isStateDBPresent(),
+                            codexUsageExists: false,
+                            codexConfigurationExists: codexPaths.contains { path in
+                                FileManager.default.fileExists(
+                                    atPath: URL(fileURLWithPath: path).appendingPathComponent(
+                                        "auth.json"
+                                    ).path)
+                                    || FileManager.default.fileExists(
+                                        atPath: URL(fileURLWithPath: path).appendingPathComponent(
+                                            "config.toml"
+                                        ).path)
+                            })
+                    }) ?? false
+                let persisted =
+                    evidence
+                    ? false
+                    : (try? await Timeout.run(seconds: 5, budget: AppSettings.evidenceBudget) {
+                        await claudeProvider?.hasPersistedObservation() ?? false
+                    }) ?? false
+                guard let self else { return }
+                if evidence || persisted { self.completeOnboarding() }
+                self.isCheckingExistingUser = false
             }
         }
         refreshScheduler.update(configuration: refreshConfiguration)
@@ -251,12 +302,14 @@ final class AppState: ObservableObject {
 
     init(
         usageStore: UsageStore = UsageStore(providers: []),
-        onboardingIsComplete: Bool = true
+        onboardingIsComplete: Bool = true,
+        codexConfiguration: [CodexAccount] = []
     ) {
         self.usageStore = usageStore
         self.refreshScheduler = RefreshScheduler(
             usageStore: usageStore, powerMonitor: nil)
         self.onboardingIsComplete = onboardingIsComplete
+        self.codexConfiguration = codexConfiguration
         let suiteName = "ClaudeMeter-AppState-\(UUID().uuidString)"
         self.activationDefaults = UserDefaults(suiteName: suiteName)!
         self.ephemeralDefaultsSuiteName = suiteName
@@ -275,6 +328,7 @@ final class AppState: ObservableObject {
     }
 
     deinit {
+        configurationTask?.cancel()
         if let ephemeralDefaultsSuiteName {
             UserDefaults(suiteName: ephemeralDefaultsSuiteName)?.removePersistentDomain(
                 forName: ephemeralDefaultsSuiteName)
@@ -285,7 +339,12 @@ final class AppState: ObservableObject {
 
     func refreshNow() { refreshScheduler.refreshNow() }
 
-    func popoverDidOpen() { refreshScheduler.popoverDidOpen() }
+    func popoverDidOpen() {
+        if AppSettings.codexSourceEnabled, codexConfigurationError != nil {
+            codexConfigurationDidChange()
+        }
+        refreshScheduler.popoverDidOpen()
+    }
 
     var claudeIsStale: Bool {
         claudeAccounts.contains {
@@ -321,13 +380,52 @@ final class AppState: ObservableObject {
 
     func providerEnablementDidChange() {
         hasEnabledDataSource = AppSettings.hasEnabledDataSource
+        if AppSettings.codexSourceEnabled, codexConfiguration.isEmpty, !codexConfigurationIsLoading
+        {
+            codexConfigurationDidChange()
+        }
         refreshScheduler.update(configuration: refreshConfiguration)
     }
 
     func codexConfigurationDidChange() {
-        objectWillChange.send()
-        codexConfiguration = AppSettings.codexAccounts()
-        refreshScheduler.refresh([.codex])
+        let paths = AppSettings.codexHomePaths()
+        let names = AppSettings.codexAccountNames
+        reloadCodexConfiguration {
+            try await AppSettings.loadCodexAccounts(paths: paths, names: names)
+        }
+    }
+
+    @discardableResult
+    func reloadCodexConfiguration(
+        load: @escaping @Sendable () async throws -> [CodexAccount]
+    ) -> Task<Void, Never> {
+        configurationTask?.cancel()
+        let generation = UUID()
+        configurationGeneration = generation
+        usageStore.cancel([.codex])
+        codexConfiguration = []
+        codexConfigurationError = nil
+        codexConfigurationIsLoading = true
+        let task = Task { [weak self] in
+            do {
+                let accounts = try await load()
+                guard let self, self.configurationGeneration == generation, !Task.isCancelled else {
+                    return
+                }
+                self.codexConfiguration = accounts
+                self.codexConfigurationIsLoading = false
+                self.refreshScheduler.refresh([.codex])
+            } catch {
+                guard let self, self.configurationGeneration == generation, !Task.isCancelled else {
+                    return
+                }
+                self.codexConfigurationError = DiagnosticsSanitizer.sanitize(
+                    error.localizedDescription)
+                self.codexConfigurationIsLoading = false
+            }
+        }
+        configurationTask = task
+        return task
     }
 
     /// A rename changes labels only. It needs no path resolution and no refresh.
@@ -369,46 +467,23 @@ final class AppState: ObservableObject {
         refreshScheduler.update(configuration: refreshConfiguration)
     }
 
-    /// Existing installs must not see first-run onboarding after an upgrade.
-    /// Keychain probes are attributes-only and never read credential contents.
-    private var hasExistingUserEvidence: Bool {
-        Self.existingUserEvidenceIsPresent(
-            snapshotExists: claudeSnapshot != nil,
-            automaticOAuthAvailability: OAuthKeychain.credentialAvailability(),
-            manualOAuthAvailability: OAuthKeychain.manualCredentialAvailability(),
-            cursorStateExists: CursorTokenStore.isStateDBPresent(),
-            codexUsageExists: codexAccounts.contains(where: { $0.observedAt != nil }),
-            codexConfigurationExists: Self.codexConfigurationExists
-        )
-    }
-
-    /// Pure onboarding-decision seam. A transient Keychain error is not evidence
+    /// Stop once a probe proves an existing user. A transient Keychain error is not evidence
     /// that a credential exists, so a new user still sees onboarding while the
     /// Keychain is locked or otherwise unavailable.
     nonisolated static func existingUserEvidenceIsPresent(
-        snapshotExists: Bool,
-        automaticOAuthAvailability: KeychainCredentialAvailability,
-        manualOAuthAvailability: KeychainCredentialAvailability,
-        cursorStateExists: Bool,
-        codexUsageExists: Bool,
-        codexConfigurationExists: Bool
+        snapshotExists: @autoclosure () -> Bool,
+        automaticOAuthAvailability: @autoclosure () -> KeychainCredentialAvailability,
+        manualOAuthAvailability: @autoclosure () -> KeychainCredentialAvailability,
+        cursorStateExists: @autoclosure () -> Bool,
+        codexUsageExists: @autoclosure () -> Bool,
+        codexConfigurationExists: @autoclosure () -> Bool
     ) -> Bool {
-        snapshotExists
-            || automaticOAuthAvailability == .available
-            || manualOAuthAvailability == .available
-            || cursorStateExists
-            || codexUsageExists
-            || codexConfigurationExists
-    }
-
-    private static var codexConfigurationExists: Bool {
-        guard AppSettings.codexSourceEnabled else { return false }
-        return AppSettings.codexAccounts().contains { account in
-            FileManager.default.fileExists(
-                atPath: account.home.appendingPathComponent("auth.json").path)
-                || FileManager.default.fileExists(
-                    atPath: account.home.appendingPathComponent("config.toml").path)
-        }
+        snapshotExists()
+            || automaticOAuthAvailability() == .available
+            || manualOAuthAvailability() == .available
+            || cursorStateExists()
+            || codexUsageExists()
+            || codexConfigurationExists()
     }
 
     static func currentThresholds() -> UsageThresholds {

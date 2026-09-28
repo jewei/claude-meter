@@ -100,6 +100,235 @@ private struct RecordingProvider: UsageProvider {
 
 @Suite("App logic", .serialized)
 struct AppLogicTests {
+    @Test("An available startup credential stops later evidence probes")
+    func startupEvidenceShortCircuits() {
+        var laterCalls = 0
+        func laterProbe() -> KeychainCredentialAvailability {
+            laterCalls += 1
+            return .temporarilyUnavailable
+        }
+        let evidence = AppState.existingUserEvidenceIsPresent(
+            snapshotExists: false, automaticOAuthAvailability: .available,
+            manualOAuthAvailability: laterProbe(), cursorStateExists: false,
+            codexUsageExists: false, codexConfigurationExists: false)
+        #expect(evidence)
+        #expect(laterCalls == 0)
+    }
+
+    @Test("Windows of the same kind use the highest usage across card styles")
+    @MainActor
+    func sameKindWindows() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let account = ProviderAccountSnapshot(
+            id: "work", label: "Work",
+            windows: [
+                UsageWindow(
+                    id: "primary", title: "Week", kind: .weekly, usedPercent: 15, resetAt: nil),
+                UsageWindow(
+                    id: "secondary", title: "Week", kind: .weekly, usedPercent: 95, resetAt: nil),
+            ], observedAt: now)
+        let ring = try #require(PopoverView.codexAccountModel(account, now: now))
+        let meter = try #require(MainMeterReading(account: account, provider: .codex, now: now))
+        #expect(ring.week.percentUsed == 95)
+        #expect(PopoverView.codexHeadlineWindow(account, asOf: now)?.usedPercent == 95)
+        #expect(PopoverView.codexBarWindows(account, asOf: now).first?.window.percentUsed == 95)
+        #expect(meter.limits.currentWeekAllModels.percentUsed == 95)
+        #expect(
+            HeroSummary.make(models: [ring], thresholds: .default, now: now).title
+                == "Almost tapped out")
+    }
+
+    @Test("Equal windows of one kind preserve the later or unknown limiting reset")
+    @MainActor
+    func sameKindResetTies() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        for later in [now.addingTimeInterval(86400), nil] {
+            let account = ProviderAccountSnapshot(
+                id: "work", label: "Work",
+                windows: [
+                    UsageWindow(
+                        id: "primary", title: "Week", kind: .weekly, usedPercent: 95,
+                        resetAt: now.addingTimeInterval(600)),
+                    UsageWindow(
+                        id: "secondary", title: "Week", kind: .weekly, usedPercent: 95,
+                        resetAt: later),
+                ], observedAt: now)
+            let ring = try #require(PopoverView.codexAccountModel(account, now: now))
+            #expect(ring.week.resetsAt == later)
+            #expect(PopoverView.codexHeadlineWindow(account, asOf: now)?.resetAt == later)
+            #expect(PopoverView.codexBarWindows(account, asOf: now).first?.window.resetsAt == later)
+            #expect(
+                MainMeterReading(account: account, provider: .codex, now: now)?.limits
+                    .currentWeekAllModels.resetsAt == later)
+            #expect(ring.limitingReset(now) == (later == nil ? nil : "Weekly resets in 24h"))
+        }
+    }
+
+    @Test("Equal limiting usage selects the later reset and keeps unknown reset times unknown")
+    func tiedHeroReset() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        var model = AccountCardModel(
+            id: "work", label: "Work", plan: nil, subtitle: nil,
+            session: LimitWindow(percentUsed: 95, resetsAt: now.addingTimeInterval(600)),
+            week: LimitWindow(percentUsed: 95, resetsAt: now.addingTimeInterval(86400)))
+        #expect(model.limitingReset(now) == "Weekly resets in 24h")
+        model.week = LimitWindow(percentUsed: 95)
+        #expect(model.limitingReset(now) == nil)
+    }
+
+    @Test(
+        .enabled(
+            if: ProcessInfo.processInfo.environment["CLAUDE_METER_MEASURE_PRESENTATION"] == "1"))
+    @MainActor
+    func presentationBenchmark() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let suite = "PresentationBenchmark-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let iterations = 500
+        var report: [String] = []
+        for count in [1, 5, 20] {
+            let accounts = (0..<count).map { index in
+                ProviderAccountSnapshot(
+                    id: "synthetic-\(index)", label: "Account \(index)",
+                    windows: [
+                        UsageWindow(
+                            id: "primary", title: "5h", kind: .session,
+                            usedPercent: Double(index * 7 % 100),
+                            resetAt: now.addingTimeInterval(3600)),
+                        UsageWindow(
+                            id: "secondary", title: "7d", kind: .weekly,
+                            usedPercent: Double(index * 11 % 100),
+                            resetAt: now.addingTimeInterval(86400)),
+                    ], observedAt: now)
+            }
+            var samples: [Double] = []
+            var checksum = 0
+            for round in 0..<6 {
+                let start = ContinuousClock.now
+                for _ in 0..<iterations {
+                    let displayed = accounts.map {
+                        $0.forPresentation(asOf: now, defaults: defaults)
+                    }
+                    let selected = ProviderAccountSelection.primary(
+                        from: displayed, pinnedAccountID: nil, asOf: now)
+                    let models = displayed.map { AccountCardModel(account: $0, now: now) }
+                    checksum +=
+                        HeroSummary.make(models: models, thresholds: .default, now: now).subtitle
+                        .count
+                    checksum += selected?.id.count ?? 0
+                    for account in displayed {
+                        checksum += PopoverView.codexBarWindows(account, asOf: now).count
+                        checksum +=
+                            MainMeterReading(
+                                account: account, provider: .codex, now: now, defaults: defaults)?
+                            .accountID.count ?? 0
+                    }
+                }
+                let elapsed = start.duration(to: .now).components
+                if round > 0 {
+                    samples.append(Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18)
+                }
+            }
+            #expect(checksum > 0)
+            let microseconds = samples.sorted()[samples.count / 2] / Double(iterations) * 1e6
+            report.append(
+                "PRESENTATION accounts=\(count) iterations=\(iterations) median_us_per_batch=\(String(format: "%.3f", microseconds))"
+            )
+        }
+        let output = try #require(
+            ProcessInfo.processInfo.environment["CLAUDE_METER_PRESENTATION_OUTPUT"])
+        try report.joined(separator: "\n").write(toFile: output, atomically: true, encoding: .utf8)
+    }
+
+    @Test("Headers, bars, rings and spoken values share reset and stale rules")
+    @MainActor
+    func resolvedAccountPresentation() throws {
+        let suite = "Presentation-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let reset = Date(timeIntervalSince1970: 1_800_000_000)
+        for state in ["current", "source", "provider", "age"] {
+            for offset in [-1.0, 0, 1] {
+                let now = reset.addingTimeInterval(offset)
+                let raw = ProviderAccountSnapshot(
+                    id: "work", label: "Work",
+                    windows: [
+                        UsageWindow(
+                            id: "primary", title: "5h", kind: .session,
+                            usedPercent: 90, resetAt: reset)
+                    ],
+                    observedAt: reset.addingTimeInterval(state == "age" ? -1200 : -2),
+                    isStale: state == "source")
+                let account = raw.forPresentation(
+                    asOf: now, providerIsStale: state == "provider", defaults: defaults)
+                let used: Double? = offset < 0 ? 90 : (state == "current" ? 0 : nil)
+                let meter = try #require(
+                    MainMeterReading(
+                        account: account, provider: .codex, now: now, defaults: defaults))
+                let ring = try #require(PopoverView.codexAccountModel(account, now: now))
+                let bars = PopoverView.codexBarWindows(account, asOf: now)
+                let header = PopoverView.codexHeadlineWindow(account, asOf: now)
+                #expect(header?.usedPercent == used)
+                #expect(bars.first?.window.percentUsed == used)
+                #expect(ring.session.percentUsed == used)
+                #expect(meter.limits.currentSession.percentUsed == used)
+                #expect(raw.windows[0].usedPercent == 90)
+                #expect(account.observedAt == raw.observedAt)
+                for progression in [MeterSettings.ProgressionMode.left, .used] {
+                    let spoken = MenuBarText.accessibilitySummary(
+                        provider: .codex, reading: meter,
+                        progression: progression, selection: .fiveHour, isActive: true,
+                        isStale: account.isStale, isLoading: false,
+                        severity: meter.severity(asOf: now), now: now)
+                    if state == "current" {
+                        let value = progression == .used ? used! : 100 - used!
+                        #expect(spoken.contains("\(Int(value)) percent"))
+                    } else {
+                        #expect(spoken.contains("Data is stale"))
+                        #expect(!spoken.contains("percent"))
+                    }
+                }
+            }
+        }
+    }
+
+    @Test("Card conversion keeps account errors and secondary provider status")
+    @MainActor
+    func cardFailureProjection() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        var account = ProviderAccountSnapshot(
+            id: "work", label: "Work",
+            windows: [
+                UsageWindow(
+                    id: "primary", title: "5h", kind: .session, usedPercent: 20, resetAt: nil)
+            ],
+            observedAt: now, lastError: "Login required")
+        let model = try #require(
+            PopoverView.codexAccountModel(account, now: now, providerError: "Offline"))
+        #expect(model.status(showsProviderStatus: true)?.text == "Login required")
+        #expect(model.status(showsProviderStatus: false)?.text == "Login required")
+        account.lastError = nil
+        let providerFailure = AccountCardModel(account: account, now: now, providerError: "Offline")
+        #expect(providerFailure.status(showsProviderStatus: true)?.isFailure == true)
+        #expect(providerFailure.status(showsProviderStatus: false) == nil)
+        account.isStale = true
+        let stale = AccountCardModel(account: account, now: now)
+        #expect(stale.status(showsProviderStatus: true)?.text == "Data may be stale")
+    }
+
+    @Test("Hero reset identifies the limiting window, not an earlier session reset")
+    func limitingHeroReset() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let model = AccountCardModel(
+            id: "work", label: "Work", plan: nil, subtitle: nil,
+            session: LimitWindow(percentUsed: 20, resetsAt: now.addingTimeInterval(600)),
+            week: LimitWindow(percentUsed: 100, resetsAt: now.addingTimeInterval(6 * 86400)))
+        let hero = HeroSummary.make(models: [model], thresholds: .default, now: now)
+        #expect(hero.subtitle.contains("Weekly resets in 6d"))
+        #expect(!hero.subtitle.contains("10m"))
+    }
+
     private struct CodexDisplayProvider: UsageProvider {
         var id: ProviderID { snapshot.provider }
         let snapshot: ProviderSnapshot
@@ -149,7 +378,9 @@ struct AppLogicTests {
         ])
         store.setEnabled(.codex, enabled: true)
         let app = AppState(
-            usageStore: store, onboardingIsComplete: false)
+            usageStore: store, onboardingIsComplete: false,
+            codexConfiguration: AppSettings.resolveCodexAccounts(
+                paths: [homeA, homeB], names: [homeA: "Personal", homeB: "Work"]))
         await store.refresh([.codex])
         #expect(app.codexAccounts.map(\.label) == ["Personal", "Work"])
         #expect(app.mainMeterReading?.accountID == homeB)
@@ -160,7 +391,9 @@ struct AppLogicTests {
         defaults.set(homeA, forKey: MeterSettings.codexMainMeterAccountKey)
         #expect(app.mainMeterReading?.accountID == homeA)
         defaults.set([homeB], forKey: AppSettings.configuredCodexHomesKey)
-        app.codexConfigurationDidChange()
+        await app.reloadCodexConfiguration {
+            AppSettings.resolveCodexAccounts(paths: [homeB], names: [:])
+        }.value
         #expect(app.mainMeterReading == nil)
         #expect(app.mainMeterError?.contains("no longer configured") == true)
         #expect(app.codexAccounts.map(\.id) == [homeB])
@@ -439,7 +672,7 @@ struct AppLogicTests {
         #expect(meter.sessionLabel == "5h")
         #expect(meter.limits.currentSession.percentUsed == 25)
         #expect(meter.observedAt == now)
-        let model = try #require(PopoverView.codexAccountModel(account))
+        let model = try #require(PopoverView.codexAccountModel(account, now: now))
         #expect(model.usageResets?.value == 3)
         #expect(model.usageResets?.details?.first?.expiresAt == now)
     }
@@ -472,14 +705,10 @@ struct AppLogicTests {
                 plan: raw,
                 source: .appServer,
                 updatedAt: Date())
-            let reading = MainMeterReading(
-                provider: .codex,
-                accountID: "codex",
-                accountLabel: "Codex",
-                plan: usage.displayPlanName,
-                limits: LimitInfo(currentSession: LimitWindow(percentUsed: 20)),
-                observedAt: Date())
-            let model = AccountCardModel(mainMeterReading: reading)
+            let now = Date()
+            let account = usage.providerAccountSnapshot(
+                id: "codex", label: "Codex", observedAt: now)
+            let model = AccountCardModel(account: account, now: now)
             #expect(PlanBadge.style(for: model.plan ?? "").text == expected)
         }
         #expect(PlanBadge.style(for: "Pro").text == "PRO")
@@ -683,24 +912,6 @@ struct AppLogicTests {
             PopoverView.usageResetsSummary(
                 BalanceItem(id: "usage-resets", title: "Usage limit resets", value: 2))
                 == "2 usage resets available")
-    }
-
-    @Test("Secondary account cards keep failure and stale states visible")
-    func secondaryAccountCardStatus() {
-        #expect(
-            PopoverView.accountCardStatus(
-                accountError: "Login required", hasProviderError: true, isStale: true)?.text
-                == "Login required")
-        #expect(
-            PopoverView.accountCardStatus(
-                accountError: nil, hasProviderError: true, isStale: false)?.text
-                == "Refresh failed · showing last known data")
-        #expect(
-            PopoverView.accountCardStatus(
-                accountError: nil, hasProviderError: false, isStale: true)?.isFailure == false)
-        #expect(
-            PopoverView.accountCardStatus(
-                accountError: nil, hasProviderError: false, isStale: false) == nil)
     }
 
     @Test("A saved card order wins, new cards follow, and hidden cards keep their place")

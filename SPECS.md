@@ -445,7 +445,13 @@ retains that reading and records the attempt error/time separately from the last
 time; observation staleness remains age-based. Healthy accounts continue updating when
 another account fails. At most three accounts run at once; a free slot starts the next
 account, so a stalled account does not delay the others. All accounts share one
-60-second provider deadline. Main-meter normalization classifies windows by reported
+60-second provider deadline, starting before configuration and archive preflight.
+Configuration and archive waits share a two-operation capacity limit. Timed-out or
+canceled work holds its slot until it ends, so repeated refreshes cannot queue unbounded
+preflight work. The remaining deadline limits identity checks and account requests.
+A preflight failure clears retained quota because ownership could not be verified;
+cancellation keeps the existing reading.
+Main-meter normalization classifies windows by reported
 duration: up to 24 hours is session, longer is weekly. Primary/secondary position is the
 fallback only when duration is absent.
 
@@ -496,8 +502,22 @@ Severity always uses percent used and the configured warning/critical thresholds
 progression mode does not change policy. Unknown values render neutral placeholders and
 never use an empty/tapped-out phrase.
 
+Account presentation combines explicit account staleness, outer reading-state staleness,
+and observation age before resolving windows. An expired stale window is unknown; an
+expired current window is zero used with no reset time. Selection, card headers, bars,
+rings, and spoken summaries use that same rule and one time per render. This is a derived
+value; UsageStore retains the original observation and timestamp. If several binding
+windows have the same kind, cards and the menu bar use the highest usage. The Codex
+headline uses that value for the primary window's kind. A failed request and
+an old observation remain separate facts. Account errors stay on both card styles;
+secondary-provider cards also show provider failures or stale status.
+
 Reset countdowns use provider-reported reset timestamps minus the current time.
 `ResetPhrase` formats these durations. Usage percentages do not change reset timing.
+The hero names the most constrained limit window and its reset. Equal usage selects the
+later reset; an unknown reset time stays unknown. Changed decision: the earliest reset
+from any window no longer supplies the hero's refill text, because a different limit
+can still prevent use.
 
 The menu-bar dot uses the highest severity from the selected main provider across all
 binding windows of the pinned account, or all of that provider's accounts when unpinned.
@@ -563,6 +583,15 @@ onboarding when a snapshot exists, an attributes-only OAuth lookup finds a crede
 state exists, or an enabled Codex home has `auth.json`/`config.toml`. A temporarily
 unavailable Keychain is not credential evidence. Rendering onboarding never reads
 credential contents or secret Keychain data.
+Startup evidence checks run off MainActor with five-second waits and two worker slots.
+A positive probe ends the search. A blocked credential probe cannot prevent the separate
+persisted-observation check from using the remaining slot.
+The UI shows a loading state while it checks existing-user evidence. Codex configuration
+and Settings home checks run off MainActor with five-second waits and two worker slots.
+Blocked work retains its slot until it ends. Only the newest configuration result can
+update labels and ordering. Until it resolves, account selection stays unavailable.
+Opening the popover retries a failed configuration check. Disabled Codex does no launch
+path resolution; opening its Settings section can request the configuration.
 
 All rolling-window reset/refill copy uses Core `ResetPhrase`: minutes below one hour, hours
 below 48 hours, and days plus remaining whole hours from 48 hours, such as `6d 7h`. Zero
@@ -690,6 +719,11 @@ and cancels a streamed response when it crosses the cap. A dedicated timeout-tas
 bounds cancellation-ignoring work. The session refuses redirects that change HTTPS origin.
 Transient retry applies only to idempotent methods and bounded, finite delays; OAuth handles
 429 separately.
+Client-generated exponential backoff is capped at eight seconds. A valid server
+`Retry-After` is not shortened. If the wait cannot fit within the remaining send deadline,
+return the original response without another attempt. Changed decision: the eight-second
+cap previously also shortened server guidance. Non-positive retry values retain the
+existing fallback behavior, and the separate OAuth 429 gate is unchanged.
 
 All Security.framework calls pass through `KeychainGateway`, which disables interaction and
 fails closed in test processes unless live Keychain testing is explicitly enabled. Candidate
@@ -715,6 +749,10 @@ The Xcode project and the committed workspace resolution pin Sparkle exactly.
 Tests are hermetic. Temporary directories are unique and cleaned up. Wall clocks and
 defaults are injectable where policy depends on them. Tests never read live Keychain or
 Application Support data by default.
+Hosted app tests and the opt-in presentation benchmark construct an empty provider store
+and skip production startup services and file logging. The synthetic benchmark is
+separate from the normal gate; its procedure and limits are in
+[docs/performance.md](docs/performance.md).
 
 A release publishes the signed GitHub assets before it pushes the new `appcast.xml` to
 `main`, so the feed never points at a missing artifact. Releases require a clean source

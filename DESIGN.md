@@ -81,12 +81,13 @@ percentLeft = 100 − resolvedWindow.percentUsed     // clamp 0…100
 
 - Rings and bars **deplete**: arc or fill length is `percentLeft`. A full ring is lots of energy.
 - The big number is `percentLeft` followed by a muted " left".
-- A just-reset rolling window reads **100% left**, through `resolved(asOf:)`.
+- A just-reset current rolling window reads **100% left**. A stale expired window is
+  unknown. Headers, bars, rings, and spoken values share the same resolved observation.
 - Appearance → progression mode can switch every number and fill to percent used.
 
 **Severity comes from the user's `UsageThresholds` on percent used (warning 80, critical
-95).** The menu-bar dot, ring colors, and hero state share this one source, so they always
-agree. To show orange earlier, lower the warning threshold in Settings.
+95).** The menu-bar dot, ring colors, and hero state use these same thresholds.
+Individual windows can have different bands; the dot considers all binding windows. To show orange earlier, lower the warning threshold in Settings.
 
 | Energy band | percentUsed      | percentLeft   | Color         |
 | ----------- | ---------------- | ------------- | ------------- |
@@ -109,10 +110,13 @@ otherwise the nearest-limit account owns the hero and menu bar.
 | Tapped out | 🥵    | "Take a breather"   | red         |
 | Unknown    | 🛰️    | "Warming up"        | neutral     |
 
-One account: the subline speaks to its most constrained window, such as "Plenty in the
-tank · refills 3h 12m" or "Getting low · refills 1h 8m". Several accounts: the subline
+One account: the subline names its most constrained window, such as "Plenty in the
+tank · Session resets in 3h 12m" or "Getting low · Weekly resets in 1h 8m".
+Equal usage selects the later reset. No reset time is shown if that window has none.
+An earlier reset of another window must not imply that the limiting quota returns.
+Several accounts: the subline
 counts fresh accounts and flags the lowest other one, such as "2 fresh · buildbot low
-(1h 8m)", or reads "All 3 accounts fresh 🎉".
+· Weekly resets in 1h 8m", or reads "All 3 accounts fresh 🎉".
 
 ---
 
@@ -225,6 +229,9 @@ Chunky card, flex row, gap 14.
   - Week row: the same, with a `ResetPhrase` duration such as "· 6d 7h".
   - An unavailable or stale account keeps its label and shows its sanitized error in small
     text below its quota rows. Unknown values stay unknown.
+  - Each account error stays visible in both styles. A secondary-provider card also shows
+    "Refresh failed · showing last known data" for a provider failure, or "Data may be
+    stale" for a stale observation. These lines use the same rules as bar cards.
 - Codex cards, and Claude cards with a reset allowance, add a full-width "Usage limit
   resets" section below the rings or bars, with the
   available count. Each returned reset shows its title and time to expiry, sorted by
@@ -243,7 +250,9 @@ provider. It is collapsible and has no section label; the provider logo names th
 
 - Header: provider mark, account name (Fredoka 600/14), plan badge when known, "same
   login" chip when needed, disclosure chevron, and the headline
-  percentage (Fredoka 700/14): Claude session, Codex primary window.
+  percentage (Fredoka 700/14): Claude session, Codex primary window kind. When several
+  binding windows have the same kind, show the highest usage for that kind in the header,
+  bar, ring, and menu-bar conversion.
 - One 12pt `EnergyBar` per reported window: session, then weekly. Below each bar, Nunito
   600/11 `ink-muted`: "Session · 60% left" on the left and "Resets in 2h 53m" on the
   right. With no reported value, one "Session · —" bar remains.

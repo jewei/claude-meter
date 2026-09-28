@@ -14,6 +14,9 @@ extension String {
 }
 
 enum AppSettings {
+    /// Blocked filesystem calls retain their slots after timeout.
+    static let configurationBudget = Timeout.TaskBudget(limit: 2)
+    static let evidenceBudget = Timeout.TaskBudget(limit: 2)
     static let isActiveKey = "isActive"
     static let oauthSourceEnabledKey = "oauthSourceEnabled"
     static let cursorSourceEnabledKey = "cursorSourceEnabled"
@@ -74,12 +77,15 @@ enum AppSettings {
         return [implicitPath] + configuredCodexHomes
     }
 
-    static func codexAccounts(
-        env: [String: String] = ProcessInfo.processInfo.environment,
-        fileManager: FileManager = .default
-    ) -> [CodexAccount] {
-        let paths = codexHomePaths(env: env, fileManager: fileManager)
-        let names = codexAccountNames
+    static func loadCodexAccounts(paths: [String], names: [String: String]) async throws
+        -> [CodexAccount]
+    {
+        try await Timeout.run(seconds: 5, budget: configurationBudget) {
+            resolveCodexAccounts(paths: paths, names: names)
+        }
+    }
+
+    static func resolveCodexAccounts(paths: [String], names: [String: String]) -> [CodexAccount] {
         var seen = Set<String>()
         return paths.enumerated().compactMap { index, path in
             let url = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()

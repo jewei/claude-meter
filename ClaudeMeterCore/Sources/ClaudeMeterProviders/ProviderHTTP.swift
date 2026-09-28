@@ -60,7 +60,7 @@ public struct HTTPRetryPolicy: Sendable {
     /// Backoff before the next attempt: `Retry-After` when present, else exponential.
     func delay(attempt: Int, retryAfter: String?, now: Date = Date()) -> TimeInterval {
         if let seconds = Self.retryAfterSeconds(retryAfter, now: now) {
-            return min(seconds, maxDelay)
+            return seconds
         }
         guard baseDelay > 0 else { return 0 }
         return min(baseDelay * pow(2, Double(max(0, attempt))), maxDelay)
@@ -116,12 +116,14 @@ public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
     private let session: URLSession
     private let responseByteLimit: Int
     private let attemptTimeoutSeconds: TimeInterval
+    private let retrySleep: @Sendable (TimeInterval) async throws -> Void
     private let responseLoader:
         @Sendable (
             URLRequest, URLSession, Int
         ) async throws -> (Data, HTTPURLResponse)
 
     public init(session injectedSession: URLSession? = nil) {
+        self.retrySleep = { try await Task.sleep(for: .seconds($0)) }
         if let injectedSession {
             self.session = injectedSession
             self.responseLoader = Self.receiveBytes
@@ -148,13 +150,17 @@ public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
             @Sendable (
                 URLRequest, URLSession, Int
             ) async throws -> (Data, HTTPURLResponse)
-        )? = nil
+        )? = nil,
+        retrySleep: @escaping @Sendable (TimeInterval) async throws -> Void = {
+            try await Task.sleep(for: .seconds($0))
+        }
     ) {
         precondition(maximumResponseByteCount >= 0)
         precondition(resourceTimeoutSeconds.isFinite && resourceTimeoutSeconds > 0)
         self.session = session
         self.responseByteLimit = maximumResponseByteCount
         self.attemptTimeoutSeconds = resourceTimeoutSeconds
+        self.retrySleep = retrySleep
         if let responseLoader {
             self.responseLoader = responseLoader
         } else if let delegate = session.delegate as? ProviderHTTPSessionDelegate {
@@ -194,12 +200,13 @@ public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
         }
         let deadlineRequest = boundedRequest
         let timeoutSeconds = attemptTimeoutSeconds
+        let deadline = ProcessInfo.processInfo.systemUptime + timeoutSeconds
         do {
             return try await Timeout.run(
                 seconds: timeoutSeconds,
                 budget: Self.requestTaskBudget
             ) {
-                try await self.sendWithinDeadline(deadlineRequest, retry: retry)
+                try await self.sendWithinDeadline(deadlineRequest, retry: retry, deadline: deadline)
             }
         } catch is TimeoutError {
             // Keep the transport's established URL-loading error contract when
@@ -210,7 +217,8 @@ public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
 
     private func sendWithinDeadline(
         _ request: URLRequest,
-        retry: HTTPRetryPolicy
+        retry: HTTPRetryPolicy,
+        deadline: TimeInterval
     ) async throws -> (Data, HTTPURLResponse) {
         var attempt = 0
         while true {
@@ -227,14 +235,20 @@ public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
                 }
                 let wait = retry.delay(
                     attempt: attempt, retryAfter: http.value(forHTTPHeaderField: "Retry-After"))
-                if wait > 0 { try await Task.sleep(for: .seconds(wait)) }
+                // Preserve the server response when its requested wait cannot fit.
+                // Never shorten server guidance to make another attempt.
+                guard wait < deadline - ProcessInfo.processInfo.systemUptime else {
+                    return (data, http)
+                }
+                if wait > 0 { try await retrySleep(wait) }
                 attempt += 1
             } catch let error as URLError
                 where Self.isRetryableTransportError(error)
                 && retry.shouldRetry(attempt: attempt, method: request.httpMethod ?? "GET")
             {
                 let wait = retry.delay(attempt: attempt, retryAfter: nil)
-                if wait > 0 { try await Task.sleep(for: .seconds(wait)) }
+                guard wait < deadline - ProcessInfo.processInfo.systemUptime else { throw error }
+                if wait > 0 { try await retrySleep(wait) }
                 attempt += 1
             }
         }

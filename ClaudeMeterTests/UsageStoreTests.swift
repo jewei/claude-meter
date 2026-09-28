@@ -195,6 +195,93 @@ private enum TestFailure: Error, LocalizedError {
 @Suite("UsageStore", .timeLimit(.minutes(1)))
 @MainActor
 struct UsageStoreTests {
+    @Test("Preflight timeout removes previously accepted Codex quota whose owner is unverified")
+    func preflightTimeoutDropsUnverifiedQuota() async {
+        let suite = "PreflightOwnership-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let gate = PersistenceGate()
+        var blocked = false
+        let account = CodexAccount(
+            home: URL(fileURLWithPath: "/test/owner"), isImplicit: false, customName: nil)
+        let provider = CodexProviderAdapter(
+            configuration: {
+                if blocked { await gate.suspend() }
+                return .init(accounts: [account])
+            }, defaults: defaults, timeoutSeconds: 0.2,
+            identityLoader: { _ in .init(ownerID: "owner-a", sourceFingerprint: "a") },
+            fetchAccount: { _, now in
+                CodexUsage(
+                    primaryWindow: .init(
+                        kind: .primary, usedPercent: 25, resetAt: nil, durationSeconds: 18000,
+                        rawLabel: nil),
+                    secondaryWindow: nil, usageCredits: nil, accountEmail: nil, plan: "plus",
+                    source: .directOAuth, updatedAt: now)
+            })
+        let store = UsageStore(providers: [provider])
+        store.setEnabled(.codex, enabled: true)
+        await store.refresh([.codex], now: now)
+        #expect(store.reading(for: .codex)?.value?.accounts.first?.observedAt != nil)
+        blocked = true
+        await store.refresh([.codex], now: now)
+        #expect(store.reading(for: .codex)?.value == nil)
+        #expect(store.reading(for: .codex)?.error != nil)
+        #expect(store.refreshing.isEmpty)
+        await gate.release()
+    }
+
+    @Test("Provider-wide failure reaches account presentation without changing the observation")
+    func providerFailurePresentation() async {
+        let provider = ControlledUsageProvider(.claude)
+        let store = UsageStore(providers: [provider])
+        store.setEnabled(.claude, enabled: true)
+        let app = AppState(usageStore: store)
+        let raw = ProviderSnapshot(
+            provider: .claude,
+            accounts: [
+                ProviderAccountSnapshot(
+                    id: "claude", label: "Claude",
+                    windows: [
+                        UsageWindow(
+                            id: "session", title: "5h", kind: .session, usedPercent: 90,
+                            resetAt: now)
+                    ], observedAt: now.addingTimeInterval(-1))
+            ], fetchedAt: now.addingTimeInterval(-1))
+        let first = Task { await store.refresh([.claude], now: now) }
+        await provider.waitForRequests(1)
+        await provider.succeed(1, with: raw)
+        await first.value
+        let second = Task { await store.refresh([.claude], now: now) }
+        await provider.waitForRequests(2)
+        await provider.fail(2)
+        await second.value
+        let displayed = app.presentationAccounts(for: .claude, asOf: now).first
+        #expect(displayed?.isStale == true)
+        #expect(displayed?.windows.first?.usedPercent == nil)
+        #expect(store.reading(for: .claude)?.value == raw)
+        #expect(app.claudeRefreshError == "Offline")
+    }
+
+    @Test("A late configuration result cannot replace a newer configuration")
+    func configurationSupersession() async {
+        let app = AppState(usageStore: UsageStore(providers: []))
+        let gate = PersistenceGate()
+        let old = app.reloadCodexConfiguration {
+            await gate.suspend()
+            return [
+                .init(home: URL(fileURLWithPath: "/test/old"), isImplicit: false, customName: nil)
+            ]
+        }
+        await gate.waitForRequests(1)
+        let expected = CodexAccount(
+            home: URL(fileURLWithPath: "/test/new"), isImplicit: false, customName: nil)
+        await app.reloadCodexConfiguration { [expected] }.value
+        await gate.release()
+        await old.value
+        #expect(app.codexConfiguration == [expected])
+        #expect(!app.codexConfigurationIsLoading)
+    }
+
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
     private func snapshot(_ id: ProviderID, used: Double? = 25, at date: Date? = nil)

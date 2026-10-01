@@ -274,6 +274,30 @@ The only difference between providers is the number of bars: Codex Pro reports o
 weekly window. With no Claude account rows, a notice states the refresh failure. No
 provider has a summary card.
 
+### Tokens used
+
+Each provider account card contains a **Tokens used** section after its **Usage limit
+resets** section, or after its other quota details for Cursor and Grok. The token section
+appears only when the card is expanded. It shares the card's saved disclosure state and
+resize animation. Ring cards remain always expanded. There is no separate token card.
+
+A divider separates token usage from the details above it. The **Tokens used** heading
+uses Nunito 700/11 in `ink`. The source label uses Nunito 600/10 in `ink-muted`:
+**Account usage** for Cursor and **This Mac** for Claude Code, Codex, and Grok Build.
+Each account card for the same local provider shows the same total. The source tooltip
+explains this because local records do not prove historical account ownership.
+
+Each section has **Today**, **Yesterday**, and **Last 7 Days** rows. Labels align left
+and token counts align right, in Nunito 600/11 with monospaced digits. Counts use compact
+notation, such as `35.8M tokens`. A tooltip and accessibility value give the full count.
+Unknown values use `—`. There are no prices or currency symbols. Last 7 Days includes
+today and the previous six local calendar dates.
+
+Below the rows, Nunito 600/10 in `ink-muted` states missing records, a sanitized error,
+partial history, or stale data when applicable. A source tooltip explains that local
+history can include earlier logins and excludes other devices. Opening and closing the
+card follows Reduce Motion. A history update does not change quota colors or freshness.
+
 ## Menu bar icon
 
 The icon shows the selected main provider's pinned account or the account nearest its
@@ -347,9 +371,19 @@ last known data" or "Refresh failed · no usage data".
 | Button press       | Move down 2pt, shadow `y` from 4 to 2, `.spring(response: 0.2)`           |
 | Loading spin       | linear 1 s rotation, repeated                                     |
 | Hero state change  | `.easeInOut(0.3)`                                                 |
+| Card expansion or collapse | Card bounds, neighboring rows, detail clipping, and popover height use `.easeInOut(0.18)` |
 
-**Reduce Motion** removes the pulse, spin, and value animations. Colors and values
-change at once.
+Card details stay visible during collapse. The scroll viewport keeps its larger height
+until the window finishes shrinking, so lower cards do not disappear early. The header
+and window top edge stay fixed. Card contents stay clipped to the moving card bounds,
+including when the popover is at its screen height cap. Rapid clicks continue from the
+current visible size.
+
+One frame driver updates the native window and the SwiftUI fitting height together.
+The menu bar host must not restore the old height during expansion or collapse.
+
+**Reduce Motion** removes the pulse, spin, value, and disclosure animations. Colors,
+values, and card sizes change at once.
 
 ## Accessibility
 

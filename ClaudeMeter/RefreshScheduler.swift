@@ -97,7 +97,8 @@ final class RefreshScheduler {
         let date = now()
         return Set(
             (configuration?.enabledProviders ?? []).filter {
-                usageStore.reading(for: $0)?.needsRefresh(now: date, maxAge: maxAge) ?? true
+                (usageStore.reading(for: $0)?.needsRefresh(now: date, maxAge: maxAge) ?? true)
+                    || usageStore.tokensNeedRefresh($0, now: date, maxAge: maxAge)
             })
     }
 

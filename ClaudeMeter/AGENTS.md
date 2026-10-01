@@ -52,6 +52,13 @@ Loading state also comes only from UsageStore.
 Outer stale state applies to all retained accounts. It does not rewrite an account's
 observation or timestamp.
 
+`UsageStore.tokenReadings` owns token history separately from quota, with independent
+refresh IDs and reading states. History uses the same scheduler opportunities. A scan
+must not delay quota publication or change quota freshness. Cancel both tasks on pause,
+sleep, disable, and source changes. Token sections in account cards label local provider
+totals **This Mac**, never as usage owned by the currently signed-in account. Each card
+for the same local provider shows the same total.
+
 ## Schedule refreshes and handle display sleep
 
 - `RefreshScheduler` merges queued provider requests. UsageStore's refreshing set

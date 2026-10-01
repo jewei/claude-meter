@@ -17,8 +17,10 @@ The app uses local credentials and reads provider quota under these rules:
 - Provider credentials are read-only except for manually entered Claude OAuth tokens,
   which Claude Meter owns in Keychain.
 - Provider secrets are never rendered, logged, or copied into diagnostics.
-- Quota polling reads provider data. It does not scan local transcripts or estimate
-  historical costs. Provider-reported live balances remain visible.
+- Quota polling reads provider data. Independent token history reads retained local
+  Claude Code, Codex, and Grok Build records and Cursor's account export. Token history
+  has no prices or historical cost estimates. Provider-reported live balances remain
+  visible.
 - Only the explicitly selected main provider affects the hero, first popover section,
   menu-bar indicator, or header timestamp. Missing selected data never falls back to
   another provider.
@@ -101,6 +103,70 @@ without inventing quota or maintaining another account array.
 It performs no I/O and stores no second copy. All provider cards consume normalized
 accounts, windows and balances. Existing Claude and Codex disk formats remain internal
 to their provider boundaries.
+
+### Token history
+
+Each provider account card has a **Tokens used** section with **Today**, **Yesterday**,
+and **Last 7 Days** rows. The section follows **Usage limit resets** for Claude and
+Codex, and the existing quota details for Cursor and Grok. It appears only in expanded
+cards; ring cards remain always expanded. This replaces the separate token card below
+the account list. Last 7 Days includes today and the previous six local calendar dates.
+Event timestamps assign records to dates. A timezone change requires a new projection.
+Missing history is unknown, not zero. A successful empty Cursor export can establish
+zero for its requested range.
+
+This is a limited change to the 3.0 decision to remove transcript scans. Only token
+counts return. There are no model prices, historical cost estimates, captured commands,
+or changes to provider credentials. Token totals do not measure energy left and do not
+affect account selection, quota freshness, the hero, or the menu bar.
+
+Claude Code, Codex, and Grok Build history is labeled **This Mac**. These records can
+include earlier logins and API-key sessions. Config dirs and local activity do not
+establish historical account ownership. Each account card for the same local provider
+shows the same provider total, without assigning it to that account. The source tooltip
+states this scope. Other devices, deleted records, and web activity are outside this
+scope. Cursor history is labeled **Account usage**.
+
+- Claude reads assistant usage from `projects/**/*.jsonl` in enabled config dirs. A
+  response contributes input, output, cache-read, and cache-write tokens. Streaming
+  updates replace the prior response record. Request and message IDs remove copies.
+- Codex reads `sessions` and `archived_sessions` under configured homes. It reconciles
+  cumulative counters and duplicate session copies. Inherited fork history requires an
+  owned boundary. Unresolved forks are skipped and make coverage partial. Cached input
+  and reasoning output remain subsets of input and output.
+- Grok reads completed-turn `usage.modelUsage` records in `sessions/**/updates.jsonl`.
+  Event timestamps, rather than file modification dates, set the day. Event ID and
+  model remove duplicate records. Total tokens are input plus output, including their
+  cache and reasoning subsets. Unfinished turns are absent.
+- Cursor requests the seven-day CSV export from
+  `cursor.com/api/dashboard/export-usage-events-csv` with `strategy=tokens`. The existing
+  access token supplies an in-memory dashboard cookie. No browser login or credential
+  write is added. Its four token columns are disjoint. Prices and model names do not
+  control whether valid tokens are counted. Credential changes invalidate account
+  history; a post-request check rejects results from an old login.
+
+Core owns `TokenUsageSnapshot` and the three calendar periods. Providers owns source
+parsing and I/O. `UsageStore.tokenReadings` is the only owner of accepted history, with
+its own `ReadingState`, loading state, and refresh ID. History runs independently of
+quota on the existing global refresh opportunities. A history failure cannot fail a
+quota reading or advance its successful poll time. Pause, sleep, disable, and newer
+refreshes cancel history and reject late results. Disable also clears its reading.
+
+All token history and parse caches are memory-only. A serial utility queue per local
+source owns cached file offsets and parsed counters; prompts and responses are not
+retained. Unchanged files need no body read. Growing journals use saved offsets after
+checking file identity, the beginning, and the append boundary. Replacement,
+truncation, same-size rewrites, and changed boundary bytes rebuild that file. This
+assumes ordinary journal growth is append-only. A restart rebuilds the complete cache.
+
+Scans prefer recently modified files and skip files last modified before the requested
+range. Normal limits are 64 MiB of log input per scan, 8 MiB per file per scan, 1 MiB per
+line, 2,048 files, 20,000 directory entries, 20,000 records per file, and 100,000 cached
+records per provider. Incomplete final lines are read again. Oversized or malformed
+records, unresolved counters, and reached limits make history partial. Reading resumes
+on a later refresh when the byte limit was reached. No limit produces a complete zero.
+History fetches have a 20 s deadline and at most two outstanding timed tasks per source.
+Cursor uses the shared HTTP response bounds. The UI states partial or stale coverage.
 
 ### Provider lifecycle store
 
@@ -606,6 +672,17 @@ provider, these are notices above the hero. With no Claude account rows, a notic
 the refresh failure. Ring cards are always expanded. Bar, Cursor, and Grok cards
 remember their expanded state. The header timestamp belongs only to the selected
 reading. There is no footer or Add Account button.
+
+Disclosure animates the card layout and popover size together. During collapse, outgoing
+details and the larger drawing viewport remain available until the transition finishes.
+This keeps lower cards visible as they move up. Rapid clicks replace the current motion
+from its visible size. Reduce Motion and hidden popovers apply disclosure changes
+without animation.
+
+The native frame driver publishes the matching SwiftUI fitting height at each step.
+This replaces holding the old fitting height during growth, which lets the menu bar
+host restore an old window size before the transition finishes. Stale frame updates
+from an interrupted transition cannot change the replacement.
 
 First-run onboarding pauses polling and directs the user to Settings. Existing users
 skip onboarding when a snapshot exists, an attributes-only OAuth lookup finds a

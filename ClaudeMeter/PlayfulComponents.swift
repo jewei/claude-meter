@@ -344,6 +344,7 @@ struct AccountRingCard: View {
     /// `true` shows usage (rings fill); `false` shows energy left (rings deplete).
     var usage: Bool = false
     var showsProviderStatus: Bool = false
+    let tokenUsage: TokenUsageRows
 
     var body: some View {
         let sBand = model.session.energyBand(thresholds: thresholds, asOf: now)
@@ -385,6 +386,7 @@ struct AccountRingCard: View {
             if let resets = model.usageResets {
                 UsageResetsView(resets: resets, now: now)
             }
+            tokenUsage
             if let status = model.status(showsProviderStatus: showsProviderStatus) {
                 Text(status.text).font(PFont.body(11, .semibold))
                     .foregroundStyle(status.isFailure ? Color.pfEnergyLow : Color.pfInkMuted)

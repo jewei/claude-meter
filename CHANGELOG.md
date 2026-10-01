@@ -12,8 +12,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Expanded provider cards show tokens used today, yesterday, and in the last seven
+  days. Claude, Codex, and Grok totals use local records on this Mac. Cursor totals use
+  account usage. No prices are shown.
+
 ### Fixed
 
+- Cards and the popover window resize together when cards expand or collapse.
 - Account headers, bars, and rings agree when a limit window resets. Stale expired
   windows remain unknown, and ring cards retain account errors and stale status.
 - Hero reset text names the limiting window, so an earlier reset of another window does

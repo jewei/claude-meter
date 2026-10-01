@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B8D000000000000000000001 /* TokenUsageRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8D000000000000000000002 /* TokenUsageRows.swift */; };
 		A70000000000000000000003 /* UsageStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A70000000000000000000004 /* UsageStoreTests.swift */; };
 		A7D000000000000000000003 /* RefreshSchedulerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7D000000000000000000004 /* RefreshSchedulerTests.swift */; };
 		A70000000000000000000001 /* UsageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A70000000000000000000002 /* UsageStore.swift */; };
@@ -49,6 +50,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		B8D000000000000000000002 /* TokenUsageRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenUsageRows.swift; sourceTree = "<group>"; };
 		A70000000000000000000004 /* UsageStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageStoreTests.swift; sourceTree = "<group>"; };
 		A7D000000000000000000004 /* RefreshSchedulerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RefreshSchedulerTests.swift; sourceTree = "<group>"; };
 		A70000000000000000000002 /* UsageStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageStore.swift; sourceTree = "<group>"; };
@@ -118,6 +120,7 @@
 				C30CB82FB9488E6512B08E66 /* PlayfulComponents.swift */,
 				D39F041AC0894892922A9F90 /* MenuBarLabel.swift */,
 				3715D40A5AE0421A91C5BED0 /* PopoverView.swift */,
+				B8D000000000000000000002 /* TokenUsageRows.swift */,
 				F30000000000000000000002 /* PopoverTransition.swift */,
 				07DBE9DE99AE4570ABDAA767 /* SettingsView.swift */,
 				C7A1B2C3D4E5F60718293A5C /* DataSettingsTab.swift */,
@@ -268,6 +271,7 @@
 				C7A1B2C3D4E5F60718293A4D /* AppSettings.swift in Sources */,
 				C7A1B2C3D4E5F60718293A59 /* ProviderReading.swift in Sources */,
 				A70000000000000000000001 /* UsageStore.swift in Sources */,
+				B8D000000000000000000001 /* TokenUsageRows.swift in Sources */,
 				A7D000000000000000000001 /* RefreshScheduler.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* AppUpdater.swift in Sources */,
 				C1D2E3F4A5B6C7D8E9F0A1B2 /* PowerMonitor.swift in Sources */,

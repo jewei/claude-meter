@@ -88,8 +88,25 @@ protocol PopoverWindowAdapter: AnyObject {
     func animateFrame(
         to frame: CGRect,
         duration: TimeInterval,
+        update: @escaping @MainActor (CGRect) -> Void,
         completion: @escaping @MainActor (PopoverWindowAnimationOutcome) -> Void
     ) -> Bool
+}
+
+@MainActor
+private final class PopoverFrameAnimation: NSAnimation {
+    // NSAnimation's progress setter is nonisolated. This driver is created,
+    // started, updated, and stopped only on the main run loop.
+    nonisolated(unsafe) var update: (@MainActor @Sendable (CGFloat) -> Void)?
+
+    override var currentProgress: NSAnimation.Progress {
+        didSet {
+            // Nonblocking NSAnimation runs on the main run loop that starts it.
+            let value = CGFloat(currentValue)
+            let callback = update
+            MainActor.assumeIsolated { callback?(value) }
+        }
+    }
 }
 
 @MainActor
@@ -97,7 +114,7 @@ private final class AppKitPopoverWindowAdapter: NSObject, PopoverWindowAdapter,
     NSAnimationDelegate
 {
     private weak var window: NSWindow?
-    private var animation: NSViewAnimation?
+    private var animation: PopoverFrameAnimation?
     private var activeAnimationID: ObjectIdentifier?
     private var completion: (@MainActor (PopoverWindowAnimationOutcome) -> Void)?
     var screenChanged: (@MainActor () -> Void)?
@@ -134,10 +151,7 @@ private final class AppKitPopoverWindowAdapter: NSObject, PopoverWindowAdapter,
         let oldAnimation = animation
         invalidateAnimation()
         oldAnimation?.stop()
-        // A nonblocking prototype on arm64 macOS 15.7.9 (24G830) observed the
-        // frame unchanged both immediately and 50 ms after `stop()`, while Apple's
-        // documentation describes end-frame behavior. Restore in this actor turn
-        // so callers get one contract on either behavior.
+        // Keep the visible frame when a new disclosure interrupts the driver.
         window.setFrame(captured, display: false)
         return captured
     }
@@ -150,20 +164,28 @@ private final class AppKitPopoverWindowAdapter: NSObject, PopoverWindowAdapter,
     func animateFrame(
         to frame: CGRect,
         duration: TimeInterval,
+        update: @escaping @MainActor (CGRect) -> Void,
         completion: @escaping @MainActor (PopoverWindowAnimationOutcome) -> Void
     ) -> Bool {
         guard let window, window.isVisible else { return false }
 
-        let attributes: [NSViewAnimation.Key: Any] = [
-            .target: window,
-            .startFrame: NSValue(rect: window.frame),
-            .endFrame: NSValue(rect: frame),
-        ]
-        let animation = NSViewAnimation(viewAnimations: [attributes])
-        animation.duration = duration
-        animation.animationCurve = .easeInOut
+        let source = window.frame
+        let animation = PopoverFrameAnimation(duration: duration, animationCurve: .easeInOut)
         animation.animationBlockingMode = .nonblocking
+        animation.frameRate = 60
         animation.delegate = self
+        animation.update = { [weak window] progress in
+            guard let window else { return }
+            let height = source.height + (frame.height - source.height) * progress
+            let next = CGRect(
+                x: source.minX, y: source.maxY - height,
+                width: source.width, height: height)
+            update(next)
+            // Commit the matching SwiftUI fitting size before moving the window.
+            // MenuBarExtra otherwise restores its old cached height mid-animation.
+            window.contentView?.layoutSubtreeIfNeeded()
+            window.setFrame(next, display: true)
+        }
 
         self.animation = animation
         activeAnimationID = ObjectIdentifier(animation)
@@ -202,6 +224,7 @@ private final class AppKitPopoverWindowAdapter: NSObject, PopoverWindowAdapter,
 
     private func invalidateAnimation() {
         animation?.delegate = nil
+        animation?.update = nil
         animation = nil
         activeAnimationID = nil
         completion = nil
@@ -283,7 +306,7 @@ final class PopoverTransitionCoordinator: ObservableObject {
     private static let screenMarginAndHeader: CGFloat = 72
     private static let tolerance: CGFloat = 0.5
     private static let anchorTolerance: CGFloat = 32
-    private static let duration: TimeInterval = 0.18
+    static let duration: TimeInterval = 0.18
 
     @Published private(set) var presentation: PopoverTransitionPresentation
     private(set) var isSettled = false
@@ -300,7 +323,6 @@ final class PopoverTransitionCoordinator: ObservableObject {
     private var pendingReplacement = false
     private var pendingStartFrame: CGRect?
     private var transitionPhase = TransitionPhase.idle
-    private var deferredResize: Task<Void, Never>?
     private var deferredAnchorReconciliation: Task<Void, Never>?
     private var baseline: Baseline?
     private var lastAnchoredFrame: CGRect?
@@ -338,8 +360,8 @@ final class PopoverTransitionCoordinator: ObservableObject {
         clippedInsertions.subtract(removed)
         clippedInsertions.formUnion(inserted)
         presentation.disablesDisclosureAnimations = true
-        presentation.revealedCards.subtract(removed)
-        presentation.revealedCards.formIntersection(desired)
+        // Keep outgoing details visible until their removal transition starts.
+        // Hiding the mask here leaves an empty card while its height shrinks.
 
         latestDesired = desired
         renderSequence &+= 1
@@ -558,39 +580,18 @@ final class PopoverTransitionCoordinator: ObservableObject {
 
         epoch &+= 1
         let transitionEpoch = epoch
-        let growing = target.height > source.height
         transitionPhase = .animating
         isQuiescent = false
-
-        if growing {
-            presentation.renderedBodyHeight = measurement.height
-            revealLatestDisclosure(animated: true)
-            startWindowAnimation(
-                from: source,
-                to: target,
-                measurement: measurement,
-                epoch: transitionEpoch)
-        } else {
-            // Commit the smaller fitting size first. Restore the captured visible
-            // frame on the next actor turn before AppKit starts shrinking.
-            presentation.bodyHeight = measurement.height
-            presentation.renderedBodyHeight = measurement.height
-            deferredResize = Task { @MainActor [weak self] in
-                await Task.yield()
-                guard let self, self.epoch == transitionEpoch else { return }
-                adapter.setFrameImmediately(source, display: false)
-                self.revealLatestDisclosure(animated: true)
-                self.startWindowAnimation(
-                    from: source,
-                    to: target,
-                    measurement: measurement,
-                    epoch: transitionEpoch)
-            }
-        }
+        presentation.bodyHeight = source.height - baseline.nonBodyHeight
+        presentation.renderedBodyHeight = max(presentation.bodyHeight, measurement.height)
+        revealLatestDisclosure(animated: true)
+        startWindowAnimation(
+            to: target,
+            measurement: measurement,
+            epoch: transitionEpoch)
     }
 
     private func startWindowAnimation(
-        from _: CGRect,
         to target: CGRect,
         measurement: CorrelatedBodyMeasurement,
         epoch transitionEpoch: UInt64
@@ -601,18 +602,24 @@ final class PopoverTransitionCoordinator: ObservableObject {
         }
         let started = adapter.animateFrame(
             to: target,
-            duration: Self.duration
-        ) { [weak self] outcome in
-            guard let self, self.epoch == transitionEpoch else { return }
-            switch outcome {
-            case .reachedTarget:
-                self.completeTransition(
-                    measurement: measurement,
-                    targetHeight: target.height)
-            case .stopped:
-                self.settleImmediately(using: measurement)
-            }
-        }
+            duration: Self.duration,
+            update: { [weak self] frame in
+                guard let self, self.epoch == transitionEpoch, let baseline = self.baseline else {
+                    return
+                }
+                self.presentation.bodyHeight = frame.height - baseline.nonBodyHeight
+            },
+            completion: { [weak self] outcome in
+                guard let self, self.epoch == transitionEpoch else { return }
+                switch outcome {
+                case .reachedTarget:
+                    self.completeTransition(
+                        measurement: measurement,
+                        targetHeight: target.height)
+                case .stopped:
+                    self.settleImmediately(using: measurement)
+                }
+            })
         if !started { settleImmediately(using: measurement) }
     }
 
@@ -644,7 +651,6 @@ final class PopoverTransitionCoordinator: ObservableObject {
         fixedNonBodyHeight = targetHeight - measurement.height
         settledDisclosure = latestDesired
         transitionPhase = .idle
-        deferredResize = nil
         pendingStartFrame = nil
         finishReconciliation()
     }
@@ -720,8 +726,6 @@ final class PopoverTransitionCoordinator: ObservableObject {
 
     private func invalidateCurrentTransition(capturePresentation: Bool) {
         epoch &+= 1
-        deferredResize?.cancel()
-        deferredResize = nil
         deferredAnchorReconciliation?.cancel()
         deferredAnchorReconciliation = nil
         if capturePresentation {
@@ -855,8 +859,7 @@ final class PopoverTransitionCoordinator: ObservableObject {
             abs(adapterFrame.maxY - baseline.frame.maxY) <= Self.tolerance,
             clippedInsertions.isEmpty,
             presentation.disablesDisclosureAnimations,
-            transitionPhase == .idle,
-            deferredResize == nil
+            transitionPhase == .idle
         else { return false }
         return true
     }
@@ -895,6 +898,13 @@ struct PopoverTransitionBody<Content: View>: View {
                     \.popoverDisclosureAnimationsDisabled,
                     coordinator.presentation.disablesDisclosureAnimations
                 )
+                // Animate the card bounds and neighboring rows as well as the
+                // detail mask. Limit this transaction to disclosure changes.
+                .animation(
+                    reduceMotion || !isPopoverVisible
+                        ? nil : .easeInOut(duration: PopoverTransitionCoordinator.duration),
+                    value: desiredExpandedCards
+                )
                 .background(
                     GeometryReader { proxy in
                         Color.clear.preference(
@@ -910,8 +920,8 @@ struct PopoverTransitionBody<Content: View>: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .frame(height: coordinator.presentation.renderedBodyHeight)
-        // Keep fitting size at the settled height while the larger ScrollView
-        // draws into AppKit's progressively growing window.
+        // Match each native animation frame while the larger ScrollView keeps
+        // moving cards visible. MenuBarExtra must never see the old fitting height.
         .frame(height: coordinator.presentation.bodyHeight, alignment: .top)
         .background(
             PopoverWindowCapture { window in

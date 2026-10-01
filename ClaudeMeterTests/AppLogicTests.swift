@@ -11,6 +11,7 @@ private final class TestPopoverWindowAdapter: PopoverWindowAdapter {
     struct Animation {
         let source: CGRect
         let target: CGRect
+        let update: @MainActor (CGRect) -> Void
         let completion: @MainActor (PopoverWindowAnimationOutcome) -> Void
     }
 
@@ -39,20 +40,24 @@ private final class TestPopoverWindowAdapter: PopoverWindowAdapter {
     func animateFrame(
         to frame: CGRect,
         duration _: TimeInterval,
+        update: @escaping @MainActor (CGRect) -> Void,
         completion: @escaping @MainActor (PopoverWindowAnimationOutcome) -> Void
     ) -> Bool {
         guard canAnimate, let source = self.frame else { return false }
-        animations.append(Animation(source: source, target: frame, completion: completion))
+        animations.append(
+            Animation(source: source, target: frame, update: update, completion: completion))
         return true
     }
 
     func advanceAnimation(_ index: Int, to frame: CGRect) {
         self.frame = frame
+        animations[index].update(frame)
     }
 
     func completeAnimation(_ index: Int) {
         let animation = animations[index]
         frame = animation.target
+        animation.update(animation.target)
         animation.completion(.reachedTarget)
     }
 
@@ -1116,6 +1121,9 @@ struct AppLogicTests {
         #expect(coordinator.presentation.renderedBodyHeight == 500)
         #expect(!coordinator.isSettled)
 
+        adapter.advanceAnimation(0, to: CGRect(x: 100, y: 170, width: 360, height: 550))
+        #expect(coordinator.presentation.bodyHeight == 450)
+        #expect(adapter.frame?.height == coordinator.presentation.bodyHeight + 100)
         adapter.completeAnimation(0)
 
         #expect(coordinator.presentation.bodyHeight == 500)
@@ -1123,24 +1131,59 @@ struct AppLogicTests {
     }
 
     @MainActor
-    @Test("Popover disclosure shrink hides details before resizing")
-    func popoverTransitionShrink() async throws {
+    @Test("Popover disclosure shrink retains its drawing area until completion")
+    func popoverTransitionShrink() throws {
         let (coordinator, adapter) = popoverTransitionFixture(
             disclosure: ["cursor"], bodyHeight: 500)
         let sequence = coordinator.desiredDisclosureChanged([])
-        #expect(coordinator.presentation.revealedCards.isEmpty)
+        #expect(coordinator.presentation.revealedCards == ["cursor"])
 
         coordinator.bodyMeasured(
             CorrelatedBodyMeasurement(
                 disclosure: [], renderSequence: sequence, height: 400))
-        #expect(coordinator.presentation.bodyHeight == 400)
-        for _ in 0..<100 where adapter.animations.isEmpty {
-            try await Task.sleep(for: .milliseconds(1))
-        }
+        #expect(coordinator.presentation.bodyHeight == 500)
+        #expect(coordinator.presentation.renderedBodyHeight == 500)
 
         let animation = try #require(adapter.animations.first)
         #expect(animation.source.maxY == animation.target.maxY)
+        adapter.advanceAnimation(0, to: CGRect(x: 100, y: 170, width: 360, height: 550))
+        #expect(coordinator.presentation.bodyHeight == 450)
+        #expect(adapter.frame?.height == coordinator.presentation.bodyHeight + 100)
+        #expect(coordinator.presentation.renderedBodyHeight == 500)
         adapter.completeAnimation(0)
+        #expect(coordinator.presentation.renderedBodyHeight == 400)
+        #expect(coordinator.presentation.revealedCards.isEmpty)
+        #expect(coordinator.isSettled)
+    }
+
+    @MainActor
+    @Test("Reopening during collapse continues from the visible frame")
+    func popoverTransitionReopensDuringCollapse() throws {
+        let (coordinator, adapter) = popoverTransitionFixture(
+            disclosure: ["cursor"], bodyHeight: 600)
+        let closingSequence = coordinator.desiredDisclosureChanged([])
+        coordinator.bodyMeasured(
+            CorrelatedBodyMeasurement(
+                disclosure: [], renderSequence: closingSequence, height: 400))
+        try #require(adapter.animations.count == 1)
+        #expect(coordinator.presentation.renderedBodyHeight == 600)
+        let partial = CGRect(x: 100, y: 170, width: 360, height: 550)
+        adapter.advanceAnimation(0, to: partial)
+
+        let openingSequence = coordinator.desiredDisclosureChanged(["cursor"])
+        coordinator.bodyMeasured(
+            CorrelatedBodyMeasurement(
+                disclosure: ["cursor"], renderSequence: openingSequence, height: 600))
+
+        try #require(adapter.animations.count == 2)
+        #expect(adapter.animations[1].source == partial)
+        adapter.animations[0].update(CGRect(x: 100, y: 220, width: 360, height: 500))
+        #expect(coordinator.presentation.bodyHeight == 450)
+        adapter.deliverCompletion(0)
+        #expect(!coordinator.isSettled)
+        adapter.completeAnimation(1)
+        #expect(coordinator.presentation.bodyHeight == 600)
+        #expect(coordinator.presentation.renderedBodyHeight == 600)
         #expect(coordinator.isSettled)
     }
 
@@ -1149,7 +1192,7 @@ struct AppLogicTests {
     func popoverTransitionReplacement() {
         let (coordinator, adapter) = popoverTransitionFixture(disclosure: ["cursor"])
         let sequence = coordinator.desiredDisclosureChanged(["codex:a"])
-        #expect(coordinator.presentation.revealedCards.isEmpty)
+        #expect(coordinator.presentation.revealedCards == ["cursor"])
 
         coordinator.bodyMeasured(
             CorrelatedBodyMeasurement(
@@ -1257,7 +1300,7 @@ struct AppLogicTests {
         #expect(adapter.animations.count == 2)
         #expect(adapter.animations[1].source == partial)
         adapter.deliverCompletion(0)
-        #expect(coordinator.presentation.bodyHeight == 400)
+        #expect(coordinator.presentation.bodyHeight == 450)
         adapter.completeAnimation(1)
         #expect(coordinator.presentation.bodyHeight == 600)
         #expect(coordinator.isSettled)

@@ -36,7 +36,7 @@ public enum ReadingState<Value: Sendable>: Sendable {
 }
 
 /// Refresh eligibility is separate from the UI's age-based stale indicator.
-extension ReadingState where Value == ProviderSnapshot {
+extension ReadingState {
     public func needsRefresh(now: Date, maxAge: TimeInterval) -> Bool {
         switch self {
         case .stale, .failed:

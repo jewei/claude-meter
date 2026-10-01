@@ -23,6 +23,12 @@ Follow these implementation rules.
 
 ## Read HTTP responses, files, and secrets safely
 
+Token history sources return only normalized counters and coverage. Their memory-only
+parse caches retain record identities, offsets, and counters, never prompts or response
+content. Keep prices out of token counting. Local history does not establish an account
+key. Cursor history keeps its own accepted credential stamp and rejects late results
+from a changed login. Scan limits and missing records must stay explicit in the result.
+
 - Use `ProviderHTTPClient.shared` or an injected `HTTPTransport`, and test clients with
   injected transports. Keep the chunk receiver, early `Content-Length` rejection,
   streamed-overflow cancellation, and dedicated `Timeout.TaskBudget`. Redirects keep the

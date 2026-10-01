@@ -192,9 +192,112 @@ private enum TestFailure: Error, LocalizedError {
     var errorDescription: String? { "Offline" }
 }
 
+private actor ControlledTokenSource: TokenUsageSource {
+    nonisolated let id: ProviderID = .codex
+    private var count = 0
+    private var pending: [Int: CheckedContinuation<TokenUsageSnapshot, Error>] = [:]
+    private var waiters: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    func fetch(now: Date, refreshID: UUID) async throws -> TokenUsageSnapshot {
+        count += 1
+        let request = count
+        return try await withCheckedThrowingContinuation { continuation in
+            pending[request] = continuation
+            let ready = waiters.filter { $0.0 <= count }
+            waiters.removeAll { $0.0 <= count }
+            for (_, waiter) in ready { waiter.resume() }
+        }
+    }
+
+    func waitForRequests(_ target: Int) async {
+        if count >= target { return }
+        await withCheckedContinuation { waiters.append((target, $0)) }
+    }
+
+    func succeed(_ request: Int, now: Date, count: Int64 = 100) {
+        let calendar = Calendar.current
+        let start = TokenUsagePeriod.lastSevenDays.interval(asOf: now, calendar: calendar)!.start
+        pending.removeValue(forKey: request)!.resume(
+            returning: TokenUsageSnapshot(
+                provider: .codex, daily: [calendar.startOfDay(for: now): count], periodStart: start,
+                observedAt: now, timeZoneID: calendar.timeZone.identifier))
+    }
+
+    func fail(_ request: Int) {
+        pending.removeValue(forKey: request)!.resume(throwing: TestFailure.offline)
+    }
+}
+
 @Suite("UsageStore", .timeLimit(.minutes(1)))
 @MainActor
 struct UsageStoreTests {
+    @Test("Quota publishes while token history is pending; history failure cannot fail quota")
+    func independentTokenHistory() async {
+        let gate = PersistenceGate()
+        let provider = ControlledUsageProvider(.codex, ownsDeadline: true, persistence: gate)
+        let tokens = ControlledTokenSource()
+        let store = UsageStore(providers: [provider], tokenSources: [tokens])
+        store.setEnabled(.codex, enabled: true)
+        let refresh = Task { await store.refresh([.codex], now: now) }
+        await provider.waitForRequests(1)
+        await tokens.waitForRequests(1)
+        await provider.succeed(1, with: snapshot(.codex))
+        await gate.waitForRequests(1)
+        #expect(store.reading(for: .codex)?.lastPolledAt == now)
+        #expect(store.refreshing.isEmpty)
+        #expect(store.tokenRefreshing.contains(.codex))
+        #expect(!store.tokensNeedRefresh(.codex, now: now, maxAge: 60))
+        #expect(store.tokenReadings[.codex] == nil)
+        await tokens.fail(1)
+        await gate.release()
+        await refresh.value
+        #expect(store.reading(for: .codex)?.isStale == false)
+        #expect(store.tokenReadings[.codex]?.error != nil)
+    }
+
+    @Test("History failure retains its timestamp while a successful quota refresh advances")
+    func tokenHistoryFreshness() async {
+        let provider = ControlledUsageProvider(.codex, ownsDeadline: true)
+        let tokens = ControlledTokenSource()
+        let store = UsageStore(providers: [provider], tokenSources: [tokens])
+        store.setEnabled(.codex, enabled: true)
+        let first = Task { await store.refresh([.codex], now: now) }
+        await provider.waitForRequests(1)
+        await tokens.waitForRequests(1)
+        await provider.succeed(1, with: snapshot(.codex))
+        await tokens.succeed(1, now: now)
+        await first.value
+        let later = now.addingTimeInterval(300)
+        let second = Task { await store.refresh([.codex], now: later) }
+        await provider.waitForRequests(2)
+        await tokens.waitForRequests(2)
+        await provider.succeed(2, with: snapshot(.codex, at: later))
+        await tokens.fail(2)
+        await second.value
+        #expect(store.reading(for: .codex)?.lastPolledAt == later)
+        #expect(store.tokenReadings[.codex]?.lastPolledAt == now)
+        #expect(store.tokenReadings[.codex]?.isStale == true)
+        #expect(store.tokenReadings[.codex]?.value?.tokens(for: .today, asOf: later) == 100)
+    }
+
+    @Test("Disable rejects a late token history result")
+    func disabledTokenHistory() async {
+        let provider = ControlledUsageProvider(.codex, ownsDeadline: true)
+        let tokens = ControlledTokenSource()
+        let store = UsageStore(providers: [provider], tokenSources: [tokens])
+        store.setEnabled(.codex, enabled: true)
+        let refresh = Task { await store.refresh([.codex], now: now) }
+        await provider.waitForRequests(1)
+        await tokens.waitForRequests(1)
+        store.setEnabled(.codex, enabled: false)
+        await provider.succeed(1, with: snapshot(.codex))
+        await tokens.succeed(1, now: now)
+        await refresh.value
+        #expect(store.tokenReadings.isEmpty)
+        #expect(store.tokenRefreshing.isEmpty)
+        #expect(store.readings.isEmpty)
+    }
+
     @Test("Preflight timeout removes previously accepted Codex quota whose owner is unverified")
     func preflightTimeoutDropsUnverifiedQuota() async {
         let suite = "PreflightOwnership-\(UUID().uuidString)"

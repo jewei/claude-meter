@@ -211,21 +211,61 @@ final class AppState: ObservableObject {
     }
 
     init() {
-        self.usageStore = UsageStore(providers: [
-            ClaudeProviderAdapter(configuration: {
-                ClaudeConfiguration(
-                    mode: UserDefaults.standard.string(forKey: MeterSettings.oauthModeKey) ?? "",
-                    configuredDirs: MeterSettings.configuredConfigDirs,
-                    disabledKeys: Set(MeterSettings.disabledAccountKeys),
-                    thresholds: MeterSettings.currentThresholds())
-            }),
-            CodexProviderAdapter(configuration: {
-                let paths = AppSettings.codexHomePaths()
-                let names = AppSettings.codexAccountNames
-                return try await CodexConfiguration(
-                    accounts: AppSettings.loadCodexAccounts(paths: paths, names: names))
-            }), CursorProviderAdapter(), GrokProviderAdapter(),
-        ])
+        self.usageStore = UsageStore(
+            providers: [
+                ClaudeProviderAdapter(configuration: {
+                    ClaudeConfiguration(
+                        mode: UserDefaults.standard.string(forKey: MeterSettings.oauthModeKey)
+                            ?? "",
+                        configuredDirs: MeterSettings.configuredConfigDirs,
+                        disabledKeys: Set(MeterSettings.disabledAccountKeys),
+                        thresholds: MeterSettings.currentThresholds())
+                }),
+                CodexProviderAdapter(configuration: {
+                    let paths = AppSettings.codexHomePaths()
+                    let names = AppSettings.codexAccountNames
+                    return try await CodexConfiguration(
+                        accounts: AppSettings.loadCodexAccounts(paths: paths, names: names))
+                }), CursorProviderAdapter(), GrokProviderAdapter(),
+            ],
+            tokenSources: [
+                LocalTokenUsageSource(
+                    id: .claude,
+                    roots: {
+                        let configured = MeterSettings.configuredConfigDirs
+                        let disabled = Set(MeterSettings.disabledAccountKeys)
+                        return try await Timeout.run(
+                            seconds: 5, budget: AppSettings.configurationBudget
+                        ) {
+                            ConfigDirDiscovery.discover(
+                                configuredDirs: configured, disabledKeys: disabled
+                            )
+                            .map {
+                                $0.configDir.appendingPathComponent("projects", isDirectory: true)
+                            }
+                        }
+                    }),
+                LocalTokenUsageSource(
+                    id: .codex,
+                    roots: {
+                        let accounts = try await AppSettings.loadCodexAccounts(
+                            paths: AppSettings.codexHomePaths(), names: [:])
+                        return accounts.flatMap { account in
+                            ["sessions", "archived_sessions"].map {
+                                account.home.appendingPathComponent($0, isDirectory: true)
+                            }
+                        }
+                    }),
+                CursorTokenUsageSource(),
+                LocalTokenUsageSource(
+                    id: .grok,
+                    roots: {
+                        [
+                            GrokAuthStore.defaultAuthPath().deletingLastPathComponent()
+                                .appendingPathComponent("sessions", isDirectory: true)
+                        ]
+                    }),
+            ])
         self.refreshScheduler = RefreshScheduler(usageStore: usageStore)
         OAuthPipeline.enableRateLimitPersistence()
         UserDefaults.standard.register(defaults: [

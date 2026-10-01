@@ -23,7 +23,7 @@ struct PopoverView: View {
     // every continuous TimelineView animation — otherwise they keep the
     // display link alive and re-layout the hidden hierarchy every frame.
     @State private var isVisible = false
-    /// Expanded non-Claude provider cards, mirrored from `AppSettings` so toggling
+    /// Expanded provider cards, mirrored from `AppSettings` so toggling
     /// re-renders. Empty by default — see `AppSettings.expandedProviderCards`.
     @State private var expandedCards: Set<String> = AppSettings.expandedProviderCards
     /// Saved card order; empty means the automatic order. Reloaded on each open,
@@ -293,6 +293,13 @@ struct PopoverView: View {
         .padding(.bottom, 12)
     }
 
+    private func tokenUsage(for provider: ProviderID) -> TokenUsageRows {
+        TokenUsageRows(
+            provider: provider,
+            reading: appState.usageStore.tokenReadings[provider],
+            isRefreshing: appState.usageStore.tokenRefreshing.contains(provider), now: now)
+    }
+
     private var showsClaude: Bool {
         appState.claudeSnapshot != nil && AppSettings.oauthSourceEnabled
     }
@@ -518,7 +525,8 @@ struct PopoverView: View {
                 } else {
                     AccountRingCard(
                         model: model, now: now, thresholds: usageThresholds, usage: showsUsage,
-                        showsProviderStatus: selectedProvider != .claude)
+                        showsProviderStatus: selectedProvider != .claude,
+                        tokenUsage: tokenUsage(for: .claude))
                 }
             }
         case .claudeExtraUsage:
@@ -612,6 +620,7 @@ struct PopoverView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
+        .clipped()
         .chunkyCard()
     }
 
@@ -627,6 +636,7 @@ struct PopoverView: View {
                 }
             }
             UsageResetsView(resets: model.usageResets, now: now)
+            tokenUsage(for: .claude)
         }
     }
 
@@ -899,7 +909,7 @@ struct PopoverView: View {
                     .foregroundStyle(Color.pfInkMuted)
             }
             if expanded {
-                Group {
+                VStack(alignment: .leading, spacing: 8) {
                     let buckets = cursor.windows.filter {
                         $0.kind == .scoped && $0.usedPercent != nil
                     }
@@ -918,12 +928,14 @@ struct PopoverView: View {
                             }
                         }
                     }
+                    tokenUsage(for: .cursor)
                 }
                 .popoverDisclosure(id: Self.cursorCardID)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
+        .clipped()
         .chunkyCard()
     }
 
@@ -988,7 +1000,8 @@ struct PopoverView: View {
                 now: now,
                 thresholds: usageThresholds,
                 usage: showsUsage,
-                showsProviderStatus: selectedProvider != .codex)
+                showsProviderStatus: selectedProvider != .codex,
+                tokenUsage: tokenUsage(for: .codex))
         } else {
             codexCard(reading, showsStatus: selectedProvider != .codex)
         }
@@ -1068,12 +1081,16 @@ struct PopoverView: View {
                     .foregroundStyle(status.isFailure ? Color.pfEnergyLow : Color.pfInkMuted)
             }
             if expanded {
-                UsageResetsView(resets: resets, now: now)
-                    .popoverDisclosure(id: cardID)
+                VStack(alignment: .leading, spacing: 8) {
+                    UsageResetsView(resets: resets, now: now)
+                    tokenUsage(for: .codex)
+                }
+                .popoverDisclosure(id: cardID)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
+        .clipped()
         .chunkyCard()
     }
 
@@ -1179,9 +1196,14 @@ struct PopoverView: View {
                     .font(PFont.body(11, .semibold))
                     .foregroundStyle(Color.pfInkMuted)
             }
+            if expanded {
+                tokenUsage(for: .grok)
+                    .popoverDisclosure(id: Self.grokCardID)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
+        .clipped()
         .chunkyCard()
     }
 

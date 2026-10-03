@@ -109,28 +109,10 @@
 		0A02B602D5924ABE89324079 /* ClaudeMeter */ = {
 			isa = PBXGroup;
 			children = (
-				262C9E3CBCA04E07BB465F9B /* ClaudeMeterApp.swift */,
-				AD0B0219D0744A52A145A257 /* AppState.swift */,
-				C7A1B2C3D4E5F60718293A4E /* AppSettings.swift */,
-				C7A1B2C3D4E5F60718293A5A /* ProviderReading.swift */,
-				A70000000000000000000002 /* UsageStore.swift */,
-				A7D000000000000000000002 /* RefreshScheduler.swift */,
-				A1B2C3D4E5F60718293A4B5D /* AppUpdater.swift */,
-				C2D3E4F5A6B7C8D9E0F1A2B3 /* PowerMonitor.swift */,
-				A33698B9F9BB4AE4BDF69097 /* DesignTokens.swift */,
-				E8C6B61CE7B7508EC05E5944 /* PlayfulTheme.swift */,
-				C30CB82FB9488E6512B08E66 /* PlayfulComponents.swift */,
-				D39F041AC0894892922A9F90 /* MenuBarLabel.swift */,
-				3715D40A5AE0421A91C5BED0 /* PopoverView.swift */,
-				B8D000000000000000000002 /* TokenUsageRows.swift */,
-				F30000000000000000000002 /* PopoverTransition.swift */,
-				07DBE9DE99AE4570ABDAA767 /* SettingsView.swift */,
-				C7A1B2C3D4E5F60718293A5C /* DataSettingsTab.swift */,
-				C7A1B2C3D4E5F60718293A50 /* AppearanceSettingsTab.swift */,
-				C7A1B2C3D4E5F60718293A54 /* AdvancedSettingsTab.swift */,
-				C7A1B2C3D4E5F60718293A56 /* AboutSettingsTab.swift */,
-				C7A1B2C3D4E5F60718293A58 /* OAuthConnectionSection.swift */,
-				B5D38012F5D5476997394541 /* DiagnosticsView.swift */,
+				4A26ABAFC73CA94D44B38695 /* Application */,
+				BDB12B27467716F14E599FC5 /* Design */,
+				9A2ED2E03AF47058757BB97C /* MenuBar */,
+				8E0F27320799F2A2477903AE /* Settings */,
 				CE4B0B7DA01144CD91C863D3 /* Assets.xcassets */,
 				79FAFFB9B2AADEDB517FE4EF /* Fonts */,
 				803E43377A64429FBFAFB75C /* Info.plist */,
@@ -166,6 +148,56 @@
 				D10000000000000000000006 /* ClaudeMeterTests */,
 				6065E92A9B9B40F79BC316EB /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		4A26ABAFC73CA94D44B38695 /* Application */ = {
+			isa = PBXGroup;
+			children = (
+				262C9E3CBCA04E07BB465F9B /* ClaudeMeterApp.swift */,
+				AD0B0219D0744A52A145A257 /* AppState.swift */,
+				C7A1B2C3D4E5F60718293A4E /* AppSettings.swift */,
+				A1B2C3D4E5F60718293A4B5D /* AppUpdater.swift */,
+				C2D3E4F5A6B7C8D9E0F1A2B3 /* PowerMonitor.swift */,
+				C7A1B2C3D4E5F60718293A5A /* ProviderReading.swift */,
+				A7D000000000000000000002 /* RefreshScheduler.swift */,
+				A70000000000000000000002 /* UsageStore.swift */,
+			);
+			path = Application;
+			sourceTree = "<group>";
+		};
+		BDB12B27467716F14E599FC5 /* Design */ = {
+			isa = PBXGroup;
+			children = (
+				A33698B9F9BB4AE4BDF69097 /* DesignTokens.swift */,
+				C30CB82FB9488E6512B08E66 /* PlayfulComponents.swift */,
+				E8C6B61CE7B7508EC05E5944 /* PlayfulTheme.swift */,
+			);
+			path = Design;
+			sourceTree = "<group>";
+		};
+		9A2ED2E03AF47058757BB97C /* MenuBar */ = {
+			isa = PBXGroup;
+			children = (
+				D39F041AC0894892922A9F90 /* MenuBarLabel.swift */,
+				F30000000000000000000002 /* PopoverTransition.swift */,
+				3715D40A5AE0421A91C5BED0 /* PopoverView.swift */,
+				B8D000000000000000000002 /* TokenUsageRows.swift */,
+			);
+			path = MenuBar;
+			sourceTree = "<group>";
+		};
+		8E0F27320799F2A2477903AE /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				C7A1B2C3D4E5F60718293A56 /* AboutSettingsTab.swift */,
+				C7A1B2C3D4E5F60718293A54 /* AdvancedSettingsTab.swift */,
+				C7A1B2C3D4E5F60718293A50 /* AppearanceSettingsTab.swift */,
+				C7A1B2C3D4E5F60718293A5C /* DataSettingsTab.swift */,
+				B5D38012F5D5476997394541 /* DiagnosticsView.swift */,
+				C7A1B2C3D4E5F60718293A58 /* OAuthConnectionSection.swift */,
+				07DBE9DE99AE4570ABDAA767 /* SettingsView.swift */,
+			);
+			path = Settings;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */

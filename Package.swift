@@ -5,7 +5,7 @@ let package = Package(
     name: "ClaudeMeterWorkspace",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "ClaudeMeter", targets: ["ClaudeMeter"]),
+        .executable(name: "ClaudeMeter", targets: ["ClaudeMeter"])
     ],
     dependencies: [
         .package(path: "ClaudeMeterCore")
@@ -19,11 +19,12 @@ let package = Package(
             ],
             path: "ClaudeMeter",
             exclude: [
+                "AGENTS.md",
                 "Assets.xcassets",
                 "ClaudeMeter.entitlements",
                 "Fonts",
                 "Info.plist",
             ]
-        ),
+        )
     ]
 )

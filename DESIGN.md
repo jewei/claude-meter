@@ -1,6 +1,6 @@
 ---
 name: Claude Meter design system
-medium: SwiftUI (MenuBarExtra .window). Tokens are implemented in ClaudeMeter/PlayfulTheme.swift.
+medium: SwiftUI (MenuBarExtra .window). Tokens are implemented in ClaudeMeter/Design/PlayfulTheme.swift.
 fonts:
   display: Fredoka # headings, numbers, avatars, plan badges (rounded, chunky)
   body: Nunito # labels, captions, body

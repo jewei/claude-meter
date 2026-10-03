@@ -20,6 +20,7 @@ python3 "$SCRIPT_DIR/test-sparkle-upgrade.py"
 
 echo "▶ Checking Swift formatting"
 swift format lint --recursive --strict \
+    "$PROJECT_DIR/Package.swift" \
     "$PROJECT_DIR/ClaudeMeterCore" \
     "$PROJECT_DIR/ClaudeMeter" \
     "$PROJECT_DIR/ClaudeMeterTests"

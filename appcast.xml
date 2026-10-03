@@ -6,15 +6,15 @@
         <description>Claude Meter release feed</description>
         <language>en</language>
         <item>
-            <title>Version 3.1</title>
-            <pubDate>Fri, 25 Sep 2026 07:39:50 +0000</pubDate>
-            <sparkle:version>314</sparkle:version>
-            <sparkle:shortVersionString>3.1</sparkle:shortVersionString>
+            <title>Version 3.1.1</title>
+            <pubDate>Sat, 03 Oct 2026 03:02:02 +0000</pubDate>
+            <sparkle:version>324</sparkle:version>
+            <sparkle:shortVersionString>3.1.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <enclosure
-                url="https://github.com/jewei/claude-meter/releases/download/v3.1/ClaudeMeter-3.1.dmg"
-                sparkle:edSignature="lhuKyUAI037Vev95grWy7jquEwPnFcDlnPZjUQzt4AWh09EVBl+IPtSHVDoBY+AjDClZh0K8S4j7eqrZSl9FBQ=="
-                length="4348606"
+                url="https://github.com/jewei/claude-meter/releases/download/v3.1.1/ClaudeMeter-3.1.1.dmg"
+                sparkle:edSignature="vn9LymC0K3DOWYS7Twii3dcOK0mjnb8/jsz2n19Sz3Fs6gkFyudKj7axgctj2yRr8yPA+vPMUjvi8x8nB3c5BQ=="
+                length="4742782"
                 type="application/octet-stream"
             />
         </item>

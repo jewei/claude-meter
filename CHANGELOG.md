@@ -18,8 +18,16 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   days. Claude, Codex, and Grok totals use local records on this Mac. Cursor totals use
   account usage. No prices are shown.
 
+### Changed
+
+- Improved card surfaces, ring lighting, button feedback, and dark-mode contrast.
+- Settings has clearer sections, larger controls, and visual previews for rings and
+  energy bars. Long account names and plan badges wrap more clearly.
+- Paused and empty states provide a direct path to Settings.
+
 ### Fixed
 
+- At zero energy left, the hero says "Take a breather" and "Out of energy".
 - Cards and the popover window resize together when cards expand or collapse.
 - Account headers, bars, and rings agree when a limit window resets. Stale expired
   windows remain unknown, and ring cards retain account errors and stale status.

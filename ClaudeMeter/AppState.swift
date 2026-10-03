@@ -235,7 +235,7 @@ final class AppState: ObservableObject {
                         let configured = MeterSettings.configuredConfigDirs
                         let disabled = Set(MeterSettings.disabledAccountKeys)
                         return try await Timeout.run(
-                            seconds: 5, budget: AppSettings.configurationBudget
+                            seconds: 5, budget: AppSettings.claudeHistoryConfigurationBudget
                         ) {
                             ConfigDirDiscovery.discover(
                                 configuredDirs: configured, disabledKeys: disabled
@@ -249,7 +249,8 @@ final class AppState: ObservableObject {
                     id: .codex,
                     roots: {
                         let accounts = try await AppSettings.loadCodexAccounts(
-                            paths: AppSettings.codexHomePaths(), names: [:])
+                            paths: AppSettings.codexHomePaths(), names: [:],
+                            budget: AppSettings.codexHistoryConfigurationBudget)
                         return accounts.flatMap { account in
                             ["sessions", "archived_sessions"].map {
                                 account.home.appendingPathComponent($0, isDirectory: true)

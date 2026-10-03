@@ -19,7 +19,7 @@ public struct InvalidTimeoutDurationError: Error, LocalizedError, Sendable {
 
 public struct TimeoutCapacityError: Error, LocalizedError, Sendable {
     public var errorDescription: String? {
-        "Too many timed operations are still running; waiting for cancellation to finish"
+        "Too many operations are still running; try again shortly"
     }
 
     public init() {}

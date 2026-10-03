@@ -91,6 +91,22 @@ private actor PollRecorder {
     }
 }
 
+private actor ConfigurationReadGate {
+    private var pending: [CheckedContinuation<Void, Never>] = []
+    private var released = false
+
+    func wait() async {
+        guard !released else { return }
+        await withCheckedContinuation { pending.append($0) }
+    }
+
+    func release() {
+        released = true
+        for continuation in pending { continuation.resume() }
+        pending.removeAll()
+    }
+}
+
 private struct RecordingProvider: UsageProvider {
     let id: ProviderID = .claude
     let recorder: PollRecorder
@@ -105,6 +121,48 @@ private struct RecordingProvider: UsageProvider {
 
 @Suite("App logic", .serialized)
 struct AppLogicTests {
+    @Test("Busy history configuration cannot exhaust quota or the other history source")
+    func historyConfigurationCapacityIsIndependent() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let historyBudgets = [
+            AppSettings.claudeHistoryConfigurationBudget,
+            AppSettings.codexHistoryConfigurationBudget,
+        ]
+        for (index, budget) in historyBudgets.enumerated() {
+            let gate = ConfigurationReadGate()
+            let entered = PollRecorder()
+            let workers = (0..<2).map { _ in
+                Task {
+                    try await Timeout.run(seconds: 30, budget: budget) {
+                        await entered.record()
+                        await gate.wait()
+                    }
+                }
+            }
+            do {
+                try await Timeout.run(seconds: 5) { await entered.waitForPoll(2) }
+                await #expect(throws: TimeoutCapacityError.self) {
+                    try await Timeout.run(seconds: 5, budget: budget) { 0 }
+                }
+                let quota = try await AppSettings.loadCodexAccounts(
+                    paths: [directory.path], names: [:])
+                #expect(quota.count == 1)
+                let otherHistory = try await AppSettings.loadCodexAccounts(
+                    paths: [directory.path], names: [:], budget: historyBudgets[1 - index])
+                #expect(otherHistory == quota)
+                await gate.release()
+                for worker in workers { try await worker.value }
+            } catch {
+                await gate.release()
+                for worker in workers { _ = await worker.result }
+                throw error
+            }
+        }
+    }
+
     @Test("An available startup credential stops later evidence probes")
     func startupEvidenceShortCircuits() {
         var laterCalls = 0

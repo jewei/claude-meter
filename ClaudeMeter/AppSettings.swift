@@ -14,8 +14,11 @@ extension String {
 }
 
 enum AppSettings {
-    /// Blocked filesystem calls retain their slots after timeout.
-    static let configurationBudget = Timeout.TaskBudget(limit: 2)
+    /// Quota and each history source have independent limits. Blocked filesystem
+    /// calls retain their slots after timeout.
+    static let codexConfigurationBudget = Timeout.TaskBudget(limit: 2)
+    static let claudeHistoryConfigurationBudget = Timeout.TaskBudget(limit: 2)
+    static let codexHistoryConfigurationBudget = Timeout.TaskBudget(limit: 2)
     static let evidenceBudget = Timeout.TaskBudget(limit: 2)
     static let isActiveKey = "isActive"
     static let oauthSourceEnabledKey = "oauthSourceEnabled"
@@ -77,10 +80,11 @@ enum AppSettings {
         return [implicitPath] + configuredCodexHomes
     }
 
-    static func loadCodexAccounts(paths: [String], names: [String: String]) async throws
-        -> [CodexAccount]
-    {
-        try await Timeout.run(seconds: 5, budget: configurationBudget) {
+    static func loadCodexAccounts(
+        paths: [String], names: [String: String],
+        budget: Timeout.TaskBudget = codexConfigurationBudget
+    ) async throws -> [CodexAccount] {
+        try await Timeout.run(seconds: 5, budget: budget) {
             resolveCodexAccounts(paths: paths, names: names)
         }
     }

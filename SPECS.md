@@ -166,6 +166,10 @@ records per provider. Incomplete final lines are read again. Oversized or malfor
 records, unresolved counters, and reached limits make history partial. Reading resumes
 on a later refresh when the byte limit was reached. No limit produces a complete zero.
 History fetches have a 20 s deadline and at most two outstanding timed tasks per source.
+Claude and Codex history configuration reads each have a separate two-operation limit
+and a 5 s deadline. Neither shares capacity with Codex quota configuration. Timed-out
+or canceled configuration work holds its slot until it ends. Capacity errors can also
+occur while ordinary work is active; they do not imply that cancellation is pending.
 Cursor uses the shared HTTP response bounds. The UI states partial or stale coverage.
 
 ### Provider lifecycle store

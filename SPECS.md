@@ -653,7 +653,9 @@ in the automatic order. A hidden card keeps its saved ID for its return. VoiceOv
 "Move up" and "Move down" actions. **Use automatic order** in **Appearance**, under
 **Account cards**, clears the saved order and both account pins, so the first card is
 again the selected provider's account nearest its limit. The drag payload is an empty
-string, so a drop outside the popover carries no account key.
+string, so a drop outside the popover carries no account key. A **Menu bar** label
+identifies the selected card. With several eligible accounts, a visible instruction
+explains drag-to-top selection. These cues do not change account selection or order.
 
 The Appearance card style applies to every Claude and Codex account card, whatever its
 position or provider. Cards use rings or collapsible bars. A bar card shows a session
@@ -707,7 +709,12 @@ own date or weekday formatter.
 ## 6. Settings
 
 Settings uses a custom tab bar with **Data**, **Appearance**, **Advanced**, and
-**About**. Appearance includes the visual warning and critical thresholds.
+**About**. Command-1 through Command-4 open these tabs. Tabs and Appearance options
+expose their selected accessibility state. Appearance includes the visual warning and
+critical thresholds; arrow keys adjust a focused threshold slider by its existing step.
+Manual OAuth entry always offers **Cancel**, including during reauthentication. Cancel
+clears the draft tokens and their visibility, returns to the previous setup screen, and
+does not change the stored credentials or connection mode.
 `MeterSettings` reads and writes standard defaults.
 
 | Key | Domain value | Default |

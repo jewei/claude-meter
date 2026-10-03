@@ -19,23 +19,29 @@ extension Color {
 
     // Ink
     static let pfInk = Color(light: "3A382F", dark: "ECE8DC")
-    static let pfInkMuted = Color(light: "908C7E", dark: "9A9588")
-    static let pfSectionLabel = Color(light: "A8A496", dark: "7C786C")
+    static let pfInkMuted = Color(light: "6A665B", dark: "ADA798")
+    static let pfSectionLabel = Color(light: "6A665B", dark: "ADA798")
 
     // Energy / severity (green = plenty left, orange = low, red = almost dry)
     static let pfEnergyFull = Color(light: "4FC51C", dark: "62D62C")
-    static let pfEnergyFullShadow = Color(light: "3DA013", dark: "2F7A0F")
+    static let pfAction = Color(hex: "287B12")
+    static let pfActionShadow = Color(hex: "19550B")
     static let pfEnergyLow = Color(light: "FF9D0A", dark: "FFAE33")
     static let pfEnergyEmpty = Color(light: "FF5A5A", dark: "FF6B6B")
+
+    // Text needs stronger contrast than the bright ring and bar fills.
+    static let pfEnergyFullInk = Color(light: "2E7D12", dark: "8FE25A")
+    static let pfEnergyLowInk = Color(light: "965000", dark: "FFC368")
+    static let pfEnergyEmptyInk = Color(light: "B52C28", dark: "FF9B96")
 
     // Hero surfaces + ink, by state
     static let pfHeroFullBG = Color(light: "EAF8E0", dark: "22311A")
     static let pfHeroFullBorder = Color(light: "CFEEB8", dark: "3C5A2A")
     static let pfHeroFullInk = Color(light: "2E7D12", dark: "8FE25A")
-    static let pfHeroFullSub = Color(light: "5B7A3E", dark: "A6C98A")
+    static let pfHeroFullSub = Color(light: "547236", dark: "A6C98A")
     static let pfHeroLowBG = Color(light: "FFF1DD", dark: "332715")
     static let pfHeroLowBorder = Color(light: "FAD9A0", dark: "5A4424")
-    static let pfHeroLowInk = Color(light: "B5650A", dark: "FFC368")
+    static let pfHeroLowInk = Color(light: "965000", dark: "FFC368")
     static let pfHeroLowSub = Color(light: "8A6A3A", dark: "D8B488")
     static let pfHeroEmptyBG = Color(light: "FFE4E1", dark: "3A1F1E")
     static let pfHeroEmptyBorder = Color(light: "F6C0BC", dark: "5E2F2D")
@@ -43,11 +49,11 @@ extension Color {
     static let pfHeroEmptySub = Color(light: "8A4B47", dark: "E0A8A4")
 
     // Plan badges
-    static let pfPlanMaxFG = Color(light: "A24DEB", dark: "D9B3FF")
+    static let pfPlanMaxFG = Color(light: "8133BC", dark: "D9B3FF")
     static let pfPlanMaxBG = Color(light: "F2E6FF", dark: "3A2A50")
-    static let pfPlanProFG = Color(light: "2E9E0E", dark: "7FD65A")
+    static let pfPlanProFG = Color(light: "287B12", dark: "7FD65A")
     static let pfPlanProBG = Color(light: "E7F8DC", dark: "23381A")
-    static let pfPlanFreeFG = Color(light: "8A8676", dark: "B8B3A2")
+    static let pfPlanFreeFG = Color(light: "6F6A5B", dark: "B8B3A2")
     static let pfPlanFreeBG = Color(light: "EFECE0", dark: "33312A")
 }
 
@@ -111,6 +117,15 @@ enum EnergyBand {
         case .low: return .pfEnergyLow
         case .empty, .tappedOut: return .pfEnergyEmpty
         case .unknown: return Color.pfInkMuted.opacity(0.45)
+        }
+    }
+
+    var ink: Color {
+        switch self {
+        case .full: .pfEnergyFullInk
+        case .low: .pfEnergyLowInk
+        case .empty, .tappedOut: .pfEnergyEmptyInk
+        case .unknown: .pfInkMuted
         }
     }
 
@@ -208,8 +223,10 @@ struct RaisedTile<Content: View>: View {
 struct RaisedButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    var fill: Color = .pfEnergyFull
-    var shadow: Color = .pfEnergyFullShadow
+    @Environment(\.isEnabled) private var isEnabled
+
+    var fill: Color = .pfAction
+    var shadow: Color = .pfActionShadow
     var radius: CGFloat = 14
 
     func makeBody(configuration: Configuration) -> some View {
@@ -232,9 +249,45 @@ struct RaisedButtonStyle: ButtonStyle {
                     .fill(shadow)
                     .offset(y: pressed ? 2 : 4)
             )
+            .opacity(isEnabled ? 1 : 0.45)
             .animation(
                 reduceMotion ? nil : .spring(response: 0.2, dampingFraction: 0.6),
                 value: pressed)
+    }
+}
+
+/// Shared feedback for compact controls. Native buttons retain keyboard focus.
+struct QuietButtonStyle: ButtonStyle {
+    var radius: CGFloat = 8
+
+    func makeBody(configuration: Configuration) -> some View {
+        QuietButtonBody(configuration: configuration, radius: radius)
+    }
+
+    private struct QuietButtonBody: View {
+        let configuration: ButtonStyleConfiguration
+        let radius: CGFloat
+        @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.isFocused) private var isFocused
+        @State private var isHovered = false
+
+        var body: some View {
+            configuration.label
+                .background(
+                    RoundedRectangle(cornerRadius: radius)
+                        .fill(
+                            Color.pfInk.opacity(
+                                isEnabled && configuration.isPressed
+                                    ? 0.12 : (isEnabled && isHovered ? 0.06 : 0)))
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: radius)
+                        .strokeBorder(isFocused ? Color.pfHeroFullInk : .clear, lineWidth: 2)
+                }
+                .contentShape(RoundedRectangle(cornerRadius: radius))
+                .opacity(isEnabled ? 1 : 0.45)
+                .onHover { isHovered = $0 }
+        }
     }
 }
 
@@ -257,7 +310,9 @@ struct PlanBadge: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(Capsule().fill(s.bg))
-            .fixedSize()
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .help(plan)
     }
 
     static func style(for plan: String) -> (fg: Color, bg: Color, text: String) {

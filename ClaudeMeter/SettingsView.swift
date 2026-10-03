@@ -40,6 +40,8 @@ struct SettingsView: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 12)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Settings tabs")
     }
 
     private func tabButton(_ index: Int, _ icon: String, _ title: String) -> some View {
@@ -59,7 +61,11 @@ struct SettingsView: View {
                     .fill(selected ? Color.pfHeroFullBG : Color.clear)
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(QuietButtonStyle(radius: 14))
+        .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .help("\(title) (⌘\(index + 1))")
     }
 }
 

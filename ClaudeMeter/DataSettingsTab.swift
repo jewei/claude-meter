@@ -377,8 +377,9 @@ private struct AccountFolderRow<Trailing: View>: View {
             }
             VStack(alignment: .leading, spacing: 5) {
                 TextField(placeholder, text: $name)
-                    .textFieldStyle(.plain)
+                    .textFieldStyle(.roundedBorder)
                     .font(PFont.display(15, .semibold))
+                    .accessibilityLabel("Display name")
                     .foregroundStyle(Color.pfInk)
                     .help("Display name shown in the popover")
                 HStack(spacing: 4) {
@@ -389,6 +390,10 @@ private struct AccountFolderRow<Trailing: View>: View {
                         .truncationMode(.middle)
                 }
                 .foregroundStyle(Color.pfInkMuted)
+                .help(path)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Config dir")
+                .accessibilityValue(path)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
                 .background(

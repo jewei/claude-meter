@@ -15,22 +15,23 @@ colors-light:
   track: "#ECE9DD" # Unfilled ring and bar track
   # Text
   ink: "#3A382F" # primary warm near-black
-  ink-muted: "#908C7E" # emails, reset times, "left"
-  label: "#A8A496" # uppercase section labels
+  ink-muted: "#6A665B" # emails, reset times, "left"
+  label: "#6A665B" # uppercase section labels
   # Energy severity: green is full, orange is low, red is empty
   energy-full: "#4FC51C" # green
-  energy-full-shadow: "#3DA013" # raised-button drop shadow
+  action: "#287B12" # raised-button fill, both modes
+  action-shadow: "#19550B" # raised-button drop shadow, both modes
   energy-low: "#FF9D0A" # orange
   energy-empty: "#FF5A5A" # red
   # Hero text by state
   hero-ink: "#2E7D12"
-  hero-subink: "#5B7A3E"
+  hero-subink: "#547236"
   # Plan badges
-  plan-max-fg: "#A24DEB"
+  plan-max-fg: "#8133BC"
   plan-max-bg: "#F2E6FF"
-  plan-pro-fg: "#2E9E0E"
+  plan-pro-fg: "#287B12"
   plan-pro-bg: "#E7F8DC"
-  plan-free-fg: "#8A8676"
+  plan-free-fg: "#6F6A5B"
   plan-free-bg: "#EFECE0"
 colors-dark: # Dark palette. The original design uses light colors only.
   popover-bg: "#201E18"
@@ -41,8 +42,8 @@ colors-dark: # Dark palette. The original design uses light colors only.
   hero-border: "#3C5A2A"
   track: "#3A372E"
   ink: "#ECE8DC"
-  ink-muted: "#9A9588"
-  label: "#7C786C"
+  ink-muted: "#ADA798"
+  label: "#ADA798"
   energy-full: "#62D62C"
   energy-low: "#FFAE33"
   energy-empty: "#FF6B6B"
@@ -130,7 +131,7 @@ maps roles and weights to their faces. The menu bar uses system fonts.
 | -------------- | -------------------------------------- | ------------------------------------------ |
 | Hero title     | Fredoka 600, 18                        | "You're cruising", "Claude Meter"          |
 | Account name   | Fredoka 600, 15                        | "Work"                                     |
-| Big number     | Fredoka 700–800, 14 (ring rows 11)     | "78%"                                      |
+| Big number     | Fredoka 700–800, 14     | "78%"                                      |
 | Avatar letter  | Fredoka 700, 17 (ring center 19)       | "W"                                        |
 | Plan badge     | Fredoka 700, 10–11                     | "MAX 20×"                                  |
 | Primary button | Fredoka 700, 14                        | "Open Settings"                            |
@@ -153,9 +154,15 @@ Cards, avatars, and buttons use these treatments:
 - Avatars and header icons use rounded squares with radii of 11pt and 9pt. They have a
   solid brand fill and a white glyph. A 3pt `black.opacity(0.13)` inner bottom highlight
   is clipped to the shape.
-- Primary buttons use an `energy-full` fill, white Fredoka text, and a 14pt radius. The
-  shadow is `.shadow(color: energy-full-shadow, radius: 0, y: 4)`. On press, the button
-  moves down 2pt and the shadow moves to `y: 2`.
+- Primary buttons use a dark green `#287B12` fill, white Fredoka text, and a 14pt radius.
+  This replaces the bright energy fill so the label has sufficient contrast. The shadow
+  uses `action-shadow` at `y: 4`. On press, the button moves down 2pt and the shadow
+  moves to `y: 2`. Disabled buttons use 45% opacity.
+- Compact controls use `QuietButtonStyle`: a subtle ink surface on hover and press,
+  a 2pt focus border, and 45% opacity when disabled. Feedback changes without motion.
+- Bright energy colors belong to rings, dots, and bars. Small status text and values
+  use darker energy ink in light mode: green `#2E7D12`, amber `#965000`, and red `#B52C28`.
+  Dark mode uses `#8FE25A`, `#FFC368`, and `#FF9B96`.
 
 Progress bars and rings have a 2pt white capsule overlay at the top of the fill. The
 overlay uses 45% opacity.
@@ -202,6 +209,8 @@ refresh button. **Settings** contains pause and resume controls.
 A 46×46 white circle (border `hero-border`) holds the mascot emoji, then the headline
 (Fredoka 600/18 `hero-ink`) and subline (Nunito 700/12 `hero-subink`). Background and
 border change from green to orange to red as severity increases, with `.easeInOut(0.3)`.
+Unknown, unavailable, and stale summaries use neutral card surfaces and ink. The headline
+and subline wrap when necessary; recovery text is not cut to a fixed number of lines.
 
 ### Accounts section
 
@@ -216,26 +225,29 @@ The account list has a label row and account cards:
   Codex card dragged to the top becomes the main meter. Cursor, Grok, and extra usage
   cannot go to the top. Cards read normalized `ProviderAccountSnapshot` values from
   UsageStore.
+- A small **Menu bar** label identifies the selected card. When several Claude or Codex
+  accounts are present, a visible instruction explains that dragging one to the top
+  selects it for the menu bar. The label does not imply that the reading is fresh.
 
 ### Ring card (default)
 
-The ring card uses a horizontal layout with a 14pt gap. It contains these elements:
+The ring card keeps the name above its quota display:
 
-- `ActivityRings` occupies 88×88pt. The outer weekly ring has a 34pt radius. The inner
-  5-hour ring has a 24pt radius. Both use 8pt strokes with round caps and a `track`
-  background. Each arc uses its window's band color and starts at the top. Arc length is
-  `percentLeft`. The center avatar letter uses Fredoka 700 at 19pt in `ink`.
-- Right column:
-  - Name (Fredoka 600/15 `ink`) and a plan badge pill on the right, only when the plan
-    is known.
-  - 5-hr row: 9×9 rounded dot (band color) · "5-hr" (Nunito 700/11 `ink`) · "78%"
-    (Fredoka 800/11, band color) · "· 3h 12m" (Nunito 600/11 `ink-muted`).
-  - Week row: the same, with a `ResetPhrase` duration such as "· 6d 7h".
-  - An unavailable or stale account keeps its label and shows its sanitized error in
-    small text below its quota rows. Unknown values stay unknown.
-  - Each account error stays visible in both styles. A secondary-provider card also
-    shows "Refresh failed · showing last known data" for a provider failure, or "Data
-    may be stale" for a stale observation. These lines use the same rules as bar cards.
+- The full-width header shows the account name (Fredoka 600/15 `ink`) and known plan.
+  If the name and badges do not fit on one line, the badges move below the name. The
+  name can use two lines; a tooltip exposes the full name. Plan text truncates only
+  when necessary and has a full-plan tooltip.
+- Below the header, `ActivityRings` occupies 88×88pt with a 14pt gap before the metrics.
+  The weekly ring has a 34pt radius; the 5-hour ring has a 24pt radius. Both use 8pt
+  strokes, round caps, and `track` backgrounds. Arcs start at the top. The center
+  letter uses Fredoka 700/19.
+- Each metric has a band dot, a Nunito 700/11 label, and a right-aligned Fredoka 700/14
+  value with an explicit **left** or **used** caption. Unknown values show only `—`.
+  A separate Nunito 600/11 line says **Resets in …**, using `ResetPhrase`.
+- An unavailable or stale account keeps its label and shows its sanitized error below
+  the quota and token rows. Error text uses energy ink rather than a bright fill color.
+  A secondary-provider card also shows **Refresh failed · showing last known data**
+  or **Data may be stale**, with the same rules as bar cards.
 - Codex cards, and Claude cards with a reset allowance, add a full-width "Usage limit
   resets" section below the rings or bars, with the available count. Each returned reset
   shows its title and time to expiry, sorted by expiry. A tooltip shows the exact local
@@ -338,13 +350,20 @@ and display names.
 Claude config dirs and Codex homes use one folder per account. Both lists use the same
 components:
 
-- An account row with an avatar, editable display name, folder path chip, and trailing
-  controls.
+- An account row with an avatar, a bordered display-name field, folder path chip, and
+  trailing controls. The field is labeled **Display name** for accessibility. The full
+  config dir is available in the path tooltip and accessibility value.
 - An **Add …** button with `folder.badge.plus` and a thick bottom border.
 - Error text in red Nunito 700 at 11pt.
 - A note in a `popover-bg` box.
 
 New folder lists use the same components.
+
+Tabs and Appearance options expose their selected state. Command-1 through Command-4
+open the four Settings tabs. Threshold sliders support arrow keys and show a focus
+border. Manual OAuth fields have explicit labels and 28pt Show/Hide token controls.
+**Cancel** is available during both initial entry and reauthentication; it discards the
+form draft and returns to the previous screen without changing stored credentials.
 
 ## Non-data states
 

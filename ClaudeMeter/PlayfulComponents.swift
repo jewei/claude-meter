@@ -101,6 +101,8 @@ struct ColorSlider: View {
     var accessibilityName: String
     var accessibilityValueText: String
 
+    @FocusState private var isFocused: Bool
+
     private let thumb: CGFloat = 26
     private let track: CGFloat = 6
 
@@ -136,6 +138,23 @@ struct ColorSlider: View {
             )
         }
         .frame(height: thumb)
+        .padding(.vertical, 2)
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(isFocused ? Color.pfHeroFullInk : .clear, lineWidth: 2)
+                .padding(-3)
+        }
+        .focusable()
+        .focused($isFocused)
+        .onMoveCommand { direction in
+            switch direction {
+            case .left, .down:
+                value = Self.adjustedValue(value, direction: .decrement, range: range, step: step)
+            case .right, .up:
+                value = Self.adjustedValue(value, direction: .increment, range: range, step: step)
+            @unknown default: break
+            }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityName)
         .accessibilityValue(accessibilityValueText)
@@ -350,6 +369,17 @@ struct AccountRingCard: View {
         let sBand = model.session.energyBand(thresholds: thresholds, asOf: now)
         let wBand = model.week.energyBand(thresholds: thresholds, asOf: now)
         VStack(alignment: .leading, spacing: 10) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    accountName.fixedSize(horizontal: true, vertical: false)
+                    Spacer(minLength: 4)
+                    accountBadges
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    accountName
+                    accountBadges
+                }
+            }
             HStack(spacing: 14) {
                 ActivityRingsView(
                     weeklyFraction: fraction(model.week),
@@ -358,16 +388,8 @@ struct AccountRingCard: View {
                     sessionColor: sBand.color,
                     letter: model.avatarLetter
                 )
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 8) {
-                        Text(model.label)
-                            .font(PFont.display(15, .semibold))
-                            .foregroundStyle(Color.pfInk)
-                            .lineLimit(1)
-                        Spacer(minLength: 4)
-                        if model.isDuplicateLogin { DuplicateLoginBadge() }
-                        if let plan = model.plan { PlanBadge(plan: plan) }
-                    }
+                .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 8) {
                     metricRow("5-hr", window: model.session, band: sBand)
                     metricRow("week", window: model.week, band: wBand)
                     if let opus = model.opus {
@@ -389,13 +411,29 @@ struct AccountRingCard: View {
             tokenUsage
             if let status = model.status(showsProviderStatus: showsProviderStatus) {
                 Text(status.text).font(PFont.body(11, .semibold))
-                    .foregroundStyle(status.isFailure ? Color.pfEnergyLow : Color.pfInkMuted)
+                    .foregroundStyle(status.isFailure ? Color.pfEnergyLowInk : Color.pfInkMuted)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
         .chunkyCard()
         .accessibilityElement(children: .contain)
+    }
+
+    private var accountName: some View {
+        Text(model.label)
+            .font(PFont.display(15, .semibold))
+            .foregroundStyle(Color.pfInk)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+            .help(model.label)
+    }
+
+    private var accountBadges: some View {
+        HStack(spacing: 6) {
+            if model.isDuplicateLogin { DuplicateLoginBadge() }
+            if let plan = model.plan { PlanBadge(plan: plan) }
+        }
     }
 
     private func fraction(_ window: LimitWindow) -> Double {
@@ -406,24 +444,31 @@ struct AccountRingCard: View {
     private func metricRow(
         _ label: String, window: LimitWindow, band: EnergyBand
     ) -> some View {
-        HStack(spacing: 6) {
-            EnergyDot(color: band.color)
-            Text(label)
-                .font(PFont.body(11, .bold))
-                .foregroundStyle(Color.pfInk)
-            Text(window.displayText(usage: usage, asOf: now) ?? "—")
-                .font(PFont.display(11, .heavy))
-                .foregroundStyle(
-                    window.percentLeft(asOf: now) == nil ? Color.pfInkMuted : band.color
-                )
-                .monospacedDigit()
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 6) {
+                EnergyDot(color: band.color)
+                Text(label)
+                    .font(PFont.body(11, .bold))
+                    .foregroundStyle(Color.pfInk)
+                Spacer(minLength: 4)
+                Text(window.displayText(usage: usage, asOf: now) ?? "—")
+                    .font(PFont.display(14, .bold))
+                    .foregroundStyle(band.ink)
+                    .monospacedDigit()
+                if window.displayText(usage: usage, asOf: now) != nil {
+                    Text(usage ? "used" : "left")
+                        .font(PFont.body(11, .semibold))
+                        .foregroundStyle(Color.pfInkMuted)
+                }
+            }
             if let detail = resetDetail(window) {
-                Text("· \(detail)")
+                Text("Resets \(detail)")
                     .font(PFont.body(11, .semibold))
                     .foregroundStyle(Color.pfInkMuted)
                     .monospacedDigit()
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 15)
             }
-            Spacer(minLength: 0)
         }
     }
 
@@ -447,7 +492,7 @@ struct AccountRingCard: View {
         windows += model.scoped.map {
             accessibilityWindow("weekly \($0.displayName)", window: $0.window)
         }
-        return "\(model.label). \(windows.joined(separator: ". "))"
+        return windows.joined(separator: ". ")
     }
 
     private func accessibilityWindow(
@@ -464,7 +509,9 @@ struct AccountRingCard: View {
         }
         let usablePercent = resolved.percentUsed.flatMap { $0.isFinite ? $0 : nil }
         let band = EnergyBand(severity: thresholds.severity(for: usablePercent))
+        let reset = resolved.resetsAt.flatMap { ResetPhrase.spoken(until: $0, asOf: now) }
         return "\(scope): \(percentText), \(accessibilityEnergyBand(band))"
+            + (reset.map { ", resets \($0)" } ?? "")
     }
 
 }
@@ -663,7 +710,9 @@ struct HeroSummary {
 
     private static func paletteFor(_ band: EnergyBand) -> Palette {
         switch band {
-        case .full, .unknown:
+        case .unknown:
+            return Palette(bg: .pfCard, border: .pfCardBorder, ink: .pfInk, sub: .pfInkMuted)
+        case .full:
             return Palette(
                 bg: .pfHeroFullBG, border: .pfHeroFullBorder, ink: .pfHeroFullInk,
                 sub: .pfHeroFullSub)
@@ -694,12 +743,11 @@ struct HeroView: View {
                 Text(summary.title)
                     .font(PFont.display(18, .semibold))
                     .foregroundStyle(summary.ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(summary.subtitle)
                     .font(PFont.body(12, .bold))
                     .foregroundStyle(summary.sub)
-                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }

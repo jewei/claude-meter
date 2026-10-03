@@ -28,7 +28,9 @@ struct AppearanceSettingsTab: View {
                     title: "Account cards", subtitle: "How each account's usage is drawn."
                 ) {
                     VStack(alignment: .leading, spacing: 10) {
-                        segmented($cardStyle, [("rings", "Rings"), ("bars", "Energy bars")])
+                        segmented(
+                            $cardStyle, [("rings", "Rings"), ("bars", "Energy bars")],
+                            label: "Account card style")
                         HStack(spacing: 10) {
                             Text(
                                 hasCustomCardOrder
@@ -55,7 +57,7 @@ struct AppearanceSettingsTab: View {
                                         .padding(.vertical, 7)
                                         .chunkyCard(radius: 10)
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(QuietButtonStyle(radius: 10))
                                 .help("Put the account nearest its limit first again")
                             }
                         }
@@ -66,7 +68,9 @@ struct AppearanceSettingsTab: View {
                     icon: "arrow.left.arrow.right", color: Color(hex: "25B6F0"),
                     title: "Show", subtitle: "Energy remaining, or usage so far."
                 ) {
-                    segmented($progressionMode, [("left", "Energy left"), ("used", "Usage")])
+                    segmented(
+                        $progressionMode, [("left", "Energy left"), ("used", "Usage")],
+                        label: "Usage display")
                 }
 
                 settingCard(
@@ -79,7 +83,7 @@ struct AppearanceSettingsTab: View {
                         [
                             ("5h", "5h"), ("7d", "7d"),
                             ("both", "Both"),
-                        ])
+                        ], label: "Menu bar window")
                 }
                 settingCard(
                     icon: "exclamationmark.circle", color: .pfEnergyLow,
@@ -87,11 +91,11 @@ struct AppearanceSettingsTab: View {
                     subtitle: "Usage levels that change the menu bar and card colors."
                 ) {
                     thresholdRow(
-                        label: "Warning at", color: .pfEnergyLow,
+                        label: "Warning at", color: .pfEnergyLow, ink: .pfEnergyLowInk,
                         value: $warningThresholdPercent, range: 50...90)
                     Divider().overlay(Color.pfCardBorder)
                     thresholdRow(
-                        label: "Critical at", color: .pfEnergyEmpty,
+                        label: "Critical at", color: .pfEnergyEmpty, ink: .pfEnergyEmptyInk,
                         value: $criticalThresholdPercent, range: 60...100)
                 }
             }
@@ -117,7 +121,7 @@ struct AppearanceSettingsTab: View {
     }
 
     private func thresholdRow(
-        label: String, color: Color, value: Binding<Double>, range: ClosedRange<Double>
+        label: String, color: Color, ink: Color, value: Binding<Double>, range: ClosedRange<Double>
     ) -> some View {
         let safeValue =
             value.wrappedValue.isFinite
@@ -137,7 +141,7 @@ struct AppearanceSettingsTab: View {
                 Spacer()
                 Text("\(Int(safeValue))%")
                     .font(PFont.display(14, .bold))
-                    .foregroundStyle(color)
+                    .foregroundStyle(ink)
                     .monospacedDigit()
                     .padding(.horizontal, 12)
                     .padding(.vertical, 5)
@@ -176,8 +180,9 @@ struct AppearanceSettingsTab: View {
         .chunkyCard(radius: 18)
     }
 
-    private func segmented(_ selection: Binding<String>, _ options: [(String, String)]) -> some View
-    {
+    private func segmented(
+        _ selection: Binding<String>, _ options: [(String, String)], label groupLabel: String
+    ) -> some View {
         HStack(spacing: 8) {
             ForEach(options, id: \.0) { value, label in
                 let selected = selection.wrappedValue == value
@@ -199,9 +204,13 @@ struct AppearanceSettingsTab: View {
                                             lineWidth: 1.5))
                         )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(QuietButtonStyle(radius: 12))
+                .accessibilityLabel(label)
+                .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(groupLabel)
     }
 
 }

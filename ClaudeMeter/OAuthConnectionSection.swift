@@ -46,6 +46,7 @@ struct OAuthConnectionSection: View {
     @AppStorage(AppSettings.oauthModeKey) private var oauthMode = ""
     @State private var state = OAuthSetupState.initial(
         oauthMode: UserDefaults.standard.string(forKey: AppSettings.oauthModeKey) ?? "")
+    @State private var stateBeforeManualEntry: OAuthSetupState?
     @State private var showAccessToken = false
     @State private var showRefreshToken = false
     @State private var manualAccess = ""
@@ -97,13 +98,13 @@ struct OAuthConnectionSection: View {
                 Button("Connect") { requestAutoConnection() }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                Button("Enter manually") { state = .manualEntry }
+                Button("Enter manually") { enterManualCredentials() }
                     .buttonStyle(.borderless)
                     .controlSize(.small)
             }
 
         case .promptNoAuto:
-            Button("Enter tokens manually") { state = .manualEntry }
+            Button("Enter tokens manually") { enterManualCredentials() }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
 
@@ -164,7 +165,7 @@ struct OAuthConnectionSection: View {
                 Button("Retry") { retryAuto() }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                Button("Enter manually") { state = .manualEntry }
+                Button("Enter manually") { enterManualCredentials() }
                     .buttonStyle(.borderless)
                     .controlSize(.small)
             }
@@ -191,13 +192,17 @@ struct OAuthConnectionSection: View {
                 }
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.caption, design: .monospaced))
+                .accessibilityLabel("Access token")
                 Button {
                     showAccessToken.toggle()
                 } label: {
                     Image(systemName: showAccessToken ? "eye.slash" : "eye")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.pfInkMuted)
+                        .frame(width: 28, height: 28)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(QuietButtonStyle())
+                .accessibilityLabel(showAccessToken ? "Hide access token" : "Show access token")
+                .help(showAccessToken ? "Hide access token" : "Show access token")
             }
             HStack(spacing: 8) {
                 Text("Refresh Token")
@@ -216,13 +221,17 @@ struct OAuthConnectionSection: View {
                 }
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.caption, design: .monospaced))
+                .accessibilityLabel("Refresh token")
                 Button {
                     showRefreshToken.toggle()
                 } label: {
                     Image(systemName: showRefreshToken ? "eye.slash" : "eye")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.pfInkMuted)
+                        .frame(width: 28, height: 28)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(QuietButtonStyle())
+                .accessibilityLabel(showRefreshToken ? "Hide refresh token" : "Show refresh token")
+                .help(showRefreshToken ? "Hide refresh token" : "Show refresh token")
             }
             HStack(spacing: 10) {
                 Button("Save and connect") { saveManual() }
@@ -231,21 +240,23 @@ struct OAuthConnectionSection: View {
                     .disabled(
                         manualAccess.trimmingCharacters(in: .whitespaces).isEmpty
                             || manualRefresh.trimmingCharacters(in: .whitespaces).isEmpty)
-                if oauthMode.isEmpty {
-                    Button("Cancel") {
-                        state = disconnectedState()
-                    }
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
+                Button("Cancel", role: .cancel) {
+                    manualAccess = ""
+                    manualRefresh = ""
+                    showAccessToken = false
+                    showRefreshToken = false
+                    state = stateBeforeManualEntry ?? .promptNoAuto
+                    stateBeforeManualEntry = nil
                 }
-                if isConnected {
-                    Button("Disconnect") { disconnect() }
-                        .buttonStyle(.borderless)
-                        .controlSize(.small)
-                        .foregroundStyle(.red)
-                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
             }
         }
+    }
+
+    private func enterManualCredentials() {
+        stateBeforeManualEntry = state
+        state = .manualEntry
     }
 
     private func loadState() {
@@ -261,7 +272,7 @@ struct OAuthConnectionSection: View {
 
     private func reauthenticate() {
         if oauthMode == "manual" {
-            state = .manualEntry
+            enterManualCredentials()
         } else {
             requestAutoConnection()
         }

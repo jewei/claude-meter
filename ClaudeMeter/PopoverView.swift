@@ -284,7 +284,7 @@ struct PopoverView: View {
                 let error = codexRefreshError
             {
                 noticeBanner(
-                    error, systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
+                    error, systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLowInk)
             }
             cardList
         }
@@ -335,7 +335,7 @@ struct PopoverView: View {
             if codexSourceEnabled {
                 if let error = codexRefreshError {
                     noticeBanner(
-                        error, systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
+                        error, systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLowInk)
                 }
                 ForEach(orderedCodexReadings) { reading in
                     codexNotices(reading)
@@ -359,7 +359,7 @@ struct PopoverView: View {
             if showsClaude, appState.claudeAccounts.isEmpty, appState.lastError != nil {
                 noticeBanner(
                     "Claude refresh failed · no usage data",
-                    systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
+                    systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLowInk)
             }
         }
     }
@@ -482,29 +482,37 @@ struct PopoverView: View {
             VStack(spacing: 10) {
                 accountSectionHeader("ACCOUNTS", style: style)
                 ForEach(Array(cards.enumerated()), id: \.element.id) { index, card in
-                    cardView(card, models: models, readings: readings, style: style)
-                        .onDrag {
-                            draggedCardID = card.id
-                            // An empty string: a drop outside the popover gets no account key.
-                            return NSItemProvider(object: "" as NSString)
+                    VStack(alignment: .leading, spacing: 6) {
+                        if card.id == mainMeterCardID {
+                            Label("Menu bar", systemImage: "menubar.rectangle")
+                                .font(PFont.body(11, .bold))
+                                .foregroundStyle(Color.pfInkMuted)
+                                .padding(.horizontal, 4)
                         }
-                        .onDrop(
-                            of: [.plainText],
-                            delegate: CardDropDelegate(
-                                targetID: card.id,
-                                draggedID: draggedCardID,
-                                move: { moveCard($0, to: card.id, cards: cards) })
-                        )
-                        .accessibilityAction(named: "Move up") {
-                            if index > 0 {
-                                moveCard(card.id, to: ids[index - 1], cards: cards)
-                            }
+                        cardView(card, models: models, readings: readings, style: style)
+                    }
+                    .onDrag {
+                        draggedCardID = card.id
+                        // An empty string: a drop outside the popover gets no account key.
+                        return NSItemProvider(object: "" as NSString)
+                    }
+                    .onDrop(
+                        of: [.plainText],
+                        delegate: CardDropDelegate(
+                            targetID: card.id,
+                            draggedID: draggedCardID,
+                            move: { moveCard($0, to: card.id, cards: cards) })
+                    )
+                    .accessibilityAction(named: "Move up") {
+                        if index > 0 {
+                            moveCard(card.id, to: ids[index - 1], cards: cards)
                         }
-                        .accessibilityAction(named: "Move down") {
-                            if index + 1 < ids.count {
-                                moveCard(card.id, to: ids[index + 1], cards: cards)
-                            }
+                    }
+                    .accessibilityAction(named: "Move down") {
+                        if index + 1 < ids.count {
+                            moveCard(card.id, to: ids[index + 1], cards: cards)
                         }
+                    }
                 }
             }
         }
@@ -568,7 +576,6 @@ struct PopoverView: View {
     private func claudeAccountCard(_ model: AccountCardModel) -> some View {
         let session = model.session.resolved(asOf: now)
         let band = session.energyBand(thresholds: usageThresholds, asOf: now)
-        let tint: Color = band == .full ? .pfEnergyFull : band.color
         let cardID = Self.claudeCardID(model.id)
         let expanded = isExpanded(cardID)
         // Selected-provider failures show as notices above the hero.
@@ -590,12 +597,14 @@ struct PopoverView: View {
                     Spacer(minLength: 4)
                     Text(session.displayText(usage: showsUsage, asOf: now) ?? "—")
                         .font(PFont.display(14, .bold))
-                        .foregroundStyle(band == .full ? Color.pfInk : tint)
+                        .foregroundStyle(band == .full ? Color.pfInk : band.ink)
                         .monospacedDigit()
                 }
+                .frame(minHeight: 28)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(QuietButtonStyle())
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             .help(expanded ? "Hide \(model.label) details" : "Show \(model.label) details")
             ForEach(
                 Self.barWindows(session: model.session, weekly: model.week, asOf: now),
@@ -611,7 +620,7 @@ struct PopoverView: View {
             if let status {
                 Text(status.text)
                     .font(PFont.body(11, .semibold))
-                    .foregroundStyle(status.isFailure ? Color.pfEnergyLow : Color.pfInkMuted)
+                    .foregroundStyle(status.isFailure ? Color.pfEnergyLowInk : Color.pfInkMuted)
             }
             if expanded {
                 claudeAccountDetails(model)
@@ -700,7 +709,7 @@ struct PopoverView: View {
                 .foregroundStyle(Color.pfInk)
             Text(resolved.displayText(usage: showsUsage, asOf: now) ?? "—")
                 .font(PFont.display(11, .heavy))
-                .foregroundStyle(resolved.percentUsed == nil ? Color.pfInkMuted : band.color)
+                .foregroundStyle(band.ink)
                 .monospacedDigit()
             if let resetsAt = resolved.resetsAt,
                 let phrase = ResetPhrase.spoken(until: resetsAt, asOf: now)
@@ -726,7 +735,7 @@ struct PopoverView: View {
     private func claudeNotices() -> some View {
         if appState.claudeRefreshError != nil {
             noticeBanner(
-                pollErrorText, systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
+                pollErrorText, systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLowInk)
         }
         // A dead Claude Code sign-in otherwise fails silently — every OAuth error
         // falls through to the next source, so the numbers just quietly stop
@@ -736,7 +745,7 @@ struct PopoverView: View {
                 issue.displayText(retryAt: appState.oauthRetryAt, now: now),
                 systemImage: issue.needsUserAction
                     ? "key.slash.fill" : "clock.arrow.circlepath",
-                tint: issue.needsUserAction ? .pfEnergyLow : .pfInkMuted)
+                tint: issue.needsUserAction ? .pfEnergyLowInk : .pfInkMuted)
         }
         if claudeReadings.contains(where: \.isStale) {
             let message =
@@ -752,7 +761,7 @@ struct PopoverView: View {
         if appState.cursorError != nil {
             noticeBanner(
                 appState.cursorError ?? "Cursor refresh failed — showing last known data",
-                systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
+                systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLowInk)
         } else if appState.cursorIsStale {
             noticeBanner(
                 "Cursor data may be outdated", systemImage: "clock.fill", tint: .pfInkMuted)
@@ -765,13 +774,21 @@ struct PopoverView: View {
         _ title: String,
         style: MeterSettings.CardStyle
     ) -> some View {
-        HStack {
-            Text(title)
-                .font(PFont.body(11, .heavy))
-                .tracking(0.9)
-                .foregroundStyle(Color.pfSectionLabel)
-            Spacer()
-            if style == .rings { RingLegend() }
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(title)
+                    .font(PFont.body(11, .heavy))
+                    .tracking(0.9)
+                    .foregroundStyle(Color.pfSectionLabel)
+                Spacer()
+                if style == .rings { RingLegend() }
+            }
+            if orderedCards.filter({ Self.mainMeterSelection(for: $0) != nil }).count > 1 {
+                Text("Drag a Claude or Codex card to the top for the menu bar.")
+                    .font(PFont.body(11, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.horizontal, 2)
     }
@@ -893,12 +910,14 @@ struct PopoverView: View {
                     Spacer(minLength: 4)
                     Text(displayPercent.map { "\(Int($0.rounded()))%" } ?? "—")
                         .font(PFont.display(14, .bold))
-                        .foregroundStyle(band == .full ? Color.pfInk : tint)
+                        .foregroundStyle(band == .full ? Color.pfInk : band.ink)
                         .monospacedDigit()
                 }
+                .frame(minHeight: 28)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(QuietButtonStyle())
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             .help(expanded ? "Hide Cursor details" : "Show Cursor details")
             // Percent, bar and reset timing all stay visible when collapsed —
             // that's what makes collapsing safe as the default.
@@ -1012,7 +1031,7 @@ struct PopoverView: View {
         if let error = reading.lastError {
             noticeBanner(
                 "\(reading.label): \(error)",
-                systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
+                systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLowInk)
         } else if reading.isStale {
             noticeBanner(
                 "\(reading.label) data may be outdated",
@@ -1032,7 +1051,6 @@ struct PopoverView: View {
         let status = model.status(showsProviderStatus: showsStatus)
         let displayPercent = codexDisplayPercent(primary)
         let band = EnergyBand(severity: primary?.severity(thresholds: usageThresholds) ?? .unknown)
-        let tint: Color = band == .full ? .pfEnergyFull : band.color
         let cardID = Self.codexCardID(account.id)
         let resets = account.balances.first { $0.id == "usage-resets" }
         let expanded = isExpanded(cardID)
@@ -1056,12 +1074,14 @@ struct PopoverView: View {
                     Spacer(minLength: 4)
                     Text(displayPercent.map { "\(Int($0.rounded()))%" } ?? "—")
                         .font(PFont.display(14, .bold))
-                        .foregroundStyle(band == .full ? Color.pfInk : tint)
+                        .foregroundStyle(band == .full ? Color.pfInk : band.ink)
                         .monospacedDigit()
                 }
+                .frame(minHeight: 28)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(QuietButtonStyle())
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             .help(
                 expanded
                     ? "Hide \(account.label) details" : "Show \(account.label) details")
@@ -1078,7 +1098,7 @@ struct PopoverView: View {
             if let status {
                 Text(status.text)
                     .font(PFont.body(11, .semibold))
-                    .foregroundStyle(status.isFailure ? Color.pfEnergyLow : Color.pfInkMuted)
+                    .foregroundStyle(status.isFailure ? Color.pfEnergyLowInk : Color.pfInkMuted)
             }
             if expanded {
                 VStack(alignment: .leading, spacing: 8) {
@@ -1156,7 +1176,7 @@ struct PopoverView: View {
         if appState.grokError != nil {
             noticeBanner(
                 appState.grokError ?? "Grok refresh failed — showing last known data",
-                systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLow)
+                systemImage: "exclamationmark.triangle.fill", tint: .pfEnergyLowInk)
         } else if appState.grokIsStale {
             noticeBanner("Grok data may be outdated", systemImage: "clock.fill", tint: .pfInkMuted)
         }
@@ -1183,12 +1203,14 @@ struct PopoverView: View {
                     Spacer()
                     Text(displayPercent.map { "\(Int($0.rounded()))%" } ?? "—")
                         .font(PFont.display(14, .bold))
-                        .foregroundStyle(band == .full ? Color.pfInk : tint)
+                        .foregroundStyle(band == .full ? Color.pfInk : band.ink)
                         .monospacedDigit()
                 }
+                .frame(minHeight: 28)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(QuietButtonStyle())
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             .help(expanded ? "Hide Grok details" : "Show Grok details")
             EnergyBar(fraction: (displayPercent ?? 0) / 100, color: tint, height: 12)
             if let subtitle = Self.grokSubtitle(account, asOf: now) {
@@ -1366,7 +1388,8 @@ struct PopoverView: View {
     private func noticeBanner(_ text: String, systemImage: String, tint: Color) -> some View {
         HStack(spacing: 7) {
             Image(systemName: systemImage).font(.system(size: 12, weight: .bold))
-            Text(text).font(PFont.body(11, .semibold)).lineLimit(3)
+            Text(text).font(PFont.body(11, .semibold))
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
         .foregroundStyle(tint)
@@ -1381,7 +1404,7 @@ struct PopoverView: View {
         } label: {
             noticeBanner(
                 "Update available — click to install", systemImage: "arrow.down.circle.fill",
-                tint: .pfEnergyFull)
+                tint: .pfEnergyFullInk)
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 15)
@@ -1411,8 +1434,9 @@ struct PopoverView: View {
                 .foregroundStyle(tint)
                 .frame(width: size, height: size)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(QuietButtonStyle(radius: size * 0.3))
         .chunkyCard(radius: size * 0.3)
+        .accessibilityLabel(help)
         .help(help)
     }
 

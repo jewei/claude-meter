@@ -164,7 +164,14 @@ range. Normal limits are 64 MiB of log input per scan, 8 MiB per file per scan, 
 line, 2,048 files, 20,000 directory entries, 20,000 records per file, and 100,000 cached
 records per provider. Incomplete final lines are read again. Oversized or malformed
 records, unresolved counters, and reached limits make history partial. Reading resumes
-on a later refresh when the byte limit was reached. No limit produces a complete zero.
+on a later refresh when the byte limit was reached. Directory discovery also resumes
+after its entry or file budget is reached, taking entries from each configured root in
+turn. Its cursors and bounded file inventory stay in memory on the scanner's queue.
+An incomplete discovery page does not remove earlier cached files. A completed sweep
+starts again on the next refresh to find new and deleted files. Changed root paths,
+root identities, or history ranges reset discovery and the parse cache. The newest
+discovered files keep priority within the file and record caps; exceeding those caps
+still means partial history. No limit produces a complete zero.
 History fetches have a 20 s deadline and at most two outstanding timed tasks per source.
 Claude and Codex history configuration reads each have a separate two-operation limit
 and a 5 s deadline. Neither shares capacity with Codex quota configuration. Timed-out

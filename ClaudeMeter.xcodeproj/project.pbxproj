@@ -37,6 +37,7 @@
 		B6F53F78A9174898AEA761F3 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5D38012F5D5476997394541 /* DiagnosticsView.swift */; };
 		C5D3E4F50617289AC2D3E4F5 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = E4B2C3D5E6F7089AB1C2D3E4 /* Sparkle */; };
 		D10000000000000000000001 /* AppLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000002 /* AppLogicTests.swift */; };
+		B90000000000000000000001 /* VisualCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B90000000000000000000002 /* VisualCaptureTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -81,6 +82,7 @@
 		D39F041AC0894892922A9F90 /* MenuBarLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarLabel.swift; sourceTree = "<group>"; };
 		D10000000000000000000002 /* AppLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogicTests.swift; sourceTree = "<group>"; };
 		D10000000000000000000004 /* ClaudeMeterTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ClaudeMeterTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B90000000000000000000002 /* VisualCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualCaptureTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -150,6 +152,7 @@
 			isa = PBXGroup;
 			children = (
 				D10000000000000000000002 /* AppLogicTests.swift */,
+				B90000000000000000000002 /* VisualCaptureTests.swift */,
 				A70000000000000000000004 /* UsageStoreTests.swift */,
 				A7D000000000000000000004 /* RefreshSchedulerTests.swift */,
 			);
@@ -296,6 +299,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D10000000000000000000001 /* AppLogicTests.swift in Sources */,
+				B90000000000000000000001 /* VisualCaptureTests.swift in Sources */,
 				A70000000000000000000003 /* UsageStoreTests.swift in Sources */,
 				A7D000000000000000000003 /* RefreshSchedulerTests.swift in Sources */,
 			);

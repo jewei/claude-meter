@@ -18,19 +18,21 @@ struct AppearanceSettingsTab: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text("Appearance")
-                    .font(PFont.display(26, .bold))
-                    .foregroundStyle(Color.pfInk)
-                    .padding(.horizontal, 4)
+                SettingsPageHeader(
+                    title: "Appearance",
+                    subtitle: "Make your meter feel like yours.")
 
                 settingCard(
                     icon: "chart.bar.xaxis", color: Color(hex: "C77DFF"),
                     title: "Account cards", subtitle: "How each account's usage is drawn."
                 ) {
                     VStack(alignment: .leading, spacing: 10) {
-                        segmented(
-                            $cardStyle, [("rings", "Rings"), ("bars", "Energy bars")],
-                            label: "Account card style")
+                        HStack(spacing: 10) {
+                            cardStyleOption("rings", title: "Rings")
+                            cardStyleOption("bars", title: "Energy bars")
+                        }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityLabel("Account card style")
                         HStack(spacing: 10) {
                             Text(
                                 hasCustomCardOrder
@@ -99,7 +101,7 @@ struct AppearanceSettingsTab: View {
                         value: $criticalThresholdPercent, range: 60...100)
                 }
             }
-            .padding(20)
+            .padding(24)
         }
         .onAppear {
             let thresholds = MeterSettings.repairThresholdSettings()
@@ -118,6 +120,52 @@ struct AppearanceSettingsTab: View {
                 criticalThresholdPercent = min(100, warningThresholdPercent + 5)
             }
         }
+    }
+
+    private func cardStyleOption(_ value: String, title: String) -> some View {
+        let selected = cardStyle == value
+        return Button {
+            cardStyle = value
+        } label: {
+            VStack(spacing: 8) {
+                Group {
+                    if value == "rings" {
+                        ActivityRingsView(
+                            weeklyFraction: 0.64, weeklyColor: .pfEnergyFull,
+                            sessionFraction: 0.82, sessionColor: .pfEnergyFull,
+                            letter: "", size: 58)
+                    } else {
+                        VStack(spacing: 10) {
+                            EnergyBar(fraction: 0.82, color: .pfEnergyFull, height: 9)
+                            EnergyBar(fraction: 0.64, color: .pfEnergyFull, height: 9)
+                        }
+                        .frame(width: 100, height: 58)
+                    }
+                }
+                .accessibilityHidden(true)
+                HStack(spacing: 6) {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(title).font(PFont.display(13, .semibold))
+                }
+                .foregroundStyle(selected ? Color.pfHeroFullInk : Color.pfInkMuted)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .fill(selected ? Color.pfHeroFullBG : Color.pfPopover)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .strokeBorder(
+                        selected ? Color.pfHeroFullBorder : Color.pfCardBorder,
+                        lineWidth: selected ? 2 : 1)
+            }
+        }
+        .buttonStyle(QuietButtonStyle(radius: 13))
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private func thresholdRow(
@@ -171,6 +219,7 @@ struct AppearanceSettingsTab: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(PFont.display(16, .semibold)).foregroundStyle(Color.pfInk)
                     Text(subtitle).font(PFont.body(12, .semibold)).foregroundStyle(Color.pfInkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
             }

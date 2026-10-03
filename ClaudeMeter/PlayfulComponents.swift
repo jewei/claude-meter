@@ -24,6 +24,10 @@ struct ActivityRingsView: View {
             DepletingRing(
                 fraction: sessionFraction, color: sessionColor,
                 diameter: size * (48.0 / 88.0), lineWidth: size * (8.0 / 88.0))
+            Circle()
+                .fill(Color.pfPopover)
+                .overlay(Circle().strokeBorder(Color.pfCardBorder.opacity(0.7), lineWidth: 1))
+                .frame(width: size * (30.0 / 88.0), height: size * (30.0 / 88.0))
             Text(letter)
                 .font(PFont.display(size * (19.0 / 88.0), .bold))
                 .foregroundStyle(Color.pfInk)
@@ -42,15 +46,25 @@ private struct DepletingRing: View {
     var lineWidth: CGFloat
 
     var body: some View {
+        let fill = min(1, max(0, fraction))
         ZStack {
             Circle().stroke(Color.pfTrack, lineWidth: lineWidth)
             Circle()
-                .trim(from: 0, to: min(1, max(0, fraction)))
+                .trim(from: 0, to: fill)
                 .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.5), value: fraction)
+            Circle()
+                .trim(from: 0, to: fill)
+                .stroke(
+                    LinearGradient(
+                        colors: [.white.opacity(0.3), .clear],
+                        startPoint: .trailing, endPoint: .leading),
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
         }
         .frame(width: diameter, height: diameter)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.4), value: fraction)
     }
 }
 
@@ -75,19 +89,24 @@ struct EnergyBar: View {
 
     var body: some View {
         GeometryReader { geo in
+            let fillWidth = max(0, geo.size.width * min(1, max(0, fraction)))
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.pfTrack)
                 Capsule()
                     .fill(color)
-                    .frame(width: max(0, geo.size.width * min(1, max(0, fraction))))
+                    .frame(width: fillWidth)
                     .overlay(alignment: .top) {
-                        Capsule().fill(Color.white.opacity(0.45))
-                            .frame(height: 2).padding(.horizontal, 3).padding(.top, 2)
+                        if fillWidth > 6 {
+                            Capsule().fill(Color.white.opacity(0.45))
+                                .frame(height: min(2, height / 4))
+                                .padding(.horizontal, 3).padding(.top, 2)
+                        }
                     }
+                    .clipShape(Capsule())
             }
         }
         .frame(height: height)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.5), value: fraction)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.4), value: fraction)
     }
 }
 
@@ -631,7 +650,7 @@ struct HeroSummary {
         -> HeroSummary
     {
         let active = models.first
-        let band = active?.band(thresholds, now) ?? .unknown
+        let band = active.map { heroBand(for: $0, thresholds: thresholds, now: now) } ?? .unknown
         let palette = paletteFor(band)
         let (emoji, title) = headlineFor(band)
         let subtitle = subtitleFor(models: models, thresholds: thresholds, now: now)
@@ -650,6 +669,12 @@ struct HeroSummary {
         }
     }
 
+    private static func heroBand(
+        for model: AccountCardModel, thresholds: UsageThresholds, now: Date
+    ) -> EnergyBand {
+        model.bindingLeft(now) == 0 ? .tappedOut : model.band(thresholds, now)
+    }
+
     private static func subtitleFor(
         models: [AccountCardModel], thresholds: UsageThresholds, now: Date
     ) -> String {
@@ -657,14 +682,16 @@ struct HeroSummary {
 
         // Single account → speak to its own most-constrained window.
         if models.count == 1 {
-            let band = active.band(thresholds, now)
+            let band = heroBand(for: active, thresholds: thresholds, now: now)
             let when = active.limitingReset(now)
             switch band {
             case .full:
                 return when.map { "Plenty in the tank · \($0)" } ?? "Plenty in the tank 🎉"
             case .low: return when.map { "Getting low · \($0)" } ?? "Getting low"
-            case .empty, .tappedOut:
+            case .empty:
                 return when.map { "Almost dry · \($0)" } ?? "Almost dry"
+            case .tappedOut:
+                return when.map { "Out of energy · \($0)" } ?? "Out of energy"
             case .unknown: return "Warming up…"
             }
         }
@@ -681,7 +708,9 @@ struct HeroSummary {
             .min(by: { $0.left < $1.left })?.model
         if fresh == 0 && lowest == nil { return "Warming up…" }
         if let low = lowest {
-            let word = low.band(thresholds, now) == .low ? "low" : "nearly dry"
+            let word =
+                low.bindingLeft(now) == 0
+                ? "out of energy" : (low.band(thresholds, now) == .low ? "low" : "nearly dry")
             let refill =
                 low.limitingReset(now).map { " · \($0)" } ?? ""
             let unknownSuffix = unknownDescription(unknown).map { " · \($0)" } ?? ""
@@ -753,15 +782,7 @@ struct HeroView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
-        .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.pfCardLip)
-                    .offset(y: 3)
-                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(summary.bg)
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(summary.border, lineWidth: 2)
-            }
-        )
+        .chunkyCard(fill: summary.bg, border: summary.border)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: summary.bg)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(summary.title). \(summary.subtitle)")

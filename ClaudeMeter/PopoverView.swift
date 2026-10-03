@@ -192,7 +192,7 @@ struct PopoverView: View {
         }
         .padding(.horizontal, 15)
         .padding(.top, 14)
-        .padding(.bottom, 8)
+        .padding(.bottom, 12)
     }
 
     // MARK: - Main content
@@ -485,9 +485,12 @@ struct PopoverView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         if card.id == mainMeterCardID {
                             Label("Menu bar", systemImage: "menubar.rectangle")
-                                .font(PFont.body(11, .bold))
+                                .font(PFont.body(10, .heavy))
                                 .foregroundStyle(Color.pfInkMuted)
-                                .padding(.horizontal, 4)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Capsule().fill(Color.pfTrack.opacity(0.65)))
+                                .padding(.leading, 2)
                         }
                         cardView(card, models: models, readings: readings, style: style)
                     }
@@ -587,18 +590,17 @@ struct PopoverView: View {
             } label: {
                 HStack(spacing: 7) {
                     claudeMark
-                    Text(model.label)
-                        .font(PFont.display(14, .semibold))
-                        .foregroundStyle(Color.pfInk)
-                        .lineLimit(1)
-                    if let plan = model.plan { PlanBadge(plan: plan) }
-                    if model.isDuplicateLogin { DuplicateLoginBadge() }
-                    disclosure(expanded)
+                    barAccountIdentity(model.label) {
+                        if let plan = model.plan { PlanBadge(plan: plan) }
+                        if model.isDuplicateLogin { DuplicateLoginBadge() }
+                    }
                     Spacer(minLength: 4)
                     Text(session.displayText(usage: showsUsage, asOf: now) ?? "—")
                         .font(PFont.display(14, .bold))
                         .foregroundStyle(band == .full ? Color.pfInk : band.ink)
                         .monospacedDigit()
+                        .fixedSize()
+                    disclosure(expanded)
                 }
                 .frame(minHeight: 28)
                 .contentShape(Rectangle())
@@ -647,6 +649,27 @@ struct PopoverView: View {
             UsageResetsView(resets: model.usageResets, now: now)
             tokenUsage(for: .claude)
         }
+    }
+
+    /// Keep the account readable when the name and plan need separate lines.
+    private func barAccountIdentity<Badges: View>(
+        _ name: String, @ViewBuilder badges: () -> Badges
+    ) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) {
+                Text(name).fixedSize()
+                badges()
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(name)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 5) { badges() }
+            }
+        }
+        .font(PFont.display(14, .semibold))
+        .foregroundStyle(Color.pfInk)
+        .help(name)
     }
 
     struct BarWindow {
@@ -1060,22 +1083,18 @@ struct PopoverView: View {
             } label: {
                 HStack(spacing: 7) {
                     codexMark
-                    Text(account.label)
-                        .font(PFont.display(14, .semibold))
-                        .foregroundStyle(Color.pfInk)
-                        .lineLimit(1)
-                    // The plan the provider actually reports, beside the name the
-                    // user gave the account — so a card labelled "Codex Pro 5X"
-                    // that is really on Plus says so at a glance.
-                    if let planName = account.plan {
-                        PlanBadge(plan: planName, verbatim: true)
+                    barAccountIdentity(account.label) {
+                        if let planName = account.plan {
+                            PlanBadge(plan: planName, verbatim: true)
+                        }
                     }
-                    disclosure(expanded)
                     Spacer(minLength: 4)
                     Text(displayPercent.map { "\(Int($0.rounded()))%" } ?? "—")
                         .font(PFont.display(14, .bold))
                         .foregroundStyle(band == .full ? Color.pfInk : band.ink)
                         .monospacedDigit()
+                        .fixedSize()
+                    disclosure(expanded)
                 }
                 .frame(minHeight: 28)
                 .contentShape(Rectangle())
@@ -1255,15 +1274,25 @@ struct PopoverView: View {
         emoji: String, title: String, message: String,
         primaryTitle: String? = nil, primary: (() -> Void)? = nil
     ) -> some View {
-        VStack(spacing: 12) {
-            Text(emoji).font(.system(size: 40))
-            Text(title)
-                .font(PFont.display(16, .semibold))
-                .foregroundStyle(Color.pfInk)
-            Text(message)
-                .font(PFont.body(12, .semibold))
-                .foregroundStyle(Color.pfInkMuted)
-                .multilineTextAlignment(.center)
+        VStack(spacing: 18) {
+            Text(emoji)
+                .font(.system(size: 36))
+                .frame(width: 76, height: 76)
+                .background(Circle().fill(Color.pfCard))
+                .overlay(Circle().strokeBorder(Color.pfCardBorder, lineWidth: 2))
+                .shadow(color: Color.pfCardLip, radius: 0, y: 3)
+                .accessibilityHidden(true)
+            VStack(spacing: 7) {
+                Text(title)
+                    .font(PFont.display(20, .semibold))
+                    .foregroundStyle(Color.pfInk)
+                Text(message)
+                    .font(PFont.body(12, .semibold))
+                    .foregroundStyle(Color.pfInkMuted)
+                    .lineSpacing(2)
+            }
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
             if let primaryTitle, let primary {
                 Button(primaryTitle, action: primary)
                     .buttonStyle(RaisedButtonStyle())
@@ -1272,7 +1301,8 @@ struct PopoverView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
+        .padding(.top, 24)
+        .padding(.bottom, 32)
         .padding(.horizontal, 22)
     }
 
@@ -1288,7 +1318,8 @@ struct PopoverView: View {
     private var inactiveState: some View {
         statusState(
             emoji: "😴", title: "Paused",
-            message: "Hit play below to refuel the gauge.")
+            message: "Resume updates in Settings when you are ready.",
+            primaryTitle: "Open Settings", primary: openSettingsAndCompleteOnboarding)
     }
 
     private var noSourcesState: some View {
@@ -1328,7 +1359,9 @@ struct PopoverView: View {
     }
 
     private var setupState: some View {
-        statusState(emoji: "🪫", title: "No usage yet", message: setupMessage)
+        statusState(
+            emoji: "🪫", title: "No usage yet", message: setupMessage,
+            primaryTitle: "Open Settings", primary: openSettingsAndCompleteOnboarding)
     }
 
     private var setupMessage: String {
@@ -1386,16 +1419,25 @@ struct PopoverView: View {
     // MARK: - Notices
 
     private func noticeBanner(_ text: String, systemImage: String, tint: Color) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: systemImage).font(.system(size: 12, weight: .bold))
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .bold))
+                .frame(width: 16, height: 16)
+                .accessibilityHidden(true)
             Text(text).font(PFont.body(11, .semibold))
+                .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(tint.opacity(0.13)))
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(tint.opacity(0.08)))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(tint.opacity(0.16), lineWidth: 1)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     private var updateAvailableNotice: some View {
@@ -1406,7 +1448,7 @@ struct PopoverView: View {
                 "Update available — click to install", systemImage: "arrow.down.circle.fill",
                 tint: .pfEnergyFullInk)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(QuietButtonStyle(radius: 12))
         .padding(.horizontal, 15)
         .padding(.bottom, 2)
     }

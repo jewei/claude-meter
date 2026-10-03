@@ -19,6 +19,14 @@ struct DiagnosticsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            SettingsPageHeader(
+                title: "Diagnostics",
+                subtitle: "Connection details to help you find a problem."
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.top, 24)
+            .padding(.bottom, 8)
             Form {
                 dataSourceSection
                 sourceAttemptsSection
@@ -26,8 +34,10 @@ struct DiagnosticsView: View {
                 warningsSection
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .font(PFont.body(12, .semibold))
 
-            Divider()
+            Divider().overlay(Color.pfPopoverBorder)
 
             HStack {
                 Button("Copy Sanitized Diagnostics") {
@@ -40,20 +50,25 @@ struct DiagnosticsView: View {
                         copied = false
                     }
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.bordered)
+                .font(PFont.body(12, .bold))
 
-                Text(copied ? "Copied!" : "")
+                Text(copied ? "Copied" : "")
                     .font(.caption)
-                    .foregroundStyle(Color.cmNormal)
+                    .foregroundStyle(Color.pfHeroFullInk)
                     .animation(reduceMotion ? nil : .easeOut, value: copied)
 
                 Spacer()
 
                 Button("Close") { dismiss() }
                     .buttonStyle(.bordered)
+                    .keyboardShortcut(.cancelAction)
             }
-            .padding()
+            .controlSize(.large)
+            .padding(20)
         }
+        .background(Color.pfPopover)
+        .tint(Color.pfHeroFullInk)
     }
 
     @ViewBuilder
@@ -107,7 +122,7 @@ struct DiagnosticsView: View {
                 if let failure = appState.accountOAuthFailures[accountKey] {
                     LabeledContent("\(AppState.friendlyAccountName(accountKey)) OAuth") {
                         Text(accountOAuthFailureText(failure))
-                            .foregroundStyle(Color.cmCritical)
+                            .foregroundStyle(Color.pfEnergyEmptyInk)
                     }
                 }
             }
@@ -120,7 +135,7 @@ struct DiagnosticsView: View {
             if let err = appState.lastError {
                 LabeledContent("Claude error") {
                     Text(DiagnosticsSanitizer.sanitize(err))
-                        .foregroundStyle(Color.cmCritical)
+                        .foregroundStyle(Color.pfEnergyEmptyInk)
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
                 }
@@ -130,7 +145,7 @@ struct DiagnosticsView: View {
                 if let err = appState.cursorError {
                     LabeledContent("Cursor error") {
                         Text(DiagnosticsSanitizer.sanitize(err))
-                            .foregroundStyle(Color.cmCritical)
+                            .foregroundStyle(Color.pfEnergyEmptyInk)
                             .font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)
                     }
@@ -153,7 +168,7 @@ struct DiagnosticsView: View {
                             "\(DiagnosticsSanitizer.sanitize(reading.label)) error"
                         ) {
                             Text(DiagnosticsSanitizer.sanitize(err))
-                                .foregroundStyle(Color.cmCritical)
+                                .foregroundStyle(Color.pfEnergyEmptyInk)
                                 .font(.system(.caption, design: .monospaced))
                                 .textSelection(.enabled)
                         }
@@ -165,7 +180,7 @@ struct DiagnosticsView: View {
                 if let err = appState.grokError {
                     LabeledContent("Grok error") {
                         Text(DiagnosticsSanitizer.sanitize(err))
-                            .foregroundStyle(Color.cmCritical)
+                            .foregroundStyle(Color.pfEnergyEmptyInk)
                             .font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)
                     }

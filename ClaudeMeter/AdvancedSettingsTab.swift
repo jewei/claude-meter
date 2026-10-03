@@ -17,6 +17,9 @@ struct AdvancedSettingsTab: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                SettingsPageHeader(
+                    title: "Advanced",
+                    subtitle: "Set your routine and keep things running smoothly.")
                 sectionHeading("App")
                 VStack(alignment: .leading, spacing: 12) {
                     // Moved here from the popover footer, which is gone. Pausing is
@@ -42,6 +45,7 @@ struct AdvancedSettingsTab: View {
                         .labelsHidden()
                         .accessibilityLabel("Fetch usage")
                     }
+                    Divider().overlay(Color.pfCardBorder)
                     HStack(spacing: 12) {
                         RaisedTile(fill: Color(hex: "C77DFF"), size: 40, radius: 11) {
                             Image(systemName: "power").font(.system(size: 17, weight: .bold))
@@ -63,8 +67,16 @@ struct AdvancedSettingsTab: View {
                                 .font(PFont.body(12, .semibold))
                                 .foregroundStyle(Color.pfInkMuted)
                             Spacer(minLength: 8)
-                            Button("Open") { SMAppService.openSystemSettingsLoginItems() }
-                                .font(PFont.body(12, .bold))
+                            Button {
+                                SMAppService.openSystemSettingsLoginItems()
+                            } label: {
+                                Text("Open")
+                                    .font(PFont.body(12, .bold))
+                                    .padding(.horizontal, 8)
+                                    .frame(minHeight: 28)
+                            }
+                            .buttonStyle(QuietButtonStyle())
+                            .accessibilityLabel("Open Login Items in System Settings")
                         }
                     }
                 }
@@ -82,6 +94,7 @@ struct AdvancedSettingsTab: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Check for updates automatically")
                                 .font(PFont.display(16, .semibold)).foregroundStyle(Color.pfInk)
+                                .fixedSize(horizontal: false, vertical: true)
                             Text(updateStatus).font(PFont.body(12, .bold))
                                 .foregroundStyle(updateStatusColor)
                         }
@@ -105,7 +118,7 @@ struct AdvancedSettingsTab: View {
                             )
                             .chunkyCard(radius: 12)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(QuietButtonStyle(radius: 12))
                         if let last = lastCheckedText {
                             Text(last).font(PFont.body(12, .semibold)).foregroundStyle(
                                 Color.pfInkMuted)
@@ -124,13 +137,13 @@ struct AdvancedSettingsTab: View {
                             )
                             .foregroundStyle(.white)
                         }
-                        cardText("Diagnostics", "Inspect logs, data sources & raw limits.")
+                        cardText("Diagnostics", "Inspect data sources and usage readings.")
                         Spacer(minLength: 8)
                         Button {
                             showingDiagnostics = true
                         } label: {
                             HStack(spacing: 6) {
-                                Text("Open Diagnostics…").font(PFont.display(13, .semibold))
+                                Text("Open…").font(PFont.display(13, .semibold))
                                 Image(systemName: "chevron.right").font(
                                     .system(size: 10, weight: .bold))
                             }
@@ -139,7 +152,8 @@ struct AdvancedSettingsTab: View {
                             )
                             .chunkyCard(radius: 12)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(QuietButtonStyle(radius: 12))
+                        .accessibilityLabel("Open Diagnostics")
                     }
                     Divider().overlay(Color.pfCardBorder)
                     // Diagnostics show the present state. A log file records what
@@ -175,7 +189,7 @@ struct AdvancedSettingsTab: View {
                                 )
                                 .chunkyCard(radius: 12)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(QuietButtonStyle(radius: 12))
                             Text("Library/Logs/ClaudeMeter")
                                 .font(PFont.body(12, .semibold))
                                 .foregroundStyle(Color.pfInkMuted)
@@ -185,7 +199,7 @@ struct AdvancedSettingsTab: View {
                 }
                 .padding(16).chunkyCard(radius: 18)
             }
-            .padding(20)
+            .padding(24)
         }
         .onAppear { syncLaunchAtLoginFromSystem() }
         .onChange(of: launchAtLogin) { _, newValue in applyLaunchAtLogin(newValue) }
@@ -195,13 +209,15 @@ struct AdvancedSettingsTab: View {
         .sheet(isPresented: $showingDiagnostics) {
             DiagnosticsView()
                 .environmentObject(appState)
-                .frame(minWidth: 480, minHeight: 380)
+                .frame(width: 560, height: 520)
         }
     }
 
     private func sectionHeading(_ text: String) -> some View {
         Text(text)
-            .font(PFont.display(22, .bold))
+            .font(PFont.body(11, .heavy))
+            .textCase(.uppercase)
+            .tracking(1)
             .foregroundStyle(Color.pfInk)
             .padding(.horizontal, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -210,7 +226,9 @@ struct AdvancedSettingsTab: View {
     private func cardText(_ title: String, _ subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title).font(PFont.display(16, .semibold)).foregroundStyle(Color.pfInk)
+                .fixedSize(horizontal: false, vertical: true)
             Text(subtitle).font(PFont.body(12, .semibold)).foregroundStyle(Color.pfInkMuted)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -224,7 +242,7 @@ struct AdvancedSettingsTab: View {
     }
 
     private var updateStatusColor: Color {
-        appState.updateAvailable ? .pfEnergyLow : .pfHeroFullInk
+        appState.updateAvailable ? .pfEnergyLowInk : .pfHeroFullInk
     }
 
     private var lastCheckedText: String? {

@@ -11,7 +11,7 @@ struct DataSourceCard<Content: View>: View {
     let title: String
     let subtitle: String
     @Binding var isEnabled: Bool
-    var contentLeading: CGFloat = 48
+    var contentLeading: CGFloat = 0
     @ViewBuilder var content: () -> Content
 
     var body: some View {
@@ -30,6 +30,7 @@ struct DataSourceCard<Content: View>: View {
                     Text(subtitle)
                         .font(PFont.body(12, .semibold))
                         .foregroundStyle(Color.pfInkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 8)
@@ -40,6 +41,9 @@ struct DataSourceCard<Content: View>: View {
                     .accessibilityLabel(title)
             }
 
+            if isEnabled {
+                Divider().overlay(Color.pfCardBorder)
+            }
             content()
                 .padding(.leading, contentLeading)
         }
@@ -83,17 +87,9 @@ struct DataSettingsTab: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Data Sources")
-                        .font(PFont.display(26, .bold))
-                        .foregroundStyle(Color.pfInk)
-                    Text(
-                        "Choose the providers that supply your usage data."
-                    )
-                    .font(PFont.body(13, .semibold))
-                    .foregroundStyle(Color.pfInkMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
+                SettingsPageHeader(
+                    title: "Data sources",
+                    subtitle: "Connect your accounts. Keep your energy in view.")
 
                 DataSourceCard(
                     icon: "key.fill",
@@ -138,7 +134,7 @@ struct DataSettingsTab: View {
                     grokContent
                 }
             }
-            .padding(20)
+            .padding(24)
         }
         .onAppear {
             loadCursorStatus()
@@ -170,7 +166,9 @@ struct DataSettingsTab: View {
                         systemName: cursorStatus.hasPrefix("Connected")
                             ? "checkmark.circle.fill" : "exclamationmark.circle"
                     )
-                    .foregroundStyle(cursorStatus.hasPrefix("Connected") ? .green : .secondary)
+                    .foregroundStyle(
+                        cursorStatus.hasPrefix("Connected") ? Color.pfHeroFullInk : Color.pfInkMuted
+                    )
                     Text(cursorStatus.isEmpty ? "Checking…" : cursorStatus)
                 }
                 if let err = appState.cursorError {
@@ -178,11 +176,11 @@ struct DataSettingsTab: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                         Text(err)
                     }
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.pfEnergyEmptyInk)
                 }
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .font(PFont.body(12, .semibold))
+            .foregroundStyle(Color.pfInkMuted)
         }
     }
 
@@ -225,7 +223,8 @@ struct DataSettingsTab: View {
                         systemName: codexStatus.hasPrefix("Connected")
                             ? "checkmark.circle.fill" : "exclamationmark.circle"
                     )
-                    .foregroundStyle(codexStatus.hasPrefix("Connected") ? .green : .secondary)
+                    .foregroundStyle(
+                        codexStatus.hasPrefix("Connected") ? Color.pfHeroFullInk : Color.pfInkMuted)
                     Text(codexStatus.isEmpty ? "Checking…" : codexStatus)
                 }
                 CodexHomesSection(appState: appState)
@@ -235,12 +234,12 @@ struct DataSettingsTab: View {
                             Image(systemName: "exclamationmark.triangle.fill")
                             Text("\(reading.label): \(error)")
                         }
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.pfEnergyEmptyInk)
                     }
                 }
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .font(PFont.body(12, .semibold))
+            .foregroundStyle(Color.pfInkMuted)
         }
     }
 
@@ -281,7 +280,8 @@ struct DataSettingsTab: View {
                         systemName: grokStatus.hasPrefix("Connected")
                             ? "checkmark.circle.fill" : "exclamationmark.circle"
                     )
-                    .foregroundStyle(grokStatus.hasPrefix("Connected") ? .green : .secondary)
+                    .foregroundStyle(
+                        grokStatus.hasPrefix("Connected") ? Color.pfHeroFullInk : Color.pfInkMuted)
                     Text(grokStatus.isEmpty ? "Checking…" : grokStatus)
                 }
                 if let err = appState.grokError {
@@ -289,11 +289,11 @@ struct DataSettingsTab: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                         Text(err)
                     }
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.pfEnergyEmptyInk)
                 }
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .font(PFont.body(12, .semibold))
+            .foregroundStyle(Color.pfInkMuted)
         }
     }
 
@@ -423,7 +423,7 @@ private struct AddFolderButton: View {
             .padding(.vertical, 10)
             .chunkyCard(radius: 12)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(QuietButtonStyle(radius: 12))
     }
 }
 
@@ -433,7 +433,7 @@ private struct AccountFolderError: View {
     var body: some View {
         Text(text)
             .font(PFont.body(11, .semibold))
-            .foregroundStyle(.red)
+            .foregroundStyle(Color.pfEnergyEmptyInk)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -508,7 +508,8 @@ private struct ConfigDirAccountsSection: View {
                 .toggleStyle(.switch)
                 .labelsHidden()
                 .accessibilityLabel("Track \(display)")
-                .controlSize(.mini)
+                .controlSize(.small)
+                .frame(minWidth: 28, minHeight: 28)
                 .disabled(isDefault)
                 .help(isDefault ? "The default account is always tracked" : "Track this account")
         }
@@ -546,12 +547,14 @@ private struct ConfigDirAccountsSection: View {
                     Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
                 }
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.pfInkMuted)
             }
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .frame(minWidth: 28, minHeight: 28)
+        .accessibilityLabel("Account plan")
     }
 
     private func setPlan(_ key: String, _ plan: String?) {
@@ -638,10 +641,18 @@ private struct CodexHomesSection: View {
                     if account.isImplicit {
                         Text("Default")
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.pfInkMuted)
                     } else {
-                        Button("Remove") { remove(account) }
-                            .buttonStyle(.borderless)
+                        Button {
+                            remove(account)
+                        } label: {
+                            Text("Remove")
+                                .font(PFont.body(11, .bold))
+                                .padding(.horizontal, 6)
+                                .frame(minHeight: 28)
+                        }
+                        .buttonStyle(QuietButtonStyle())
+                        .accessibilityLabel("Remove \(account.displayName)")
                     }
                 }
             }

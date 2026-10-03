@@ -12,6 +12,7 @@ echo "▶ Checking release-symbol validation"
 echo "▶ Checking release script syntax and publication ordering"
 bash -n "$SCRIPT_DIR/release.sh"
 bash -n "$SCRIPT_DIR/measure-presentation.sh"
+bash -n "$SCRIPT_DIR/capture-visuals.sh"
 python3 "$SCRIPT_DIR/test-release-publication.py"
 
 echo "▶ Checking signed-upgrade helper fixtures"

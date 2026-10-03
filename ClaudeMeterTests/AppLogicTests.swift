@@ -1045,6 +1045,62 @@ struct AppLogicTests {
         #expect(!stale.subtitle.contains("Plenty"))
     }
 
+    @Test("Hero distinguishes almost empty from exhausted without changing quota severity")
+    func exhaustedHeroCopy() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        for used in [99.0, 100.0, 105.0] {
+            let model = AccountCardModel(
+                id: "work", label: "Work", plan: nil, subtitle: nil,
+                session: LimitWindow(percentUsed: used, resetsAt: now.addingTimeInterval(600)),
+                week: LimitWindow())
+            let hero = HeroSummary.make(models: [model], thresholds: .default, now: now)
+            #expect(hero.title == (used < 100 ? "Almost tapped out" : "Take a breather"))
+            #expect(hero.emoji == (used < 100 ? "🪫" : "🥵"))
+            #expect(
+                hero.subtitle
+                    == "\(used < 100 ? "Almost dry" : "Out of energy") · Session resets in 10m")
+            if used == 100 { #expect(model.band(.default, now) == .empty) }
+
+            let full = AccountCardModel(
+                id: "personal", label: "Personal", plan: nil, subtitle: nil,
+                session: LimitWindow(percentUsed: 0), week: LimitWindow())
+            let mixed = HeroSummary.make(models: [full, model], thresholds: .default, now: now)
+            #expect(mixed.title == "You're cruising")
+            #expect(
+                mixed.subtitle
+                    == "1 fresh · Work \(used < 100 ? "nearly dry" : "out of energy") · Session resets in 10m"
+            )
+        }
+    }
+
+    @Test("Exhausted hero resolves current and stale windows at reset")
+    func exhaustedHeroResolvesReset() {
+        let reset = Date(timeIntervalSince1970: 1_800_000_000)
+        for isStale in [false, true] {
+            for offset in [-1.0, 0, 1] {
+                let now = reset.addingTimeInterval(offset)
+                let session = LimitWindow(percentUsed: 100, resetsAt: reset)
+                    .resolved(asOf: now, isStale: isStale)
+                let model = AccountCardModel(
+                    id: "work", label: "Work", plan: nil, subtitle: nil,
+                    session: session, week: LimitWindow(), isStale: isStale)
+                let hero = HeroSummary.make(models: [model], thresholds: .default, now: now)
+                if offset < 0 {
+                    #expect(hero.title == "Take a breather")
+                    #expect(model.bindingLeft(now) == 0)
+                } else if isStale {
+                    #expect(hero.title == "Warming up")
+                    #expect(model.bindingLeft(now) == nil)
+                    #expect(!hero.subtitle.contains("Out of energy"))
+                } else {
+                    #expect(hero.title == "You're cruising")
+                    #expect(model.bindingLeft(now) == 100)
+                    #expect(hero.subtitle == "Plenty in the tank 🎉")
+                }
+            }
+        }
+    }
+
     @Test("Hero does not call mixed full and unknown accounts all fresh")
     func mixedFullAndUnknownHeroCopy() {
         let now = Date(timeIntervalSince1970: 100)

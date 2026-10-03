@@ -96,17 +96,24 @@ struct OAuthConnectionSection: View {
         case .promptAuto:
             HStack(spacing: 10) {
                 Button("Connect") { requestAutoConnection() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                Button("Enter manually") { enterManualCredentials() }
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
+                    .buttonStyle(RaisedButtonStyle(radius: 10))
+                    .fixedSize()
+                Button {
+                    enterManualCredentials()
+                } label: {
+                    Text("Enter manually")
+                        .font(PFont.body(12, .bold))
+                        .foregroundStyle(Color.pfInkMuted)
+                        .padding(.horizontal, 8)
+                        .frame(minHeight: 32)
+                }
+                .buttonStyle(QuietButtonStyle())
             }
 
         case .promptNoAuto:
             Button("Enter tokens manually") { enterManualCredentials() }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
+                .controlSize(.large)
 
         case .manualEntry:
             manualEntryFields
@@ -114,7 +121,7 @@ struct OAuthConnectionSection: View {
         case .verifying:
             HStack(spacing: 8) {
                 ProgressView().scaleEffect(0.7)
-                Text("Verifying…").font(.caption).foregroundStyle(.secondary)
+                Text("Verifying…").font(PFont.body(12, .semibold)).foregroundStyle(Color.pfInkMuted)
             }
 
         case .connectedAuto, .connectedManual:
@@ -127,10 +134,11 @@ struct OAuthConnectionSection: View {
                         systemName: issue.needsUserAction
                             ? "exclamationmark.triangle.fill" : "clock.arrow.circlepath"
                     )
-                    .foregroundStyle(issue.needsUserAction ? .orange : .secondary)
+                    .foregroundStyle(
+                        issue.needsUserAction ? Color.pfEnergyLowInk : Color.pfInkMuted)
                     Text(issue.displayText(retryAt: appState.oauthRetryAt))
-                        .font(.caption)
-                        .foregroundStyle(issue.needsUserAction ? .primary : .secondary)
+                        .font(PFont.body(12, .semibold))
+                        .foregroundStyle(issue.needsUserAction ? Color.pfInk : Color.pfInkMuted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -141,33 +149,44 @@ struct OAuthConnectionSection: View {
                     Label("Re-authenticate", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
+                .controlSize(.large)
             }
             if state == .connectedAuto {
                 Text(
                     "Reads Claude Code's Keychain; refreshed tokens stay in memory for this session only."
                 )
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                .font(PFont.body(11, .semibold))
+                .foregroundStyle(Color.pfInkMuted)
             }
             if !testResult.isEmpty {
                 Text(testResult)
-                    .font(.caption)
-                    .foregroundStyle(testResult.hasPrefix("Error") ? .red : .green)
+                    .font(PFont.body(12, .semibold))
+                    .foregroundStyle(
+                        testResult.hasPrefix("Error") ? Color.pfEnergyEmptyInk : Color.pfHeroFullInk
+                    )
             }
 
         case .error(let message):
             HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
-                Text(message).font(.caption).foregroundStyle(.red)
+                Image(systemName: "exclamationmark.circle.fill").foregroundStyle(
+                    Color.pfEnergyEmptyInk)
+                Text(message).font(PFont.body(12, .semibold)).foregroundStyle(
+                    Color.pfEnergyEmptyInk)
             }
             HStack(spacing: 12) {
                 Button("Retry") { retryAuto() }
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
-                Button("Enter manually") { enterManualCredentials() }
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
+                    .controlSize(.large)
+                Button {
+                    enterManualCredentials()
+                } label: {
+                    Text("Enter manually")
+                        .font(PFont.body(12, .bold))
+                        .foregroundStyle(Color.pfInkMuted)
+                        .padding(.horizontal, 8)
+                        .frame(minHeight: 32)
+                }
+                .buttonStyle(QuietButtonStyle())
             }
         }
     }
@@ -177,7 +196,7 @@ struct OAuthConnectionSection: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text("Access Token")
-                    .font(.caption)
+                    .font(PFont.body(12, .semibold))
                     .frame(width: 88, alignment: .leading)
                 Group {
                     if showAccessToken {
@@ -206,7 +225,7 @@ struct OAuthConnectionSection: View {
             }
             HStack(spacing: 8) {
                 Text("Refresh Token")
-                    .font(.caption)
+                    .font(PFont.body(12, .semibold))
                     .frame(width: 88, alignment: .leading)
                 Group {
                     if showRefreshToken {
@@ -235,21 +254,26 @@ struct OAuthConnectionSection: View {
             }
             HStack(spacing: 10) {
                 Button("Save and connect") { saveManual() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .buttonStyle(RaisedButtonStyle(radius: 10))
+                    .fixedSize()
                     .disabled(
                         manualAccess.trimmingCharacters(in: .whitespaces).isEmpty
                             || manualRefresh.trimmingCharacters(in: .whitespaces).isEmpty)
-                Button("Cancel", role: .cancel) {
+                Button(role: .cancel) {
                     manualAccess = ""
                     manualRefresh = ""
                     showAccessToken = false
                     showRefreshToken = false
                     state = stateBeforeManualEntry ?? .promptNoAuto
                     stateBeforeManualEntry = nil
+                } label: {
+                    Text("Cancel")
+                        .font(PFont.body(12, .bold))
+                        .foregroundStyle(Color.pfInkMuted)
+                        .padding(.horizontal, 8)
+                        .frame(minHeight: 32)
                 }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
+                .buttonStyle(QuietButtonStyle())
             }
         }
     }

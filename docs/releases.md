@@ -78,6 +78,18 @@ first launch, onboarding, the menu bar, the popover, and Settings. Also check pa
 resume, display sleep, wake, quit, and relaunch. Use synthetic data for migration
 checks.
 
+To review native UI images with synthetic readings, run:
+
+```bash
+./scripts/capture-visuals.sh /tmp/claude-meter-visual-review
+```
+
+The capture build uses a separate bundle identifier, preference domain, and file home.
+The test checks the bundle identifier and home before it writes fixture settings.
+It does not use live provider credentials. Inspect the light and dark PNG files for
+spacing, text wrapping, meter states, and contrast. This is an optional visual review;
+the normal verification script checks the capture script syntax and skips image capture.
+
 To test an actual Sparkle installation, use a separate macOS test account or VM without
 real provider credentials. In that account's active desktop, run:
 

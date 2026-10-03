@@ -26,13 +26,14 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 560, height: 640)
+        .frame(width: 580, height: 700)
+        .tint(Color.pfHeroFullInk)
         .background(Color.pfPopover)
         .background(SettingsWindowAccessor())
     }
 
     private var tabBar: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Spacer(minLength: 0)
             ForEach(Array(Self.tabs.enumerated()), id: \.offset) { index, tab in
                 tabButton(index, tab.icon, tab.title)
@@ -54,11 +55,16 @@ struct SettingsView: View {
                 Text(title).font(PFont.body(12, .heavy))
             }
             .foregroundStyle(selected ? Color.pfHeroFullInk : Color.pfInkMuted)
-            .frame(width: 96)
-            .padding(.vertical, 8)
+            .frame(width: 112)
+            .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(selected ? Color.pfHeroFullBG : Color.clear)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(
+                                selected ? Color.pfHeroFullBorder : Color.clear, lineWidth: 1.5)
+                    }
             )
         }
         .buttonStyle(QuietButtonStyle(radius: 14))
@@ -94,4 +100,25 @@ private struct SettingsWindowAccessor: NSViewRepresentable {
 @MainActor
 func isSettingsWindowVisible() -> Bool {
     NSApp.windows.contains { $0.isVisible && $0.title == SettingsWindowAccessor.windowTitle }
+}
+
+/// Shared hierarchy for the settings pages.
+struct SettingsPageHeader: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(PFont.display(26, .bold))
+                .foregroundStyle(Color.pfInk)
+                .accessibilityAddTraits(.isHeader)
+            Text(subtitle)
+                .font(PFont.body(13, .semibold))
+                .foregroundStyle(Color.pfInkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 2)
+        .padding(.bottom, 4)
+    }
 }

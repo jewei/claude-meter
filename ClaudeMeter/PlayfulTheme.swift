@@ -171,8 +171,10 @@ extension LimitWindow {
 
 // MARK: - Chunky 3D treatments
 
-/// White card with a 2pt border and a darker bottom "lip" — the Duolingo 3D sit.
+/// A raised card with a solid lower edge and a restrained top highlight.
 struct ChunkyCard: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
     var fill: Color = .pfCard
     var border: Color = .pfCardBorder
     var radius: CGFloat = 18
@@ -185,7 +187,19 @@ struct ChunkyCard: ViewModifier {
                     .offset(y: 3)
                 RoundedRectangle(cornerRadius: radius, style: .continuous).fill(fill)
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [.white.opacity(colorScheme == .dark ? 0.06 : 0.12), .clear],
+                            startPoint: .top, endPoint: .bottom))
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .strokeBorder(border, lineWidth: 2)
+                RoundedRectangle(cornerRadius: max(0, radius - 2), style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [.white.opacity(0.22), .clear],
+                            startPoint: .top, endPoint: .center), lineWidth: 1
+                    )
+                    .padding(2)
             }
         )
     }
@@ -211,6 +225,13 @@ struct RaisedTile<Content: View>: View {
         content
             .frame(width: size, height: size)
             .background(fill)
+            .overlay {
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [.white.opacity(0.35), .clear],
+                            startPoint: .top, endPoint: .bottom), lineWidth: 1)
+            }
             .overlay(alignment: .bottom) {
                 Rectangle().fill(Color.black.opacity(0.14)).frame(height: 3)
             }
@@ -221,38 +242,76 @@ struct RaisedTile<Content: View>: View {
 /// Duolingo's signature raised button: solid fill over a solid colored shadow
 /// plate that compresses on press.
 struct RaisedButtonStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    @Environment(\.isEnabled) private var isEnabled
-
     var fill: Color = .pfAction
     var shadow: Color = .pfActionShadow
     var radius: CGFloat = 14
 
     func makeBody(configuration: Configuration) -> some View {
-        let pressed = configuration.isPressed
-        return configuration.label
-            .font(PFont.display(14, .bold))
-            .foregroundStyle(.white)
-            .lineLimit(1)
-            // Horizontal padding must be *inside* the flexible frame. Without it
-            // the pill had no side inset at all, and a `.fixedSize()` caller — the
-            // status states all use one — collapsed it to exactly the text width,
-            // so the label sat flush against both edges.
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: radius, style: .continuous).fill(fill))
-            .offset(y: pressed ? 2 : 0)
-            .background(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(shadow)
-                    .offset(y: pressed ? 2 : 4)
-            )
-            .opacity(isEnabled ? 1 : 0.45)
-            .animation(
-                reduceMotion ? nil : .spring(response: 0.2, dampingFraction: 0.6),
-                value: pressed)
+        RaisedButtonBody(configuration: configuration, fill: fill, shadow: shadow, radius: radius)
+    }
+
+    private struct RaisedButtonBody: View {
+        let configuration: ButtonStyleConfiguration
+        let fill: Color
+        let shadow: Color
+        let radius: CGFloat
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.isFocused) private var isFocused
+        @State private var isHovered = false
+
+        private var pressed: Bool { isEnabled && configuration.isPressed }
+
+        var body: some View {
+            configuration.label
+                .font(PFont.display(14, .bold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                // Horizontal padding must be *inside* the flexible frame. Without it
+                // the pill had no side inset at all, and a `.fixedSize()` caller — the
+                // status states all use one — collapsed it to exactly the text width,
+                // so the label sat flush against both edges.
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity)
+                .background(RoundedRectangle(cornerRadius: radius, style: .continuous).fill(fill))
+                .overlay {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(
+                            pressed
+                                ? Color.black.opacity(0.08)
+                                : .white.opacity(isHovered && isEnabled ? 0.06 : 0)
+                        )
+                        .allowsHitTesting(false)
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [.white.opacity(0.22), .clear],
+                                startPoint: .top, endPoint: .bottom), lineWidth: 1
+                        )
+                        .allowsHitTesting(false)
+                }
+                .offset(y: pressed && !reduceMotion ? 2 : 0)
+                .background(
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(shadow)
+                        .offset(y: pressed && !reduceMotion ? 2 : 4)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: radius + 3, style: .continuous)
+                        .strokeBorder(isFocused ? Color.pfHeroFullInk : .clear, lineWidth: 2)
+                        .padding(-4)
+                        .allowsHitTesting(false)
+                }
+                .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                .opacity(isEnabled ? 1 : 0.45)
+                .onHover { isHovered = $0 }
+                .animation(
+                    reduceMotion ? nil : .spring(response: 0.2, dampingFraction: 0.85),
+                    value: pressed)
+        }
     }
 }
 

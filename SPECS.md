@@ -637,6 +637,14 @@ time. One "ACCOUNTS" list below the hero holds one card per account for Claude, 
 Cursor, and Grok, with no provider section labels. The provider logo names the provider.
 There is no provider summary card.
 
+The hero distinguishes nearly exhausted from exhausted energy. A resolved binding
+window at 100% used gives the **Take a breather** headline and **Out of energy**
+subline. This presentation rule does not change Core severity thresholds.
+
+When paused with no retained data, the popover explains that updates resume in
+Settings and provides **Open Settings**. The **No usage yet** state also provides
+**Open Settings** beside its source-specific setup guidance.
+
 Users choose card order. This changes the earlier fixed order below the first card. The
 first card is always the main-meter account, so the first card, hero, menu bar, and
 header time agree. The automatic order continues with the selected provider's other

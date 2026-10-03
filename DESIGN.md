@@ -122,6 +122,11 @@ several accounts, the subline counts fresh accounts and names the lowest other a
 Examples are "2 fresh · buildbot low · Weekly resets in 1h 8m", or "All 3 accounts fresh
 🎉".
 
+When the selected account has exactly 0% energy left, the headline is **Take a
+breather** and the subline says **Out of energy**. Another exhausted account is also
+described as **out of energy**. Resolve rolling windows before this check. Core
+severity thresholds stay unchanged.
+
 ## Typography
 
 Fredoka and Nunito, both rounded, are bundled OFL TTFs in `ClaudeMeter/Fonts/`. `PFont`
@@ -149,23 +154,28 @@ All changing numbers use `.monospacedDigit()`.
 Cards, avatars, and buttons use these treatments:
 
 - Cards use `RoundedRectangle(cornerRadius: 18)` with a `card-bg` fill and a 2pt
-  `card-border` stroke. A 4pt bottom border adds depth through `.shadow(color:
-  cardBorder, radius: 0, y: 2)`. Padding is 13×14pt.
+  `card-border` stroke. A solid lower plate sits 3pt below the surface. A subtle
+  vertical light wash (12% in light mode, 6% in dark mode) and a 1pt inner top edge give
+  the surface depth. Padding is
+  13×14pt. The hero uses the same surface treatment with its state colors.
 - Avatars and header icons use rounded squares with radii of 11pt and 9pt. They have a
   solid brand fill and a white glyph. A 3pt `black.opacity(0.13)` inner bottom highlight
   is clipped to the shape.
 - Primary buttons use a dark green `#287B12` fill, white Fredoka text, and a 14pt radius.
   This replaces the bright energy fill so the label has sufficient contrast. The shadow
   uses `action-shadow` at `y: 4`. On press, the button moves down 2pt and the shadow
-  moves to `y: 2`. Disabled buttons use 45% opacity.
+  moves to `y: 2`. Hover adds a small highlight; keyboard focus adds a visible border.
+  Reduce Motion keeps the button still and uses a tint for press feedback. Disabled
+  buttons use 45% opacity.
 - Compact controls use `QuietButtonStyle`: a subtle ink surface on hover and press,
   a 2pt focus border, and 45% opacity when disabled. Feedback changes without motion.
 - Bright energy colors belong to rings, dots, and bars. Small status text and values
   use darker energy ink in light mode: green `#2E7D12`, amber `#965000`, and red `#B52C28`.
   Dark mode uses `#8FE25A`, `#FFC368`, and `#FF9B96`.
 
-Progress bars and rings have a 2pt white capsule overlay at the top of the fill. The
-overlay uses 45% opacity.
+Rings have a directional highlight along their arcs. Progress bars have a narrow top
+highlight clipped inside the filled capsule. The highlight disappears for fills below
+6pt, so it cannot imply extra energy. Ring centers have a neutral inset disc.
 
 ## Popover layout
 
@@ -225,7 +235,8 @@ The account list has a label row and account cards:
   Codex card dragged to the top becomes the main meter. Cursor, Grok, and extra usage
   cannot go to the top. Cards read normalized `ProviderAccountSnapshot` values from
   UsageStore.
-- A small **Menu bar** label identifies the selected card. When several Claude or Codex
+- A small neutral **Menu bar** pill identifies the selected card. It does not use an
+  energy color. When several Claude or Codex
   accounts are present, a visible instruction explains that dragging one to the top
   selects it for the menu bar. The label does not imply that the reading is fresh.
 
@@ -265,10 +276,12 @@ and Codex account card uses this layout. Each card is collapsible. The provider 
 names the provider, with no section label. The card has these elements:
 
 - Header: provider mark, account name (Fredoka 600/14), plan badge when known, "same
-  login" chip when needed, disclosure chevron, and the headline percentage (Fredoka
-  700/14): Claude session, Codex primary window kind. When several binding windows have
+  login" chip when needed, headline percentage (Fredoka 700/14), and a trailing
+  disclosure chevron. The percentage shows Claude session or Codex primary window
+  kind. When several binding windows have
   the same kind, the header, bar, ring, and menu bar show the highest usage for that
-  kind.
+  kind. The name can use two lines and has a full-name tooltip. Badges move below the
+  name when needed. The percentage keeps its width.
 - One 12pt `EnergyBar` per reported window: session, then weekly. Below each bar, Nunito
   600/11 `ink-muted`: "Session · 60% left" on the left and "Resets in 2h 53m" on the
   right. With no reported value, one "Session · —" bar remains.
@@ -347,6 +360,15 @@ Nunito body, and adaptive dark mode. The tabs are **Data**, **Appearance**,
 menu-bar and card colors. Codex Data settings show enablement, sign-in status, homes,
 and display names.
 
+The window is 580×700pt. Tabs have 112pt targets and a tinted border for the selected
+tab. Settings pages use 24pt insets and a shared title and subtitle hierarchy. Data
+source contents use the full card width below a divider. Account tracking, plan, and
+remove controls have at least 28pt targets. Appearance presents rings and bars as
+visual options with a checkmark on the selected option. About uses a restrained icon
+glow and an external-link arrow. Diagnostics uses the same page hierarchy and palette;
+Escape closes its sheet. Native controls use adaptive `hero-ink` tint so their text
+stays readable in dark mode. Raised primary buttons retain the dark `action` fill.
+
 Claude config dirs and Codex homes use one folder per account. Both lists use the same
 components:
 
@@ -367,14 +389,18 @@ form draft and returns to the previous screen without changing stored credential
 
 ## Non-data states
 
-These states use the same popover background, a centered mascot, and one line of text:
+These states use the same popover background and a centered mascot in a raised 76pt
+disc. Titles use Fredoka 600/20. Supporting text wraps without a fixed line limit.
+Actions sit below the message with a clear gap. Decorative mascots are hidden from
+accessibility. Notices use a lightly tinted fill, a 1pt border, and a top-aligned icon
+so multiline errors remain easy to scan.
 
 | State      | Emoji and title                | Message and action                                            |
 | ---------- | ------------------------------ | ------------------------------------------------------------- |
 | Onboarding | 🚀 "Welcome to Claude Meter"   | "Connect a data source to start your engines." → "Get started →" |
-| Paused     | 😴 "Paused"                    | "Hit play below to refuel the gauge."                         |
+| Paused     | 😴 "Paused"                    | "Resume updates in Settings when you are ready." → "Open Settings" |
 | No sources | 🔌 "No data methods on"        | "Turn on at least one method in Settings → Data." → "Open Settings" |
-| No usage   | 🪫 "No usage yet"              | Setup guidance for the enabled sources                        |
+| No usage   | 🪫 "No usage yet"              | Setup guidance for the enabled sources → "Open Settings"      |
 | Loading    | spinner                        | "Checking your tanks…", or "Checking Codex…" for one source   |
 
 Stale data shows "Data may be stale". A failed refresh shows "Refresh failed · showing
@@ -384,10 +410,10 @@ last known data" or "Refresh failed · no usage data".
 
 | Trigger            | Animation                                                         |
 | ------------------ | ----------------------------------------------------------------- |
-| Ring or bar value     | `.easeOut(0.5)` on arc length or fill width                       |
+| Ring or bar value     | `.easeOut(0.4)` on arc length or fill width                       |
 | Severity color     | `.easeInOut(0.3)` on color                                        |
 | Critical dot pulse | three 1.2 s scale and opacity cycles in a `TimelineView`, ≤ 12 fps |
-| Button press       | Move down 2pt, shadow `y` from 4 to 2, `.spring(response: 0.2)`           |
+| Button press       | Move down 2pt, shadow `y` from 4 to 2, spring response 0.2, damping 0.85 |
 | Loading spin       | linear 1 s rotation, repeated                                     |
 | Hero state change  | `.easeInOut(0.3)`                                                 |
 | Card expansion or collapse | Card bounds, neighboring rows, detail clipping, and popover height use `.easeInOut(0.18)` |

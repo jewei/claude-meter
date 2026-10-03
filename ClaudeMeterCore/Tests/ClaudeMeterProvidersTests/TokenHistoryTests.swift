@@ -142,6 +142,173 @@ struct TokenHistoryTests {
         #expect(result.tokens(for: .today, asOf: tokenNow, calendar: tokenCalendar) == 260)
     }
 
+    @Test func directoryBudgetResumesAndKeepsEarlierFilesAcrossPages() async throws {
+        let fixture = try TokenHistoryFixture()
+        for index in 0..<7 {
+            _ = try fixture.write("\(index).jsonl", claudeLine("\(index)", count: 10))
+        }
+        let scanner = TokenHistoryScanner(provider: .claude, limits: .init(directoryEntries: 2))
+        var result = try await scanner.scan(
+            roots: [fixture.root], now: tokenNow, calendar: tokenCalendar)
+        #expect(result.isPartial)
+        #expect(result.tokens(for: .today, asOf: tokenNow, calendar: tokenCalendar) == 44)
+        for _ in 0..<8 where result.isPartial {
+            let previous = result.tokens(for: .today, asOf: tokenNow, calendar: tokenCalendar) ?? 0
+            result = try await scanner.scan(
+                roots: [fixture.root], now: tokenNow, calendar: tokenCalendar)
+            #expect(
+                (result.tokens(for: .today, asOf: tokenNow, calendar: tokenCalendar) ?? 0)
+                    >= previous)
+            #expect(await scanner.work().directoryEntries <= 2)
+        }
+        #expect(!result.isPartial)
+        #expect(result.tokens(for: .today, asOf: tokenNow, calendar: tokenCalendar) == 154)
+        // A new, incomplete sweep must not discard files beyond its first page.
+        let next = try await scanner.scan(
+            roots: [fixture.root], now: tokenNow, calendar: tokenCalendar)
+        #expect(next.isPartial)
+        #expect(next.tokens(for: .today, asOf: tokenNow, calendar: tokenCalendar) == 154)
+        #expect(await scanner.work().bytesRead == 0)
+    }
+
+    @Test func discoveryEventuallyReachesRecentFileAfterOldEntries() async throws {
+        let fixture = try TokenHistoryFixture()
+        for index in 0..<7 {
+            let url = try fixture.write("\(index).jsonl", claudeLine("\(index)", count: 10))
+            try FileManager.default.setAttributes(
+                [.modificationDate: tokenNow.addingTimeInterval(-30 * 86400)],
+                ofItemAtPath: url.path)
+        }
+        // Assign the recent file after observing this fixture's directory order;
+        // creating or renaming entries could change that order on different filesystems.
+        let entries = try #require(
+            FileManager.default.enumerator(at: fixture.root, includingPropertiesForKeys: nil))
+        let last = try #require((entries.allObjects as? [URL])?.last)
+        try FileManager.default.setAttributes(
+            [.modificationDate: tokenNow], ofItemAtPath: last.path)
+        let scanner = TokenHistoryScanner(provider: .claude, limits: .init(directoryEntries: 2))
+        var result = try await scanner.scan(
+            roots: [fixture.root], now: tokenNow, calendar: tokenCalendar)
+        for _ in 0..<8 where result.isPartial {
+            result = try await scanner.scan(
+                roots: [fixture.root], now: tokenNow, calendar: tokenCalendar)
+            #expect(await scanner.work().directoryEntries <= 2)
+        }
+        #expect(!result.isPartial)
+        #expect(result.tokens(for: .today, asOf: tokenNow, calendar: tokenCalendar) == 22)
+    }
+
+    @Test func discoverySharesItsBudgetAcrossRoots() async throws {
+        let first = try TokenHistoryFixture()
+        let second = try TokenHistoryFixture()
+        for index in 0..<7 {
+            _ = try first.write("\(index).jsonl", claudeLine("first-\(index)", count: 10))
+        }
+        _ = try second.write("only.jsonl", claudeLine("second", count: 100))
+        let scanner = TokenHistoryScanner(provider: .claude, limits: .init(directoryEntries: 2))
+        let result = try await scanner.scan(
+            roots: [first.root, second.root], now: tokenNow, calendar: tokenCalendar)
+        #expect(result.isPartial)
+        #expect(result.tokens(for: .today, asOf: tokenNow, calendar: tokenCalendar) == 134)
+        #expect(await scanner.work().directoryEntries == 2)
+        // A configuration change discards cursors and cached values from the old roots.
+        let changed = try await scanner.scan(
+            roots: [second.root], now: tokenNow, calendar: tokenCalendar)
+        #expect(!changed.isPartial)
+        #expect(changed.tokens(for: .today, asOf: tokenNow, calendar: tokenCalendar) == 112)
+    }
+
+    @Test func completedSweepsFindInsertionsAndRemoveDeletedFiles() async throws {
+        let fixture = try TokenHistoryFixture()
+        let removed = try fixture.write("old.jsonl", claudeLine("old", count: 100))
+        let kept = try fixture.write("kept.jsonl", claudeLine("kept", count: 10))
+        let scanner = TokenHistoryScanner(provider: .claude, limits: .init(directoryEntries: 1))
+        for _ in 0..<3 {
+            _ = try await scanner.scan(
+                roots: [fixture.root], now: tokenNow, calendar: tokenCalendar)
+        }
+        // Change the directory while the next sweep is in progress.
+        _ = try await scanner.scan(roots: [fixture.root], now: tokenNow, calendar: tokenCalendar)
+        try FileManager.default.removeItem(at: removed)
+        _ = try fixture.write("new.jsonl", claudeLine("new", count: 20))
+        try fixture.append(claudeLine("appended", count: 30), to: kept)
+        var result = try await scanner.scan(
+            roots: [fixture.root], now: tokenNow, calendar: tokenCalendar)
+        // Allow both the interrupted sweep and a fresh sweep to finish.
+        for _ in 0..<8 {
+            result = try await scanner.scan(
+                roots: [fixture.root], now: tokenNow, calendar: tokenCalendar)
+            #expect(await scanner.work().directoryEntries <= 1)
+        }
+        #expect(result.tokens(for: .today, asOf: tokenNow, calendar: tokenCalendar) == 96)
+    }
+
+    @Test func replacingARootAtTheSamePathInvalidatesItsCursor() async throws {
+        let fixture = try TokenHistoryFixture()
+        _ = try fixture.write("logs/one.jsonl", claudeLine("old-one", count: 100))
+        _ = try fixture.write("logs/two.jsonl", claudeLine("old-two", count: 100))
+        let root = fixture.root.appendingPathComponent("logs")
+        let scanner = TokenHistoryScanner(provider: .claude, limits: .init(directoryEntries: 1))
+        _ = try await scanner.scan(roots: [root], now: tokenNow, calendar: tokenCalendar)
+        try FileManager.default.moveItem(
+            at: root, to: fixture.root.appendingPathComponent("previous-logs"))
+        _ = try fixture.write("logs/new.jsonl", claudeLine("new", count: 10))
+        _ = try await scanner.scan(roots: [root], now: tokenNow, calendar: tokenCalendar)
+        let result = try await scanner.scan(roots: [root], now: tokenNow, calendar: tokenCalendar)
+        #expect(!result.isPartial)
+        #expect(result.tokens(for: .today, asOf: tokenNow, calendar: tokenCalendar) == 22)
+    }
+
+    @Test func fileAndRecordCapsRemainBoundedAcrossDiscoveryPages() async throws {
+        let fixture = try TokenHistoryFixture()
+        for index in 0..<7 {
+            let url = try fixture.write(
+                "\(index).jsonl", claudeLine("\(index)", count: Int64(index)))
+            try FileManager.default.setAttributes(
+                [.modificationDate: tokenNow.addingTimeInterval(Double(-index))],
+                ofItemAtPath: url.path)
+        }
+        let scanner = TokenHistoryScanner(
+            provider: .claude, limits: .init(files: 2, records: 1, directoryEntries: 3))
+        var result = try await scanner.scan(
+            roots: [fixture.root], now: tokenNow, calendar: tokenCalendar)
+        for _ in 0..<10 {
+            result = try await scanner.scan(
+                roots: [fixture.root], now: tokenNow, calendar: tokenCalendar)
+            let work = await scanner.work()
+            #expect(work.directoryEntries <= 3)
+            #expect(work.discoveredFiles <= 2)
+            #expect(work.cachedFiles <= 2)
+            #expect(work.cachedRecords <= 1)
+        }
+        #expect(result.isPartial)
+        // The most recently modified file gets the available record budget.
+        #expect(result.tokens(for: .today, asOf: tokenNow, calendar: tokenCalendar) == 12)
+    }
+
+    @Test func cancellationBetweenPagesKeepsDiscoveryProgress() async throws {
+        let fixture = try TokenHistoryFixture()
+        for index in 0..<5 {
+            _ = try fixture.write("\(index).jsonl", claudeLine("\(index)", count: 10))
+        }
+        let scanner = TokenHistoryScanner(provider: .claude, limits: .init(directoryEntries: 1))
+        _ = try await scanner.scan(roots: [fixture.root], now: tokenNow, calendar: tokenCalendar)
+        let cancelled = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await scanner.scan(
+                roots: [fixture.root], now: tokenNow, calendar: tokenCalendar)
+        }
+        await #expect(throws: CancellationError.self) { _ = try await cancelled.value }
+        var result = try await scanner.scan(
+            roots: [fixture.root], now: tokenNow, calendar: tokenCalendar)
+        for _ in 0..<6 where result.isPartial {
+            result = try await scanner.scan(
+                roots: [fixture.root], now: tokenNow, calendar: tokenCalendar)
+        }
+        #expect(!result.isPartial)
+        #expect(result.tokens(for: .today, asOf: tokenNow, calendar: tokenCalendar) == 110)
+    }
+
     @Test func grokUsesCompletedTurnsAndEventDatesWithoutReasoningDoubleCount() async throws {
         let fixture = try TokenHistoryFixture()
         func turn(_ id: String, _ date: Date) throws -> Data {

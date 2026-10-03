@@ -18,6 +18,74 @@ final class TokenHistoryScanner: @unchecked Sendable {
         var bytesRead = 0
         var parsedLines = 0
         var cacheHits = 0
+        var directoryEntries = 0
+        var discoveredFiles = 0
+        var cachedFiles = 0
+        var cachedRecords = 0
+    }
+
+    private struct RootIdentity: Equatable {
+        let url: URL
+        let device: Int32
+        let inode: UInt64
+        let exists: Bool
+
+        init(_ url: URL) {
+            self.url = url
+            var status = stat()
+            exists = url.path.withCString { Darwin.lstat($0, &status) } == 0
+            device = status.st_dev
+            inode = status.st_ino
+        }
+    }
+
+    /// Queue-owned cursors keep a bounded scan from visiting the same prefix forever.
+    /// Take one entry from each root in turn so a large root cannot starve later roots.
+    private final class Discovery {
+        let roots: [RootIdentity]
+        var cursors: [FileManager.DirectoryEnumerator?]
+        var started: Set<Int> = []
+        var finished: Set<Int> = []
+        var nextRoot = 0
+        var files: [String: Date] = [:]
+        var hadErrors = false
+        var exceededFileLimit = false
+        var isComplete: Bool { finished.count == roots.count }
+
+        init(roots: [RootIdentity]) {
+            self.roots = roots
+            self.cursors = Array(repeating: nil, count: roots.count)
+        }
+
+        func next(cancellation: Cancellation) throws -> URL? {
+            while !isComplete {
+                try cancellation.check()
+                let index = nextRoot
+                nextRoot = (index + 1) % roots.count
+                guard !finished.contains(index) else { continue }
+                if started.insert(index).inserted {
+                    guard roots[index].exists else {
+                        finished.insert(index)
+                        continue
+                    }
+                    cursors[index] = FileManager.default.enumerator(
+                        at: roots[index].url,
+                        includingPropertiesForKeys: [
+                            .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey,
+                        ],
+                        options: [.skipsHiddenFiles],
+                        errorHandler: { [weak self] _, _ in
+                            self?.hadErrors = true
+                            return false
+                        })
+                    if cursors[index] == nil { hadErrors = true }
+                }
+                if let url = cursors[index]?.nextObject() as? URL { return url }
+                cursors[index] = nil
+                finished.insert(index)
+            }
+            return nil
+        }
     }
 
     private struct Stamp: Equatable {
@@ -68,6 +136,10 @@ final class TokenHistoryScanner: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.jewei.claudemeter.token-history", qos: .utility)
     private var cache: [String: FileState] = [:]
     private var lastWork = Work()
+    private var discoveryRoots: [RootIdentity] = []
+    private var discoveryStart: Date?
+    private var discovery: Discovery?
+    private var inventory: [String: Date] = [:]
 
     init(provider: ProviderID, limits: Limits = Limits()) {
         self.provider = provider
@@ -105,59 +177,23 @@ final class TokenHistoryScanner: @unchecked Sendable {
         try cancellation.check()
         var accumulator = try TokenDayAccumulator(now: now, calendar: calendar)
         lastWork = Work()
-        var candidates: [(url: URL, modified: Date)] = []
         var visited = Set<String>()
-        var entries = 0
-        for root in roots {
-            try cancellation.check()
-            let root = root.resolvingSymlinksInPath().standardizedFileURL
-            guard visited.insert(root.path).inserted else { continue }
-            guard FileManager.default.fileExists(atPath: root.path) else { continue }
-            var failed = false
-            guard
-                let enumerator = FileManager.default.enumerator(
-                    at: root,
-                    includingPropertiesForKeys: [
-                        .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey,
-                    ],
-                    options: [.skipsHiddenFiles],
-                    errorHandler: { _, _ in
-                        failed = true
-                        return false
-                    })
-            else {
-                accumulator.isPartial = true
-                continue
-            }
-            while let url = enumerator.nextObject() as? URL {
-                try cancellation.check()
-                entries += 1
-                guard entries <= limits.directoryEntries, candidates.count < limits.files else {
-                    accumulator.isPartial = true
-                    break
-                }
-                let matches =
-                    provider == .grok
-                    ? url.lastPathComponent == "updates.jsonl" : url.pathExtension == "jsonl"
-                guard matches else { continue }
-                let values = try? url.resourceValues(forKeys: [
-                    .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey,
-                ])
-                guard values?.isRegularFile == true, values?.isSymbolicLink != true else {
-                    accumulator.isPartial = true
-                    continue
-                }
-                let modified = values?.contentModificationDate ?? .distantFuture
-                guard modified >= accumulator.start else { continue }
-                candidates.append((url, modified))
-            }
-            accumulator.isPartial = accumulator.isPartial || failed
+        let rootIdentities = roots.compactMap { root -> RootIdentity? in
+            let url = root.resolvingSymlinksInPath().standardizedFileURL
+            return visited.insert(url.path).inserted ? RootIdentity(url) : nil
         }
-        let urls = candidates.sorted {
-            $0.modified == $1.modified ? $0.url.path < $1.url.path : $0.modified > $1.modified
-        }.map(\.url)
-        let present = Set(urls.map(\.path))
-        cache = cache.filter { present.contains($0.key) }
+        if rootIdentities != discoveryRoots || discoveryStart != accumulator.start {
+            discoveryRoots = rootIdentities
+            discoveryStart = accumulator.start
+            discovery = nil
+            inventory.removeAll()
+            cache.removeAll()
+        }
+        let sweep = discovery ?? Discovery(roots: rootIdentities)
+        discovery = sweep
+        try discoverPage(sweep, since: accumulator.start, cancellation: cancellation)
+        accumulator.isPartial = !sweep.isComplete || sweep.hadErrors || sweep.exceededFileLimit
+        let urls = newestFiles(inventory).map { URL(fileURLWithPath: $0.key) }
         var records = 0
         var identities = Set<String>()
         // Recent files get the first share of the scan budget.
@@ -180,6 +216,10 @@ final class TokenHistoryScanner: @unchecked Sendable {
                     accumulator.isPartial = true
                 }
             }
+        }
+        lastWork.cachedFiles = cache.count
+        lastWork.cachedRecords = cache.values.reduce(0) {
+            $0 + $1.parser.events.count + $1.parser.codex.events.count
         }
         var hasRecords = false
         var events: [String: TokenEvent] = [:]
@@ -228,6 +268,57 @@ final class TokenHistoryScanner: @unchecked Sendable {
         }
         try cancellation.check()
         return accumulator.snapshot(provider: provider, hasRecords: hasRecords)
+    }
+
+    private func newestFiles(_ files: [String: Date]) -> [(key: String, value: Date)] {
+        Array(
+            files.sorted {
+                $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value
+            }.prefix(max(0, limits.files)))
+    }
+
+    private func discoverPage(_ sweep: Discovery, since start: Date, cancellation: Cancellation)
+        throws
+    {
+        var page: [String: Date] = [:]
+        defer {
+            // Save consumed entries even if cancellation interrupts this page. A
+            // resumed cursor must never skip metadata collected before cancellation.
+            let discovered = sweep.files.merging(page, uniquingKeysWith: { _, new in new })
+            sweep.exceededFileLimit = sweep.exceededFileLimit || discovered.count > limits.files
+            sweep.files = Dictionary(uniqueKeysWithValues: newestFiles(discovered))
+            if sweep.isComplete && !sweep.hadErrors {
+                inventory = sweep.files
+            } else {
+                // An incomplete page is not evidence that an earlier file was deleted.
+                inventory = Dictionary(
+                    uniqueKeysWithValues: newestFiles(
+                        inventory.merging(page, uniquingKeysWith: { _, new in new })))
+            }
+            cache = cache.filter { inventory[$0.key] != nil }
+            if sweep.isComplete { discovery = nil }
+        }
+        while lastWork.directoryEntries < limits.directoryEntries,
+            lastWork.discoveredFiles < limits.files
+        {
+            guard let url = try sweep.next(cancellation: cancellation) else { break }
+            lastWork.directoryEntries += 1
+            let matches =
+                provider == .grok
+                ? url.lastPathComponent == "updates.jsonl" : url.pathExtension == "jsonl"
+            guard matches else { continue }
+            let values = try? url.resourceValues(forKeys: [
+                .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey,
+            ])
+            guard values?.isRegularFile == true, values?.isSymbolicLink != true else {
+                sweep.hadErrors = true
+                continue
+            }
+            let modified = values?.contentModificationDate ?? .distantFuture
+            guard modified >= start else { continue }
+            page[url.path] = modified
+            lastWork.discoveredFiles += 1
+        }
     }
 
     private func read(

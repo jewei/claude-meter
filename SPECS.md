@@ -664,8 +664,11 @@ way to choose. Saved cards keep their saved order. A card with no saved position
 in the automatic order. A hidden card keeps its saved ID for its return. VoiceOver has
 "Move up" and "Move down" actions. **Use automatic order** in **Appearance**, under
 **Account cards**, clears the saved order and both account pins, so the first card is
-again the selected provider's account nearest its limit. The drag payload is an empty
-string, so a drop outside the popover carries no account key. A **Menu bar** label
+again the selected provider's account nearest its limit. Reordering uses only a local
+pointer gesture. It creates no pasteboard payload and accepts no external drops. This
+replaces the earlier empty-string drag payload. Gesture state resets on completion or
+cancellation, and a hidden popover cannot reorder. Ending outside the list keeps the
+last saved order. A **Menu bar** label
 identifies the selected card. With several eligible accounts, a visible instruction
 explains drag-to-top selection. These cues do not change account selection or order.
 

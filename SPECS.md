@@ -846,7 +846,10 @@ invoke live cleanup.
 ## 7. Networking, Keychain, and diagnostics
 
 OAuth and other direct provider requests use `ProviderHTTPClient.shared` or an injected
-`HTTPTransport`. The provider session is ephemeral and cookie-less. It has a ten-second
+`HTTPTransport`. The provider session is ephemeral, cookie-less, and has no URL cache.
+Every send bypasses local HTTP caches, including sends through an injected URLSession,
+so a cached response cannot receive a new observation time. `UsageStore` owns retained
+readings. The transport has a ten-second
 idle timeout, an eight-MiB response cap, and a 30-second hard deadline for the complete
 send, including retry waits. A chunk receiver rejects an oversized declared
 `Content-Length` before body receipt and cancels a streamed response when it crosses the

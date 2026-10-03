@@ -741,7 +741,7 @@ private struct CodexHomesSection: View {
         homeTask = Task {
             do {
                 let updated = try await Timeout.run(
-                    seconds: 5, budget: AppSettings.configurationBudget
+                    seconds: 5, budget: AppSettings.codexConfigurationBudget
                 ) {
                     try operation(original)
                 }

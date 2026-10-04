@@ -67,10 +67,15 @@ Do these steps once on each Mac that makes releases.
 
 1. Add the release notes under `## [Unreleased]` in `CHANGELOG.md`. Use `### Added`,
    `### Changed`, `### Fixed`, and `### Removed` headings and `- ` list items. The notes
-   become the GitHub release text and the HTML text in the Sparkle update window.
-2. Commit and push everything to `main`. Make sure that CI passes.
-3. Select the version and the build number (see [The build number](#the-build-number)).
-4. Optional: make a private candidate first. It uploads to Apple notarization, but publishes
+   become the GitHub release text and the HTML text in the Sparkle update window. Each
+   entry describes a change against the last release, never a fix of unreleased code.
+2. **TODO before 4.0.0:** the screenshots in `README.md`
+   (`docs/images/claude-meter-light-mode.png` and `docs/images/claude-meter-dark-mode.png`)
+   show the 2.x popover. Capture the 4.0 popover in light mode and in dark mode, replace the
+   two files, and remove this step.
+3. Commit and push everything to `main`. Make sure that CI passes.
+4. Select the version and the build number (see [The build number](#the-build-number)).
+5. Optional: make a private candidate first. It uploads to Apple notarization, but publishes
    nothing. This works on any branch:
 
    ```bash
@@ -82,7 +87,7 @@ Do these steps once on each Mac that makes releases.
    dialog appears before you select **Connect automatically**. Tests cannot show a system
    dialog, so this is the only check of the no-prompt rule.
 
-5. Publish:
+6. Publish:
 
    ```bash
    make release VERSION=4.0.0 BUILD=400
@@ -95,12 +100,14 @@ The release takes about 10 to 20 minutes. Most of the time is Apple notarization
 `scripts/release.sh VERSION BUILD [--prepare-only]` does these steps in this order. Each
 step prints `==> <step>`.
 
-1. **Check preconditions.** VERSION is 4.x. The working tree is clean, with no untracked
-   files. When it publishes: the branch is `main`, `HEAD` equals the fetched `origin/main`,
-   and tag `vVERSION` does not exist. BUILD obeys the rules in
-   [The build number](#the-build-number). `CHANGELOG.md` has a `## [Unreleased]` section
-   that is not empty. `ClaudeMeterUpdateRequirement` in `App/Info.plist` compiles with
-   `csreq`. The signing identity, the notarization profile, and the Sparkle key are present.
+1. **Check preconditions.** VERSION is 4.x. BUILD passes the checks in
+   [The build number](#the-build-number). If `IGNORE_SKIPPED_UPGRADES_BELOW` is set, it is a
+   build from 401 to BUILD. The working tree is clean, with no untracked files. When it
+   publishes: the branch is `main`, `HEAD` equals the fetched `origin/main`, tag `vVERSION`
+   is neither on this Mac nor on GitHub, and `gh auth status` succeeds. `CHANGELOG.md` has a
+   `## [Unreleased]` section that is not empty and has no `]]>`.
+   `ClaudeMeterUpdateRequirement` in `App/Info.plist` compiles with `csreq`. The signing
+   identity, the notarization profile, and the Sparkle key are present.
 2. **Run `make check`.** The same gate as CI, including an unsigned Release build.
 3. **Archive and export with Developer ID.** A universal Release archive in
    `build/release`, with the version and build from the command line. The export uses
@@ -141,20 +148,26 @@ release also has a copy.
 ## The build number
 
 `CFBundleVersion` is an integer build number. Sparkle compares it with `sparkle:version` in
-the feed to find an update. These rules apply, and the script stops in step 1 if BUILD
-breaks one of them:
+the feed to find an update.
 
+The script checks these rules in step 1, and stops if BUILD breaks one of them:
+
+- BUILD is a positive integer, 400 or greater. The 4.x line starts at 400
+  (`MAJOR_START_BUILD` in `scripts/release.sh`).
 - BUILD is greater than every build in `appcast.xml`. The last 3.x release, 3.1.3, is
   build 337.
-- BUILD is 400 or greater. The 4.x line starts at 400 (`MAJOR_START_BUILD` in
-  `scripts/release.sh`).
 - BUILD is not lower than `CURRENT_PROJECT_VERSION` in `Config/Version.xcconfig`. The
   release commit writes the released version and build into that file. If the tag of the
   file's `MARKETING_VERSION` exists, that build is published, and BUILD must be greater. So
-  a build is never used twice, even after its item leaves the feed.
-- Increase the number by at least one for each release, for example 4.0.1 is 401.
+  a build is never used twice, even after its item leaves the feed. Before the first 4.x
+  release, the file has 4.0.0 and 400, and tag `v4.0.0` does not exist, so 4.0.0 can use
+  400.
+
+You choose the number. The script cannot check these rules:
+
+- Choose a number that is easy to match to the version, for example 401 for 4.0.1.
 - Do not use the Git commit count as the build number. The count depends on how branches
-  merge. Choose the number; it must only grow.
+  merge.
 - A build number that the script used for a candidate that was not published can be
   used again.
 

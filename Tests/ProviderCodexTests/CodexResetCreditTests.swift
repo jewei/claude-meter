@@ -64,6 +64,35 @@ extension CodexTests {
             #expect(bed.http.requests.count == 2)
         }
 
+        /// R3-P-04: a 429 on the details request holds the login until its retry time. The
+        /// quota of that refresh stands; the hold lives in memory.
+        @Test func aRateLimitedDetailsRequestHoldsTheLogin() async throws {
+            let bed = try CodexTestBed(
+                http: Self.client { .json(429, "", headers: ["Retry-After": "120"]) })
+            defer { bed.remove() }
+            try bed.writeAuth()
+            let clock = Locked(Date.reference())
+            let provider = bed.provider(clock: clock)
+
+            let first = try await provider.fetch(previous: nil)
+            let observed = try #require(first.accounts.first)
+            #expect(observed.issue == nil)
+            #expect(observed.resetAllowance == ResetAllowance(available: 3))
+
+            clock.withLock { $0 = .reference(60) }
+            let held = try await provider.fetch(previous: first)
+            #expect(bed.http.requests.count == 2)
+            let account = try #require(held.accounts.first)
+            #expect(account.isStale)
+            #expect(account.observedAt == .reference())
+            #expect(account.issue?.retryAt == .reference(120))
+            #expect(bed.recovery.calls == 0)
+
+            clock.withLock { $0 = .reference(120) }
+            _ = try await provider.fetch(previous: held)
+            #expect(bed.http.requests.count == 4)
+        }
+
         @Test func aTransportErrorKeepsQuota() async throws {
             let bed = try CodexTestBed(http: Self.client { throw HTTPError.offline })
             defer { bed.remove() }

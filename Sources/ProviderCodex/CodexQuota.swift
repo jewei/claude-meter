@@ -35,6 +35,9 @@ struct CodexQuota: Equatable, Sendable {
     var resetCount: Int?
     /// Details for some or all reset credits.
     var resets: [ResetAllowance.Reset] = []
+    /// After HTTP 429 on the reset-credit details request: when Codex allows the next request
+    /// for this login (``RateLimitHold``). The quota itself stands.
+    var resetDetailsRetryAt: Date?
 
     /// One rule for both sources: a reading needs a window or credits. Plan and reset metadata
     /// alone are not usage.

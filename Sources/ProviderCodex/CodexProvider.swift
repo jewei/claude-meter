@@ -21,6 +21,10 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
     private let refresh: CodexAccountRefresh
     private let now: @Sendable () -> Date
     private let lastAttempts = Locked<[CodexAttempt]>([])
+    /// Holds after HTTP 429 on the optional reset-credit details request. The usage request of
+    /// that refresh succeeded, so no account issue carries them. Memory only: a restart ends
+    /// them.
+    private let detailsHolds = Locked<[RateLimitHold]>([])
 
     /// Creates the provider.
     ///
@@ -168,8 +172,10 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
             Self.log.error("Codex homes could not be resolved", error)
             throw Self.homesUnresolved
         }
-        let holds = Self.rateLimitHolds(in: previous, now: now())
+        let holds = Self.rateLimitHolds(in: previous, now: now()) + detailsHolds.value
         let attempts = await refreshAll(homes, holds: holds, until: deadline)
+        // Codex answered with a 429, also when this fetch is cancelled now.
+        recordDetailsHolds(of: attempts)
         try Task.checkCancellation()
         lastAttempts.withLock { $0 = attempts }
         let accounts = attempts.map { attempt in
@@ -207,6 +213,21 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
                 let retryAt = account.rateLimitHold(for: owner, now: now)?.retryAt
             else { return nil }
             return RateLimitHold(owner: owner, retryAt: retryAt)
+        }
+    }
+
+    /// Keeps a hold for each login whose reset-credit details request got HTTP 429, and drops
+    /// the holds that ended.
+    private func recordDetailsHolds(of attempts: [CodexAttempt]) {
+        let now = now()
+        let started = attempts.compactMap { attempt -> RateLimitHold? in
+            guard case .observed(let quota, let owner) = attempt.outcome.kind,
+                let retryAt = quota.resetDetailsRetryAt
+            else { return nil }
+            return RateLimitHold(owner: owner, retryAt: retryAt)
+        }
+        detailsHolds.withLock { holds in
+            holds = (holds + started).filter { $0.holds($0.owner, now: now) }
         }
     }
 

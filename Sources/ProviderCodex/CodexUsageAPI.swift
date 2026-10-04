@@ -16,7 +16,8 @@ struct CodexUsageAPI: Sendable {
 
     /// Sends `GET wham/usage` once. HTTP 401 and 403 throw ``CodexError/loginRequired``, and
     /// HTTP 429 throws ``CodexError/rateLimited(retryAt:)``.
-    /// When the response reports reset credits, one more request reads their details.
+    /// When the response reports reset credits, one more request reads their details. HTTP 429
+    /// on that request sets ``CodexQuota/resetDetailsRetryAt``.
     /// Throws ``CodexError``, or `CancellationError` only when this refresh was cancelled.
     func quota(with credentials: CodexCredentials, now: Date) async throws -> CodexQuota {
         let request = HTTPRequest(
@@ -55,19 +56,22 @@ struct CodexUsageAPI: Sendable {
         }
         var quota = try CodexUsageResponse.quota(from: response.body)
         if let count = quota.resetCount, count > 0 {
-            quota.resets =
-                try await resetDetails(with: credentials, expectedCount: count, now: now) ?? []
+            let details = try await resetDetails(
+                with: credentials, expectedCount: count, now: now)
+            quota.resets = details.resets
+            quota.resetDetailsRetryAt = details.retryAt
         }
         return quota
     }
 
     /// Reads reset-credit details once, with no retries, within ``resetDetailsLimit``.
     ///
-    /// Any failure returns nil: the quota and the count stay, and recovery never starts.
-    /// Only cancellation of the caller throws.
+    /// Any failure returns no rows: the quota and the count stay, and recovery never starts.
+    /// HTTP 429 with a usable `Retry-After` also returns its retry time, so the provider holds
+    /// the login. Only cancellation of the caller throws.
     private func resetDetails(
         with credentials: CodexCredentials, expectedCount: Int, now: Date
-    ) async throws -> [ResetAllowance.Reset]? {
+    ) async throws -> (resets: [ResetAllowance.Reset], retryAt: Date?) {
         var headers = Self.headers(for: credentials)
         headers["OpenAI-Beta"] = "codex-1"
         headers["originator"] = "Codex Desktop"
@@ -78,12 +82,17 @@ struct CodexUsageAPI: Sendable {
             let response = try await withDeadline(resetDetailsLimit) { [http] in
                 try await http.send(request)
             }
-            guard response.isSuccess else { return nil }
-            return CodexUsageResponse.resets(
+            if response.status == 429 {
+                let delay = RetryAfter.delay(response.header("retry-after"), now: now)
+                return ([], RateLimitHold.retryAt(delay: delay, now: now))
+            }
+            guard response.isSuccess else { return ([], nil) }
+            let resets = CodexUsageResponse.resets(
                 from: response.body, expectedCount: expectedCount, now: now)
+            return (resets ?? [], nil)
         } catch {
             try Task.checkCancellation()
-            return nil
+            return ([], nil)
         }
     }
 

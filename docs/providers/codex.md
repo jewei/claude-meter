@@ -76,8 +76,9 @@ OpenAI-Beta: codex-1
 originator: Codex Desktop
 ```
 
-Limit 4 s, no retries. Response: `available_count` (whole number) and `credits`, an array of
-rows with `status`, `title`, and `expires_at` (ISO 8601 or Unix seconds).
+Limit 4 s, no retries. HTTP 429 holds the next requests of the login (rule 23). Response:
+`available_count` (whole number) and `credits`, an array of rows with `status`, `title`, and
+`expires_at` (ISO 8601 or Unix seconds).
 
 ### App-server recovery
 
@@ -220,6 +221,9 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
     details count is equal. Only `available` rows that are not expired stay.
 23. A failed details request (any status, timeout, network, or format) keeps the quota and the
     count, shows no rows, and never starts recovery. Only cancellation of the refresh stops it.
+    After HTTP 429 with a usable `Retry-After`, the hold of rule 31 starts for the login. The
+    usage request of that refresh succeeded, so no account issue carries the hold: the
+    provider keeps it in memory, and a restart ends it.
 24. Codex lists only available credits in recovery rows. A row with another `status` and an
     expired row are dropped. A row without a status stays.
 

@@ -310,13 +310,27 @@ private final class ManualTimer: Sendable {
         #expect(store.readings[.claude]?.value == .sample(.claude, used: 2))
     }
 
-    @Test func refreshNowWhileAsleepFetchesNothing() async {
-        let (scheduler, _) = makeScheduler()
+    @Test func refreshNowWhileAsleepOnlyReconciles() async {
+        let (scheduler, store) = makeScheduler()
         await start(scheduler)
         display.sleep()
+        claude.setReconcile { _ in nil }
         scheduler.refreshNow([.claude])
         await scheduler.waitForWork()
         #expect(claude.fetchCount == 1)
+        #expect(store.readings[.claude] == nil)
+    }
+
+    @Test func refreshNowWhilePausedStillReconciles() async {
+        let (scheduler, store) = makeScheduler()
+        await start(scheduler, [.codex])
+        scheduler.update(RefreshConfiguration(isActive: false, enabledProviders: [.codex]))
+        codex.setReconcile { _ in nil }
+        scheduler.refreshNow([.codex])
+        await scheduler.waitForWork()
+        #expect(codex.fetchCount == 1)
+        #expect(store.readings[.codex] == nil)
+        #expect(store.refreshing.isEmpty)
     }
 
     // MARK: - History

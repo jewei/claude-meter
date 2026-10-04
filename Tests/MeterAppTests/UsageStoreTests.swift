@@ -244,6 +244,139 @@ import Testing
         #expect(history.callCount == 1)
     }
 
+    // MARK: - Reconcile without a fetch
+
+    @Test func reconcileAloneSendsNoRequest() async {
+        let provider = FakeUsageProvider(.codex)
+        provider.enqueue(homes("/a", "/b"))
+        let store = makeStore([provider])
+        await store.refresh([.codex])
+        provider.setReconcile(keepOnly("/a"))
+        await store.reconcile([.codex])
+        #expect(provider.fetchCount == 1)
+        #expect(store.readings[.codex] == .current(homes("/a"), observedAt: .reference()))
+        #expect(store.refreshing.isEmpty)
+    }
+
+    @Test func supersededReconcileNeitherPublishesNorFetches() async {
+        let provider = FakeUsageProvider(.codex)
+        provider.enqueue(homes("/a", "/b"))
+        let store = makeStore([provider])
+        await store.refresh([.codex])
+        let gate = Gate()
+        provider.setReconcile { _ in
+            await gate.wait()
+            return nil
+        }
+        let older = Task { await store.refresh([.codex]) }
+        #expect(await gate.waitForArrivals())
+        provider.setReconcile { $0 }
+        provider.enqueue(homes("/a", used: 70))
+        await store.refresh([.codex])
+        gate.open()
+        await older.value
+        #expect(provider.fetchCount == 2)
+        #expect(store.readings[.codex]?.value == homes("/a", used: 70))
+    }
+
+    @Test func disablingDuringReconcileSkipsTheFetch() async {
+        let provider = FakeUsageProvider(.codex)
+        provider.enqueue(homes("/a"))
+        let store = makeStore([provider])
+        await store.refresh([.codex])
+        let gate = Gate()
+        provider.setReconcile { previous in
+            await gate.wait()
+            return previous
+        }
+        let refresh = Task { await store.refresh([.codex]) }
+        #expect(await gate.waitForArrivals())
+        store.setEnabled([])
+        gate.open()
+        await refresh.value
+        #expect(provider.fetchCount == 1)
+        #expect(store.readings[.codex] == nil)
+    }
+
+    @Test func disablingRejectsALateHistoryResult() async {
+        let gate = Gate()
+        let history = FakeHistoryProvider(.grok) { now in
+            await gate.wait()
+            return .sample(.grok, now: now)
+        }
+        let store = makeStore([FakeUsageProvider(.grok)], history: [history])
+        let refresh = Task { await store.refresh(quota: [], history: [.grok]) }
+        #expect(await gate.waitForArrivals())
+        store.setEnabled([])
+        store.setEnabled([.grok])
+        gate.open()
+        await refresh.value
+        #expect(store.histories[.grok] == nil)
+    }
+
+    @Test func historyFailureKeepsTheLastHistoryAsStale() async {
+        let history = FakeHistoryProvider(.claude) { now in .sample(.claude, now: now) }
+        let store = makeStore([FakeUsageProvider(.claude)], history: [history])
+        await store.refresh(quota: [], history: [.claude])
+        history.setAnswer { _ in throw ProviderError("Scan failed") }
+        await store.refresh(quota: [], history: [.claude])
+        #expect(
+            store.histories[.claude]
+                == .stale(
+                    .sample(.claude, now: .reference()), observedAt: .reference(),
+                    issue: UsageIssue("Scan failed")))
+    }
+
+    @Test func quotaPublishesBeforeHistoryFinishes() async {
+        let provider = FakeUsageProvider(.claude)
+        provider.enqueue(.sample(.claude))
+        let gate = Gate()
+        let history = FakeHistoryProvider(.claude) { now in
+            await gate.wait()
+            return .sample(.claude, now: now)
+        }
+        let store = makeStore([provider], history: [history])
+        let refresh = Task { await store.refresh([.claude]) }
+        #expect(await gate.waitForArrivals())
+        #expect(await waitUntil { store.readings[.claude] != nil })
+        #expect(store.refreshingHistory == [.claude])
+        gate.open()
+        await refresh.value
+    }
+
+    @Test func cancellingAnOlderCallerKeepsTheNewerRefresh() async {
+        let provider = FakeUsageProvider(.claude)
+        let gate = Gate()
+        provider.enqueue { _ in
+            await gate.wait()
+            return .sample(.claude, used: 10)
+        }
+        let store = makeStore([provider])
+        let older = Task { await store.refresh([.claude]) }
+        #expect(await gate.waitForArrivals())
+        provider.enqueue { _ in
+            await gate.wait()
+            return .sample(.claude, used: 20)
+        }
+        let newer = Task { await store.refresh([.claude]) }
+        #expect(await gate.waitForArrivals(2))
+        older.cancel()
+        gate.open()
+        await older.value
+        await newer.value
+        #expect(store.readings[.claude]?.value == .sample(.claude, used: 20))
+    }
+
+    @Test func partialAccountFailuresStayCurrent() async {
+        let provider = FakeUsageProvider(.codex)
+        var usage = homes("/a")
+        usage.accounts.append(.unavailable(id: "/b", name: "b", issue: UsageIssue("Sign in")))
+        provider.enqueue(usage)
+        let store = makeStore([provider])
+        await store.refresh([.codex])
+        #expect(store.readings[.codex] == .current(usage, observedAt: .reference()))
+    }
+
     // MARK: - Safety deadline
 
     @Test func nonCooperativeFetchTimesOutAndClearsRefreshing() async {

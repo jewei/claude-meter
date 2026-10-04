@@ -107,6 +107,12 @@ since its last attempt, or when that attempt is at least 240 s old (a failed his
 too). A due history never adds a quota request, and a quota request never adds a history
 that is not due. An account or credential change refreshes that provider's history at once.
 
+When no request may go out (paused, before onboarding, or with the display asleep), an
+account or credential change still runs that provider's `reconcile` alone
+(`UsageStore.reconcile`): local reads, no request, and the result is published and saved. So
+a removed account or a changed login disappears at once. At launch, saved readings are
+reconciled the same way when refreshing cannot start.
+
 There is one global cadence. No battery, network, or per-provider timers.
 
 ## Storage

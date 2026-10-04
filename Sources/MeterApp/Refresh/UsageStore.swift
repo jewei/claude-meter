@@ -102,8 +102,21 @@ public final class UsageStore {
     /// Starts every job before waiting, so one slow provider never delays another. Cancelling
     /// the caller cancels only these refreshes, never a newer one.
     public func refresh(quota: Set<ProviderID>, history: Set<ProviderID>) async {
-        var tasks = targets(quota).compactMap(startQuota)
+        var tasks = targets(quota).compactMap { startQuota($0, fetches: true) }
         tasks += targets(history).compactMap(startHistory)
+        await wait(for: tasks)
+    }
+
+    /// Applies account and login changes from local reads only: each provider's `reconcile`
+    /// runs, and a changed value is published and saved. Sends no request. Supersedes a quota
+    /// refresh in flight for these ids. Use it when refreshing cannot run, for example while
+    /// updates are paused, so a removed account or a changed login disappears at once.
+    public func reconcile(_ ids: Set<ProviderID>) async {
+        let withReadings = targets(ids).filter { readings[$0] != nil }
+        await wait(for: withReadings.compactMap { startQuota($0, fetches: false) })
+    }
+
+    private func wait(for tasks: [Task<Void, Never>]) async {
         await withTaskCancellationHandler {
             for task in tasks { await task.value }
         } onCancel: {
@@ -153,22 +166,28 @@ public final class UsageStore {
 
     // MARK: - Quota
 
-    private func startQuota(_ id: ProviderID) -> Task<Void, Never>? {
+    /// Starts a quota job: reconcile, then fetch when `fetches` is true. A reconcile-only job
+    /// is local and short, so it does not count as refreshing.
+    private func startQuota(_ id: ProviderID, fetches: Bool) -> Task<Void, Never>? {
         guard let provider = providers[id] else { return nil }
         quotaJobs[id]?.task.cancel()
         let token = UUID()
         let previous = readings[id]?.value
-        refreshing.insert(id)
+        if fetches {
+            refreshing.insert(id)
+        } else {
+            refreshing.remove(id)
+        }
         let task = Task { [weak self] in
             guard let self else { return }
-            await self.runQuota(provider, token: token, previous: previous)
+            await self.runQuota(provider, token: token, previous: previous, fetches: fetches)
         }
         quotaJobs[id] = Job(token: token, task: task)
         return task
     }
 
     private func runQuota(
-        _ provider: any UsageProvider, token: UUID, previous: ProviderUsage?
+        _ provider: any UsageProvider, token: UUID, previous: ProviderUsage?, fetches: Bool
     ) async {
         let id = provider.id
         defer { finishQuota(id, token: token) }
@@ -181,6 +200,7 @@ public final class UsageStore {
             }
             guard isCurrentQuota(id, token) else { return }
             if reconciled != previous { applyReconciled(reconciled, for: id) }
+            guard fetches else { return }
             let usage = try await SafetyDeadline.run(until: deadline, limit: quotaLimit) {
                 try await provider.fetch(previous: reconciled)
             }

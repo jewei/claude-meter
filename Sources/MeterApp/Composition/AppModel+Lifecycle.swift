@@ -5,13 +5,24 @@ import MeterPlatform
 extension AppModel {
     /// Restores saved readings, applies the log setting, and starts refreshing. Call once.
     func start(archive: ReadingArchive?) async {
-        let current = settings.settings
+        var restored: Set<ProviderID> = []
         if let archive {
             let saved = await archive.load()
-            usage.restore(saved.filter { current.enabledProviders.contains($0.key) })
+            // Settings can change while the file loads, so read them after it.
+            let enabled = settings.settings.enabledProviders
+            let kept = saved.filter { enabled.contains($0.key) }
+            usage.restore(kept)
+            restored = Set(kept.keys)
         }
+        let current = settings.settings
         LogFile.shared.setEnabled(current.writesLogFile)
-        scheduler?.update(Self.refreshConfiguration(current))
+        let configuration = Self.refreshConfiguration(current)
+        scheduler?.update(configuration)
+        // A refresh reconciles first. Without one, still drop saved accounts whose login or
+        // folder is gone, from local reads only.
+        if !configuration.canRefresh, !restored.isEmpty {
+            await usage.reconcile(restored)
+        }
         await claudeSettings?.reload()
         await codexSettings?.reload()
     }

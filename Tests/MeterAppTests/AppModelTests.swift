@@ -58,6 +58,29 @@ import Testing
         #expect(model.usage.readings[.grok] == nil)
     }
 
+    @Test func startWhilePausedRestoresAndReconcilesWithoutRefreshing() async throws {
+        let directory = try TemporaryDirectory()
+        defer { directory.remove() }
+        let file = directory.path("readings.json")
+        let writer = ReadingArchive(file: file)
+        writer.record(.sample(.claude, account: "claude"), for: .claude)
+        writer.record(.sample(.grok), for: .grok)
+        writer.flush()
+
+        var settings = Settings()
+        settings.hasCompletedOnboarding = true
+        settings.isPaused = true
+        settings.claude.connection = .automatic
+        let model = makeModel(settings)
+        // The Claude login changed while the app was closed.
+        claude.setReconcile { _ in nil }
+        await model.start(archive: ReadingArchive(file: file))
+        #expect(model.usage.readings[.claude] == nil)
+        // Grok is off, so its saved reading is not restored.
+        #expect(model.usage.readings[.grok] == nil)
+        #expect(claude.fetchCount == 0)
+    }
+
     @Test func movingACardToTheTopPinsItsAccount() {
         let model = makeModel()
         let visible: [CardID] = [.account(.claude, "a"), .account(.codex, "b")]

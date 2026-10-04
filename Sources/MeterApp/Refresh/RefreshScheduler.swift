@@ -84,8 +84,16 @@ public final class RefreshScheduler {
     }
 
     /// Refreshes quota and history of `ids` now, superseding work in progress. Use after
-    /// credential, account, or source changes.
+    /// credential, account, or source changes. While paused, before onboarding, or with the
+    /// display asleep, no request goes out; the change is applied from local reads only
+    /// (``UsageStore/reconcile(_:)``), so a removed account or login disappears at once.
     public func refreshNow(_ ids: Set<ProviderID>) {
+        guard canRequest else {
+            let ids = ids.intersection(enabledProviders)
+            guard !ids.isEmpty else { return }
+            latestWork = Task { [store] in await store.reconcile(ids) }
+            return
+        }
         store.cancel(ids)
         request(quota: ids, history: ids, force: true)
     }
@@ -117,6 +125,11 @@ public final class RefreshScheduler {
         configuration?.enabledProviders ?? []
     }
 
+    /// Requests may go out: refreshing is active and the display is awake.
+    private var canRequest: Bool {
+        configuration?.canRefresh == true && display?.isDisplayAsleep != true
+    }
+
     private func due(maxAge: TimeInterval) -> Set<ProviderID> {
         enabledProviders.filter { store.needsRefresh($0, maxAge: maxAge) }
     }
@@ -132,8 +145,7 @@ public final class RefreshScheduler {
     }
 
     private func startTimer() {
-        guard configuration?.canRefresh == true, display?.isDisplayAsleep != true, timer == nil
-        else { return }
+        guard canRequest, timer == nil else { return }
         timer = Task { [weak self, sleep] in
             while !Task.isCancelled {
                 do { try await sleep(Self.interval) } catch { return }
@@ -147,9 +159,7 @@ public final class RefreshScheduler {
     /// `force`, quota already refreshing and history that is not due are left out; forcing
     /// applies only to these ids, never to others that merge into the same store call.
     private func request(quota: Set<ProviderID>, history: Set<ProviderID>, force: Bool = false) {
-        guard let configuration, configuration.canRefresh, display?.isDisplayAsleep != true else {
-            return
-        }
+        guard canRequest, let configuration else { return }
         var quota = quota.intersection(configuration.enabledProviders)
         var history = history.intersection(configuration.enabledProviders)
         if !force {

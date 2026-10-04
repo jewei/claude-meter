@@ -20,3 +20,6 @@ public enum ProviderID: String, Codable, CaseIterable, Sendable {
         self == .claude || self == .codex
     }
 }
+
+// Lets `[ProviderID: Value]` encode as a JSON object rather than a flat array.
+extension ProviderID: CodingKeyRepresentable {}

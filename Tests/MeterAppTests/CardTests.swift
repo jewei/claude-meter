@@ -130,6 +130,7 @@ import Testing
             return
         }
         #expect(bars.bars.map(\.title) == ["Session"])
+        #expect(bars.showsBarLabels)
         #expect(bars.headline.valueText == "—")
         #expect(card.disclosure == .collapsed)
         #expect(card.details.contains(.resets(ResetsBuilder.model(nil, now: .reference()))))
@@ -158,6 +159,8 @@ import Testing
             return
         }
         #expect(bars.caption == "$120.25 spent · Resets in 2h")
+        // The caption names the reset, so the bar has no label row of its own.
+        #expect(!bars.showsBarLabels)
         #expect(card.plan == PlanBadge(plan: "Pro", verbatim: true))
         #expect(card.disclosure == .expanded)
         #expect(card.details.contains { if case .usageBars = $0 { true } else { false } })

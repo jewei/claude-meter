@@ -107,7 +107,8 @@ struct CardBuilder {
         if let resetSummary { caption.append(resetSummary) }
         return BarsModel(
             headline: bars[0], bars: bars,
-            caption: caption.isEmpty ? nil : caption.joined(separator: " · "))
+            caption: caption.isEmpty ? nil : caption.joined(separator: " · "),
+            showsBarLabels: true)
     }
 
     /// One bar for the provider's main window, with spend details in the caption.
@@ -133,7 +134,8 @@ struct CardBuilder {
         if let reset = gauge.resetText { caption.append(reset) }
         return BarsModel(
             headline: gauge, bars: [gauge],
-            caption: caption.isEmpty ? nil : caption.joined(separator: " · "))
+            caption: caption.isEmpty ? nil : caption.joined(separator: " · "),
+            showsBarLabels: false)
     }
 
     /// Claude extra usage for the selected account, when Claude owns the menu bar.

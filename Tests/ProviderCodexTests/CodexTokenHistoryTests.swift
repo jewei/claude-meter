@@ -5,8 +5,8 @@ import MeterTestSupport
 import ProviderCodex
 import Testing
 
-/// Codex rollout files, read from synthetic Codex homes. Scans run one at a time because they
-/// share the process-wide `BlockingIO` pool with other suites.
+/// Codex rollout files, read from synthetic Codex homes. Each test has its own scanner and
+/// folders, so the suite runs in parallel with the rest of the package.
 @Suite struct CodexTokenHistoryTests {
     private let calendar = Calendar.fixed("UTC")
 

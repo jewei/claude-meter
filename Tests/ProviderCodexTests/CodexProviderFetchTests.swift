@@ -239,9 +239,39 @@ extension CodexTests {
             defer { bed.remove() }
             let provider = bed.provider
             let task = Task { try await provider.fetch(previous: nil) }
-            try await Task.sleep(for: .milliseconds(100))
+            // Cancel only once recovery runs, not after a fixed delay.
+            let deadline = ContinuousClock.now + .seconds(10)
+            while recovery.calls == 0, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            #expect(recovery.calls == 1)
             task.cancel()
             await #expect(throws: CancellationError.self) { try await task.value }
+        }
+
+        /// CDX-19: without usable tokens, an installed CLI can still find the login.
+        @Test(arguments: [false, true])
+        func signInStatusWithAndWithoutACLI(hasCLI: Bool) async throws {
+            let bed = try CodexTestBed(hasCLI: hasCLI)
+            defer { bed.remove() }
+            let home = try #require(await bed.homes().first)
+            let checking = SignInStatus.unknown("Codex detected; checking sign-in during refresh.")
+            let withoutTokens = hasCLI ? checking : SignInStatus.signedOut
+
+            #expect(await bed.provider.signInStatus(for: home) == withoutTokens)
+            try bed.writeAuth(#"{"auth_mode":"chatgpt"}"#)
+            #expect(await bed.provider.signInStatus(for: home) == withoutTokens)
+            try bed.writeAuth("{")
+            #expect(await bed.provider.signInStatus(for: home) == withoutTokens)
+            try FileManager.default.removeItem(at: bed.root.path("home/auth.json"))
+            _ = try bed.root.makeDirectory("home/auth.json")
+            let unreadable = SignInStatus.unknown(
+                CodexError.authFileUnreadable.localizedDescription)
+            #expect(
+                await bed.provider.signInStatus(for: home) == (hasCLI ? checking : unreadable))
+            try FileManager.default.removeItem(at: bed.root.path("home"))
+            #expect(await bed.provider.signInStatus(for: home) == .signedOut)
+            #expect(bed.recovery.calls == 0)
         }
 
         @Test func signInStatusReadsOnlyTheAuthFile() async throws {

@@ -103,8 +103,10 @@ extension CodexTests {
         }
 
         @Test func cancellationDuringDetailsCancelsTheFetch() async throws {
+            let started = Locked(false)
             let bed = try CodexTestBed(
                 http: Self.client {
+                    started.withLock { $0 = true }
                     try await Task.sleep(for: .seconds(30))
                     return .json(200, Self.details)
                 })
@@ -112,7 +114,12 @@ extension CodexTests {
             try bed.writeAuth()
             let provider = bed.provider
             let task = Task { try await provider.fetch(previous: nil) }
-            try await Task.sleep(for: .milliseconds(200))
+            // Cancel only once the details request runs, not after a fixed delay.
+            let deadline = ContinuousClock.now + .seconds(10)
+            while !started.value, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            #expect(started.value)
             task.cancel()
             await #expect(throws: CancellationError.self) { try await task.value }
         }

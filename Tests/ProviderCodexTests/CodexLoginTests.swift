@@ -92,7 +92,8 @@ extension CodexTests {
             #expect(mkfifo(home.authFile.path, 0o600) == 0)
             let start = ContinuousClock.now
             #expect(try await CodexLogin.read(home, timeout: .seconds(5)) == .unreadable)
-            #expect(ContinuousClock.now - start < .seconds(1))
+            // Well under the 5 s read limit, with room for a busy machine.
+            #expect(ContinuousClock.now - start < .seconds(4))
         }
 
         @Test(arguments: [

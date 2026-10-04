@@ -119,31 +119,52 @@ final class FakeRecovery: CodexRecovery {
 }
 
 /// One temporary implicit home and a provider that reads it.
+///
+/// The provider never finds a real `codex`: its only install folder is `root/bin`, which
+/// holds a fake one only when `hasCLI` is true. Recovery is always a ``FakeRecovery``.
 struct CodexTestBed {
     let root: TemporaryDirectory
     let extras: [URL]
     let http: FakeHTTPClient
     let recovery: FakeRecovery
+    let now: Date
     let provider: CodexProvider
 
     /// The implicit home is `root/home`. Extra homes are `root/<name>`.
     init(
         extraHomes: [String] = [], http: FakeHTTPClient = FakeHTTPClient(json: CodexFixtures.usage),
         recovery: FakeRecovery = FakeRecovery(), now: Date = .reference(),
-        limits: CodexLimits = .standard
+        limits: CodexLimits = .standard, hasCLI: Bool = false
     ) throws {
         let root = try TemporaryDirectory()
         _ = try root.makeDirectory("home")
         let extras = try extraHomes.map { try root.makeDirectory($0) }
+        if hasCLI {
+            let cli = try root.write("#!/bin/sh\nexit 1\n", to: "bin/codex")
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: cli.path)
+        }
         self.root = root
         self.extras = extras
         self.http = http
         self.recovery = recovery
+        self.now = now
         self.provider = CodexProvider(
             configuration: { CodexConfiguration(extraHomes: extras) }, http: http,
             environment: ["CODEX_HOME": root.path("home").path, "PATH": ""],
             home: root.url, recovery: recovery, now: { now }, limits: limits,
-            installFolders: [])
+            installFolders: [root.path("bin")])
+    }
+
+    /// Another provider for the same homes, HTTP client, and recovery, with other limits.
+    func provider(limits: CodexLimits) -> CodexProvider {
+        let extras = self.extras
+        let now = self.now
+        return CodexProvider(
+            configuration: { CodexConfiguration(extraHomes: extras) }, http: http,
+            environment: ["CODEX_HOME": root.path("home").path, "PATH": ""],
+            home: root.url, recovery: recovery, now: { now }, limits: limits,
+            installFolders: [root.path("bin")])
     }
 
     /// Writes `auth.json` into a home folder (`home` is the implicit one).

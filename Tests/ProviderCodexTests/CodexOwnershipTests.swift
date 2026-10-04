@@ -149,6 +149,27 @@ extension CodexTests {
             #expect(account.observedAt == first.accounts.first?.observedAt)
         }
 
+        /// CDX-19: when the homes do not resolve in time, reconcile changes nothing.
+        @Test func aReconcileThatCannotResolveTheHomesKeepsTheReading() async throws {
+            let bed = try CodexTestBed()
+            defer { bed.remove() }
+            try bed.writeAuth()
+            let usage = try await bed.provider.fetch(previous: nil)
+            try FileManager.default.removeItem(at: bed.root.path("home"))
+            var limits = CodexLimits.standard
+            limits.homeResolution = .milliseconds(200)
+            let blocked = CodexProvider(
+                configuration: {
+                    try? await Task.sleep(for: .seconds(30))
+                    return CodexConfiguration()
+                },
+                http: bed.http, environment: ["CODEX_HOME": bed.root.path("home").path],
+                home: bed.root.url, recovery: bed.recovery, now: { .reference() },
+                limits: limits, installFolders: [])
+
+            #expect(await blocked.reconcile(usage) == usage)
+        }
+
         @Test func reconcileDropsChangedOwnersAndRemovedHomes() async throws {
             let root = try TemporaryDirectory()
             defer { root.remove() }

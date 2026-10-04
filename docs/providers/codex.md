@@ -158,10 +158,12 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
 
 ### Recovery
 
-6. Recovery starts only when `auth.json` is missing, has no tokens, is not valid JSON, or
-   cannot be read; when the access token expires within 60 s; or when the usage request
-   returns HTTP 401 or 403. A home folder that does not exist starts no recovery: Codex has
-   no login there, and the child could create files in it.
+6. Recovery starts only when `auth.json` is missing, has no tokens, or is not valid JSON;
+   when the access token expires within 60 s; or when the usage request returns HTTP 401 or
+   403. A home folder that does not exist starts no recovery: Codex has no login there, and
+   the child could create files in it. A file that cannot be read now, and a read that does
+   not finish in time, start no recovery and send nothing: the file names no owner, so the
+   answer could never be verified (rule 28). The status is unknown (rule 26).
 7. Network errors, timeouts, other HTTP statuses, unknown response formats, and API-key auth
    never start recovery. The original error shows. A redirect to another site and a response
    over the size limit are unknown response formats, not network errors: the server answered.
@@ -234,7 +236,8 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
     file that cannot be read now is unknown. A read that times out or finds no free
     blocking-read thread is temporary: `Reading the Codex auth file took too long. Claude Meter
     will try again soon.` Any other read failure (not a regular file, over 4 MiB, or refused)
-    says `Could not read Codex auth file. Check that your user can read it.`
+    says `Could not read Codex auth file. Check that your user can read it.` Neither sends a
+    request or starts recovery (rule 6), so the home keeps its previous observation as stale.
 27. After a direct request, the owner must be the same, or the response is discarded with
     `Codex sign-in changed or could not be verified. Refresh again.` A failure belongs to the
     login that sent the request: when the status after it (rule 29) names another signed-in

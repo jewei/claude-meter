@@ -97,16 +97,32 @@ enum CodexLogin: Sendable, Equatable {
         }
     }
 
-    /// The direct-path error that sends this login to recovery. Nil for ChatGPT tokens, which
-    /// send the usage request first, and for logins that recovery cannot help.
-    var recoveryReason: CodexError? {
+    /// What a refresh does with a login before any request.
+    enum Route: Equatable, Sendable {
+        /// Send the usage request with these tokens.
+        case request(CodexCredentials)
+        /// Start app-server recovery. `reason` is the direct-path error, for the message.
+        case recover(reason: CodexError)
+        /// Send nothing and start nothing. The refresh fails with `error`, and `status`
+        /// decides whether the previous observation stays.
+        case stop(CodexError, status: OwnerStatus)
+    }
+
+    /// Only Codex can find a login without usable tokens, so recovery starts. API-key auth
+    /// has no subscription quota, and a home folder that does not exist has no login. A file
+    /// that cannot be read now names no owner, so the answer of a recovery could never be
+    /// verified (``CodexAccountRefresh/verifiedOwner(before:after:source:report:)``): it would
+    /// only start `codex app-server` at every refresh. These logins stop.
+    var route: Route {
         switch self {
-        case .missing: .authFileMissing
-        case .noTokens: .missingTokens
-        case .invalid: .authFileInvalid
-        case .unreadable: .authFileUnreadable
-        case .notReadInTime: .authFileTimedOut
-        case .chatGPT, .apiKey, .noHome: nil
+        case .chatGPT(let credentials): .request(credentials)
+        case .missing: .recover(reason: .authFileMissing)
+        case .noTokens: .recover(reason: .missingTokens)
+        case .invalid: .recover(reason: .authFileInvalid)
+        case .apiKey: .stop(.apiKeyOnly, status: .signedOut)
+        case .noHome: .stop(.homeMissing, status: .signedOut)
+        case .unreadable: .stop(.authFileUnreadable, status: .unknown)
+        case .notReadInTime: .stop(.authFileTimedOut, status: .unknown)
         }
     }
 

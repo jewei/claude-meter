@@ -80,28 +80,38 @@ extension CodexTests {
                     == (await bed.homes()).first?.directory.path)
         }
 
-        /// CDX-04, CDX-05: a file that cannot be read or parsed still starts recovery, but it
-        /// names no owner, so the response cannot be verified and is never shown.
-        @Test(arguments: ["invalid", "directory"])
-        func anUnverifiableFileStartsRecoveryButShowsNothing(problem: String) async throws {
+        /// CDX-04: a file that is not JSON can be half written, so it still starts recovery.
+        /// It names no owner, so the response cannot be verified and is never shown.
+        @Test func aFileThatIsNotJSONStartsRecoveryButShowsNothing() async throws {
             let recovery = FakeRecovery(rateLimits: CodexFixtures.rateLimits)
             let bed = try CodexTestBed(recovery: recovery)
             defer { bed.remove() }
-            if problem == "invalid" {
-                try bed.writeAuth("{")
-            } else {
-                _ = try bed.root.makeDirectory("home/auth.json")
-            }
+            try bed.writeAuth("{")
 
             let account = try #require(try await bed.provider.fetch(previous: nil).accounts.first)
 
             #expect(recovery.calls == 1)
             #expect(!account.hasObservation)
-            #expect(
-                account.issue?.message
-                    == (problem == "invalid"
-                    ? CodexError.signInChanged : CodexError.authFileUnreadable)
-                    .localizedDescription)
+            #expect(account.issue?.message == CodexError.signInChanged.localizedDescription)
+        }
+
+        /// R3-P-02: a file that cannot be read names no owner, so a recovery answer could
+        /// never be shown. Nothing is sent and no child process starts.
+        @Test func aFileThatCannotBeReadStartsNothing() async throws {
+            let recovery = FakeRecovery(rateLimits: CodexFixtures.rateLimits)
+            let bed = try CodexTestBed(recovery: recovery, hasCLI: true)
+            defer { bed.remove() }
+            _ = try bed.root.makeDirectory("home/auth.json")
+
+            let account = try #require(try await bed.provider.fetch(previous: nil).accounts.first)
+
+            #expect(recovery.calls == 0)
+            #expect(bed.http.requests.isEmpty)
+            #expect(!account.hasObservation)
+            #expect(account.owner == nil)
+            #expect(account.issue?.message == CodexError.authFileUnreadable.localizedDescription)
+            let facts = await bed.provider.diagnostics()
+            #expect(facts.contains { $0.label == "Codex source" && $0.value == "None" })
         }
 
         @Test(arguments: [401, 403])
@@ -317,10 +327,10 @@ extension CodexTests {
             #expect(await bed.provider.signInStatus(for: home) == withoutTokens)
             try FileManager.default.removeItem(at: bed.root.path("home/auth.json"))
             _ = try bed.root.makeDirectory("home/auth.json")
+            // A refresh does not check a file that cannot be read with the CLI either.
             let unreadable = SignInStatus.unknown(
                 CodexError.authFileUnreadable.localizedDescription)
-            #expect(
-                await bed.provider.signInStatus(for: home) == (hasCLI ? checking : unreadable))
+            #expect(await bed.provider.signInStatus(for: home) == unreadable)
             try FileManager.default.removeItem(at: bed.root.path("home"))
             #expect(await bed.provider.signInStatus(for: home) == .signedOut)
             #expect(bed.recovery.calls == 0)

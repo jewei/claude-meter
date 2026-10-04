@@ -99,12 +99,34 @@ extension CodexTests {
             }
             #expect(CodexLogin.notReadInTime.ownerStatus == .unknown)
             #expect(CodexLogin.notReadInTime.owner == nil)
-            #expect(CodexLogin.notReadInTime.recoveryReason == .authFileTimedOut)
+            #expect(CodexLogin.notReadInTime.route == .stop(.authFileTimedOut, status: .unknown))
             #expect(
                 CodexError.authFileTimedOut.localizedDescription
                     == "Reading the Codex auth file took too long. Claude Meter will try again soon."
             )
             #expect(!CodexError.authFileTimedOut.needsAction)
+        }
+
+        /// R3-P-02: only Codex can find a login without usable tokens, so only those logins
+        /// start recovery. A file that cannot be read now names no owner, so the answer could
+        /// never be verified: it stops, like API-key auth and a missing home folder.
+        @Test func eachLoginHasOneRoute() {
+            let credentials = CodexCredentials(accessToken: "a", idToken: nil, accountID: nil)
+            let cases: [(CodexLogin, CodexLogin.Route)] = [
+                (.chatGPT(credentials), .request(credentials)),
+                (.missing, .recover(reason: .authFileMissing)),
+                (.noTokens(fileDigest: "d"), .recover(reason: .missingTokens)),
+                (.invalid, .recover(reason: .authFileInvalid)),
+                (.apiKey, .stop(.apiKeyOnly, status: .signedOut)),
+                (.noHome, .stop(.homeMissing, status: .signedOut)),
+                (.unreadable, .stop(.authFileUnreadable, status: .unknown)),
+                (.notReadInTime, .stop(.authFileTimedOut, status: .unknown)),
+            ]
+            for (login, route) in cases {
+                #expect(login.route == route, "\(login.summary)")
+            }
+            #expect(!CodexError.authFileUnreadable.startsRecovery)
+            #expect(!CodexError.authFileTimedOut.startsRecovery)
         }
 
         /// The read after the request names the failure that it had.

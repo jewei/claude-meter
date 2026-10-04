@@ -111,28 +111,24 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
     /// ChatGPT tokens are signed in. API-key auth is signed out because it has no
     /// subscription quota, and so is a home folder that does not exist. Without usable tokens,
     /// an installed Codex CLI can still find a login during refresh, for example in the
-    /// keyring, so the status is unknown.
+    /// keyring, so the status is unknown. A file that cannot be read now is unknown, with what
+    /// to do: a refresh does not check it with the CLI either.
     public func signInStatus(for home: CodexHome) async -> SignInStatus {
         guard let login = try? await CodexLogin.read(home, timeout: limits.fileRead) else {
             return .unknown("The sign-in check stopped. Open Settings again.")
         }
-        switch login {
-        case .chatGPT:
+        switch login.route {
+        case .request:
             return .signedIn
-        case .apiKey, .noHome:
+        case .stop(_, status: .signedOut):
             return .signedOut
-        case .missing, .noTokens, .invalid, .unreadable, .notReadInTime:
+        case .stop(let error, _):
+            return .unknown(error.localizedDescription)
+        case .recover:
             if (try? await locateCLI()) != nil {
                 return .unknown("Codex detected; checking sign-in during refresh.")
             }
-            switch login {
-            case .unreadable:
-                return .unknown(CodexError.authFileUnreadable.localizedDescription)
-            case .notReadInTime:
-                return .unknown(CodexError.authFileTimedOut.localizedDescription)
-            default:
-                return .signedOut
-            }
+            return .signedOut
         }
     }
 

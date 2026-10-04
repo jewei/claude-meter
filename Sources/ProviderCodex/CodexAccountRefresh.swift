@@ -60,25 +60,24 @@ struct CodexAccountRefresh: Sendable {
 
     /// Refreshes `home`. `previous` is the account that the app holds now: while it holds a
     /// rate limit for the same login (``AccountUsage/rateLimitHold(for:now:)``), nothing is
-    /// sent, not even recovery. Throws only `CancellationError`.
+    /// sent, not even recovery. A login that stops (``CodexLogin/Route/stop(_:status:)``)
+    /// sends nothing either. Throws only `CancellationError`.
     func run(_ home: CodexHome, previous: AccountUsage?) async throws -> Outcome {
         let before = try await CodexLogin.read(home, timeout: fileReadLimit)
-        switch before {
-        case .apiKey:
-            return Outcome(
-                kind: .failed(.apiKeyOnly, status: .signedOut), login: before.summary)
-        case .noHome:
-            return Outcome(
-                kind: .failed(.homeMissing, status: .signedOut), login: before.summary)
-        case .chatGPT, .missing, .noTokens, .invalid, .unreadable, .notReadInTime:
-            break
-        }
         if let owner = before.owner, let hold = previous?.rateLimitHold(for: owner, now: now()) {
             return Outcome(
                 kind: .failed(.rateLimited(retryAt: hold.retryAt), status: .signedIn(owner)),
                 login: before.summary)
         }
-        let request = try await obtain(home, login: before)
+        let request: RequestResult
+        switch before.route {
+        case .stop(let error, let status):
+            return Outcome(kind: .failed(error, status: status), login: before.summary)
+        case .recover(let reason):
+            request = try await recover(home, directError: reason)
+        case .request(let credentials):
+            request = try await send(credentials, home: home)
+        }
         let after = try await CodexLogin.read(home, timeout: fileReadLimit)
         return Outcome(
             kind: Self.kind(of: request, before: before, after: after),
@@ -160,13 +159,11 @@ struct CodexAccountRefresh: Sendable {
 
     // MARK: - Work
 
-    private func obtain(_ home: CodexHome, login: CodexLogin) async throws -> RequestResult {
-        guard case .chatGPT(let credentials) = login else {
-            guard let reason = login.recoveryReason else {
-                return RequestResult(quota: .failure(.apiKeyOnly), source: .direct)
-            }
-            return try await recover(home, directError: reason)
-        }
+    /// Sends the usage request, or starts recovery when the token expires within a minute or
+    /// the request returns HTTP 401 or 403.
+    private func send(_ credentials: CodexCredentials, home: CodexHome) async throws
+        -> RequestResult
+    {
         let now = now()
         if credentials.needsRenewal(at: now) {
             return try await recover(home, directError: .accessTokenExpired)

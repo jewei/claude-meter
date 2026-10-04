@@ -151,10 +151,12 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
     ///
     /// Network failures, other HTTP statuses, unknown formats, and API-key auth never start
     /// recovery: Codex cannot fix them, and the original error is more useful.
+    /// An auth file that cannot be read now never starts recovery either: it names no owner,
+    /// so the answer could never be verified (``CodexLogin/route``).
     var startsRecovery: Bool {
         switch self {
-        case .authFileMissing, .authFileUnreadable, .authFileTimedOut, .authFileInvalid,
-            .missingTokens, .accessTokenExpired, .loginRequired:
+        case .authFileMissing, .authFileInvalid, .missingTokens, .accessTokenExpired,
+            .loginRequired:
             true
         default:
             false

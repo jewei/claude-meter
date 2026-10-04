@@ -126,7 +126,7 @@ extension CodexTests {
         }
 
         /// CDX-05: an unreadable file never yields an ownerless reading. An older owned reading
-        /// stays stale, because unreadable is unknown.
+        /// stays stale, because unreadable is unknown. R3-P-02: nothing is sent or started.
         @Test func anUnreadableFileNeverYieldsAnOwnerlessReading() async throws {
             let bed = try CodexTestBed(
                 recovery: FakeRecovery(rateLimits: CodexFixtures.rateLimits))
@@ -138,7 +138,8 @@ extension CodexTests {
 
             let second = try #require(try await bed.provider.fetch(previous: first).accounts.first)
 
-            #expect(bed.recovery.calls == 1)
+            #expect(bed.recovery.calls == 0)
+            #expect(bed.http.requests.count == 1)
             #expect(second.isStale)
             #expect(second.owner == first.accounts.first?.owner)
             #expect(second.observedAt == first.accounts.first?.observedAt)

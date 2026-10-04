@@ -128,6 +128,27 @@ extension CodexTests {
             #expect(next.accounts.first?.hasObservation == true)
         }
 
+        /// An auth file that cannot be read now sends nothing, so the hold of the last login
+        /// stays until the file can be read again.
+        @Test func anAuthFileThatCannotBeReadKeepsTheHold() async throws {
+            let bed = try CodexTestBed(http: Self.limited())
+            defer { bed.remove() }
+            try bed.writeAuth()
+            let limited = try await bed.provider.fetch(previous: nil)
+            try FileManager.default.removeItem(at: bed.root.path("home/auth.json"))
+            _ = try bed.root.makeDirectory("home/auth.json")
+
+            let unreadable = try await bed.provider(now: .reference(30)).fetch(previous: limited)
+            try FileManager.default.removeItem(at: bed.root.path("home/auth.json"))
+            try bed.writeAuth()
+            _ = try await bed.provider(now: .reference(60)).fetch(previous: unreadable)
+
+            #expect(unreadable.accounts.first?.issue?.retryAt == .reference(120))
+            #expect(unreadable.accounts.first?.owner == limited.accounts.first?.owner)
+            #expect(bed.http.requests.count == 1)
+            #expect(bed.recovery.calls == 0)
+        }
+
         @Test func anotherLoginIsNotHeld() async throws {
             let bed = try CodexTestBed(http: Self.limited())
             defer { bed.remove() }

@@ -4,8 +4,8 @@ import MeterPlatform
 /// Reads one home through `codex app-server`, so Codex can renew or find its own sign-in.
 ///
 /// The provider uses recovery only when the normal request cannot work: the auth file is
-/// missing, unusable, or unreadable, the access token expires within a minute, or the usage
-/// request returned HTTP 401 or 403. The live implementation starts one short-lived child
+/// missing, has no tokens, or is not JSON, the access token expires within a minute, or the
+/// usage request returned HTTP 401 or 403. The live implementation starts one short-lived child
 /// process per call. Tests inject a fake. Internal, because the reply carries wire JSON.
 protocol CodexRecovery: Sendable {
     /// Reads the account and its rate limits for `home`.

@@ -100,6 +100,92 @@ final class ClaudeHarness: Sendable {
     }
 }
 
+/// A Keychain that runs a hook before each write, to hold or fail it. Reads go straight to
+/// `base`. Hooks run on the writing thread, so they may block it.
+final class ScriptedKeychain: Keychain {
+    typealias Hook = @Sendable (_ password: Data?) throws(KeychainError) -> Void
+
+    let base: FakeKeychain
+    private let beforeWrite: Hook
+    private let log = Locked<[String]>([])
+
+    init(base: FakeKeychain, beforeWrite: @escaping Hook) {
+        self.base = base
+        self.beforeWrite = beforeWrite
+    }
+
+    /// The writes that reached `base`, in order: the saved access token, or `delete`.
+    var writes: [String] { log.value }
+
+    func password(service: String, account: String?) throws(KeychainError) -> Data? {
+        try base.password(service: service, account: account)
+    }
+
+    func items(servicePrefix: String, account: String?) throws(KeychainError) -> [KeychainItem] {
+        try base.items(servicePrefix: servicePrefix, account: account)
+    }
+
+    func setPassword(_ password: Data, service: String, account: String) throws(KeychainError) {
+        try beforeWrite(password)
+        try base.setPassword(password, service: service, account: account)
+        let token = (try? JSONDecoder.meter.decode(ManualCredential.self, from: password))?
+            .accessToken
+        log.withLock { $0.append(token ?? "?") }
+    }
+
+    func deletePassword(service: String, account: String) throws(KeychainError) {
+        try beforeWrite(nil)
+        try base.deletePassword(service: service, account: account)
+        log.withLock { $0.append("delete") }
+    }
+}
+
+/// A one-shot signal between a blocking Keychain hook and an async test.
+final class Signal: Sendable {
+    private let semaphore = DispatchSemaphore(value: 0)
+    private let raised = Locked(false)
+
+    var isRaised: Bool { raised.value }
+
+    /// Called from the hook's thread.
+    func raise() {
+        raised.withLock { $0 = true }
+        semaphore.signal()
+    }
+
+    /// Blocks the calling thread until ``raise()``. For hooks only.
+    func block() {
+        semaphore.wait()
+        semaphore.signal()
+    }
+
+    /// Waits without blocking a cooperative thread. Returns false after `limit`.
+    @discardableResult
+    func wait(limit: Duration = .seconds(5)) async -> Bool {
+        let deadline = ContinuousClock.now + limit
+        while !isRaised {
+            guard ContinuousClock.now < deadline else { return false }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        return true
+    }
+}
+
+extension ClaudeHarness {
+    /// Stores a manual login, as a Connect would.
+    func storeManual(
+        accessToken: String = "old-access", refreshToken: String? = "old-refresh",
+        expiresAt: Date?, connectionID: String = "connection-1"
+    ) throws {
+        let stored = ManualCredential(
+            accessToken: accessToken, refreshToken: refreshToken, expiresAt: expiresAt,
+            subscriptionType: "pro", connectionID: connectionID)
+        keychain.store(
+            String(decoding: try JSONEncoder.meter.encode(stored), as: UTF8.self),
+            service: ManualCredentialVault.service, account: ManualCredentialVault.account)
+    }
+}
+
 /// Answers usage requests by bearer token and token requests with `tokenResponse`.
 func usageServer(
     _ bodies: [String: String], tokenResponse: HTTPResponse = .json(500, "{}")

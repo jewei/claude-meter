@@ -6,8 +6,9 @@ import MeterPlatform
 ///
 /// - A token is refreshed when it expires within 60 s, and once after HTTP 401.
 /// - Concurrent callers with the same refresh token share one token request.
-/// - Connect and disconnect bump a generation. A refresh that started before cannot commit,
-///   save, or change any state afterwards.
+/// - Disconnect wins. From the moment it starts there is no login, and nothing that started
+///   earlier (a fetch, a refresh, or a Connect) can store or change anything afterwards.
+/// - Keychain writes run one at a time, in order, so a late save never follows a delete.
 /// - A refresh token rejected with `invalid_grant` is not sent again. Temporary failures back
 ///   off for 5 minutes, doubling up to 6 hours.
 actor ManualLogin {
@@ -26,19 +27,35 @@ actor ManualLogin {
         case changed
     }
 
+    /// Identifies one Connect. A Disconnect, or a newer Connect, makes it stale.
+    struct Ticket: Sendable, Equatable {
+        fileprivate let generation: UInt64
+        fileprivate let attempt: UInt64
+    }
+
     static let backoffBase: TimeInterval = 5 * 60
     static let backoffLimit: TimeInterval = 6 * 60 * 60
 
-    private let vault: ManualCredentialVault
-    private let refresher: TokenRefresher
-    private let now: @Sendable () -> Date
-    private let log = Log(.claude)
+    let vault: ManualCredentialVault
+    let refresher: TokenRefresher
+    let now: @Sendable () -> Date
+    let log = Log(.claude)
 
+    /// Moves when a Connect is stored and when a Disconnect starts. Work that began in an
+    /// older generation cannot store or change anything.
     private var generation: UInt64 = 0
+    private var connectAttempts: UInt64 = 0
+    /// Set when a Disconnect starts and cleared by the next Connect. While it is set there is
+    /// no login, whatever a Keychain read that started earlier returns.
+    private var isDisconnected = false
     private var writeSequence: UInt64 = 0
+    private var isWriting = false
+    private var writeWaiters: [CheckedContinuation<Void, Never>] = []
     /// The newest known credential of the stored connection, including unsaved rotations.
     private var latest: ManualCredential?
     private var refreshes: [String: Task<ManualCredential, any Error>] = [:]
+    /// Callers waiting for a shared token request now. Tests use it to prove the sharing.
+    private(set) var refreshWaiters = 0
     private var rejectedRefreshToken: String?
     private var transientFailures = 0
     private var backoffUntil: Date?
@@ -54,10 +71,12 @@ actor ManualLogin {
     /// The stored login, or a newer in-memory rotation of the same connection. A locked
     /// Keychain falls back to the in-memory credential. Throws ``Failure``.
     func current() async throws -> ManualCredential {
+        guard !isDisconnected else { throw Failure.missing }
         let startGeneration = generation
         let read = try await vault.load()
         guard generation == startGeneration else {
-            guard let latest else { throw Failure.missing }
+            // A Connect or Disconnect finished during the read, so the read may predate it.
+            guard !isDisconnected, let latest else { throw Failure.missing }
             return latest
         }
         switch read {
@@ -106,26 +125,42 @@ actor ManualLogin {
         }
     }
 
-    /// Stores a verified login in place of the old one. On failure the old login stays.
-    func connect(_ credential: ManualCredential) async throws {
-        let previous = latest
-        startGeneration()
-        latest = credential
-        writeSequence += 1
-        do {
-            try await vault.save(credential, sequence: writeSequence)
-        } catch {
-            if latest == credential { latest = previous }
-            throw error
-        }
+    /// Starts a Connect. Pass the ticket to ``connect(_:ticket:)``.
+    func beginConnect() -> Ticket {
+        connectAttempts += 1
+        return currentTicket
     }
 
-    /// Deletes the stored login. Work that started before cannot write it back.
+    /// Stores a verified login in place of the old one. Throws ``Failure/changed`` when a
+    /// Disconnect or a newer Connect started after `ticket`; then nothing is stored. When the
+    /// save fails, the old login and its in-flight refreshes stay as they were.
+    func connect(_ credential: ManualCredential, ticket: Ticket) async throws {
+        await lockWrites()
+        defer { unlockWrites() }
+        guard ticket == currentTicket else { throw Failure.changed }
+        writeSequence += 1
+        try await vault.save(credential, sequence: writeSequence)
+        // A Disconnect that started during the save wins: its delete runs after this save.
+        guard ticket.generation == generation else { throw Failure.changed }
+        startGeneration()
+        isDisconnected = false
+        latest = credential
+    }
+
+    /// Deletes the stored login. From now on there is no login, and work that started before
+    /// cannot write it back.
     func disconnect() async throws {
         startGeneration()
+        isDisconnected = true
         latest = nil
+        await lockWrites()
+        defer { unlockWrites() }
         writeSequence += 1
         try await vault.delete(sequence: writeSequence)
+    }
+
+    private var currentTicket: Ticket {
+        Ticket(generation: generation, attempt: connectAttempts)
     }
 
     private func startGeneration() {
@@ -153,16 +188,11 @@ actor ManualLogin {
         switch result {
         case .success(let fresh):
             if latest?.connectionID == used.connectionID, latest?.accessToken != fresh.accessToken {
+                // In memory at once, so that no other caller sends the rotated refresh token.
                 latest = fresh
                 transientFailures = 0
                 backoffUntil = nil
-                writeSequence += 1
-                do {
-                    try await vault.save(fresh, sequence: writeSequence)
-                } catch {
-                    // The in-memory rotation stays usable until the next save works.
-                    log.error("Could not save refreshed manual Claude tokens", error)
-                }
+                await persist(fresh, generation: startGeneration)
             }
             return fresh
         case .failure(Failure.rejected):
@@ -180,6 +210,21 @@ actor ManualLogin {
         }
     }
 
+    /// Stores a rotation after the writes before it. A Connect or Disconnect meanwhile, or a
+    /// newer rotation, makes it obsolete. The in-memory rotation stays usable when the save
+    /// fails, until the next save works.
+    private func persist(_ credential: ManualCredential, generation expected: UInt64) async {
+        await lockWrites()
+        defer { unlockWrites() }
+        guard generation == expected, latest == credential else { return }
+        writeSequence += 1
+        do {
+            try await vault.save(credential, sequence: writeSequence)
+        } catch {
+            log.error("Could not save refreshed manual Claude tokens", error)
+        }
+    }
+
     /// Joins the in-flight refresh of `refreshToken`, or starts one. `isFirst` is true for the
     /// one caller that sees the request finish first, so outcomes are recorded once.
     private func sharedRefresh(
@@ -192,7 +237,7 @@ actor ManualLogin {
             let refresher = refresher
             task = Task {
                 do {
-                    return try await refresher.refresh(credential)
+                    return try await refresher.refresh(credential, using: refreshToken)
                 } catch TokenRefresher.Failure.rejected {
                     throw Failure.rejected
                 } catch TokenRefresher.Failure.failed(let reason) {
@@ -201,9 +246,29 @@ actor ManualLogin {
             }
             refreshes[refreshToken] = task
         }
+        refreshWaiters += 1
         let result = await task.result
+        refreshWaiters -= 1
         let isFirst = refreshes[refreshToken] == task
         if isFirst { refreshes[refreshToken] = nil }
         return (result, isFirst)
+    }
+
+    /// Waits until no other Keychain write of this login runs. Writes run in arrival order.
+    private func lockWrites() async {
+        guard isWriting else {
+            isWriting = true
+            return
+        }
+        await withCheckedContinuation { writeWaiters.append($0) }
+    }
+
+    /// Hands the write lock to the next waiter, if any.
+    private func unlockWrites() {
+        guard !writeWaiters.isEmpty else {
+            isWriting = false
+            return
+        }
+        writeWaiters.removeFirst().resume()
     }
 }

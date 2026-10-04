@@ -156,10 +156,19 @@ little memory. The limit is 256 MiB. The result is one of three states:
    expires within 60 s is refreshed first. A failure leaves the old manual login unchanged.
 3. A token is refreshed when it expires within 60 s, and once after HTTP 401.
 4. Callers with the same refresh token share one token request.
-5. Connect and disconnect start a new generation. A refresh from an older generation cannot
-   save or change anything. Keychain writes are ordered, so a late save cannot restore a
-   deleted item.
-6. A refresh token rejected with `invalid_grant` is not sent again. After a temporary
+5. Disconnect wins. From the moment it starts there is no manual login: a fetch reports
+   "not connected" without a Keychain read, and nothing that started earlier (a fetch, a
+   token refresh, or a Connect) can save or change anything. A Connect that started before
+   a Disconnect, or before a newer Connect, stores nothing and says that the connection
+   changed. (Settings must call Disconnect in every mode for this to cover a Connect in
+   flight.)
+6. Keychain writes of the manual item run one at a time, in order, on a private queue,
+   never on the shared `BlockingIO` threads. A write that times out before it starts is
+   skipped, so it cannot land later; a Keychain call that already runs cannot be stopped. A
+   save of rotated tokens finishes even when the refresh that got them was cancelled.
+7. A Connect whose save fails leaves the old login as it was, and a rotation of the old
+   login that arrives meanwhile is still saved.
+8. A refresh token rejected with `invalid_grant` is not sent again. After a temporary
    failure, refreshes wait 5 minutes, doubling up to 6 hours.
 
 ### Rate-limit gate

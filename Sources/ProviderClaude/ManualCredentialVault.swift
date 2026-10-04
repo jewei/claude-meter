@@ -1,12 +1,16 @@
+import Dispatch
 import Foundation
 import MeterDomain
 import MeterPlatform
 
 /// The app-owned Keychain item that holds the manual login. The only credential the app writes.
 ///
-/// Writes carry a sequence number from ``ManualLogin``. A write applies only when it is newer
-/// than every write before it, so a late save from an old refresh can never restore an item
-/// that a disconnect deleted, even if the Keychain answers out of order.
+/// Writes run one at a time on a private serial queue, in the order they were sent, and never
+/// on the shared ``BlockingIO`` threads: a Keychain call that hangs holds one thread and delays
+/// the later writes, but it cannot fill the pool that every provider uses. Each write carries a
+/// sequence number from ``ManualLogin`` and runs only when it is newer than every write before
+/// it. A write that times out before it starts is skipped, so it cannot land later. A Keychain
+/// call that already runs cannot be stopped.
 final class ManualCredentialVault: Sendable {
     enum Read: Sendable, Equatable {
         case found(ManualCredential)
@@ -21,7 +25,9 @@ final class ManualCredentialVault: Sendable {
 
     private let keychain: any Keychain
     private let timeout: Duration
-    /// The sequence of the newest write that was attempted.
+    private let writes = DispatchQueue(
+        label: "com.jewei.claudemeter.claude-oauth-writes", qos: .utility)
+    /// The sequence of the newest write that ran or was abandoned.
     private let newestWrite = Locked<UInt64>(0)
 
     init(keychain: any Keychain, timeout: Duration) {
@@ -76,19 +82,52 @@ final class ManualCredentialVault: Sendable {
         }
     }
 
+    /// Runs `operation` on the write queue. The caller's cancellation does not stop it: a
+    /// rotated refresh token must be stored even when the refresh that got it was cancelled.
     private func write(
         sequence: UInt64, _ operation: @escaping @Sendable (any Keychain) throws -> Void
     ) async throws {
         let keychain = keychain
         let newestWrite = newestWrite
-        let outcome = try await BlockingIO.run(timeout: timeout) { _ in
-            // The lock orders writes: an older write that runs late is skipped.
-            newestWrite.withLock { newest -> Result<Void, any Error> in
-                guard sequence > newest else { return .success(()) }
-                newest = sequence
-                return Result { try operation(keychain) }
+        let timeout = timeout
+        try await withCheckedThrowingContinuation { continuation in
+            let outcome = WriteOutcome(continuation)
+            writes.async {
+                // Claim the sequence; an older write, or one that was abandoned, is skipped.
+                let isNewest = newestWrite.withLock { newest in
+                    guard sequence > newest else { return false }
+                    newest = sequence
+                    return true
+                }
+                outcome.finish(isNewest ? Result { try operation(keychain) } : .success(()))
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(
+                deadline: .now() + timeout.timeInterval
+            ) {
+                guard outcome.finish(.failure(TimeoutError(limit: timeout))) else { return }
+                // The write has not started, or it hangs; either way it must not land later.
+                newestWrite.withLock { $0 = max($0, sequence) }
             }
         }
-        try outcome.get()
+    }
+
+    /// Resumes a write's caller once, with the result or the timeout, whichever comes first.
+    private final class WriteOutcome: Sendable {
+        private let continuation: Locked<CheckedContinuation<Void, any Error>?>
+
+        init(_ continuation: CheckedContinuation<Void, any Error>) {
+            self.continuation = Locked(continuation)
+        }
+
+        /// Returns true when this call decided the outcome.
+        @discardableResult
+        func finish(_ result: Result<Void, any Error>) -> Bool {
+            let waiting = continuation.withLock { continuation in
+                defer { continuation = nil }
+                return continuation
+            }
+            waiting?.resume(with: result)
+            return waiting != nil
+        }
     }
 }

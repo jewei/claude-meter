@@ -18,14 +18,16 @@ struct TokenRefresher: Sendable {
     static let clientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
     static let minimumLifetime: TimeInterval = 5 * 60
     static let maximumLifetime: TimeInterval = 7 * 24 * 60 * 60
+    static let requestDeadline: Duration = .seconds(15)
 
     let http: any HTTPClient
     let now: @Sendable () -> Date
 
-    /// New tokens for `credential`. A response without `refresh_token` keeps the old one.
-    /// Throws ``Failure``.
-    func refresh(_ credential: ManualCredential) async throws -> ManualCredential {
-        guard let refreshToken = credential.refreshToken else { throw Failure.rejected }
+    /// New tokens for `credential`, from `refreshToken`. A response without `refresh_token`
+    /// keeps the old one. Throws ``Failure``.
+    func refresh(_ credential: ManualCredential, using refreshToken: String) async throws
+        -> ManualCredential
+    {
         let body = try JSONEncoder.sorted.encode([
             "grant_type": "refresh_token",
             "refresh_token": refreshToken,
@@ -33,7 +35,7 @@ struct TokenRefresher: Sendable {
         ])
         let request = HTTPRequest(
             .post, url: Self.url, headers: ["Content-Type": "application/json"], body: body,
-            retry: .never, deadline: UsageAPI.requestDeadline)
+            retry: .never, deadline: Self.requestDeadline)
         let response: HTTPResponse
         do {
             response = try await http.send(request)

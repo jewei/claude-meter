@@ -77,6 +77,8 @@ extension ClaudeProvider {
         guard !access.isEmpty else {
             throw ProviderError("Enter an access token.", needsAction: true)
         }
+        // A Disconnect, or a newer Connect, after this point wins over this Connect.
+        let ticket = await manualLogin.beginConnect()
         var candidate = ManualCredential(
             accessToken: access, refreshToken: refresh?.isEmpty == false ? refresh : nil,
             expiresAt: expiresAt, subscriptionType: nil, connectionID: UUID().uuidString)
@@ -99,7 +101,10 @@ extension ClaudeProvider {
             rejection: ProviderError(
                 "Anthropic rejected these tokens. Check them and try again.", needsAction: true))
         do {
-            try await manualLogin.connect(candidate)
+            try await manualLogin.connect(candidate, ticket: ticket)
+        } catch ManualLogin.Failure.changed {
+            throw ProviderError(
+                "The Claude connection changed while the tokens were checked. Try again.")
         } catch {
             throw ProviderError("Could not save credentials: \(error.localizedDescription)")
         }

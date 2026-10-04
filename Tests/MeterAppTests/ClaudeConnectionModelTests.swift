@@ -218,11 +218,13 @@ import Testing
         #expect(fixture.credentialChanges == 2)
         #expect(!model.isWorking)
 
-        // The next reload, as at the next launch, deletes the item.
+        // The next reload, as at the next launch, deletes the item, so the message goes.
         fixture.keychain.failure = nil
         await model.reload()
         #expect(fixture.manualItem == nil)
         #expect(model.manualStatus == .signedOut)
+        #expect(model.message == nil)
+        #expect(!model.messageIsProblem)
     }
 
     @Test func aManualLoginThatNoConnectionUsesIsDeletedAtReload() async {

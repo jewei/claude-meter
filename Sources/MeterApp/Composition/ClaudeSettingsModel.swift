@@ -123,7 +123,8 @@ public final class ClaudeSettingsModel {
     ///
     /// A manual login that no connection uses is deleted here, while no attempt runs: the
     /// item of a Disconnect whose delete failed, or one that an automatic Connect could not
-    /// delete. This runs at launch and each time Settings reloads.
+    /// delete. This runs at launch and each time Settings reloads. Once no manual login is
+    /// left, the message that its tokens could not be deleted goes away.
     public func reload() async {
         generation += 1
         let current = generation
@@ -142,6 +143,7 @@ public final class ClaudeSettingsModel {
             guard current == generation else { return }
         }
         manualStatus = manual
+        if manual == .signedOut, message == Self.deleteFailedMessage { message = nil }
     }
 
     /// Verifies Claude Code's login with one request, then switches to automatic mode.

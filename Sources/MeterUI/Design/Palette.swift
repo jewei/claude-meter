@@ -53,13 +53,13 @@ enum Palette {
     static let heroFull = HeroColors(
         background: .adaptive("heroFullBG", light: 0xEAF8E0, dark: 0x22311A),
         border: .adaptive("heroFullBorder", light: 0xCFEEB8, dark: 0x3C5A2A),
-        ink: .adaptive("heroFullInk", light: 0x2E7D12, dark: 0x8FE25A),
+        ink: .adaptive("heroFullInk", light: 0x29700F, dark: 0x8FE25A),
         subink: .adaptive("heroFullSub", light: 0x547236, dark: 0xA6C98A))
     static let heroLow = HeroColors(
         background: .adaptive("heroLowBG", light: 0xFFF1DD, dark: 0x332715),
         border: .adaptive("heroLowBorder", light: 0xFAD9A0, dark: 0x5A4424),
         ink: .adaptive("heroLowInk", light: 0x965000, dark: 0xFFC368),
-        subink: .adaptive("heroLowSub", light: 0x8A6A3A, dark: 0xD8B488))
+        subink: .adaptive("heroLowSub", light: 0x846436, dark: 0xD8B488))
     static let heroEmpty = HeroColors(
         background: .adaptive("heroEmptyBG", light: 0xFFE4E1, dark: 0x3A1F1E),
         border: .adaptive("heroEmptyBorder", light: 0xF6C0BC, dark: 0x5E2F2D),

@@ -55,8 +55,8 @@ stay `ink` while energy is full (`headlineInk`).
 
 | Hero tone | Background | Border | Title | Subtitle |
 | --- | --- | --- | --- | --- |
-| full | `#EAF8E0` / `#22311A` | `#CFEEB8` / `#3C5A2A` | `#2E7D12` / `#8FE25A` | `#547236` / `#A6C98A` |
-| low | `#FFF1DD` / `#332715` | `#FAD9A0` / `#5A4424` | `#965000` / `#FFC368` | `#8A6A3A` / `#D8B488` |
+| full | `#EAF8E0` / `#22311A` | `#CFEEB8` / `#3C5A2A` | `#29700F` / `#8FE25A` | `#547236` / `#A6C98A` |
+| low | `#FFF1DD` / `#332715` | `#FAD9A0` / `#5A4424` | `#965000` / `#FFC368` | `#846436` / `#D8B488` |
 | empty | `#FFE4E1` / `#3A1F1E` | `#F6C0BC` / `#5E2F2D` | `#C0322E` / `#FF9B96` | `#8A4B47` / `#E0A8A4` |
 | neutral | `card` | `cardBorder` | `ink` | `inkMuted` |
 
@@ -89,7 +89,7 @@ bar uses the system rounded font.
 | Primary button | Fredoka Bold | 14 | "Open Settings" |
 | Metric label | Nunito Bold | 11 | "5-hr", "week" |
 | Caption | Nunito SemiBold | 11 | "Resets in 3h 12m" |
-| Section label | Nunito ExtraBold | 11, tracking 0.99, uppercase | "ACCOUNTS" |
+| Section label | Nunito ExtraBold | 11, tracking 0.99, uppercase, `inkMuted` | "ACCOUNTS", Settings section headings |
 | Note | Nunito SemiBold | 10 | "Token usage unavailable" |
 
 Every changing number uses `.monospacedDigit()`.
@@ -101,7 +101,7 @@ Every changing number uses `.monospacedDigit()`.
 | `ChunkyCard` (`.chunkyCard()`) | Radius 18 continuous. Plate `cardLip` 3 pt below; fill; white wash 12% light / 6% dark from the top; 2 pt border; 1 pt inner top highlight. |
 | `RaisedTile` | Rounded square with a brand fill, a 1 pt white top-light border, and a 3 pt `black 13%` band inside the bottom edge. Header 30/9, Settings 40/11, About 104/26. |
 | `RaisedButtonStyle` | `action` fill, white Fredoka Bold 14, padding 20×12, radius 14, plate at y 4. Pressed: label down 2 pt, plate at y 2, spring 0.2/0.85. Hover: white 6%. Focus: 2 pt `accent` ring. Disabled: 45%. Reduce Motion: no movement, darker tint. |
-| `QuietButtonStyle` | `ink` surface at 6% hover and 12% press, 2 pt focus border, 45% when disabled. Nothing moves. |
+| `QuietButtonStyle` | `ink` surface at 6% hover and 10% press (muted text keeps 4.5:1 on both), 2 pt focus border, 45% when disabled. Nothing moves. |
 | `EnergyDot` | 9 pt rounded square, radius 3. |
 | `EnergyBar` | Capsule on `track`. Fill width = share × width. A white 45% highlight, 2 pt high, inset 3 pt, runs along the top of the fill only when the fill is wider than 6 pt. |
 | `ActivityRings` | 88 pt. Outer weekly ring radius 34, inner session ring radius 24, 8 pt strokes, round caps, start at the top, `track` behind, a white 30% highlight along each arc. Center disc 30 pt in `popover` with the letter. Hidden from accessibility. |
@@ -111,7 +111,7 @@ Every changing number uses `.monospacedDigit()`.
 | `NoticeBanner` | Top-aligned 12 pt icon, wrapping Nunito SemiBold 11, padding 12×9, tint 8% fill, 16% 1 pt border, radius 12. Action: `key.slash.fill`, warning: `exclamationmark.triangle.fill` (both `energyLowInk`); info: `clock.fill` (`inkMuted`). |
 | `SquareIconButton` | 28 pt target, glyph 12 bold, quiet style on a chunky surface. |
 | `InlineConfirmation` (`Settings/Data`) | A question in the page in place of the control that asked: `energyEmptyInk` warning symbol, Fredoka SemiBold 15 title, Nunito SemiBold 12 message, Cancel (Escape) and a raised `destructive` button; `popover` fill, 1.5 pt border in `energyEmptyInk` at 40%, radius 14. Never a blocking alert. |
-| `MeterSwitch` | Native switch with the `accent` tint and a spoken label. |
+| `MeterSwitch` | Native switch with the `action` tint in both appearances, so the white knob stays clear on it, and a spoken label. |
 | `Spinner` | Native spinner; static while the popover is hidden. |
 
 ## Popover (`Popover/`)
@@ -310,7 +310,10 @@ the app is regular; "About Claude Meter" opens the About tab.
 - Every icon button has a label and a tooltip, and a target of at least 28 pt.
 - Tabs and options expose the selected trait. Sliders are adjustable.
 - Decorative mascots and drawings are hidden.
-- Text contrast is at least 4.5:1 in both appearances.
+- Text contrast is at least 4.5:1 in both appearances, also on tinted fills and on the hover
+  and press surfaces of quiet buttons (`ContrastTests` checks every pair). A notice whose
+  tint is too light for text ("Update available") keeps the tint for its icon and uses
+  `ink` for the text. Rows that are off never fade their text.
 
 ## Visual checks
 

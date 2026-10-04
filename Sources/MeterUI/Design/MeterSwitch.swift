@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// A native switch with the accent tint and a spoken label. Its visible label lives in the
-/// row beside it.
+/// A native switch with the `action` tint and a spoken label. Its visible label lives in the
+/// row beside it. The tint is the dark green in both appearances, so the white knob stays
+/// clear on it.
 struct MeterSwitch: View {
     let label: String
     @Binding var isOn: Bool
@@ -13,7 +14,7 @@ struct MeterSwitch: View {
         if rendersStatically {
             // `ImageRenderer` cannot draw AppKit controls. This shape matches the switch.
             Capsule()
-                .fill(isOn ? Palette.accent : Palette.track)
+                .fill(isOn ? Palette.action : Palette.track)
                 .frame(width: 38, height: 22)
                 .overlay(alignment: isOn ? .trailing : .leading) {
                     Circle().fill(.white).padding(2).shadow(color: .black.opacity(0.15), radius: 1)
@@ -23,7 +24,7 @@ struct MeterSwitch: View {
             Toggle(label, isOn: $isOn)
                 .toggleStyle(.switch)
                 .labelsHidden()
-                .tint(Palette.accent)
+                .tint(Palette.action)
                 .accessibilityLabel(label)
         }
     }

@@ -7,6 +7,8 @@ struct NoticeBanner: View {
     let text: String
     let systemImage: String
     let tint: Color
+    /// The text color when the tint is too light for small text on the tinted fill.
+    var textColor: Color?
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -20,6 +22,7 @@ struct NoticeBanner: View {
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .foregroundStyle(textColor ?? tint)
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 12)

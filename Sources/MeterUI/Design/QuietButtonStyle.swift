@@ -3,6 +3,11 @@ import SwiftUI
 /// Feedback for compact controls: a faint ink surface on hover and press, a 2 pt focus
 /// border, and 45% opacity when disabled. Nothing moves.
 struct QuietButtonStyle: ButtonStyle {
+    /// The ink surface on hover. Muted text keeps 4.5:1 on it.
+    static let hoverOpacity = 0.06
+    /// The ink surface while pressed. Muted text keeps 4.5:1 on it.
+    static let pressOpacity = 0.10
+
     var radius: CGFloat = 8
     /// False while the button is being dragged with its card, so it does not look pressed.
     var showsPress = true
@@ -34,8 +39,8 @@ struct QuietButtonStyle: ButtonStyle {
 
         private var surfaceOpacity: Double {
             guard isEnabled else { return 0 }
-            if configuration.isPressed, showsPress { return 0.12 }
-            return isHovered ? 0.06 : 0
+            if configuration.isPressed, showsPress { return QuietButtonStyle.pressOpacity }
+            return isHovered ? QuietButtonStyle.hoverOpacity : 0
         }
     }
 }

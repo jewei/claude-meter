@@ -14,9 +14,12 @@ struct PopoverBody: View {
                 Button {
                     actions.checkForUpdates()
                 } label: {
+                    // Green text on the green tint is below 4.5:1 in light mode; the text
+                    // stays ink and the icon carries the color.
                     NoticeBanner(
                         text: "Update available — click to install",
-                        systemImage: "arrow.down.circle.fill", tint: Palette.energyFullInk)
+                        systemImage: "arrow.down.circle.fill", tint: Palette.energyFullInk,
+                        textColor: Palette.ink)
                 }
                 .buttonStyle(QuietButtonStyle(radius: 12))
                 .padding(.horizontal, 15)

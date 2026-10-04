@@ -51,11 +51,14 @@ extension ClaudeSettingsModel {
             return false
         }
         // Accounts are keyed by folder name. A second folder with a listed key would be saved
-        // but never listed, so the user could not remove it.
-        guard !found.contains(where: { $0.id == ClaudeAccount.key(for: canonical) }) else {
-            directoryMessage =
-                "A config dir with this folder name is already listed. Rename the folder, then "
-                + "add it."
+        // but never listed, so the user could not remove it. Renaming a folder is no advice:
+        // Claude Code keys its Keychain item by the folder's path.
+        let key = ClaudeAccount.key(for: canonical)
+        if let listed = found.first(where: { $0.id == key }) {
+            let action =
+                isConfigured(listed)
+                ? "Remove it first, then add this folder." : "Choose a folder with another name."
+            directoryMessage = "A config dir named \(key) is already listed. \(action)"
             return false
         }
         directoryMessage = nil

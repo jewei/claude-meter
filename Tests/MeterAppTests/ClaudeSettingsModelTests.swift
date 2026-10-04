@@ -50,11 +50,25 @@ import Testing
 
         #expect(await !model.addDirectory(project))
 
+        // The listed dir is found by itself, so it cannot be removed.
         #expect(
             model.directoryMessage
-                == "A config dir with this folder name is already listed. Rename the folder, "
-                + "then add it.")
+                == "A config dir named claude is already listed. Choose a folder with another "
+                + "name.")
         #expect(settings.settings.claude.extraDirectories.isEmpty)
+
+        // A dir that the user added can be removed first.
+        let team = try home.write("{}", to: "a/.claude-team/settings.json")
+            .deletingLastPathComponent()
+        let other = try home.write("{}", to: "b/.claude-team/settings.json")
+            .deletingLastPathComponent()
+        #expect(await model.addDirectory(team))
+        #expect(await !model.addDirectory(other))
+        #expect(
+            model.directoryMessage
+                == "A config dir named claude-team is already listed. Remove it first, then add "
+                + "this folder.")
+        #expect(settings.settings.claude.extraDirectories == [team.path])
     }
 
     @Test func theDefaultDirIsRefusedBeforeTheFirstReload() async {

@@ -142,10 +142,11 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    loads. A name edit for a Codex home that is no longer listed is dropped (`CodexSettingsModel`).
    A Codex home is listed once by its canonical path. Remove deletes every saved path of it,
    also a link left at the old path of a moved folder.
-   Claude refuses a folder whose account key (its folder name) is already listed, and drops a name
-   edit for an account that is no longer listed. Cancel, and turning Claude off, abandon a running
-   Claude Connect, never a Disconnect. When turning Claude off kept a Connect from being saved,
-   the Claude subtitle says so while Claude is off; turning Claude on clears the note
+   Claude refuses a folder whose account key (its folder name) is already listed, names that dir,
+   and asks to remove it first when the user added it, else to choose another folder. It drops a
+   name edit for an account that is no longer listed. Cancel, and turning Claude off, abandon a
+   running Claude Connect, never a Disconnect. When turning Claude off kept a Connect from being
+   saved, the Claude subtitle says so while Claude is off; turning Claude on clears the note
    (`DataSourceText.claudeSubtitle`). A Disconnect turns the connection off even when the saved
    tokens cannot be deleted. A Disconnect of a manual connection whose delete fails says so, and
    the next reload (at launch, and when Settings opens) deletes a manual login that no manual

@@ -43,6 +43,61 @@ import Testing
         #expect(settings.appearance == AppearanceSettings())
     }
 
+    @Test func unknownCardIDDropsOnlyThatCard() {
+        let data = Data(
+            #"""
+            {"cards": {"order": ["claude:work", "copilot:x", "extra-usage"],
+                       "expanded": ["copilot:x", "grok:default"]}}
+            """#.utf8)
+        let settings = SettingsCodec.decode(data)
+        #expect(settings.cards.order == [.account(.claude, "work"), .extraUsage])
+        #expect(settings.cards.expanded == [.account(.grok, .default)])
+    }
+
+    @Test func unknownProviderPinKeepsTheMainProviderAndOtherPins() {
+        let data = Data(
+            #"""
+            {"menuBar": {"provider": "codex",
+                         "pinnedAccounts": {"codex": "/h", "copilot": "x"}}}
+            """#.utf8)
+        let settings = SettingsCodec.decode(data)
+        #expect(settings.menuBar.provider == .codex)
+        #expect(settings.menuBar.pinnedAccounts == [.codex: "/h"])
+    }
+
+    @Test func badDisplayNameKeepsTheClaudeConnection() {
+        let data = Data(
+            #"""
+            {"claude": {"connection": "automatic", "accountNames": {"claude": 7, "claude-work": "Work"},
+                        "extraDirectories": ["/a", 3]}}
+            """#.utf8)
+        let settings = SettingsCodec.decode(data)
+        #expect(settings.claude.connection == .automatic)
+        #expect(settings.claude.accountNames == ["claude-work": "Work"])
+        #expect(settings.claude.extraDirectories == ["/a"])
+    }
+
+    @Test func unknownValueKeepsItsDefault() {
+        let data = Data(
+            #"{"menuBar": {"provider": "copilot", "pinnedAccounts": {"claude": "a"}}}"#.utf8)
+        let settings = SettingsCodec.decode(data)
+        #expect(settings.menuBar.provider == .claude)
+        #expect(settings.menuBar.pinnedAccounts == [.claude: "a"])
+    }
+
+    @Test func thresholdsClampOnDecode() {
+        let data = Data(
+            #"{"appearance": {"thresholds": {"warning": 20, "critical": 200}}}"#.utf8)
+        #expect(
+            SettingsCodec.decode(data).appearance.thresholds
+                == Thresholds(warning: 50, critical: 100))
+        let wrong = Data(
+            #"{"appearance": {"thresholds": {"warning": "high", "critical": 90}}}"#.utf8)
+        #expect(
+            SettingsCodec.decode(wrong).appearance.thresholds
+                == Thresholds(warning: 80, critical: 90))
+    }
+
     @Test func encodesDictionariesAsObjects() throws {
         var settings = Settings()
         settings.claude.accountNames = ["claude": "Home"]

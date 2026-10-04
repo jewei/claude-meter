@@ -21,7 +21,7 @@ extension CodexTests {
             #expect(usage.name == "Codex")
             #expect(usage.plan == "Plus")
             #expect(usage.windows.map(\.id) == ["primary", "secondary"])
-            #expect(usage.windows.map(\.title) == ["5h", "Weekly"])
+            #expect(usage.windows.map(\.title) == ["Session", "Weekly"])
             #expect(usage.windows.map(\.kind) == [.session, .weekly])
             #expect(usage.windows.map(\.usedPercent) == [9, 43])
             #expect(usage.windows.first?.resetsAt == Date(timeIntervalSince1970: 1_791_118_800))
@@ -111,8 +111,9 @@ extension CodexTests {
         }
 
         @Test(arguments: [
-            (18_000.0, "5h", QuotaWindow.Kind.session), (86_400, "24h", .session),
-            (604_800, "Weekly", .weekly), (172_800, "2d", .weekly), (7_200, "2h", .session),
+            (18_000.0, "Session", QuotaWindow.Kind.session), (86_400, "Session", .session),
+            (604_800, "Weekly", .weekly), (172_800, "Weekly", .weekly),
+            (7_200, "Session", .session),
             (1_800, "Session", .session), (1e308, "Weekly", .weekly),
         ])
         func titleAndKindComeFromTheDuration(seconds: Double, title: String, kind: QuotaWindow.Kind)

@@ -68,23 +68,14 @@ struct CodexQuota: Equatable, Sendable {
                 slot == .primary ? .session : .weekly
             }
         return QuotaWindow(
-            id: slot.rawValue, title: title(duration: window.duration, kind: kind), kind: kind,
+            id: slot.rawValue, title: title(kind: kind), kind: kind,
             usedPercent: window.usedPercent, resetsAt: window.resetsAt)
     }
 
-    /// A readable title from the window length, such as "5h" or "Weekly". Never a limit ID.
-    static func title(duration: TimeInterval?, kind: QuotaWindow.Kind) -> String {
-        if let duration, let seconds = Int(exactly: duration.rounded()) {
-            switch seconds {
-            case 18_000: return "5h"
-            case 86_400: return "24h"
-            case 604_800: return "Weekly"
-            case 86_400...: return "\(Int((duration / 86_400).rounded()))d"
-            case 3_600...: return "\(Int((duration / 3_600).rounded()))h"
-            default: break
-            }
-        }
-        return kind == .session ? "Session" : "Weekly"
+    /// "Session" or "Weekly", matching Claude, so the hero and cards read the same for both
+    /// providers. Never a limit ID.
+    static func title(kind: QuotaWindow.Kind) -> String {
+        kind == .session ? "Session" : "Weekly"
     }
 
     /// Credits from either source. Malformed credits are nil and never discard windows.

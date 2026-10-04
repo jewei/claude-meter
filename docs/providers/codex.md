@@ -165,8 +165,8 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
     itself.
 17. A window of at most 24 hours is a session window. A longer window is weekly. Without a
     duration, `primary` is session and `secondary` is weekly.
-18. Window titles come from the duration: `5h`, `24h`, `Weekly`, `<n>d`, `<n>h`, else
-    `Session` or `Weekly`. A limit ID is never a title.
+18. Window titles are `Session` and `Weekly`, from the kind, the same as Claude. A limit ID
+    is never a title.
 19. A percent above 100 shows as 100 and over the limit. Dates outside 1970 to 3000 are
     unknown.
 20. Credits become a `credits` balance. Unlimited credits have no amount.

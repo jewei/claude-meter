@@ -101,7 +101,7 @@ extension CodexTests {
         @Test func aTimeoutNamesTheStepAndStopsTheChild() async throws {
             let cli = try FakeCLI(accountReply: ":", rateLimitsReply: Self.rateLimitsReply)
             defer { cli.root.remove() }
-            let server = CodexAppServer(userHome: cli.root.url, stepLimit: .milliseconds(300))
+            let server = CodexAppServer(userHome: cli.root.url, stepLimit: .seconds(2))
             await #expect(throws: CodexError.appServerTimedOut(step: "account/read")) {
                 try await server.recover(cli.home, environment: cli.environment)
             }

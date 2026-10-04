@@ -23,7 +23,7 @@ extension CodexTests {
             let usage = try quota(CodexFixtures.rateLimits)
                 .usage(for: home, observedAt: .reference(), owner: nil)
             #expect(usage.name == "work")
-            #expect(usage.windows.map(\.title) == ["5h", "Weekly"])
+            #expect(usage.windows.map(\.title) == ["Session", "Weekly"])
             #expect(usage.windows.map(\.usedPercent) == [22, 43])
             #expect(usage.windows.map(\.percentLeft) == [78, 57])
             #expect(usage.plan == "Pro 20X")
@@ -46,7 +46,7 @@ extension CodexTests {
                 """#)
             let windows = result.usage(for: home, observedAt: .reference(), owner: nil).windows
             #expect(windows.map(\.usedPercent) == [31, 64])
-            #expect(windows.map(\.title) == ["5h", "Weekly"])
+            #expect(windows.map(\.title) == ["Session", "Weekly"])
             #expect(!windows.contains { $0.title.hasPrefix("codex_") })
         }
 

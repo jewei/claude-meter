@@ -45,7 +45,7 @@ struct AdvancedSettingsView: View {
                     } label: {
                         ChunkyButtonLabel(title: "Open…", trailingSymbol: "chevron.right")
                     }
-                    .buttonStyle(QuietButtonStyle(radius: 12))
+                    .buttonStyle(.chunky)
                     .accessibilityLabel("Open Diagnostics")
                 }
                 CardDivider()
@@ -61,7 +61,7 @@ struct AdvancedSettingsView: View {
                         Button(action: showLogInFinder) {
                             ChunkyButtonLabel(title: "Show in Finder", symbol: "folder")
                         }
-                        .buttonStyle(QuietButtonStyle(radius: 12))
+                        .buttonStyle(.chunky)
                         // The folder of this build: Debug builds log to "ClaudeMeter Debug".
                         Text(
                             (model.logFile.directory.path as NSString).abbreviatingWithTildeInPath

@@ -32,7 +32,7 @@ struct InlineConfirmation: View {
                 Button(action: cancel) {
                     ChunkyButtonLabel(title: "Cancel")
                 }
-                .buttonStyle(QuietButtonStyle(radius: 12))
+                .buttonStyle(.chunky)
                 .keyboardShortcut(.cancelAction)
                 Button(confirmation.confirmTitle, action: confirm)
                     .buttonStyle(

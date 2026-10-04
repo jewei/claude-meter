@@ -48,7 +48,7 @@ struct UpdatesCard: View {
                 } label: {
                     ChunkyButtonLabel(title: "Check for Updates…", symbol: "arrow.clockwise")
                 }
-                .buttonStyle(QuietButtonStyle(radius: 12))
+                .buttonStyle(.chunky)
                 .disabled(!updater.canCheckForUpdates)
                 TimelineView(.periodic(from: .now, by: 60)) { context in
                     Text(UpdateCheckText.lastChecked(updater.lastCheckDate, now: context.date))

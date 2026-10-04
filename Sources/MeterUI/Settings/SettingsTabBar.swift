@@ -32,11 +32,13 @@ struct SettingsTabBar: View {
             .foregroundStyle(isSelected ? Palette.heroFull.ink : Palette.inkMuted)
             .frame(width: 112)
             .padding(.vertical, 10)
-            .background(shape.fill(isSelected ? Palette.heroFull.background : .clear))
             .overlay(
                 shape.strokeBorder(isSelected ? Palette.heroFull.border : .clear, lineWidth: 1.5))
         }
-        .buttonStyle(QuietButtonStyle(radius: 14))
+        .buttonStyle(
+            QuietButtonStyle(
+                radius: 14, surface: isSelected ? .fill(Palette.heroFull.background) : .clear)
+        )
         .keyboardShortcut(tab.shortcut, modifiers: .command)
         .accessibilityLabel(tab.title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])

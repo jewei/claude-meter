@@ -60,12 +60,18 @@ import Testing
     }
 
     private static let pairs: [Pair] = [
-        Pair(name: "ink on popover", text: Palette.ink, background: Palette.popover),
-        Pair(name: "ink on card", text: Palette.ink, background: Palette.card),
+        // Quiet buttons on the page: "Show tokens", plan menus, tabs, and options.
+        Pair(
+            name: "ink on popover", text: Palette.ink, background: Palette.popover,
+            isButton: true),
+        // Chunky buttons and bar card headers (review R3-U-02).
+        Pair(name: "ink on card", text: Palette.ink, background: Palette.card, isButton: true),
         Pair(
             name: "muted on popover", text: Palette.inkMuted, background: Palette.popover,
             isButton: true),
-        Pair(name: "muted on card", text: Palette.inkMuted, background: Palette.card),
+        Pair(
+            name: "muted on card", text: Palette.inkMuted, background: Palette.card,
+            isButton: true),
         Pair(name: "section label", text: Palette.sectionLabel, background: Palette.popover),
         Pair(name: "chip", text: Palette.inkMuted, background: Palette.track),
         Pair(
@@ -75,10 +81,19 @@ import Testing
             name: "path chip", text: Palette.inkMuted, background: Palette.popover,
             tint: (Palette.track, 0.8)),
         Pair(name: "green text", text: Palette.energyFullInk, background: Palette.card),
-        Pair(name: "amber text", text: Palette.energyLowInk, background: Palette.card),
+        // Amber and red ink are also the headline of a bar card header, a quiet button. Full
+        // energy keeps that headline in ink (`Severity.headlineInk`).
+        Pair(
+            name: "amber text", text: Palette.energyLowInk, background: Palette.card,
+            isButton: true),
         Pair(name: "amber on popover", text: Palette.energyLowInk, background: Palette.popover),
-        Pair(name: "red text", text: Palette.energyEmptyInk, background: Palette.card),
-        Pair(name: "red on popover", text: Palette.energyEmptyInk, background: Palette.popover),
+        Pair(
+            name: "red text", text: Palette.energyEmptyInk, background: Palette.card,
+            isButton: true),
+        // Also the trash button of a folder row.
+        Pair(
+            name: "red on popover", text: Palette.energyEmptyInk, background: Palette.popover,
+            isButton: true),
         Pair(
             name: "warning notice", text: Palette.energyLowInk, background: Palette.popover,
             tint: (Palette.energyLowInk, 0.08)),

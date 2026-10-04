@@ -45,9 +45,8 @@ struct AboutSettingsView: View {
                 .foregroundStyle(Palette.ink)
                 .padding(.horizontal, 28)
                 .padding(.vertical, 13)
-                .chunkyCard(radius: 16)
             }
-            .buttonStyle(QuietButtonStyle(radius: 16))
+            .buttonStyle(QuietButtonStyle(radius: 16, surface: .chunky))
             .help(Self.repository.absoluteString)
             .padding(.top, 2)
             Rectangle().fill(Palette.cardBorder).frame(height: 1).padding(.vertical, 4)

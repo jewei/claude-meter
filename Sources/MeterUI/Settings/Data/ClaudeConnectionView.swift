@@ -145,7 +145,7 @@ struct ClaudeConnectionView: View {
                         ? "Update tokens…" : "Enter tokens manually…",
                     symbol: "key")
             }
-            .buttonStyle(QuietButtonStyle(radius: 12))
+            .buttonStyle(.chunky)
             if snapshot.connection != .off {
                 Button {
                     if disconnectConfirmation == nil {
@@ -156,7 +156,7 @@ struct ClaudeConnectionView: View {
                 } label: {
                     ChunkyButtonLabel(title: "Disconnect", symbol: "xmark.circle")
                 }
-                .buttonStyle(QuietButtonStyle(radius: 12))
+                .buttonStyle(.chunky)
             }
         }
         .disabled(snapshot.isWorking)

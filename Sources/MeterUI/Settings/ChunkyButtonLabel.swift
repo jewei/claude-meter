@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// The label of a secondary Settings button: an optional symbol and a title on a small
-/// chunky surface. Use it with `QuietButtonStyle(radius: 12)`.
+/// The label of a secondary Settings button: an optional symbol and a title. Use it with
+/// `.buttonStyle(.chunky)`, which draws the small chunky surface below the label and the hover
+/// and press feedback between the two.
 struct ChunkyButtonLabel: View {
     let title: String
     var symbol: String?
@@ -21,6 +22,5 @@ struct ChunkyButtonLabel: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .frame(minHeight: 28)
-        .chunkyCard(radius: 12)
     }
 }

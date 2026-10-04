@@ -81,9 +81,8 @@ struct AppearanceSettingsView: View {
                         .foregroundStyle(Palette.ink)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 7)
-                        .chunkyCard(radius: 10)
                 }
-                .buttonStyle(QuietButtonStyle(radius: 10))
+                .buttonStyle(QuietButtonStyle(radius: 10, surface: .chunky))
                 .help("Put the account nearest its limit first again")
             }
         }

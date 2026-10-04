@@ -96,7 +96,7 @@ struct ManualTokenForm: View {
             } label: {
                 ChunkyButtonLabel(title: "Cancel")
             }
-            .buttonStyle(QuietButtonStyle(radius: 12))
+            .buttonStyle(.chunky)
             .keyboardShortcut(isDraftEmpty ? .cancelAction : nil)
             Button("Connect") {
                 let access = Self.cleaned(accessToken) ?? ""

@@ -37,7 +37,7 @@ struct LaunchAtLoginRow: View {
                         } label: {
                             ChunkyButtonLabel(title: "Open")
                         }
-                        .buttonStyle(QuietButtonStyle(radius: 12))
+                        .buttonStyle(.chunky)
                         .accessibilityLabel("Open Login Items in System Settings")
                     }
                 }

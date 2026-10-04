@@ -16,8 +16,7 @@ struct SquareIconButton: View {
                 .foregroundStyle(Palette.inkMuted)
                 .frame(width: Self.size, height: Self.size)
         }
-        .buttonStyle(QuietButtonStyle(radius: radius))
-        .chunkyCard(radius: radius)
+        .buttonStyle(QuietButtonStyle(radius: radius, surface: .chunky))
         .accessibilityLabel(label)
         .help(label)
     }

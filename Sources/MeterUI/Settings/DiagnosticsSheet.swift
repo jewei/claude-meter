@@ -80,7 +80,7 @@ struct DiagnosticsSheet: View {
             } label: {
                 ChunkyButtonLabel(title: "Copy Diagnostics", symbol: "doc.on.doc")
             }
-            .buttonStyle(QuietButtonStyle(radius: 12))
+            .buttonStyle(.chunky)
             .disabled(report == nil)
             if copied {
                 Text("Copied")
@@ -93,7 +93,7 @@ struct DiagnosticsSheet: View {
             } label: {
                 ChunkyButtonLabel(title: "Close")
             }
-            .buttonStyle(QuietButtonStyle(radius: 12))
+            .buttonStyle(.chunky)
             .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 24)

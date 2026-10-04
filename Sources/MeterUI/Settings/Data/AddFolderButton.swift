@@ -9,6 +9,6 @@ struct AddFolderButton: View {
         Button(action: action) {
             ChunkyButtonLabel(title: title, symbol: "folder.badge.plus")
         }
-        .buttonStyle(QuietButtonStyle(radius: 12))
+        .buttonStyle(.chunky)
     }
 }

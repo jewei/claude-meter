@@ -19,15 +19,17 @@ struct ChoiceRow<Value: Hashable>: View {
                         .foregroundStyle(isSelected ? Palette.heroFull.ink : Palette.inkMuted)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 9)
-                        .background(
-                            shape.fill(isSelected ? Palette.heroFull.background : Palette.popover)
-                        )
                         .overlay(
                             shape.strokeBorder(
                                 isSelected ? Palette.heroFull.border : Palette.cardBorder,
                                 lineWidth: 1.5))
                 }
-                .buttonStyle(QuietButtonStyle(radius: 12))
+                .buttonStyle(
+                    QuietButtonStyle(
+                        radius: 12,
+                        surface: .fill(
+                            isSelected ? Palette.heroFull.background : Palette.popover))
+                )
                 .accessibilityLabel(option.title)
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
             }

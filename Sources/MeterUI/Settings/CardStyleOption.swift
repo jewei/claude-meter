@@ -28,13 +28,16 @@ struct CardStyleOption: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
-            .background(shape.fill(isSelected ? Palette.heroFull.background : Palette.popover))
             .overlay(
                 shape.strokeBorder(
                     isSelected ? Palette.heroFull.border : Palette.cardBorder,
                     lineWidth: isSelected ? 2 : 1))
         }
-        .buttonStyle(QuietButtonStyle(radius: 13))
+        .buttonStyle(
+            QuietButtonStyle(
+                radius: 13,
+                surface: .fill(isSelected ? Palette.heroFull.background : Palette.popover))
+        )
         .accessibilityLabel(title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }

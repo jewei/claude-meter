@@ -64,6 +64,10 @@ core.
   before the list loads, and a name typed for a removed Codex home no longer comes back.
 - One saved reading that cannot be read no longer discards the saved readings of the other
   sources at launch.
+- After a rate limit, Codex, Cursor, and Grok wait for the retry time before they ask
+  again, at most one hour, and only for the limited account. The countdown on the card is
+  true.
+- A Codex CLI that is too old for usage checks asks you to update it.
 
 ### Removed
 

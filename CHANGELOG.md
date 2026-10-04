@@ -12,6 +12,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [3.1.3] - 2026-10-04
+
 ### Fixed
 
 - A Claude account card shows the plan that its login reports, such as Max 5x. An older
@@ -732,7 +734,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Settings and diagnostics views.
 - Sparkle automatic updates.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v3.1.2...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v3.1.3...HEAD
+[3.1.3]: https://github.com/jewei/claude-meter/compare/v3.1.2...v3.1.3
 [3.1.2]: https://github.com/jewei/claude-meter/compare/v3.1.1...v3.1.2
 [3.1.1]: https://github.com/jewei/claude-meter/compare/v3.1...v3.1.1
 [3.1]: https://github.com/jewei/claude-meter/compare/v3.0.2...v3.1

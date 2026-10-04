@@ -2,7 +2,8 @@ import MeterApp
 import SwiftUI
 
 /// Automatic update checks, the installed version, and "Check for Updates…". The last-check
-/// age renders again every minute while the card is on screen.
+/// age renders again every minute while the card is on screen. A build that cannot update
+/// itself shows only a note.
 struct UpdatesCard: View {
     let updater: any Updater
 
@@ -10,7 +11,22 @@ struct UpdatesCard: View {
         let version = AppVersion.current
         let status = UpdateCheckText.statusLine(
             version: version.version, build: version.build,
-            isUpdateAvailable: updater.isUpdateAvailable)
+            isUpdateAvailable: updater.isUpdateAvailable, canUpdate: updater.isAvailable)
+        if updater.isAvailable {
+            controls(status: status)
+        } else {
+            SettingsCard(spacing: 12) {
+                SettingsRow(
+                    symbol: "arrow.clockwise", tint: Palette.Tile.sky, title: "Updates",
+                    subtitle: status.text, subtitleColor: status.tone.color
+                ) {
+                    EmptyView()
+                }
+            }
+        }
+    }
+
+    private func controls(status: (text: String, tone: UpdateCheckText.Tone)) -> some View {
         SettingsCard(spacing: 12) {
             SettingsRow(
                 symbol: "arrow.clockwise", tint: Palette.Tile.sky,

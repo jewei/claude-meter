@@ -125,7 +125,8 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    thresholds (warning 50–90, critical 60–100, steps of 5; critical stays above warning),
    and automatic order.
 3. **Advanced**: fetch usage (pause), launch at login, automatic update checks, the log file,
-   and Diagnostics. Diagnostics shows and copies redacted facts.
+   and Diagnostics. Diagnostics shows and copies redacted facts. A development or unsigned
+   build cannot update itself (`Updater.isAvailable`) and shows only a note there.
 4. **About**: version, links, license, credits, and the disclaimer.
 5. Command-1 to Command-4 open the tabs. Settings opens as a normal window with a Dock icon
    and returns the app to menu-bar-only when it closes.

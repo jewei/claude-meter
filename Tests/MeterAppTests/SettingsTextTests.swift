@@ -128,6 +128,16 @@ import Testing
         #expect(update.tone == .attention)
     }
 
+    /// A development or unsigned build says so, never "up to date" (review UI-52).
+    @MainActor @Test func aBuildThatCannotUpdateSaysSo() {
+        let line = UpdateCheckText.statusLine(
+            version: "4.0.0", build: "400", isUpdateAvailable: true, canUpdate: false)
+        #expect(line.text == UpdateCheckText.unavailable)
+        #expect(line.tone == .neutral)
+        let updater = DisabledUpdater()
+        #expect(!updater.isAvailable)
+    }
+
     @Test func installedVersion() {
         #expect(
             UpdateCheckText.status(version: "4.0.0", build: "400", isUpdateAvailable: false)

@@ -9,6 +9,7 @@ import Sparkle
 /// user's focus, the app sets ``isUpdateAvailable`` instead, and the user opens the update
 /// from the menu bar when it suits them.
 @MainActor @Observable final class SparkleUpdater: Updater {
+    let isAvailable = true
     private(set) var canCheckForUpdates = false
     private(set) var lastCheckDate: Date?
     private(set) var isUpdateAvailable = false

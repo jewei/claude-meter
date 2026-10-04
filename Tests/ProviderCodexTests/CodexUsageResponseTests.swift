@@ -124,18 +124,25 @@ extension CodexTests {
             #expect(window.kind == kind)
         }
 
-        @Test func planNames() {
-            let names = [
-                "go", "plus", "prolite", "pro-lite", "pro", "team", "business", "edu", " Custom ",
-            ]
-            #expect(
-                names.map(CodexPlan.displayName)
-                    == [
-                        "Go", "Plus", "Pro 5X", "Pro 5X", "Pro 20X", "Team", "Business", "Edu",
-                        "Custom",
-                    ])
+        /// CDX-11: every upstream `PlanType` value has a readable name.
+        @Test(arguments: [
+            ("free", "Free"), ("go", "Go"), ("plus", "Plus"), ("prolite", "Pro 5X"),
+            ("pro-lite", "Pro 5X"), ("pro", "Pro 20X"), ("promax", "Pro Max"), ("team", "Team"),
+            ("self_serve_business_prolite", "Business"),
+            ("self_serve_business_usage_based", "Business"), ("business", "Business"),
+            ("ent26", "Enterprise"), ("enterprise_cbp_automation", "Enterprise"),
+            ("enterprise_cbp_usage_based", "Enterprise"), ("enterprise", "Enterprise"),
+            ("edu", "Edu"), ("education", "Edu"), ("edu_plus", "Edu Plus"),
+            ("edu_pro", "Edu Pro"), (" Custom ", "Custom"), ("PLUS", "Plus"),
+        ])
+        func planNames(id: String, name: String) {
+            #expect(CodexPlan.displayName(id) == name)
+        }
+
+        @Test func unknownAndEmptyPlansHaveNoName() {
             #expect(CodexPlan.displayName("unknown") == nil)
             #expect(CodexPlan.displayName("") == nil)
+            #expect(CodexPlan.displayName(nil) == nil)
         }
 
         @Test func resetDetailsKeepAvailableUnexpiredRows() {

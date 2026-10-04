@@ -200,8 +200,10 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
 19. A percent above 100 shows as 100 and over the limit. Dates outside 1970 to 3000 are
     unknown.
 20. Credits become a `credits` balance. Unlimited credits have no amount.
-21. The plan shows as `Free`, `Go`, `Plus`, `Pro 5X`, `Pro 20X`, `Team`, `Business`,
-    `Enterprise`, or `Edu`, else as the plan text.
+21. The plan shows as `Free`, `Go`, `Plus`, `Pro 5X` (`prolite`), `Pro 20X` (`pro`), `Pro Max`
+    (`promax`), `Team`, `Business` (`business` and both `self_serve_business_*`), `Enterprise`
+    (`enterprise`, `ent26`, and both `enterprise_cbp_*`), `Edu`, `Edu Plus`, or `Edu Pro`,
+    else as the plan text. `unknown` shows no plan.
 
 ### Reset credits
 

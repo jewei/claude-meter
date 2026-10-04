@@ -5,11 +5,12 @@ import MeterDomain
 /// summary for VoiceOver.
 public struct MenuBarModel: Equatable, Sendable {
     public enum Icon: Equatable, Sendable {
-        /// The bolt with its badge.
+        /// The bolt with its badge. Also the calm state with no data: before setup, while
+        /// paused, or before the first reading.
         case bolt(Badge)
         /// The first reading is on its way.
         case loading
-        /// No reading and an error.
+        /// The warning bolt: no reading because something failed (``MainMeter/hasFailure``).
         case error
     }
 
@@ -26,22 +27,23 @@ public struct MenuBarModel: Equatable, Sendable {
     public let icon: Icon
     /// `99% 5h`, `73% 7d`, or `99% 5h · 73% 7d`. Nil when paused or stale.
     public let text: String?
-    /// Paused: the whole item is dimmed.
+    /// Paused or not set up yet: the whole item is dimmed.
     public let isDimmed: Bool
     public let accessibilityLabel: String
 
     public init(_ context: PresentationContext) {
         let meter = MainMeter(context)
-        let isPaused = context.settings.isPaused || !context.settings.hasCompletedOnboarding
+        let isSetUp = context.settings.hasCompletedOnboarding
+        let isPaused = context.settings.isPaused || !isSetUp
         let selected = meter.selected
         isDimmed = isPaused
 
-        if selected == nil && meter.isLoading {
-            icon = .loading
-        } else if selected == nil && meter.issue != nil {
-            icon = .error
-        } else if isPaused {
+        if isPaused {
             icon = .bolt(.none)
+        } else if selected == nil && meter.isLoading {
+            icon = .loading
+        } else if selected == nil {
+            icon = meter.hasFailure ? .error : .bolt(.none)
         } else if meter.isStale {
             icon = .bolt(.stale)
         } else if meter.severity == .exhausted {
@@ -54,8 +56,11 @@ public struct MenuBarModel: Equatable, Sendable {
         text =
             isPaused || meter.isStale || parts.isEmpty
             ? nil : parts.map(\.short).joined(separator: " · ")
-        accessibilityLabel = Self.summary(
-            meter: meter, parts: parts, isPaused: isPaused, showsUsed: context.showsUsed)
+        accessibilityLabel =
+            isSetUp
+            ? Self.summary(
+                meter: meter, parts: parts, isPaused: isPaused, showsUsed: context.showsUsed)
+            : "Claude Meter. Not set up."
     }
 
     private struct Part {
@@ -98,7 +103,8 @@ public struct MenuBarModel: Equatable, Sendable {
             guard let value = Formatting.value(part.window, showsUsed: showsUsed) else {
                 return "\(name) unavailable."
             }
-            return "\(name) \(Int(value.rounded())) percent \(showsUsed ? "used" : "left")."
+            return
+                "\(name) \(Formatting.wholePercent(value)) percent \(showsUsed ? "used" : "left")."
         }
         let status =
             switch meter.severity {

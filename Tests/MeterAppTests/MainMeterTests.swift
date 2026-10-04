@@ -216,4 +216,97 @@ import Testing
         #expect(failed.icon == .error)
         #expect(failed.accessibilityLabel == "Claude Meter. Claude. Usage unavailable.")
     }
+
+    @Test func notSetUpShowsACalmDimmedBolt() {
+        // The first launch: Claude's switch is on, nothing is connected or read yet.
+        var fresh = Settings()
+        let first = MenuBarModel(Fixture.context(fresh, readings: [:]))
+        #expect(first.icon == .bolt(.none))
+        #expect(first.isDimmed)
+        #expect(first.text == nil)
+        #expect(first.accessibilityLabel == "Claude Meter. Not set up.")
+        // Connected before onboarding, with a failure left from an earlier run.
+        fresh.claude.connection = .automatic
+        let failed = MenuBarModel(
+            Fixture.context(fresh, readings: [.claude: .failed(UsageIssue("Sign in"))]))
+        #expect(failed.icon == .bolt(.none))
+        #expect(failed.accessibilityLabel == "Claude Meter. Not set up.")
+    }
+
+    @Test func pausedWithoutDataShowsACalmDimmedBolt() {
+        let settings = Fixture.settings { $0.isPaused = true }
+        let paused = MenuBarModel(
+            Fixture.context(settings, readings: [.claude: .failed(UsageIssue("Sign in"))]))
+        #expect(paused.icon == .bolt(.none))
+        #expect(paused.isDimmed)
+        #expect(paused.accessibilityLabel == "Claude Meter. Claude. Paused.")
+    }
+
+    @Test func noReadingYetIsNotAnError() {
+        let model = MenuBarModel(Fixture.context(Fixture.settings(), readings: [:]))
+        #expect(model.icon == .bolt(.none))
+        #expect(!model.isDimmed)
+        let off = MenuBarModel(Fixture.context(Fixture.settings(enabled: [.cursor]), readings: [:]))
+        #expect(off.icon == .bolt(.none))
+    }
+
+    @Test func missingPinShowsTheWarningBolt() {
+        let model = model(Fixture.account("a")) { $0.menuBar.pinnedAccounts[.claude] = "gone" }
+        #expect(model.icon == .error)
+        #expect(model.text == nil)
+    }
+
+    @Test func menuBarDotUsesEveryAccountWithoutAPin() {
+        let usage = Fixture.usage(
+            .claude, Fixture.account("home", session: 10), Fixture.account("work", session: 96))
+        let unpinned = MenuBarModel(
+            Fixture.context(Fixture.settings(), readings: [.claude: Fixture.current(usage)]))
+        #expect(unpinned.icon == .bolt(.dot(.critical)))
+        let pinned = MenuBarModel(
+            Fixture.context(
+                Fixture.settings { $0.menuBar.pinnedAccounts[.claude] = "home" },
+                readings: [.claude: Fixture.current(usage)]))
+        #expect(pinned.icon == .bolt(.dot(.normal)))
+        #expect(pinned.text == "90% 5h")
+    }
+
+    @Test func menuBarTextAndSpeechResolveAtReset() {
+        // Observed a minute before the 2 h reset, rendered at the reset.
+        let account = Fixture.account(
+            "a", session: 85, observedAt: .reference(.hours(2) - .minutes(1)))
+        let model = model(account, now: .reference(.hours(2)))
+        #expect(model.text == "100% 5h")
+        #expect(
+            model.accessibilityLabel
+                == "Claude Meter. Claude. Session 100 percent left. Overall quota is normal.")
+    }
+
+    @Test func spokenSummaryBothWindowsAndRefreshingSuffix() {
+        let model = model(
+            Fixture.account("a", session: 1, weekly: 27),
+            configure: { $0.appearance.menuBarWindow = .both },
+            refreshing: [.claude])
+        #expect(
+            model.accessibilityLabel
+                == "Claude Meter. Claude. Session 99 percent left. Weekly 73 percent left. "
+                + "Overall quota is normal. Refreshing.")
+    }
+
+    @Test func percentRoundingAtTheEdges() {
+        let cases: [(Double, Int)] = [
+            (0, 0), (0.01, 1), (0.4, 1), (0.5, 1), (1.4, 1), (50.5, 51), (99.4, 99), (99.6, 99),
+            (99.99, 99), (100, 100),
+        ]
+        for (value, shown) in cases {
+            #expect(Formatting.wholePercent(value) == shown, "\(value)")
+        }
+        let almostEmpty = model(Fixture.account("a", session: 99.6))
+        #expect(almostEmpty.text == "1% 5h")
+        #expect(almostEmpty.icon == .bolt(.dot(.critical)))
+        #expect(almostEmpty.accessibilityLabel.contains("Session 1 percent left."))
+        #expect(model(Fixture.account("a", session: 0.4)).text == "99% 5h")
+        let used = model(Fixture.account("a", session: 0.4)) { $0.appearance.meterMode = .used }
+        #expect(used.text == "1% 5h")
+        #expect(model(Fixture.account("a", session: 100)).text == "0% 5h")
+    }
 }

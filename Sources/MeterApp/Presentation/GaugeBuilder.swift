@@ -11,7 +11,8 @@ struct GaugeBuilder {
         let reset = Formatting.resetText(window, now: context.now)
         var spoken: [String] = []
         if let value = Formatting.value(window, showsUsed: showsUsed) {
-            spoken.append("\(Int(value.rounded())) percent \(showsUsed ? "used" : "left")")
+            spoken.append(
+                "\(Formatting.wholePercent(value)) percent \(showsUsed ? "used" : "left")")
         } else {
             spoken.append("percentage unknown")
         }

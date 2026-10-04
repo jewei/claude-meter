@@ -9,15 +9,18 @@ enum Formatting {
         return showsUsed ? used : 100 - used
     }
 
-    /// `60%`, or `—` when unknown. Every percentage in the app rounds to a whole number.
+    /// `60%`, or `—` when unknown. Every percentage in the app uses ``wholePercent(_:)``.
     static func percent(_ window: QuotaWindow?, showsUsed: Bool) -> String {
-        value(window, showsUsed: showsUsed).map { "\(Int($0.rounded()))%" } ?? "—"
+        value(window, showsUsed: showsUsed).map { "\(wholePercent($0))%" } ?? "—"
     }
 
-    /// `60% left`, `40% used`, or `—`.
-    static func percentWithCaption(_ window: QuotaWindow?, showsUsed: Bool) -> String {
-        guard window?.usedPercent != nil else { return "—" }
-        return "\(percent(window, showsUsed: showsUsed)) \(showsUsed ? "used" : "left")"
+    /// The one rounding rule for every percentage: the nearest whole number, except that a
+    /// value above 0 shows at least 1 and a value below 100 shows at most 99. So 0% left
+    /// appears only when the window is exhausted, and 100% left only when nothing is used.
+    static func wholePercent(_ value: Double) -> Int {
+        guard value > 0 else { return 0 }
+        guard value < 100 else { return 100 }
+        return min(99, max(1, Int(value.rounded())))
     }
 
     /// The share of a ring or bar to fill, 0...1. Unknown fills nothing.

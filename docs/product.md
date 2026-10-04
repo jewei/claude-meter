@@ -21,6 +21,10 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    reset; a stale reading reads unknown (`QuotaWindow.resolved`).
 6. **Reset countdowns** use only provider-reported times and one format: `42m`, `3h 12m`,
    `36h`, `6d 7h` (`Countdown`). Never a calendar date.
+7. **Percentages** are whole numbers, rounded to the nearest, except that a value above 0
+   shows at least 1 and a value below 100 at most 99. So `0%` left appears only when the
+   window is exhausted, and `100%` left only when nothing is used
+   (`Formatting.wholePercent`, for text and speech alike).
 
 ## 2. The main meter
 
@@ -51,10 +55,12 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 
 1. The icon is the bolt with a badge: a severity dot, a gray dot when stale, or a red `0`
    pill when exhausted. A spinner replaces it while the first reading loads; a warning bolt
-   shows when there is no reading and an error.
+   shows when there is no reading because something failed (`MainMeter.hasFailure`). Before
+   setup, while paused, and before the first reading, the bolt has no badge.
 2. The number follows **Menu bar shows**: `99% 5h` (session, or the weekly window with a
    `7d` suffix when there is no session value), `73% 7d`, or both joined by ` · `.
-3. Paused and stale states hide the number. Paused dims the whole item.
+3. Paused and stale states hide the number. Paused and not set up dim the whole item; the
+   spoken summary says `Paused.` or `Claude Meter. Not set up.`
 4. One spoken summary names the provider, each shown window, and the overall severity, for
    example `Claude Meter. Claude. Session 15 percent left. Overall quota warning.`
 5. The label refreshes on every store change and every 30 s.

@@ -21,7 +21,12 @@ struct CursorCredentialStore: Sendable {
     static let refreshTokenKey = "cursorAuth/refreshToken"
     static let emailKey = "cursorAuth/cachedEmail"
     static let membershipKey = "cursorAuth/stripeMembershipType"
-    static let query = "SELECT key, value FROM ItemTable WHERE key IN (?, ?, ?, ?) LIMIT 4"
+    /// Only whether the refresh token is non-empty leaves SQLite (`1` or `0`), so the secret is
+    /// never loaded into this process. `?2` is the refresh token key.
+    static let query = """
+        SELECT key, CASE WHEN key = ?2 THEN length(value) > 0 ELSE value END \
+        FROM ItemTable WHERE key IN (?1, ?2, ?3, ?4) LIMIT 4
+        """
     static let keys = [accessTokenKey, refreshTokenKey, emailKey, membershipKey]
     /// The Keychain item that holds the access token when the database has none.
     static let accessTokenService = "cursor-access-token"
@@ -134,7 +139,7 @@ struct CursorCredentialStore: Sendable {
     ) -> CursorCredentialLookup {
         if let failure = failure(for: state) { return .unreadable(failure) }
         let membership = values[membershipKey]
-        let hasRefreshToken = values[refreshTokenKey] != nil
+        let hasRefreshToken = values[refreshTokenKey] == "1"
         if let token = values[accessTokenKey] {
             return .found(
                 CursorCredentials(

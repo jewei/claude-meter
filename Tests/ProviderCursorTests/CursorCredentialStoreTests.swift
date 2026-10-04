@@ -51,6 +51,25 @@ import Testing
         )
     }
 
+    /// Diagnostics need only whether a refresh token exists, so its value never leaves SQLite.
+    @Test func theRefreshTokenIsNeverLoaded() async throws {
+        let home = try CursorHome()
+        defer { home.remove() }
+        try home.write(token: "access-token")
+        let rows = try SQLiteReader.rows(
+            in: home.database, query: CursorCredentialStore.query,
+            bindings: CursorCredentialStore.keys)
+        let refresh = rows.first { $0.first == Data("cursorAuth/refreshToken".utf8) }
+        #expect(refresh?.last == Data("1".utf8))
+        #expect(!rows.contains { $0.last == Data("refresh-token".utf8) })
+
+        try home.write([
+            "cursorAuth/accessToken": .text("access-token"), "cursorAuth/refreshToken": .text(""),
+        ])
+        let store = CursorCredentialStore(home: home.url, keychain: FakeKeychain())
+        #expect(credentials(try await store.read())?.hasRefreshToken == false)
+    }
+
     @Test func emptyTableOrRefreshTokenAloneMeansSignedOut() async throws {
         let home = try CursorHome()
         defer { home.remove() }

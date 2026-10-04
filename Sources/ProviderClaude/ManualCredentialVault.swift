@@ -22,6 +22,11 @@ final class ManualCredentialVault: Sendable {
     /// `com.jewei.claudemeter.claude-oauth`; a development build uses its own item.
     static let service = AppIdentity.keychainService("claude-oauth")
     static let account = "manual"
+    /// The manual login of Claude Meter 3, which version 4 never reads. It is the app's own
+    /// item, so the app deletes it. Nil in a development build, which must never touch the
+    /// items of an installed copy.
+    static let version3Item: (service: String, account: String)? =
+        AppIdentity.isDevelopmentBuild ? nil : ("com.jewei.claudemeter-oauth", "oauthManual")
 
     private let keychain: any Keychain
     private let timeout: Duration
@@ -79,6 +84,22 @@ final class ManualCredentialVault: Sendable {
     func delete(sequence: UInt64) async throws {
         try await write(sequence: sequence) { keychain in
             try keychain.deletePassword(service: Self.service, account: Self.account)
+        }
+    }
+
+    /// Deletes the version 3 item, so that no live refresh token stays behind after the
+    /// upgrade. Deleting a missing item succeeds. Throws only `CancellationError`.
+    func removeVersion3Item() async throws {
+        guard let item = Self.version3Item else { return }
+        let keychain = keychain
+        do {
+            try await BlockingIO.run(timeout: timeout) { _ in
+                try keychain.deletePassword(service: item.service, account: item.account)
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            Log(.claude).error("Could not delete the Claude Meter 3 manual login", error)
         }
     }
 

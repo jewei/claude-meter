@@ -23,6 +23,8 @@ public final class ClaudeProvider: UsageProvider, DiagnosticsReporting {
     let automatic: AutomaticRefresh
     let manual: ManualRefresh
     let lastRefresh = RefreshRecord()
+    /// The version 3 manual item is deleted at the first fetch of each launch.
+    private let hasRemovedVersion3Item = Locked(false)
 
     /// - Parameters:
     ///   - configuration: The user's Claude settings, read at the start of each operation.
@@ -87,6 +89,11 @@ public final class ClaudeProvider: UsageProvider, DiagnosticsReporting {
     /// Reads every configured account. Throws ``ProviderError`` when Claude is not connected,
     /// while the HTTP 429 gate is closed, or when the whole refresh fails.
     public func fetch(previous: ProviderUsage?) async throws -> ProviderUsage {
+        let isFirstFetch = hasRemovedVersion3Item.withLock { done in
+            defer { done = true }
+            return !done
+        }
+        if isFirstFetch { try await vault.removeVersion3Item() }
         let configuration = await configuration()
         let automatic = automatic
         let manual = manual

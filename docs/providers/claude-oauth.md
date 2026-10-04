@@ -67,6 +67,7 @@ Content-Type: application/json
 | Claude Code, legacy | `Claude Code-credentials` | macOS user name | Read only |
 | Claude Code, per config dir | `Claude Code-credentials-<h>` | macOS user name | Read only |
 | Manual login (app-owned) | `com.jewei.claudemeter.claude-oauth` | `manual` | Read, write, delete |
+| Manual login of version 3 (app-owned) | `com.jewei.claudemeter-oauth` | `oauthManual` | Delete only: at the first fetch of each launch, release builds only |
 
 1. `<h>` is the first 8 lowercase hex characters of the SHA-256 of the config dir's path.
    The path is absolute, has symbolic links resolved, is standardized, and has no trailing

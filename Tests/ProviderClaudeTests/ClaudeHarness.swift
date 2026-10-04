@@ -100,8 +100,8 @@ final class ClaudeHarness: Sendable {
     }
 }
 
-/// A Keychain that runs a hook before each write, to hold or fail it. Reads go straight to
-/// `base`. Hooks run on the writing thread, so they may block it.
+/// A Keychain that runs a hook before each write of the manual item, to hold or fail it. Other
+/// calls go straight to `base`. Hooks run on the writing thread, so they may block it.
 final class ScriptedKeychain: Keychain {
     typealias Hook = @Sendable (_ password: Data?) throws(KeychainError) -> Void
 
@@ -126,6 +126,9 @@ final class ScriptedKeychain: Keychain {
     }
 
     func setPassword(_ password: Data, service: String, account: String) throws(KeychainError) {
+        guard service == ManualCredentialVault.service else {
+            return try base.setPassword(password, service: service, account: account)
+        }
         try beforeWrite(password)
         try base.setPassword(password, service: service, account: account)
         let token = (try? JSONDecoder.meter.decode(ManualCredential.self, from: password))?
@@ -134,6 +137,9 @@ final class ScriptedKeychain: Keychain {
     }
 
     func deletePassword(service: String, account: String) throws(KeychainError) {
+        guard service == ManualCredentialVault.service else {
+            return try base.deletePassword(service: service, account: account)
+        }
         try beforeWrite(nil)
         try base.deletePassword(service: service, account: account)
         log.withLock { $0.append("delete") }

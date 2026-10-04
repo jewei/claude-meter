@@ -268,6 +268,21 @@ extension ClaudeTests {
             #expect(await provider.reconcile(usage) == nil)
         }
 
+        @Test func theFirstFetchDeletesTheVersion3ManualLogin() async throws {
+            let harness = try ClaudeHarness(.off)
+            let item = try #require(ManualCredentialVault.version3Item)
+            harness.keychain.store(
+                #"{"claudeAiOauth": {"accessToken": "a", "refreshToken": "r"}}"#,
+                service: item.service, account: item.account)
+            let provider = harness.provider(usageServer([:]))
+
+            await #expect(throws: ProviderError.self) { try await provider.fetch(previous: nil) }
+
+            #expect(
+                harness.keychain.storedPassword(service: item.service, account: item.account) == nil
+            )
+        }
+
         @Test func manualModeWithoutALoginAsksToConnect() async throws {
             let harness = try ClaudeHarness(.manual)
             let usage = try await harness.provider(usageServer([:])).fetch(previous: nil)

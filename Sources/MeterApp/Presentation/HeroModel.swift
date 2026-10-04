@@ -23,14 +23,16 @@ public struct HeroModel: Equatable, Sendable {
 
     public init(_ meter: MainMeter, context: PresentationContext) {
         let name = meter.provider.displayName
-        guard let selected = meter.selected else {
+        let selected: AccountUsage
+        switch meter.selection {
+        case .unavailable(let reason):
             // Notices leave out this text, so the reason is stated once.
             self.init(
                 emoji: "🔌", title: "\(name) meter unavailable",
-                subtitle: meter.issue.map { NoticeText.text(for: $0, now: context.now) }
-                    ?? "Turn on \(name) in Settings > Data.",
-                tone: .neutral)
+                subtitle: NoticeText.text(for: reason, now: context.now), tone: .neutral)
             return
+        case .account(let account):
+            selected = account
         }
         guard !selected.isStale else {
             self.init(

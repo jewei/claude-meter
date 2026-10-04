@@ -3,10 +3,17 @@ import MeterDomain
 
 /// The account that owns the menu bar, the hero, and the first card.
 public struct MainMeter: Equatable, Sendable {
+    /// The account that the meter shows, or why it shows none.
+    public enum Selection: Equatable, Sendable {
+        case account(AccountUsage)
+        /// No account: the meter is unavailable for this reason.
+        case unavailable(UsageIssue)
+    }
+
     public let provider: ProviderID
     /// Presentation accounts of the provider, in provider order.
     public let accounts: [AccountUsage]
-    public let selected: AccountUsage?
+    public let selection: Selection
     /// Why nothing is selected, or the selected account's own issue.
     public let issue: UsageIssue?
     /// The issue is a failure: a failed refresh, an account's own issue, or a missing pinned
@@ -21,6 +28,12 @@ public struct MainMeter: Equatable, Sendable {
     /// (``PresentationContext/isLoadingFirstReading(_:)``).
     public let isLoadingFirstReading: Bool
 
+    /// The account that the meter shows; nil when it is unavailable.
+    public var selected: AccountUsage? {
+        guard case .account(let account) = selection else { return nil }
+        return account
+    }
+
     /// The selected account shows as stale (see ``PresentationContext/isStale(_:reading:)``).
     public var isStale: Bool { selected?.isStale ?? false }
 
@@ -33,56 +46,63 @@ public struct MainMeter: Equatable, Sendable {
         isRefreshing = context.refreshing.contains(provider)
         isLoadingFirstReading = context.isLoadingFirstReading(provider)
         guard context.isEnabled(provider) else {
-            accounts = []
-            selected = nil
-            severity = .unknown
-            hasFailure = false
-            issue =
+            let reason =
                 provider == .claude && context.settings.claude.needsConnection
                 ? UsageIssue("Connect Claude in Settings > Data.", needsAction: true)
                 : UsageIssue("\(name) is off. Turn it on in Settings > Data.", needsAction: true)
+            accounts = []
+            selection = .unavailable(reason)
+            issue = reason
+            hasFailure = false
+            severity = .unknown
             return
         }
         let accounts = context.accounts(for: provider)
         let pin = context.settings.menuBar.pinnedAccounts[provider]
-        let selected = AccountSelection.primary(in: accounts, pinned: pin)
+        let reading = context.readings[provider]
         self.accounts = accounts
-        self.selected = selected
 
         let considered = pin.map { pin in accounts.filter { $0.id == pin } } ?? accounts
         severity =
             considered.filter(\.hasObservation).map { $0.severity(context.thresholds) }.max()
             ?? .unknown
 
-        (issue, hasFailure) = Self.issue(
-            provider: provider, accounts: accounts, pin: pin, selected: selected,
-            reading: context.readings[provider])
+        // A pin selects only its own account, so a selected account is the pinned one.
+        if let selected = AccountSelection.primary(in: accounts, pinned: pin) {
+            selection = .account(selected)
+            issue = selected.issue ?? reading?.issue
+            hasFailure = issue != nil
+        } else {
+            let (reason, isFailure) = Self.reason(
+                provider: provider, accounts: accounts, pin: pin, reading: reading)
+            selection = .unavailable(reason)
+            issue = reason
+            hasFailure = isFailure
+        }
     }
 
-    /// The issue to state, and whether it is a failure.
-    private static func issue(
+    /// Why no account is selected, and whether that is a failure.
+    private static func reason(
         provider: ProviderID, accounts: [AccountUsage], pin: AccountID?,
-        selected: AccountUsage?, reading: Reading<ProviderUsage>?
-    ) -> (UsageIssue?, Bool) {
+        reading: Reading<ProviderUsage>?
+    ) -> (UsageIssue, Bool) {
         let name = provider.displayName
+        let noReading = UsageIssue("\(name) has no usage reading yet.")
         // Before the first reading (a launch without a saved one, a source switched on, or a
         // reconnect), a pin cannot be missing yet: nothing was read to look for it in.
-        guard let reading else { return (UsageIssue("\(name) has no usage reading yet."), false) }
-        let readingIssue = reading.issue
+        guard let reading else { return (noReading, false) }
         if let pin {
             guard let pinned = accounts.first(where: { $0.id == pin }) else {
                 let missing = UsageIssue("The selected \(name) account is no longer configured.")
-                return (readingIssue ?? missing, true)
+                return (reading.issue ?? missing, true)
             }
-            if let issue = pinned.issue ?? readingIssue { return (issue, true) }
-            return selected == nil
-                ? (UsageIssue("The selected \(name) account has no usage reading."), false)
-                : (nil, false)
+            if let issue = pinned.issue ?? reading.issue { return (issue, true) }
+            return (UsageIssue("The selected \(name) account has no usage reading."), false)
         }
-        if let issue = selected?.issue ?? readingIssue { return (issue, true) }
-        guard selected == nil else { return (nil, false) }
-        if let issue = accounts.lazy.compactMap(\.issue).first { return (issue, true) }
-        return (UsageIssue("\(name) has no usage reading yet."), false)
+        if let issue = reading.issue ?? accounts.lazy.compactMap(\.issue).first {
+            return (issue, true)
+        }
+        return (noReading, false)
     }
 
     /// The card that the main meter owns.

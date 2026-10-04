@@ -5,8 +5,11 @@ import SwiftUI
 /// come from, an access token, an optional refresh token, and an optional expiry. Tokens stay
 /// hidden until the user shows them.
 ///
-/// The draft rules are in ``ManualTokenDraft``. Cancel discards the draft and stops a Connect
-/// that is still running, so nothing is saved after it.
+/// The draft rules are in ``ManualTokenDraft``. Return in a token field connects; Connect is
+/// not the window's default button, so Return in another field of the page, such as a folder
+/// name, never connects. Cancel discards the draft and stops a Connect that is still running,
+/// so nothing is saved after it. Escape cancels while the draft is empty and no newer question
+/// is open (``CancelShortcuts``).
 struct ManualTokenForm: View {
     let isWorking: Bool
     let connect: (_ access: String, _ refresh: String?, _ expiry: Date?) async -> Void
@@ -26,10 +29,14 @@ struct ManualTokenForm: View {
             .foregroundStyle(Palette.inkMuted)
             .fixedSize(horizontal: false, vertical: true)
             sourceNote
-            TokenField(title: "Access token", text: $draft.accessToken, isRevealed: showsTokens)
-            TokenField(
-                title: "Refresh token (optional)", text: $draft.refreshToken,
-                isRevealed: showsTokens)
+            Group {
+                TokenField(
+                    title: "Access token", text: $draft.accessToken, isRevealed: showsTokens)
+                TokenField(
+                    title: "Refresh token (optional)", text: $draft.refreshToken,
+                    isRevealed: showsTokens)
+            }
+            .onSubmit(submit)
             HStack(spacing: 10) {
                 MeterSwitch(label: "Set an expiry", isOn: $draft.hasExpiry)
                 Text("Set an expiry")
@@ -91,11 +98,10 @@ struct ManualTokenForm: View {
                 ChunkyButtonLabel(title: "Cancel")
             }
             .buttonStyle(.chunky)
-            .keyboardShortcut(draft.escapeCancels ? .cancelAction : nil)
+            .cancelShortcut(isEnabled: draft.escapeCancels)
             Button("Connect", action: submit)
                 .buttonStyle(RaisedButtonStyle())
                 .fixedSize()
-                .keyboardShortcut(.defaultAction)
                 .disabled(!draft.canConnect(isWorking: isWorking))
         }
     }

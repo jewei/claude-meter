@@ -2,7 +2,8 @@ import MeterApp
 import SwiftUI
 
 /// A question in the page, in place of the control that asked it: a title, what will be
-/// lost, Cancel, and a red button. Escape cancels. Nothing blocks the app or the window.
+/// lost, Cancel, and a red button. Escape cancels the newest question only
+/// (``CancelShortcuts``). Nothing blocks the app or the window.
 struct InlineConfirmation: View {
     let confirmation: DataSourceText.Confirmation
     let confirm: () -> Void
@@ -33,7 +34,7 @@ struct InlineConfirmation: View {
                     ChunkyButtonLabel(title: "Cancel")
                 }
                 .buttonStyle(.chunky)
-                .keyboardShortcut(.cancelAction)
+                .cancelShortcut()
                 Button(confirmation.confirmTitle, action: confirm)
                     .buttonStyle(
                         RaisedButtonStyle(

@@ -10,6 +10,8 @@ struct SettingsView: View {
 
     let model: AppModel
     @Bindable var navigation: SettingsNavigation
+    /// Only the newest inline question or token form answers Escape.
+    @State private var cancelShortcuts = CancelShortcuts()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,6 +23,7 @@ struct SettingsView: View {
         .frame(minHeight: Self.minimumHeight, alignment: .top)
         .background(Palette.popover)
         .tint(Palette.accent)
+        .environment(\.cancelShortcuts, cancelShortcuts)
     }
 
     @ViewBuilder private var page: some View {

@@ -1,3 +1,4 @@
+import MeterApp
 import SwiftUI
 
 /// A thick colored slider with a ringed thumb. It snaps to `step`, moves one step per arrow
@@ -57,7 +58,7 @@ struct ThresholdSlider: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
-        .accessibilityValue("\(Int(Self.bounded(value, in: range).rounded())) percent")
+        .accessibilityValue(ThresholdText.spoken(value, in: range))
         .accessibilityAdjustableAction { direction in
             value = Self.stepped(value, up: direction == .increment, in: range, step: step)
         }

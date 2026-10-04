@@ -12,7 +12,7 @@ struct UsageBarRow: View {
                     .font(MeterFont.body(11, .semibold))
                     .foregroundStyle(Palette.inkMuted)
                 Spacer(minLength: 4)
-                Text(gauge.valueText)
+                Text(gauge.valueWithCaption)
                     .font(MeterFont.body(11, .bold))
                     .foregroundStyle(Palette.ink)
                     .monospacedDigit()

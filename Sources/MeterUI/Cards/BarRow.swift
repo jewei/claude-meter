@@ -12,7 +12,7 @@ struct BarRow: View {
             EnergyBar(fraction: gauge.fraction, color: gauge.severity.fill, height: 12)
             if showsLabels {
                 HStack(spacing: 6) {
-                    Text(summary)
+                    Text(gauge.summaryText)
                     Spacer(minLength: 4)
                     if let reset = gauge.resetText { Text(reset) }
                 }
@@ -25,10 +25,5 @@ struct BarRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(gauge.title)
         .accessibilityValue(gauge.accessibilityValue)
-    }
-
-    private var summary: String {
-        let value = [gauge.valueText, gauge.caption].compactMap { $0 }.joined(separator: " ")
-        return "\(gauge.title) · \(value)"
     }
 }

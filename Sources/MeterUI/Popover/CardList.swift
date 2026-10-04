@@ -29,7 +29,7 @@ struct CardList: View {
     var body: some View {
         let ids = accounts.cards.map(\.id)
         VStack(spacing: 10) {
-            AccountsHeader(showsLegend: accounts.showsRingLegend, dragHint: accounts.dragHint)
+            AccountsHeader(legend: accounts.ringLegend, dragHint: accounts.dragHint)
             ForEach(Array(accounts.cards.enumerated()), id: \.element.id) { index, card in
                 let isDragged = drag?.card == card.id
                 VStack(alignment: .leading, spacing: 6) {

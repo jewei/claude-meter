@@ -80,10 +80,13 @@ bar uses the system rounded font.
 | --- | --- | --- | --- |
 | Page title | Fredoka Bold | 26 | Settings page titles |
 | Status title | Fredoka SemiBold | 20 | Welcome, Paused, errors |
+| About title | Fredoka Bold | 28 | "Claude Meter" on About |
 | Hero title, app name | Fredoka SemiBold | 18 | "You're cruising", "Claude Meter" |
+| Hero subtitle | Nunito Bold | 12 | "Almost dry · Session resets in 30m" |
 | Account name | Fredoka SemiBold | 15 ring / 14 bar | "Work" |
 | Settings row title | Fredoka SemiBold | 16 | "Launch at login" |
-| Big number | Fredoka Bold | 14 | "78%" |
+| Big number | Fredoka Bold | 14 (12 in limit rows) | "78%" |
+| Unknown number | Nunito Bold | one size smaller | "—" (Fredoka draws it like a minus) |
 | Ring letter | Fredoka Bold | 19 | "W" |
 | Plan badge | Fredoka Bold | 10 | "MAX 20X" |
 | Primary button | Fredoka Bold | 14 | "Open Settings" |
@@ -91,6 +94,7 @@ bar uses the system rounded font.
 | Caption | Nunito SemiBold | 11 | "Resets in 3h 12m" |
 | Section label | Nunito ExtraBold | 11, tracking 0.99, uppercase, `inkMuted` | "ACCOUNTS", Settings section headings |
 | Note | Nunito SemiBold | 10 | "Token usage unavailable" |
+| Pill | Nunito ExtraBold | 10 | "Menu bar" |
 
 Every changing number uses `.monospacedDigit()`.
 
@@ -103,10 +107,10 @@ Every changing number uses `.monospacedDigit()`.
 | `RaisedButtonStyle` | `action` fill, white Fredoka Bold 14, padding 20×12, radius 14, plate at y 4. Pressed: label down 2 pt, plate at y 2, spring 0.2/0.85. Hover: white 6%. Focus: 2 pt `accent` ring. Disabled: 45%. Reduce Motion: no movement, darker tint. |
 | `QuietButtonStyle` | `ink` surface at 6% hover and 10% press (muted text keeps 4.5:1 on both), 2 pt focus border, 45% when disabled. Nothing moves. |
 | `EnergyDot` | 9 pt rounded square, radius 3. |
-| `EnergyBar` | Capsule on `track`. Fill width = share × width. A white 45% highlight, 2 pt high, inset 3 pt, runs along the top of the fill only when the fill is wider than 6 pt. |
-| `ActivityRings` | 88 pt. Outer weekly ring radius 34, inner session ring radius 24, 8 pt strokes, round caps, start at the top, `track` behind, a white 30% highlight along each arc. Center disc 30 pt in `popover` with the letter. Hidden from accessibility. |
+| `EnergyBar` | Capsule on `track`. Fill width = share × width; the track's capsule clips the fill, so a tiny fill follows the rounded end. A white 45% highlight, 2 pt high, inset 3 pt, runs along the top of the fill only when the fill is wider than 6 pt. |
+| `ActivityRings` | 88 pt. Outer weekly ring radius 34, inner session ring radius 24, 8 pt strokes, round caps, start at the top, `track` behind, a white highlight along each arc that grows from clear at the start to 30% at the tip (angular gradient). Center disc 30 pt in `popover` with the letter. Hidden from accessibility. |
 | `PlanBadgeView` | Capsule, padding 8×3, tier colors, one line. |
-| `ChipView` | Neutral capsule for "same login" and "paused". |
+| `ChipView` | Neutral capsule for "same login", "paused", and "Not tracked"; a tooltip only when it has help text. |
 | `ProviderMark` | Bundled logo as a 15 pt template image in `ink`; Grok uses the `atom` symbol. |
 | `NoticeBanner` | Top-aligned 12 pt icon, wrapping Nunito SemiBold 11, padding 12×9, tint 8% fill, 16% 1 pt border, radius 12. Action: `key.slash.fill`, warning: `exclamationmark.triangle.fill` (both `energyLowInk`); info: `clock.fill` (`inkMuted`). |
 | `SquareIconButton` | 28 pt target, glyph 12 bold, quiet style on a chunky surface. |
@@ -148,7 +152,7 @@ its focus.
 │ ┌ update notice (when available) ──────────┐ │
 │ ┌ notices ─────────────────────────────────┐ │  body: padding 15, top 2, bottom 16
 │ ┌ hero ────────────────────────────────────┐ │  spacing 12
-│  ACCOUNTS                 ◌ weekly ● 5-hour  │
+│  ACCOUNTS                     ◌ week ● 5-hr  │
 │  Drag a Claude or Codex card to the top…     │
 │  (▭ Menu bar)                                 │  pill above the main card
 │ ┌ card ────────────────────────────────────┐ │  card list spacing 10
@@ -206,7 +210,7 @@ All cards: padding 14×13, `chunkyCard()`, full width.
   then red, as money is spent, and it is empty at the limit. It never fills green as money
   goes. Without a limit share there is no bar.
 - **Details** (`DetailSectionsView`), each after a 1 pt `cardBorder` rule: limit rows
-  (`LimitRow`), usage bars (`UsageBarRow`, 7 pt bars), usage-limit resets
+  (`LimitRow`), usage bars (`UsageBarRow`, 7 pt bars, the value with "left" or "used"), usage-limit resets
   (`ResetsSectionView`: count, rows with the exact date in a tooltip, note), and tokens used
   (`TokensSectionView`: source label with a scope tooltip, three rows with full counts in
   tooltips and accessibility values, note).
@@ -304,7 +308,8 @@ the app is regular; "About Claude Meter" opens the About tab.
 | Loading arrow | one turn per second, ≤ 30 fps | still |
 | Critical pulse | 3 × 1.2 s, ≤ 12 fps | none |
 
-`Design/Motion.swift` holds every duration. A hidden popover runs no clock and no animation.
+`Design/Motion.swift` holds every duration. A hidden popover runs no clock and no animation:
+ring, bar, and hero animations are off while `popoverIsVisible` is false.
 
 ## Accessibility
 

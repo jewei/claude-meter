@@ -37,13 +37,15 @@ struct ActivityRings: View {
     }
 }
 
-/// One ring: the track, the arc, and a directional highlight along the arc.
+/// One ring: the track, the arc, and a highlight along the arc that brightens toward its
+/// tip.
 private struct RingArc: View {
     let ring: ActivityRings.Ring
     let diameter: CGFloat
     let lineWidth: CGFloat
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.popoverIsVisible) private var isVisible
 
     var body: some View {
         let fill = ring.fraction.isFinite ? min(1, max(0, ring.fraction)) : 0
@@ -57,14 +59,14 @@ private struct RingArc: View {
             Circle()
                 .trim(from: 0, to: fill)
                 .stroke(
-                    LinearGradient(
-                        colors: [.white.opacity(0.3), .clear], startPoint: .trailing,
-                        endPoint: .leading),
+                    AngularGradient(
+                        colors: [.clear, .white.opacity(0.3)], center: .center,
+                        startAngle: .zero, endAngle: .degrees(360 * max(fill, 0.01))),
                     style: style
                 )
                 .rotationEffect(.degrees(-90))
         }
         .frame(width: diameter, height: diameter)
-        .animation(Motion.value(reduceMotion: reduceMotion), value: fill)
+        .animation(Motion.value(reduceMotion: reduceMotion || !isVisible), value: fill)
     }
 }

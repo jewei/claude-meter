@@ -3,6 +3,10 @@ import MeterDomain
 
 /// Turns limit windows into ``GaugeModel`` values.
 struct GaugeBuilder {
+    /// The short titles of ring rows, which the ring legend repeats.
+    static let sessionShortTitle = "5-hr"
+    static let weeklyShortTitle = "week"
+
     let context: PresentationContext
 
     func gauge(_ window: QuotaWindow?, title: String, shortTitle: String) -> GaugeModel {
@@ -37,11 +41,11 @@ struct GaugeBuilder {
     }
 
     func session(_ account: AccountUsage) -> GaugeModel {
-        gauge(account.bindingWindow(.session), title: "Session", shortTitle: "5-hr")
+        gauge(account.bindingWindow(.session), title: "Session", shortTitle: Self.sessionShortTitle)
     }
 
     func weekly(_ account: AccountUsage) -> GaugeModel {
-        gauge(account.bindingWindow(.weekly), title: "Weekly", shortTitle: "week")
+        gauge(account.bindingWindow(.weekly), title: "Weekly", shortTitle: Self.weeklyShortTitle)
     }
 
     /// Scoped windows (Opus, Sonnet, …) after the session and weekly windows.
@@ -52,8 +56,8 @@ struct GaugeBuilder {
     /// `Opus Weekly` → `opus`.
     static func shortTitle(_ window: QuotaWindow) -> String {
         switch window.kind {
-        case .session: "5-hr"
-        case .weekly: "week"
+        case .session: sessionShortTitle
+        case .weekly: weeklyShortTitle
         case .scoped, .billing:
             window.title.replacingOccurrences(of: " Weekly", with: "").lowercased()
         }

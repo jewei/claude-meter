@@ -1,3 +1,4 @@
+import MeterApp
 import SwiftUI
 
 /// "Warning at 80%" with its slider.
@@ -17,7 +18,7 @@ struct ThresholdRow: View {
                     .font(MeterFont.display(16, .semibold))
                     .foregroundStyle(Palette.ink)
                 Spacer()
-                Text("\(Int(ThresholdSlider.bounded(value, in: range).rounded()))%")
+                Text(ThresholdText.percent(value, in: range))
                     .font(MeterFont.display(14, .bold))
                     .foregroundStyle(ink)
                     .monospacedDigit()

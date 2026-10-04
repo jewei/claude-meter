@@ -1,8 +1,9 @@
+import MeterApp
 import SwiftUI
 
 /// "ACCOUNTS", the ring legend in ring style, and the drag hint when it applies.
 struct AccountsHeader: View {
-    let showsLegend: Bool
+    let legend: RingLegendModel?
     let dragHint: String?
 
     var body: some View {
@@ -15,7 +16,7 @@ struct AccountsHeader: View {
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityLabel("Accounts")
                 Spacer()
-                if showsLegend { RingLegend() }
+                if let legend { RingLegend(legend: legend) }
             }
             if let dragHint {
                 Text(dragHint)

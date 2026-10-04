@@ -13,6 +13,19 @@ struct ChipView: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 1)
             .background(Capsule().fill(Palette.track))
-            .help(help ?? "")
+            .modifier(OptionalHelp(text: help))
+    }
+}
+
+/// A tooltip only when there is text for it; `.help("")` shows an empty one.
+struct OptionalHelp: ViewModifier {
+    let text: String?
+
+    func body(content: Content) -> some View {
+        if let text {
+            content.help(text)
+        } else {
+            content
+        }
     }
 }

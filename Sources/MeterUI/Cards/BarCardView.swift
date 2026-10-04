@@ -53,7 +53,7 @@ struct BarCardView: View {
                 CardIdentity(card: card)
                 Spacer(minLength: 4)
                 Text(bars.headline.valueText)
-                    .font(MeterFont.display(14, .bold))
+                    .font(bars.headline.valueFont(size: 14))
                     .foregroundStyle(bars.headline.severity.headlineInk)
                     .monospacedDigit()
                     .fixedSize()

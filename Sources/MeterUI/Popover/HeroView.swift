@@ -7,6 +7,7 @@ struct HeroView: View {
     let hero: HeroModel
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.popoverIsVisible) private var isVisible
 
     var body: some View {
         let colors = hero.tone.colors
@@ -31,7 +32,7 @@ struct HeroView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
         .chunkyCard(fill: colors.background, border: colors.border)
-        .animation(Motion.tone(reduceMotion: reduceMotion), value: hero.tone)
+        .animation(Motion.tone(reduceMotion: reduceMotion || !isVisible), value: hero.tone)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(hero.accessibilityLabel)
     }

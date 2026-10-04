@@ -13,6 +13,7 @@ struct EnergyBar: View {
     var height: CGFloat = 12
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.popoverIsVisible) private var isVisible
 
     var body: some View {
         GeometryReader { geometry in
@@ -31,11 +32,12 @@ struct EnergyBar: View {
                                 .padding(.top, 2)
                         }
                     }
-                    .clipShape(Capsule())
             }
+            // The track's shape clips the fill, so a tiny fill follows the rounded end.
+            .clipShape(Capsule())
         }
         .frame(height: height)
-        .animation(Motion.value(reduceMotion: reduceMotion), value: fraction)
+        .animation(Motion.value(reduceMotion: reduceMotion || !isVisible), value: fraction)
         .accessibilityHidden(true)
     }
 

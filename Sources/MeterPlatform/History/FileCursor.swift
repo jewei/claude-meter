@@ -77,8 +77,12 @@ struct FileCursor<Parser: HistoryFileParser>: Sendable {
         limits: HistoryLimits, cancellation: BlockingIO.Cancellation
     ) throws -> Progress.Outcome {
         let stamp = try FileStamp(descriptor: reader.descriptor)
+        // Only a saved cursor can be unchanged. A new empty file needs a cursor too, or it
+        // would read as never read.
+        if let previous, previous.stamp == stamp, previous.offset == stamp.size {
+            return .unchanged
+        }
         var cursor = previous ?? FileCursor(stamp: stamp)
-        if cursor.stamp == stamp, cursor.offset == stamp.size { return .unchanged }
         let reserve = cursor.head.count + cursor.boundary.count + HistoryLimits.reserveBytes
         guard available >= reserve else { throw FileReadError.budget }
 

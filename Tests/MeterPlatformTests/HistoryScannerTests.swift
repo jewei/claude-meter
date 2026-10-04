@@ -22,6 +22,28 @@ extension HistoryScans {
             #expect(second.work.cacheHits == 1)
         }
 
+        @Test func anEmptyFileIsCompleteAndNotACacheHit() async throws {
+            let home = try TemporaryDirectory()
+            defer { home.remove() }
+            try home.write(line("a", 10), to: "full.jsonl")
+            try home.write("", to: "empty.jsonl")
+            let scanner = CountingScanner(match: .fileExtension("jsonl"))
+            let first = try await scanner.scan([home.root()], since: rangeStart)
+            #expect(!first.isPartial())
+            #expect(first.total() == 10)
+            #expect(first.work.cacheHits == 0)
+            #expect(first.files.count == 2)
+            let second = try await scanner.scan([home.root()], since: rangeStart)
+            #expect(!second.isPartial())
+            #expect(second.work.cacheHits == 2)
+
+            // The empty file grows later and counts.
+            try home.append(line("b", 5), to: "empty.jsonl")
+            let grown = try await scanner.scan([home.root()], since: rangeStart)
+            #expect(!grown.isPartial())
+            #expect(grown.total() == 15)
+        }
+
         @Test func anIncompleteFinalLineIsReadAgainLater() async throws {
             let home = try TemporaryDirectory()
             defer { home.remove() }

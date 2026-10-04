@@ -43,12 +43,15 @@ public final class FakeKeychain: Keychain {
         }
     }
 
+    /// With `account: nil`, the item with the first account in sorted order wins, so a test
+    /// with two accounts for one service gets the same item on every run.
     public func password(service: String, account: String?) throws(KeychainError) -> Data? {
         if let failure { throw failure }
         reads.withLock { $0.append(service) }
-        return entries.value.first { key, _ in
+        let matches = entries.value.filter { key, _ in
             key.service == service && (account == nil || key.account == account)
-        }?.value.password
+        }
+        return matches.min { $0.key.account < $1.key.account }?.value.password
     }
 
     public func items(

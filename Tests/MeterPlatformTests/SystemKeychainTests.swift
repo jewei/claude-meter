@@ -1,9 +1,23 @@
 import Foundation
 import LocalAuthentication
+import MeterTestSupport
 import Security
 import Testing
 
 @testable import MeterPlatform
+
+@Suite struct FakeKeychainTests {
+    @Test func aServiceWithTwoAccountsReadsTheSameItemEveryTime() throws {
+        let keychain = FakeKeychain()
+        for account in ["zed", "alpha", "mid"] {
+            keychain.store("secret-\(account)", service: "service", account: account)
+        }
+        for _ in 0..<20 {
+            let data = try keychain.password(service: "service", account: nil)
+            #expect(data == Data("secret-alpha".utf8))
+        }
+    }
+}
 
 @Suite struct SystemKeychainTests {
     @Test func failsClosedInTests() {

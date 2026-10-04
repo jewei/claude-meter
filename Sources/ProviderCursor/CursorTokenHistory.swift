@@ -15,6 +15,8 @@ public final class CursorTokenHistory: TokenHistoryProvider {
     /// The login of the last history returned. A failure keeps the previous history only
     /// while this login is still signed in.
     private let lastOwner = Locked<AccountOwner?>(nil)
+    /// The last failure, so that the log records changes only.
+    private let lastFailure = Locked<CursorFailure?>(nil)
 
     /// - Parameters:
     ///   - keychain: Read only, for the access token when the state database has none.
@@ -59,6 +61,7 @@ public final class CursorTokenHistory: TokenHistoryProvider {
             case .signedIn, .unknown: break
             }
             lastOwner.withLock { $0 = owner }
+            lastFailure.withLock { $0 = nil }
             return history
         } catch let failure as CursorFailure {
             let keeps = isSameLogin && failure != .signedOut && failure != .signInChanged
@@ -84,7 +87,11 @@ public final class CursorTokenHistory: TokenHistoryProvider {
     }
 
     private func failure(_ failure: CursorFailure, keepsLastReading: Bool) -> ProviderError {
-        if failure != .offline {
+        let isNew = lastFailure.withLock { last in
+            defer { last = failure }
+            return last != failure
+        }
+        if isNew {
             Self.log.warning("Cursor token history failed: \(failure.issue.message)")
         }
         return ProviderError(failure.issue, keepsLastReading: keepsLastReading)

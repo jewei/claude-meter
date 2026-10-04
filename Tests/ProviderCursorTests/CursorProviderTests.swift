@@ -324,7 +324,7 @@ import Testing
         let facts = await provider.diagnostics()
 
         #expect(facts.contains(DiagnosticFact("State database", "Found")))
-        #expect(facts.contains(DiagnosticFact("Access token", "Found in the State database")))
+        #expect(facts.contains(DiagnosticFact("Access token", "Found in the state database")))
         #expect(facts.contains(DiagnosticFact("Account identity", "Token subject")))
         #expect(
             facts.contains { $0.label == "Last usage request" && $0.value.hasPrefix("Succeeded") })

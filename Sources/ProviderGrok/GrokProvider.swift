@@ -192,7 +192,8 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
         lastRequest.withLock {
             $0 = "Failed at \(now.formatted(.iso8601)): \(failure.issue.message)"
         }
-        if failure != .offline {
+        // Log a change of state, not the same failure at every refresh.
+        if previous?.issue != failure.issue {
             Self.log.warning("Grok refresh failed: \(failure.issue.message)")
         }
         if let previous, previous.hasObservation, previous.belongs(to: status) {

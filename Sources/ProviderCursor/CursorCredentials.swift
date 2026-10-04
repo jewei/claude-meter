@@ -5,7 +5,7 @@ import MeterPlatform
 /// Cursor's own login, read without change from its state database or the Keychain.
 struct CursorCredentials: Hashable, Sendable {
     enum Source: String, Sendable {
-        case database = "State database"
+        case database = "state database"
         case keychain = "Keychain"
     }
 

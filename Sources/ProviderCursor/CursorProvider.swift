@@ -171,7 +171,8 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
         lastRequest.withLock {
             $0 = "Failed at \(now.formatted(.iso8601)): \(failure.issue.message)"
         }
-        if failure != .offline {
+        // Log a change of state, not the same failure at every refresh.
+        if previous?.issue != failure.issue {
             Self.log.warning("Cursor refresh failed: \(failure.issue.message)")
         }
         if failure.keepsObservation, let previous, previous.hasObservation,

@@ -156,9 +156,11 @@ import Testing
         #expect(account.issue?.needsAction == true)
     }
 
-    @Test func aBusyDatabaseKeepsTheReading() async throws {
+    /// A busy database never hands the refresh to another login's Keychain token.
+    @Test func aBusyDatabaseKeepsTheReadingAndSendsNoOtherLogin() async throws {
         try home.write(
             ["cursorAuth/accessToken": .text(CursorFixture.token())], journalMode: "DELETE")
+        keychain.store(CursorFixture.token(subject: "auth0|other"), service: "cursor-access-token")
         let lock = try home.lockExclusively()
         defer { home.unlock(lock) }
         let http = FakeHTTPClient(json: CursorFixture.usage)
@@ -168,8 +170,12 @@ import Testing
         let account = try account(try await provider.fetch(previous: previous()))
 
         #expect(account.isStale)
+        #expect(account.owner == owner)
+        #expect(account.windows.first?.usedPercent == 40)
+        #expect(account.issue == CursorFailure.credentialsBusy.issue)
         #expect(account.issue?.needsAction == false)
         #expect(http.requests.isEmpty)
+        #expect(keychain.readServices.isEmpty)
     }
 
     @Test func reconcileKeepsOnlyTheSignedInOwner() async throws {

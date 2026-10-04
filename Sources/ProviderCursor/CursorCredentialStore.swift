@@ -13,6 +13,8 @@ struct CursorCredentialStore: Sendable {
         case missing = "Missing"
         case busy = "Busy"
         case unreadable = "Unreadable"
+        /// The database or Keychain read did not finish in time.
+        case timedOut = "Not read in time"
     }
 
     static let accessTokenKey = "cursorAuth/accessToken"
@@ -27,10 +29,13 @@ struct CursorCredentialStore: Sendable {
 
     let database: URL
     private let keychain: any Keychain
+    private let readTimeout: Duration
 
-    init(home: URL, keychain: any Keychain) {
+    /// - Parameter readTimeout: The limit for one blocking read. Tests pass less.
+    init(home: URL, keychain: any Keychain, readTimeout: Duration = Self.readTimeout) {
         self.database = Self.databaseURL(home: home)
         self.keychain = keychain
+        self.readTimeout = readTimeout
     }
 
     static func databaseURL(home: URL) -> URL {
@@ -44,7 +49,7 @@ struct CursorCredentialStore: Sendable {
 
     /// Reads the login and reports the database state. Throws only `CancellationError`.
     func inspect() async throws -> (database: DatabaseState, lookup: CursorCredentialLookup) {
-        try await runBlocking(whenBusy: (.busy, .unreadable(.credentialsBusy))) {
+        try await runBlocking(whenBusy: (.timedOut, .unreadable(.credentialsTimedOut))) {
             [database, keychain] cancellation in
             let (values, state) = Self.databaseValues(database, cancellation: cancellation)
             if cancellation.isCancelled { throw CancellationError() }
@@ -53,24 +58,24 @@ struct CursorCredentialStore: Sendable {
     }
 
     /// Whether a login exists, without reading the Keychain secret. Sends nothing.
+    ///
+    /// Follows the same order as ``read()``: a busy or unreadable database proves nothing, so
+    /// the Keychain is not asked.
     func signInStatus() async throws -> SignInStatus {
-        try await runBlocking(whenBusy: .unknown(CursorFailure.credentialsBusy.issue.message)) {
+        try await runBlocking(whenBusy: .unknown(CursorFailure.credentialsTimedOut.issue.message)) {
             [database, keychain] cancellation in
             let (values, state) = Self.databaseValues(database, cancellation: cancellation)
             if cancellation.isCancelled { throw CancellationError() }
             if values[Self.accessTokenKey] != nil { return .signedIn }
-            do {
+            if let failure = Self.failure(for: state) { return .unknown(failure.issue.message) }
+            do throws(KeychainError) {
                 let items = try keychain.items(
                     servicePrefix: Self.accessTokenService, account: nil)
-                if items.contains(where: { $0.service == Self.accessTokenService }) {
-                    return .signedIn
-                }
+                let exists = items.contains { $0.service == Self.accessTokenService }
+                return exists ? .signedIn : .signedOut
             } catch {
-                return .unknown(
-                    (Self.failure(for: state) ?? .keychainUnavailable).issue.message)
+                return .unknown(Self.failure(for: error).issue.message)
             }
-            if let failure = Self.failure(for: state) { return .unknown(failure.issue.message) }
-            return .signedOut
         }
     }
 
@@ -81,11 +86,11 @@ struct CursorCredentialStore: Sendable {
         _ work: @escaping @Sendable (BlockingIO.Cancellation) throws -> Value
     ) async throws -> Value {
         do {
-            return try await BlockingIO.run(timeout: Self.readTimeout, work)
+            return try await BlockingIO.run(timeout: readTimeout, work)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            // A timeout or a full blocking-I/O pool is temporary, like a SQLite lock.
+            // A timeout or a full blocking-I/O pool is temporary.
             return busy
         }
     }
@@ -115,10 +120,13 @@ struct CursorCredentialStore: Sendable {
         return (values, .found)
     }
 
-    /// The database wins. The Keychain is read only when the database has no access token.
+    /// The database wins. The Keychain is read only when the database was read and has no
+    /// access token: a busy or unreadable database can still hold a token, and the Keychain item
+    /// can belong to another login, such as the `cursor-agent` CLI.
     private static func resolve(
         _ values: [String: String], state: DatabaseState, keychain: any Keychain
     ) -> CursorCredentialLookup {
+        if let failure = failure(for: state) { return .unreadable(failure) }
         let membership = values[membershipKey]
         let hasRefreshToken = values[refreshTokenKey] != nil
         if let token = values[accessTokenKey] {
@@ -131,16 +139,18 @@ struct CursorCredentialStore: Sendable {
         do {
             stored = try keychain.password(service: accessTokenService, account: nil)
         } catch {
-            return .unreadable(failure(for: state) ?? .keychainUnavailable)
+            return .unreadable(failure(for: error))
         }
-        if let token = stored.flatMap(CursorStoredValue.text) {
-            return .found(
-                CursorCredentials(
-                    accessToken: token, membership: membership, source: .keychain,
-                    hasRefreshToken: hasRefreshToken))
+        guard let stored else { return .missing }
+        // The item exists, so `signInStatus` says signed in. An item without a usable token is
+        // unreadable, not a sign-out, so the card and onboarding agree.
+        guard let token = CursorStoredValue.text(stored) else {
+            return .unreadable(.credentialsUnreadable)
         }
-        if let failure = failure(for: state) { return .unreadable(failure) }
-        return .missing
+        return .found(
+            CursorCredentials(
+                accessToken: token, membership: membership, source: .keychain,
+                hasRefreshToken: hasRefreshToken))
     }
 
     private static func failure(for state: DatabaseState) -> CursorFailure? {
@@ -148,6 +158,15 @@ struct CursorCredentialStore: Sendable {
         case .found, .missing: nil
         case .busy: .credentialsBusy
         case .unreadable: .credentialsUnreadable
+        case .timedOut: .credentialsTimedOut
+        }
+    }
+
+    private static func failure(for error: KeychainError) -> CursorFailure {
+        switch error {
+        case .unavailable: .keychainUnavailable
+        case .denied: .keychainDenied
+        case .failure: .keychainFailed
         }
     }
 }

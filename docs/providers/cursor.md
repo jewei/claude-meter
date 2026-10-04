@@ -128,18 +128,26 @@ The email is never part of the reading.
 
 ### Credentials
 
-1. Read the database first. Read the Keychain only when the database has no access token.
+1. Read the database first. Read the Keychain only when the database was read and has no access
+   token. A busy or unreadable database can still hold a token, and the Keychain item can
+   belong to another login (the `cursor-agent` CLI), so the Keychain proves nothing then.
 2. Never write, renew, or cache Cursor credentials. Never send the refresh token, and never
    read it from the Keychain. Diagnostics show only whether the database has one.
 3. A missing database is not an error. The Keychain fallback runs.
-4. A database that is not a regular file, or that SQLite cannot read, is unreadable.
+4. A database that is not a regular file, or that SQLite cannot read, is unreadable. The
+   Keychain is not read.
 5. A locked database (`SQLITE_BUSY`, `SQLITE_LOCKED`) fails at once. It is busy, not signed out.
-6. A locked or refused Keychain is a temporary failure, not a sign-out.
-7. No access token in the database or the Keychain means signed out.
+   The Keychain is not read.
+6. A locked, refused, or failed Keychain read is a temporary failure, not a sign-out. A refused
+   item asks the user to allow access in Keychain Access. A read that takes more than 5 s is
+   temporary too.
+7. No access token in the database and no Keychain item means signed out. A Keychain item that
+   exists but holds no usable token is unreadable, because `signInStatus` sees only the item.
 8. A cancelled read does not read the Keychain.
 9. Each refresh reads the credentials again, before and after its request.
-10. `signInStatus` reads the database and only the attributes of the Keychain item, and sends
-    nothing. It counts an expired token as signed in. The card asks the user to renew it.
+10. `signInStatus` reads the database and only the attributes of the Keychain item, in the same
+    order as a refresh, and sends nothing. It counts an expired token as signed in. The card
+    asks the user to renew it.
 
 ### Quota
 

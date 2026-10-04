@@ -24,12 +24,18 @@ enum CursorFailure: Error, Equatable, Sendable {
     case offline
     case timedOut
     case network
-    /// SQLite reported a lock, or the read did not finish in time.
+    /// SQLite reported a lock.
     case credentialsBusy
-    /// The state database exists but cannot be read, and the Keychain has no token.
+    /// The database or Keychain read did not finish in time.
+    case credentialsTimedOut
+    /// The state database exists but cannot be read, or the Keychain item holds no usable token.
     case credentialsUnreadable
-    /// The Keychain is locked or refused the read.
+    /// The Keychain is locked or would need to show a prompt.
     case keychainUnavailable
+    /// The Keychain refused access to the item.
+    case keychainDenied
+    /// Any other Keychain error.
+    case keychainFailed
     /// The login changed while a request was in flight. The response is discarded.
     case signInChanged
     /// The local clock gives no valid seven-day range.
@@ -77,12 +83,23 @@ enum CursorFailure: Error, Equatable, Sendable {
         case .credentialsBusy:
             UsageIssue(
                 "The Cursor credential database is busy. Claude Meter will try again soon.")
+        case .credentialsTimedOut:
+            UsageIssue(
+                "Reading Cursor credentials took too long. Claude Meter will try again soon.")
         case .credentialsUnreadable:
             UsageIssue(
                 "Could not read Cursor credentials. Open Cursor and try again.", needsAction: true)
         case .keychainUnavailable:
             UsageIssue(
                 "Could not read Cursor credentials from the Keychain. Unlock your Mac and try again."
+            )
+        case .keychainDenied:
+            UsageIssue(
+                "Claude Meter cannot read the Cursor Keychain item. Allow access in Keychain Access, or sign in to the Cursor app.",
+                needsAction: true)
+        case .keychainFailed:
+            UsageIssue(
+                "Could not read Cursor credentials from the Keychain. Claude Meter will try again soon."
             )
         case .signInChanged:
             UsageIssue(

@@ -109,6 +109,39 @@ import Testing
         #expect(account.windows.first?.usedPercent == 62)
     }
 
+    /// Without a stored plan, a plan that the same login showed in the last day is reused, so a
+    /// refresh sends one request, not two.
+    @Test func aRecentPlanOfTheSameLoginIsReusedWithoutARequest() async throws {
+        try home.write(token: CursorFixture.token())
+        let http = FakeHTTPClient(json: CursorFixture.usage)
+        let account = try account(try await provider(http).fetch(previous: previous()))
+        #expect(account.plan == "Pro")
+        #expect(http.requests.map(\.url) == [CursorAPI.usageURL])
+    }
+
+    /// The plan badge does not disappear because the optional plan request failed.
+    @Test func aFailedPlanRequestKeepsThePlanOfTheSameLogin() async throws {
+        try home.write(token: CursorFixture.token(expiresAt: .reference(.days(3))))
+        let http = FakeHTTPClient { request in
+            request.url == CursorAPI.planURL ? .json(500, "") : .json(200, CursorFixture.usage)
+        }
+        advance(.days(2))
+        let account = try account(try await provider(http).fetch(previous: previous()))
+        #expect(account.plan == "Pro")
+        #expect(http.requests.map(\.url) == [CursorAPI.usageURL, CursorAPI.planURL])
+    }
+
+    @Test func thePlanOfAnotherLoginIsNeverReused() async throws {
+        try home.write(token: CursorFixture.token())
+        let http = FakeHTTPClient { request in
+            request.url == CursorAPI.planURL ? .json(500, "") : .json(200, CursorFixture.usage)
+        }
+        let other = previous(owner: CursorFixture.ownerOf(subject: "auth0|other"))
+        let account = try account(try await provider(http).fetch(previous: other))
+        #expect(account.plan == nil)
+        #expect(http.requests.map(\.url) == [CursorAPI.usageURL, CursorAPI.planURL])
+    }
+
     @Test func plansKeepTheirCapitalization() async throws {
         try home.write(token: CursorFixture.token(), membership: "Enterprise Custom")
         let account = try account(

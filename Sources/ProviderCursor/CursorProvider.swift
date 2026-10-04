@@ -11,6 +11,9 @@ import MeterPlatform
 public final class CursorProvider: UsageProvider, DiagnosticsReporting {
     /// The account label before the user renames it.
     static let accountName = "Cursor"
+    /// A plan from `GetPlanInfo` is asked for again after this long. Plans rarely change, and
+    /// every request counts against Cursor's limits.
+    static let planMaxAge: TimeInterval = 24 * 3_600
     private static let log = Log(.cursor)
 
     private let store: CursorCredentialStore
@@ -117,7 +120,7 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
         }
         let result: Result<AccountUsage, CursorFailure>
         do {
-            result = .success(try await requestUsage(credentials, now: now))
+            result = .success(try await requestUsage(credentials, previous: previous, now: now))
         } catch let failure as CursorFailure {
             result = .failure(failure)
         }
@@ -141,9 +144,9 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
     }
 
     /// Throws ``CursorFailure`` or `CancellationError`.
-    private func requestUsage(_ credentials: CursorCredentials, now: Date) async throws
-        -> AccountUsage
-    {
+    private func requestUsage(
+        _ credentials: CursorCredentials, previous: AccountUsage?, now: Date
+    ) async throws -> AccountUsage {
         let token = credentials.accessToken
         let request = CursorAPI.connectRequest(
             CursorAPI.usageURL, token: token, deadline: CursorAPI.usageDeadline)
@@ -152,21 +155,31 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
         guard report.isEnabled else { throw CursorFailure.usageDisabled }
         var plan = credentials.membership
         if plan == nil {
-            plan = try await planName(token: token, now: now)
+            let known = previous?.owner == credentials.owner ? previous : nil
+            plan = try await planName(token: token, known: known, now: now)
         }
         return report.account(plan: plan, owner: credentials.owner, now: now)
     }
 
-    /// The plan from `GetPlanInfo`, used only when Cursor stored no plan. Its failures are
-    /// silent, because the plan only labels the card.
-    private func planName(token: String, now: Date) async throws -> String? {
+    /// The plan from `GetPlanInfo`, used only when Cursor stored no plan. A plan that the same
+    /// login showed less than ``planMaxAge`` ago is reused without a request, and a failed
+    /// request keeps it, because the plan only labels the card.
+    private func planName(token: String, known: AccountUsage?, now: Date) async throws
+        -> String?
+    {
+        let knownPlan = known?.plan
+        if let knownPlan, let observedAt = known?.observedAt, observedAt <= now,
+            now.timeIntervalSince(observedAt) < Self.planMaxAge
+        {
+            return knownPlan
+        }
         let request = CursorAPI.connectRequest(
             CursorAPI.planURL, token: token, deadline: CursorAPI.planDeadline)
         do {
             return CursorPlan.name(
-                planInfo: try await CursorAPI.send(request, http: http, now: now))
+                planInfo: try await CursorAPI.send(request, http: http, now: now)) ?? knownPlan
         } catch is CursorFailure {
-            return nil
+            return knownPlan
         }
     }
 

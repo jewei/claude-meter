@@ -80,8 +80,8 @@ string. Other fields are ignored.
 
 ### Plan: `GetPlanInfo`
 
-Sent only when the database has no `cursorAuth/stripeMembershipType`. Same headers and body as
-the usage request. Deadline: 10 s.
+Sent only when the database has no `cursorAuth/stripeMembershipType`, at most once a day for
+one login (rule 14). Same headers and body as the usage request. Deadline: 10 s.
 
 ```text
 POST https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo
@@ -162,7 +162,8 @@ The email is never part of the reading.
 11. A token with a known `exp` at or before now is never sent.
 12. Spend and limit never give a percentage. `totalPercentUsed` is the usage.
 13. A body that is not a JSON object is an unexpected response.
-14. The plan request runs only when Cursor stored no plan. Its failures are silent.
+14. The plan request runs only when Cursor stored no plan, and not while the same login showed a
+    plan less than 24 hours ago. Its failures are silent and keep the plan of the same login.
 15. The plan keeps the capitalization that Cursor used, except for the known names.
 
 ### Retention

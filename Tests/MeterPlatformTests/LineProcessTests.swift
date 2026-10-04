@@ -33,9 +33,11 @@ import Testing
     @Test func killsAProcessThatIgnoresTerminate() async throws {
         let process = LineProcess(
             executable: URL(fileURLWithPath: "/bin/sh"),
-            arguments: ["-c", "trap '' TERM; while :; do sleep 1; done"], environment: [:])
+            arguments: ["-c", "trap '' TERM; echo ready; while :; do sleep 1; done"],
+            environment: [:])
         try process.start()
-        try await Task.sleep(for: .milliseconds(100))
+        // The trap is set when the child says so.
+        try await expectReady(process)
         let clock = ContinuousClock()
         let start = clock.now
         await process.stop()
@@ -78,10 +80,11 @@ import Testing
 
     @Test func aWriteToAClosedPipeThrowsInsteadOfSignaling() async throws {
         let process = LineProcess(
-            executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "exec 0<&-; sleep 5"],
-            environment: [:])
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "exec 0<&-; echo ready; sleep 5"], environment: [:])
         try process.start()
-        try await Task.sleep(for: .milliseconds(200))
+        // The input is closed when the child says so.
+        try await expectReady(process)
         // Without F_SETNOSIGPIPE this write would kill the test process with SIGPIPE.
         #expect(throws: LineProcess.ProcessError.notRunning) { try process.send(Data("x".utf8)) }
         await process.stop()
@@ -183,6 +186,25 @@ import Testing
         #expect(await waitUntil { kill(grandchild, 0) != 0 })
     }
 
+    @Test func stopEndsABackgroundChildAfterTheChildExited() async throws {
+        let process = LineProcess(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "sleep 30 >/dev/null 2>&1 & echo $!"], environment: [:])
+        try process.start()
+        let pid = process.processIdentifier
+        var grandchild: Int32?
+        for try await line in process.lines {
+            grandchild = Int32(String(decoding: line, as: UTF8.self))
+        }
+        let background = try #require(grandchild)
+        // The child exited and was reaped; its background child still runs in its group.
+        #expect(await waitUntil { kill(pid, 0) != 0 })
+        #expect(kill(background, 0) == 0)
+        #expect(getpgid(background) == pid)
+        await process.stop()
+        #expect(await waitUntil { kill(background, 0) != 0 })
+    }
+
     @Test func stopFinishesTheLines() async throws {
         let process = LineProcess(
             executable: URL(fileURLWithPath: "/bin/sleep"), arguments: ["30"], environment: [:])
@@ -210,6 +232,15 @@ import Testing
         await process.stop()
         #expect(lines.map(\.count) == [300_000, 3])
         #expect(lines.first?.allSatisfy { $0 == 0x61 } == true)
+    }
+
+    /// Waits for the line `ready` that the child prints when it is set up.
+    private func expectReady(
+        _ process: LineProcess, sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        var iterator = process.lines.makeAsyncIterator()
+        let line = try await iterator.next()
+        #expect(line == Data("ready".utf8), sourceLocation: sourceLocation)
     }
 
     private func expectReturnsQuickly(

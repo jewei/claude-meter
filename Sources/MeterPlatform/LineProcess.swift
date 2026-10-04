@@ -11,10 +11,12 @@ import MeterDomain
 /// unread backlog are bounded, and a truncated line is never delivered. The last 2 KiB of
 /// stderr are kept for ``lastErrorLine``.
 ///
-/// `@unchecked Sendable`: `state` is guarded by its lock, and `lines` is a thread-safe stream.
-/// `process` and the pipes are used only by the one task that owns this object (`start`,
-/// `send`, `stop`); Foundation's handlers read the pipes' descriptors and touch only `state`
-/// and the stream.
+/// `@unchecked Sendable`: `state` is guarded by its lock, `lines` is a thread-safe stream, and
+/// stderr reads run on the serial queue `errorReads`. `process` is used only by the one task
+/// that owns this object (`start`, `send`, `stop`). Foundation's handlers read the pipes'
+/// descriptors, touch `state` and the stream, and clear their own `readabilityHandler`;
+/// `FileHandle` is `Sendable` and that property is atomic, so `stop()` may clear it at the same
+/// time.
 public final class LineProcess: @unchecked Sendable {
     public enum ProcessError: Error, Equatable, LocalizedError, Sendable {
         case launchFailed(String)
@@ -58,6 +60,9 @@ public final class LineProcess: @unchecked Sendable {
     private let maxBacklogBytes: Int
     private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
     private let state = Locked(State())
+    /// Keeps stderr bytes in order when a handler and ``stop()`` read at the same time, without
+    /// holding the lock of `state` during `read(2)`.
+    private let errorReads = DispatchQueue(label: "com.jewei.claudemeter.line-process.stderr")
 
     private struct State: Sendable {
         var buffer = Data()
@@ -168,19 +173,23 @@ public final class LineProcess: @unchecked Sendable {
     /// Stops the process group and waits until the child is reaped, at most ``reapLimit``
     /// after the last signal. Then it reads the rest of stderr, stops reading, and finishes
     /// ``lines``. Returns at once when the process never launched. Safe to call more than once.
+    ///
+    /// The group is signaled also when the child already exited, because a background child of
+    /// the child can still run in it.
     public func stop() async {
-        let (hasLaunched, closesInput) = state.withLock { state in
+        let (hasLaunched, leadsGroup, closesInput) = state.withLock { state in
             defer { state.isInputClosed = true }
-            return (state.hasLaunched, !state.isInputClosed)
+            return (state.hasLaunched, state.leadsGroup, !state.isInputClosed)
         }
         if closesInput { try? input.fileHandleForWriting.close() }
         // A process that never launched has no exit to wait for.
         guard hasLaunched else { return }
-        if process.isRunning {
+        if process.isRunning || leadsGroup {
+            // An empty group fails with ESRCH, which is harmless.
             signal(SIGTERM)
             let exited = await waitForExit(timeout: Self.terminationGrace)
             // The group can outlive the child, so it gets SIGKILL too.
-            if !exited || state.value.leadsGroup { signal(SIGKILL) }
+            if !exited || leadsGroup { signal(SIGKILL) }
         }
         if await !waitForExit(timeout: Self.reapLimit) {
             Self.log.error(
@@ -219,18 +228,22 @@ public final class LineProcess: @unchecked Sendable {
         }
     }
 
-    /// Reads everything that stderr holds now and keeps the last ``errorTailBytes``. Reads and
-    /// appends under the lock, so the bytes stay in order when ``stop()`` reads too.
+    /// Reads everything that stderr holds now and keeps the last ``errorTailBytes``. Reads run
+    /// on `errorReads`, so the bytes stay in order when ``stop()`` reads too, and only the
+    /// append takes the lock of `state`.
     private func readErrors(_ descriptor: Int32) {
         let limit = Self.errorTailBytes
-        let isAtEnd = state.withLock { state -> Bool in
+        let isAtEnd = errorReads.sync { () -> Bool in
             var buffer = [UInt8](repeating: 0, count: 4 * 1024)
             while true {
                 let count = read(descriptor, &buffer, buffer.count)
                 if count > 0 {
-                    state.errorTail.append(contentsOf: buffer[0..<count])
-                    if state.errorTail.count > limit {
-                        state.errorTail = Data(state.errorTail.suffix(limit))
+                    let bytes = Data(buffer[0..<count])
+                    state.withLock { state in
+                        state.errorTail.append(bytes)
+                        if state.errorTail.count > limit {
+                            state.errorTail = Data(state.errorTail.suffix(limit))
+                        }
                     }
                 } else if count < 0, errno == EINTR {
                     continue

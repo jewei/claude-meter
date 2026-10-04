@@ -24,27 +24,22 @@ actor ManualLogin {
     let now: @Sendable () -> Date
     let log = Log(.claude)
 
-    // `ManualLogin+Refresh.swift` reads or changes the members below that are not private.
-    // Nothing outside this actor may touch them.
-
     /// Moves when a Connect is stored and when a Disconnect starts. Work that began in an
     /// older generation cannot store or change anything.
     private(set) var generation: UInt64 = 0
     private var connectAttempts: UInt64 = 0
     /// Set when a Disconnect starts and cleared by the next Connect. While it is set there is
     /// no login, whatever a Keychain read that started earlier returns.
-    private var isDisconnected = false
+    private(set) var isDisconnected = false
     private var writeSequence: UInt64 = 0
     private var isWriting = false
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
-    /// The newest known credential of the stored connection, including unsaved rotations.
-    var latest: ManualCredential?
-    var refreshes: [String: Task<ManualCredential, any Error>] = [:]
-    var policy = ManualRefreshPolicy()
-    /// Tokens that a Connect got from the token endpoint but has not stored, by the refresh
-    /// token that the user pasted. The server spent that token when it rotated it, so a retry
-    /// of Connect with the same pasted tokens must use these instead.
-    var pendingRotation: (pasted: String, credential: ManualCredential)?
+    /// The newest known credential of the stored connection, including unsaved rotations. Only
+    /// this file changes it; a refresh hands its rotation to ``adopt(_:generation:)``.
+    private(set) var latest: ManualCredential?
+    /// The token refreshes of this generation. `ManualLogin+Refresh.swift` owns its fields;
+    /// this file only starts it over.
+    var refreshState = RefreshState()
 
     init(
         vault: ManualCredentialVault, refresher: TokenRefresher, now: @escaping @Sendable () -> Date
@@ -141,7 +136,6 @@ actor ManualLogin {
         startGeneration()
         isDisconnected = false
         latest = credential
-        pendingRotation = nil
     }
 
     /// Deletes the stored login and forgets every token in memory. From now on there is no
@@ -150,7 +144,6 @@ actor ManualLogin {
         startGeneration()
         isDisconnected = true
         latest = nil
-        pendingRotation = nil
         await lockWrites()
         defer { unlockWrites() }
         writeSequence += 1
@@ -180,16 +173,29 @@ actor ManualLogin {
         }
     }
 
+    /// Forgets the token requests in flight, the refresh failures, and the rotation that a
+    /// Connect got: a Connect was stored, or a Disconnect started.
     private func startGeneration() {
         generation &+= 1
-        refreshes.removeAll()
-        policy = ManualRefreshPolicy()
+        refreshState = RefreshState()
+    }
+
+    /// Takes `fresh`, a rotation of the stored login that a refresh of generation `expected`
+    /// got: in memory at once, so that no other caller sends the spent refresh token, then
+    /// saved after the writes before it. Does nothing when a Connect or Disconnect came
+    /// meanwhile, or when another caller took these tokens already.
+    func adopt(_ fresh: ManualCredential, generation expected: UInt64) async {
+        guard generation == expected, let latest, latest.connectionID == fresh.connectionID,
+            latest.accessToken != fresh.accessToken
+        else { return }
+        self.latest = fresh
+        await persist(fresh, generation: expected)
     }
 
     /// Stores a rotation after the writes before it. A Connect or Disconnect meanwhile, or a
     /// newer rotation, makes it obsolete. The in-memory rotation stays usable when the save
     /// fails, until the next save works.
-    func persist(_ credential: ManualCredential, generation expected: UInt64) async {
+    private func persist(_ credential: ManualCredential, generation expected: UInt64) async {
         await lockWrites()
         defer { unlockWrites() }
         guard generation == expected, latest == credential else { return }

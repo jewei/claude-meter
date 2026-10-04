@@ -5,11 +5,23 @@ import MeterPlatform
 /// Token refreshes of the manual login: when a refresh goes out, how callers share one, and
 /// what a rotation changes. ``ManualRefreshPolicy`` decides what may go out after failures.
 extension ManualLogin {
+    /// What the token refreshes of one generation know. Only this file reads or changes its
+    /// fields; ``ManualLogin`` starts it over when a Connect is stored or a Disconnect starts.
+    struct RefreshState: Sendable {
+        /// Token requests in flight, by the refresh token that they spend.
+        fileprivate var running: [String: Task<ManualCredential, any Error>] = [:]
+        fileprivate var policy = ManualRefreshPolicy()
+        /// Tokens that a Connect got from the token endpoint but has not stored, by the
+        /// refresh token that the user pasted. The server spent that token when it rotated
+        /// it, so a retry of Connect with the same pasted tokens must use these instead.
+        fileprivate var pendingRotation: (pasted: String, credential: ManualCredential)?
+    }
+
     /// A credential that does not expire within 60 s, refreshed first when needed. Throws
     /// ``Failure/rejected`` without a request for a connection that the server rejected.
     func usable() async throws -> ManualCredential {
         let credential = try await current()
-        guard !policy.isRejected(connectionID: credential.connectionID) else {
+        guard !refreshState.policy.isRejected(connectionID: credential.connectionID) else {
             throw Failure.rejected
         }
         guard credential.isExpired(at: now()) else { return credential }
@@ -25,19 +37,22 @@ extension ManualLogin {
     /// Stops all requests for the connection of `credential` until the next Connect: the
     /// server rejected its tokens, and a refresh did not help.
     func markRejected(_ credential: ManualCredential) {
-        guard policy.rejectConnection(credential.connectionID) else { return }
+        guard refreshState.policy.rejectConnection(credential.connectionID) else { return }
         log.notice("Manual Claude tokens were rejected; waiting for a new Connect")
     }
 
     /// The rotation that an earlier Connect got for the refresh token the user pasted.
     func pendingRotation(for pastedRefreshToken: String) -> ManualCredential? {
-        guard let pendingRotation, pendingRotation.pasted == pastedRefreshToken else { return nil }
-        return pendingRotation.credential
+        guard let pending = refreshState.pendingRotation, pending.pasted == pastedRefreshToken
+        else { return nil }
+        return pending.credential
     }
 
     /// Forgets the pending rotation of `pastedRefreshToken`, after the server rejected it.
     func discardPendingRotation(for pastedRefreshToken: String) {
-        if pendingRotation?.pasted == pastedRefreshToken { pendingRotation = nil }
+        if refreshState.pendingRotation?.pasted == pastedRefreshToken {
+            refreshState.pendingRotation = nil
+        }
     }
 
     /// Refreshes tokens that are not stored yet, during Connect. Shares an in-flight request
@@ -54,7 +69,7 @@ extension ManualLogin {
             guard generation == startGeneration else { throw Failure.changed }
             // The shared request may have started for the stored connection.
             fresh.connectionID = candidate.connectionID
-            pendingRotation = (pastedRefreshToken, fresh)
+            refreshState.pendingRotation = (pastedRefreshToken, fresh)
             return fresh
         case .failure(Failure.rejected):
             discardPendingRotation(for: pastedRefreshToken)
@@ -71,7 +86,7 @@ extension ManualLogin {
             return latest
         }
         guard let refreshToken = used.refreshToken else { throw Failure.expired }
-        try policy.checkRefresh(refreshToken, now: now())
+        try refreshState.policy.checkRefresh(refreshToken, now: now())
 
         let startGeneration = generation
         let (result, isFirst) = await sharedRefresh(used, refreshToken: refreshToken)
@@ -80,20 +95,16 @@ extension ManualLogin {
         case .success(var fresh):
             // The shared request may have started for a Connect of the same refresh token.
             fresh.connectionID = used.connectionID
-            if latest?.connectionID == used.connectionID, latest?.accessToken != fresh.accessToken {
-                // In memory at once, so that no other caller sends the rotated refresh token.
-                latest = fresh
-                policy.recordSuccess()
-                await persist(fresh, generation: startGeneration)
-            }
+            refreshState.policy.recordSuccess()
+            await adopt(fresh, generation: startGeneration)
             return fresh
         case .failure(Failure.rejected):
-            policy.rejectRefreshToken(refreshToken)
+            refreshState.policy.rejectRefreshToken(refreshToken)
             if isFirst { log.notice("Manual Claude refresh token was rejected") }
             throw Failure.rejected
         case .failure(let error):
             if isFirst {
-                policy.recordTemporaryFailure(now: now())
+                refreshState.policy.recordTemporaryFailure(now: now())
                 log.warning("Manual Claude token refresh failed: \(error.localizedDescription)")
             }
             throw error
@@ -106,7 +117,7 @@ extension ManualLogin {
         _ credential: ManualCredential, refreshToken: String
     ) async -> (result: Result<ManualCredential, any Error>, isFirst: Bool) {
         let task: Task<ManualCredential, any Error>
-        if let running = refreshes[refreshToken] {
+        if let running = refreshState.running[refreshToken] {
             task = running
         } else {
             let refresher = refresher
@@ -119,11 +130,11 @@ extension ManualLogin {
                     throw Failure.refreshFailed(reason)
                 }
             }
-            refreshes[refreshToken] = task
+            refreshState.running[refreshToken] = task
         }
         let result = await task.result
-        let isFirst = refreshes[refreshToken] == task
-        if isFirst { refreshes[refreshToken] = nil }
+        let isFirst = refreshState.running[refreshToken] == task
+        if isFirst { refreshState.running[refreshToken] = nil }
         return (result, isFirst)
     }
 }

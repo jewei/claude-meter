@@ -7,9 +7,9 @@ import Foundation
 public enum Countdown {
     /// `42m`, `3h 12m`, `36h`, or `6d 7h`. Nil when `date` is not in the future.
     ///
-    /// Minutes round to the nearest minute, with a minimum of one. Below 12 hours the text
-    /// shows hours and minutes; below 48 hours, whole hours; from 48 hours, days and hours.
-    /// Hours always round down, so the text never claims more time than remains.
+    /// Minutes round to the nearest minute, with a minimum of one, so the text can claim up
+    /// to 30 seconds more than remains. Below 12 hours the text shows hours and minutes; below
+    /// 48 hours, whole hours; from 48 hours, days and hours. Hours and days then round down.
     public static func text(until date: Date, now: Date) -> String? {
         let seconds = date.timeIntervalSince(now)
         guard seconds.isFinite, seconds > 0,

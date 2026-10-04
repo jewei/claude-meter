@@ -25,6 +25,11 @@ core.
 - The popover is a native panel that resizes smoothly when you open and close cards.
 - Settings opens as a normal window with a Dock icon while it is open, and no longer floats
   above other apps.
+- The Settings window can be resized, and always fits on the screen.
+- A card's context menu has **Use in Menu Bar**, also as a VoiceOver action, so you can
+  choose the menu-bar account without a drag.
+- Removing a folder, and a Disconnect that deletes tokens you entered, ask first.
+- The welcome screen offers Quit.
 - Every percentage is a whole number, everywhere.
 - Codex windows are named Session and Weekly, the same as Claude.
 - Exactly 100% used now shows as out of energy in the menu bar as well as in the hero.
@@ -44,6 +49,11 @@ core.
   an expired one comes first.
 - Reset countdowns between 47h 30m and 48h no longer show "48h".
 - The loading indicator in the menu bar spins.
+- The popover closes when you switch apps or Spaces, and a click on the menu-bar icon
+  right after it closed no longer opens it again.
+- Releasing a dragged card no longer opens or closes it.
+- The popover fits on short screens and with a hidden menu bar.
+- Text has enough contrast in light and dark mode, also on hover and press.
 
 ### Removed
 

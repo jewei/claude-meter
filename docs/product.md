@@ -48,8 +48,10 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 7. Dragging a Claude or Codex card to the top of the list pins it and makes its provider
    the main meter. A drop in place of a first card that is not the main card does the same,
    so that card can always become the main meter. While a Claude or Codex card is visible,
-   Cursor, Grok, and extra usage cannot go first (`CardOrder.move`). **Use automatic order**
-   in Appearance clears the order and every pin.
+   Cursor, Grok, and extra usage cannot go first (`CardOrder.move`). **Use in Menu Bar** in
+   a card's context menu, also a VoiceOver action, does the same as a drag to the top
+   (`CardModel.canUseInMenuBar`). **Use automatic order** in Appearance clears the order and
+   every pin.
 
 ## 3. Menu bar (`MenuBarModel`)
 
@@ -116,7 +118,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    card state (`Settings.forgetAccount`). Every connect and disconnect refreshes Claude, also
    when the connection mode stays the same (`ClaudeSettingsModel`). Claude Code's active
    login with no config dir (`oauth-…`) is listed too, to name it and set its plan; it has
-   no switch and no Remove. A config dir is listed once by its canonical path.
+   no switch and no Remove. A config dir is listed once by its canonical path. Removing a
+   folder, and a Disconnect that would delete tokens that the user entered, ask first, inside
+   the page (`DataSourceText.removeConfirmation`, `.disconnectConfirmation`).
 2. **Appearance**: card style, energy left or used, the menu-bar window, warning and critical
    thresholds (warning 50–90, critical 60–100, steps of 5; critical stays above warning),
    and automatic order.
@@ -128,7 +132,8 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 
 ## 7. First launch and upgrades
 
-1. The first launch shows the welcome. Refreshing starts when the user opens Settings from
-   the popover.
+1. The first launch shows the welcome. Refreshing starts when the user opens Settings by any
+   path: the popover, Command-comma, the app menu, or opening the app again from Finder
+   (`AppController.openSettings`).
 2. 4.0 starts with fresh settings. Installations older than 3.0 receive 3.1.3 first through
    the update feed, which removes 2.x hooks and files.

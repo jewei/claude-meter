@@ -127,6 +127,51 @@ import Testing
         #expect(Set(loaded.keys) == [.codex])
     }
 
+    @Test func forgetBeforeLoadStaysForgotten() async throws {
+        let directory = try TemporaryDirectory()
+        defer { directory.remove() }
+        let file = directory.path("readings.json")
+        let earlier = ReadingArchive(file: file)
+        earlier.record(.sample(.claude), for: .claude)
+        earlier.flush()
+
+        let archive = ReadingArchive(file: file)
+        archive.record(nil, for: .claude)
+        #expect(await archive.load().isEmpty)
+        archive.record(.sample(.codex), for: .codex)
+        archive.flush()
+        #expect(Set(await ReadingArchive(file: file).load().keys) == [.codex])
+    }
+
+    @Test func recordBeforeLoadWins() async throws {
+        let directory = try TemporaryDirectory()
+        defer { directory.remove() }
+        let file = directory.path("readings.json")
+        let earlier = ReadingArchive(file: file)
+        earlier.record(.sample(.claude, used: 10), for: .claude)
+        earlier.flush()
+
+        let archive = ReadingArchive(file: file)
+        archive.record(.sample(.claude, used: 90), for: .claude)
+        #expect(await archive.load().isEmpty)
+        archive.flush()
+        #expect(await ReadingArchive(file: file).load()[.claude] == .sample(.claude, used: 90))
+    }
+
+    @Test func anExistingFolderBecomesPrivate() async throws {
+        let directory = try TemporaryDirectory()
+        defer { directory.remove() }
+        let folder = try directory.makeDirectory("ClaudeMeter")
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: folder.path)
+        let archive = ReadingArchive(file: folder.appending(path: "readings.json"))
+        archive.record(.sample(.claude), for: .claude)
+        archive.flush()
+        let mode = try FileManager.default.attributesOfItem(atPath: folder.path)[
+            .posixPermissions]
+        #expect(mode as? Int == 0o700)
+    }
+
     @Test func unreadableFilesLoadAsEmpty() async throws {
         let directory = try TemporaryDirectory()
         defer { directory.remove() }

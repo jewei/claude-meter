@@ -17,6 +17,9 @@ public final class ReadingArchive: Sendable {
 
     private struct State: Sendable {
         var readings: [ProviderID: ProviderUsage] = [:]
+        /// Providers recorded or forgotten this launch. A later load never brings back their
+        /// saved values.
+        var recorded: Set<ProviderID> = []
         var isWriteScheduled = false
     }
 
@@ -31,12 +34,14 @@ public final class ReadingArchive: Sendable {
             .appending(path: "Library/Application Support/\(AppIdentity.folderName)/readings.json")
     }
 
-    /// Reads the saved readings. A missing or unreadable file reads as empty.
+    /// Reads the saved readings. A missing or unreadable file reads as empty. A provider that
+    /// was recorded or forgotten before the load keeps that newer value: it is neither merged
+    /// nor returned.
     public func load() async -> [ProviderID: ProviderUsage] {
         let file = file
         let loaded: [ProviderID: ProviderUsage]
         do {
-            let data = try await BlockingIO.run(timeout: .seconds(2)) { _ in
+            let data = try await BlockingIO.run(timeout: .seconds(5)) { _ in
                 try LocalFile.read(file, maxBytes: Self.maxFileBytes)
             }
             let decoded = try JSONDecoder.meter.decode([ProviderID: ProviderUsage].self, from: data)
@@ -47,16 +52,18 @@ public final class ReadingArchive: Sendable {
             log.warning("Ignored the saved readings: \(error.localizedDescription)")
             loaded = [:]
         }
-        state.withLock { state in
-            state.readings.merge(loaded) { current, _ in current }
+        return state.withLock { state in
+            let older = loaded.filter { !state.recorded.contains($0.key) }
+            state.readings.merge(older) { current, _ in current }
+            return older
         }
-        return loaded
     }
 
     /// Records the newest value for a provider, or nil to forget it, and schedules a write.
     public func record(_ usage: ProviderUsage?, for provider: ProviderID) {
         let needsWrite = state.withLock { state -> Bool in
             state.readings[provider] = usage?.persistable
+            state.recorded.insert(provider)
             defer { state.isWriteScheduled = true }
             return !state.isWriteScheduled
         }
@@ -79,6 +86,11 @@ public final class ReadingArchive: Sendable {
             try FileManager.default.createDirectory(
                 at: directory, withIntermediateDirectories: true,
                 attributes: [.posixPermissions: 0o700])
+            // An existing folder keeps its mode, so set it on every write. The atomic write
+            // creates the file with the default mode before it becomes 0600; a private folder
+            // keeps other users out for that moment.
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o700], ofItemAtPath: directory.path)
             let data = try JSONEncoder.meter.encode(readings)
             try data.write(to: file, options: [.atomic])
             try FileManager.default.setAttributes(

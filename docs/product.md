@@ -92,8 +92,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    the accounts with plenty left ("fresh") and names the lowest account. Stale accounts are
    left out of that count and ranking, so old numbers never read as current.
 6. Cards: one per account, in the user's order, with the main card first and a **Menu bar**
-   pill. Automatic order is the main provider's accounts (selected first), Claude extra usage,
-   the other main-capable provider, Cursor, then Grok.
+   pill. Without a main card, the first Claude or Codex card comes first
+   (`CardOrder.ordered`). Automatic order is the main provider's accounts (selected first),
+   Claude extra usage, the other main-capable provider, Cursor, then Grok.
 7. **Rings** cards are always open. **Bars**, Cursor, and Grok cards open and close, and
    remember their state. Details hold scoped windows, usage-limit resets, and tokens used.
 8. A card shows its account's own issue. A card of a provider that is not the main meter also

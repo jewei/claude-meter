@@ -15,9 +15,10 @@ import Testing
             .account(.cursor, .default), .account(.grok, .default), .account(.claude, "personal"),
             .account(.cursor, .default),
         ]
+        // Without a main card, the first card that can own the menu bar leads.
         #expect(
             CardOrder.ordered(automatic: automatic, saved: saved, main: nil) == [
-                .account(.cursor, .default), .account(.claude, "personal"),
+                .account(.claude, "personal"), .account(.cursor, .default),
                 .account(.claude, "work"), .account(.codex, "home"),
             ])
         #expect(
@@ -26,6 +27,26 @@ import Testing
                     .account(.codex, "home"), .account(.cursor, .default),
                     .account(.claude, "personal"), .account(.claude, "work"),
                 ])
+    }
+
+    @Test func aSavedOrderKeepsCursorAndGrokFirstOnlyWithoutClaudeAndCodexCards() {
+        let saved: [CardID] = [.account(.grok, .default), .account(.cursor, .default)]
+        let automatic: [CardID] = [.account(.cursor, .default), .account(.grok, .default)]
+        #expect(CardOrder.ordered(automatic: automatic, saved: saved, main: nil) == saved)
+        // A Codex card shows while the main provider has none: it goes first, and a move that
+        // keeps it first works.
+        let withCodex = [CardID.account(.codex, "/h")] + automatic
+        let order = CardOrder.ordered(automatic: withCodex, saved: saved, main: nil)
+        #expect(order == [.account(.codex, "/h")] + saved)
+        #expect(
+            CardOrder.move(
+                .account(.cursor, .default), to: 1, visible: order, saved: saved, main: nil)
+                == .moved(
+                    .init(
+                        order: [
+                            .account(.codex, "/h"), .account(.cursor, .default),
+                            .account(.grok, .default),
+                        ], newMain: nil)))
     }
 
     @Test func movingAnAccountToTheTopMakesItTheMainMeter() {

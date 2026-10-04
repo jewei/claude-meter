@@ -3,14 +3,20 @@ import MeterDomain
 /// The user's card order and the drag-to-top rule that selects the main meter.
 public enum CardOrder {
     /// Saved cards keep their saved order, new cards follow in automatic order, and the main
-    /// card always comes first. Saved IDs of hidden cards are kept for their return.
+    /// card always comes first. Without a main card, the first Claude or Codex card comes
+    /// first, so a saved order never puts Cursor, Grok, or extra usage on top while a card
+    /// that can own the menu bar shows (`docs/product.md` §2.7). Saved IDs of hidden cards
+    /// are kept for their return.
     public static func ordered(automatic: [CardID], saved: [CardID], main: CardID?) -> [CardID] {
         let visible = Set(automatic)
         var seen = Set<CardID>()
         var result = saved.filter { visible.contains($0) && seen.insert($0).inserted }
         result += automatic.filter { seen.insert($0).inserted }
-        if let main, let index = result.firstIndex(of: main) {
-            result.insert(result.remove(at: index), at: 0)
+        let lead =
+            main.flatMap { result.firstIndex(of: $0) }
+            ?? result.firstIndex { $0.menuBarSelection != nil }
+        if let lead {
+            result.insert(result.remove(at: lead), at: 0)
         }
         return result
     }

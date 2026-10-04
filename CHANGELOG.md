@@ -56,6 +56,8 @@ core.
 - Text has enough contrast in light and dark mode, also on hover and press.
 - Moving a card lower in the popover no longer changes the menu-bar meter or its pinned
   account.
+- A saved card order no longer keeps Cursor, Grok, or extra usage first while a Claude or
+  Codex card shows.
 
 ### Removed
 

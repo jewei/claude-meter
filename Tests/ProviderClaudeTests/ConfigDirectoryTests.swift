@@ -1,0 +1,138 @@
+import Foundation
+import MeterDomain
+import MeterTestSupport
+import Testing
+
+@testable import ProviderClaude
+
+extension ClaudeTests {
+    @Suite struct ConfigDirectoryTests {
+        @Test(arguments: [
+            (".claude", "claude"),
+            (".claude-it-oneone", "claude-it-oneone"),
+            (".claude work!@#", "claudework"),
+            ("。", "claude"),
+            (".claude.bak", "claude.bak"),
+        ])
+        func accountKeysKeepTheStoredFormat(folder: String, key: String) {
+            let url = URL(fileURLWithPath: "/x").appending(path: folder)
+            #expect(ConfigDirectoryScanner.accountID(for: url) == AccountID(key))
+        }
+
+        @Test(arguments: [
+            ("claude", "default"), ("claude-work", "work"), ("claude-", "claude-"),
+            ("custom", "custom"),
+        ])
+        func labelsDropTheClaudePrefix(key: String, label: String) {
+            #expect(ConfigDirectoryScanner.name(for: AccountID(key)) == label)
+        }
+
+        @Test func scanKeepsOnlyQualifyingDirsAndAlwaysTheDefault() throws {
+            let home = try TemporaryDirectory()
+            defer { home.remove() }
+            _ = try home.makeDirectory(".claude")
+            try home.write("{}", to: ".claude-work/settings.json")
+            _ = try home.makeDirectory(".claude-team/projects")
+            _ = try home.makeDirectory(".claude-empty")
+            try home.write("{}", to: ".config/settings.json")
+
+            let accounts = ConfigDirectoryScanner.discover(
+                home: home.url, configuration: ClaudeConfiguration(connection: .automatic))
+
+            #expect(accounts.map(\.id) == ["claude", "claude-team", "claude-work"])
+            #expect(accounts.map(\.name) == ["default", "team", "work"])
+            #expect(accounts.map(\.isDefault) == [true, false, false])
+            #expect(accounts.allSatisfy { $0.isEnabled && $0.issue == nil })
+        }
+
+        @Test func disabledAccountsAreListedButTheDefaultCannotBeDisabled() throws {
+            let home = try TemporaryDirectory()
+            defer { home.remove() }
+            _ = try home.makeDirectory(".claude")
+            try home.write("{}", to: ".claude-work/settings.json")
+
+            let configuration = ClaudeConfiguration(
+                connection: .automatic, disabledAccounts: ["claude", "claude-work"])
+            let accounts = ConfigDirectoryScanner.discover(
+                home: home.url, configuration: configuration)
+
+            #expect(configuration.disabledAccounts == ["claude-work"])
+            #expect(accounts.map(\.id) == ["claude", "claude-work"])
+            #expect(accounts.map(\.isEnabled) == [true, false])
+        }
+
+        @Test func configuredDuplicatesCollapseAndConfiguredPathsWinKeyCollisions() throws {
+            let home = try TemporaryDirectory()
+            defer { home.remove() }
+            _ = try home.makeDirectory(".claude")
+            try home.write("{}", to: ".claude-work/settings.json")
+            try home.write("{}", to: ".claude-team/settings.json")
+            try home.write("{}", to: "elsewhere/.claude-work/settings.json")
+            try home.write("{}", to: "custom/.claude-extra/settings.json")
+            try FileManager.default.createSymbolicLink(
+                at: home.path("alias"), withDestinationURL: home.path(".claude"))
+
+            let configuration = ClaudeConfiguration(
+                connection: .automatic,
+                extraDirectories: [
+                    home.path("elsewhere/.claude-work"), home.path("custom/.claude-extra"),
+                    home.path("alias"), home.path(".claude-team"),
+                ])
+            let accounts = ConfigDirectoryScanner.discover(
+                home: home.url, configuration: configuration)
+
+            // The alias of ~/.claude collapses into the default account, a configured copy of a
+            // scanned dir is one account, and a configured dir wins a key collision.
+            #expect(accounts.map(\.id) == ["claude", "claude-extra", "claude-team", "claude-work"])
+            let work = try #require(accounts.first { $0.id == "claude-work" })
+            #expect(work.directory.path.hasSuffix("elsewhere/.claude-work"))
+            #expect(accounts.allSatisfy { $0.issue == nil })
+        }
+
+        @Test func aConfiguredFolderThatIsNoLongerAConfigDirStaysListedWithAnIssue() throws {
+            let home = try TemporaryDirectory()
+            defer { home.remove() }
+            _ = try home.makeDirectory(".claude")
+            _ = try home.makeDirectory("old/.claude-old")
+
+            let configuration = ClaudeConfiguration(
+                connection: .automatic,
+                extraDirectories: [home.path("old/.claude-old"), home.path("gone/.claude-gone")])
+            let accounts = ConfigDirectoryScanner.discover(
+                home: home.url, configuration: configuration)
+
+            #expect(accounts.map(\.id) == ["claude", "claude-gone", "claude-old"])
+            #expect(accounts[0].issue == nil)
+            #expect(
+                accounts[1].issue?.message == "This folder no longer exists. Remove it in Settings."
+            )
+            #expect(accounts[2].issue?.message.contains("not a Claude config dir") == true)
+            #expect(accounts[2].issue?.needsAction == true)
+        }
+
+        @Test func configDirectoryCheckNeedsSettingsOrProjects() throws {
+            let home = try TemporaryDirectory()
+            defer { home.remove() }
+            let empty = try home.makeDirectory("empty")
+            let projects = try home.makeDirectory("withProjects/projects")
+                .deletingLastPathComponent()
+            let settings = try home.write("{}", to: "withSettings/settings.json")
+                .deletingLastPathComponent()
+
+            #expect(!ClaudeProvider.isConfigDirectory(empty))
+            #expect(ClaudeProvider.isConfigDirectory(projects))
+            #expect(ClaudeProvider.isConfigDirectory(settings))
+            #expect(!ClaudeProvider.isConfigDirectory(home.path("missing")))
+        }
+
+        @Test func identityFileOfTheDefaultDirIsInTheHomeFolder() {
+            let home = URL(fileURLWithPath: "/Users/alice", isDirectory: true)
+            #expect(
+                LocalIdentity.file(for: home.appending(path: ".claude"), home: home).path
+                    == "/Users/alice/.claude.json")
+            #expect(
+                LocalIdentity.file(for: home.appending(path: ".claude-work"), home: home).path
+                    == "/Users/alice/.claude-work/.claude.json")
+        }
+    }
+}

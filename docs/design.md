@@ -41,6 +41,8 @@ value serves SwiftUI, AppKit chrome, and the menu bar in both appearances.
 | `energyUnknown` | `inkMuted` at 45% | same | Dots of unknown values |
 | `action` | `#287B12` | `#287B12` | Raised button fill |
 | `actionShadow` | `#19550B` | `#19550B` | Raised button plate |
+| `destructive` | `#B52C28` | `#B52C28` | Raised button that deletes something |
+| `destructiveShadow` | `#7A1A17` | `#7A1A17` | Its plate |
 
 Bright energy colors are for fills only. Small text uses the `…Ink` colors, which keep at
 least 4.5:1 contrast on `card` and `popover`.
@@ -108,6 +110,7 @@ Every changing number uses `.monospacedDigit()`.
 | `ProviderMark` | Bundled logo as a 15 pt template image in `ink`; Grok uses the `atom` symbol. |
 | `NoticeBanner` | Top-aligned 12 pt icon, wrapping Nunito SemiBold 11, padding 12×9, tint 8% fill, 16% 1 pt border, radius 12. Action: `key.slash.fill`, warning: `exclamationmark.triangle.fill` (both `energyLowInk`); info: `clock.fill` (`inkMuted`). |
 | `SquareIconButton` | 28 pt target, glyph 12 bold, quiet style on a chunky surface. |
+| `InlineConfirmation` (`Settings/Data`) | A question in the page in place of the control that asked: `energyEmptyInk` warning symbol, Fredoka SemiBold 15 title, Nunito SemiBold 12 message, Cancel (Escape) and a raised `destructive` button; `popover` fill, 1.5 pt border in `energyEmptyInk` at 40%, radius 14. Never a blocking alert. |
 | `MeterSwitch` | Native switch with the `accent` tint and a spoken label. |
 | `Spinner` | Native spinner; static while the popover is hidden. |
 
@@ -242,8 +245,14 @@ the app is regular; "About Claude Meter" opens the About tab.
 - **Data** (`Data/DataSettingsView`): one `DataSourceCard` per source with its switch.
   Controls for a source go in its card content, below a divider, while the source is on.
   Claude: the connection (`ClaudeConnectionView`: both logins' states, Connect automatically
-  with a Keychain consent alert, Enter tokens manually with a form whose Cancel discards the
-  draft, Disconnect) and, in automatic mode, the config dirs (`ClaudeAccountsList`). Codex:
+  with a Keychain consent alert, Enter tokens manually, Disconnect, and the last message,
+  which shows a failure in `energyEmptyInk` with a warning symbol) and, in automatic mode,
+  the config dirs (`ClaudeAccountsList`). The token form (`ManualTokenForm`) says first, in
+  `ink` with an amber warning symbol, that the tokens must come from a separate Claude login
+  (`DataSourceText.manualTokensSource`). Return connects; Cancel discards the draft and
+  abandons a running Connect, so nothing is saved after it; Escape cancels only while both
+  token fields are empty. Disconnect asks first in the page (`InlineConfirmation`) when it
+  would delete tokens that the user entered (`DataSourceText.disconnectConfirmation`). Codex:
   the homes (`CodexHomesList`). Rows (`FolderRow`) show an avatar, a display-name field that
   saves on Return or focus loss, a path chip with the full path in its tooltip, and 28 pt
   controls. Folders are added with the open panel (hidden folders shown).

@@ -34,6 +34,42 @@ import Testing
         #expect(DataSourceText.codexHome(.unknown("Codex detected.")).text == "Codex detected.")
     }
 
+    /// Manual tokens must come from a separate login (claude-oauth.md, Manual mode rule 9).
+    @Test func manualTokensNameTheirSource() {
+        let note = DataSourceText.manualTokensSource
+        #expect(note.contains("separate Claude login"))
+        #expect(note.contains("not Claude Code's own login"))
+        #expect(note.contains("sign Claude Code out"))
+    }
+
+    @Test func disconnectAsksOnlyWhenEnteredTokensWouldBeLost() {
+        let manual = DataSourceText.disconnectConfirmation(connection: .manual, manualStatus: nil)
+        #expect(manual?.title == "Delete the saved tokens?")
+        #expect(manual?.confirmTitle == "Disconnect and Delete Tokens")
+        #expect(
+            DataSourceText.disconnectConfirmation(connection: .automatic, manualStatus: .signedIn)
+                == manual)
+        #expect(
+            DataSourceText.disconnectConfirmation(connection: .automatic, manualStatus: .signedOut)
+                == nil)
+        #expect(
+            DataSourceText.disconnectConfirmation(
+                connection: .automatic, manualStatus: .unknown("Locked")) == nil)
+        #expect(DataSourceText.disconnectConfirmation(connection: .off, manualStatus: nil) == nil)
+    }
+
+    @Test func removalNamesTheFolderAndWhatGoes() {
+        let confirmation = DataSourceText.removeConfirmation(name: "Work")
+        #expect(confirmation.title == "Remove Work?")
+        #expect(confirmation.message.contains("The folder stays on disk."))
+        #expect(confirmation.confirmTitle == "Remove")
+    }
+
+    @Test func untrackedLoginsSayItInWords() {
+        #expect(DataSourceText.trackingChip(isEnabled: false) == "Not tracked")
+        #expect(DataSourceText.trackingChip(isEnabled: true) == nil)
+    }
+
     @Test func avatarInitials() {
         #expect(DataSourceText.initial("work") == "W")
         #expect(DataSourceText.initial(".claude-2") == "C")

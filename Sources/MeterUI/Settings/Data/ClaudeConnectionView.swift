@@ -5,8 +5,9 @@ import SwiftUI
 /// The Claude connection: both logins' states and the actions for the current connection.
 ///
 /// "Connect automatically" asks for Keychain consent first when the user has not given it.
-/// "Enter tokens manually" opens a form whose Cancel discards the draft and keeps the stored
-/// credentials.
+/// "Enter tokens manually" opens a form whose Cancel discards the draft, abandons a Connect
+/// that is still running, and keeps the stored credentials. Disconnect asks in the page first
+/// when it would delete tokens that the user entered.
 struct ClaudeConnectionView: View {
     /// What the view shows, read from ``ClaudeSettingsModel``.
     struct Snapshot: Equatable {
@@ -15,6 +16,8 @@ struct ClaudeConnectionView: View {
         var manualStatus: SignInStatus?
         var isWorking = false
         var message: String?
+        /// The message reports a failure.
+        var messageIsProblem = false
         var needsKeychainConsent = false
     }
 
@@ -22,16 +25,29 @@ struct ClaudeConnectionView: View {
         var connectAutomatically: () async -> Void
         /// Returns true when the tokens were verified and saved.
         var connectManually: (_ access: String, _ refresh: String?, _ expiry: Date?) async -> Bool
+        /// Abandons a Connect that is still running; it stores nothing afterwards.
+        var abandonConnect: () async -> Void
         var disconnect: () async -> Void
+    }
+
+    /// What shows below the sign-in states.
+    enum Stage: Equatable {
+        case buttons
+        case tokenForm
+        case confirmingDisconnect
     }
 
     let snapshot: Snapshot
     let actions: Actions
-    /// Starts with the token form open. For previews and tests.
-    var startsWithForm = false
 
+    @State private var stage: Stage
     @State private var showsConsent = false
-    @State private var showsForm = false
+
+    init(snapshot: Snapshot, actions: Actions, stage: Stage = .buttons) {
+        self.snapshot = snapshot
+        self.actions = actions
+        _stage = State(initialValue: stage)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -42,24 +58,13 @@ struct ClaudeConnectionView: View {
                 SignInStatusLine(
                     status: DataSourceText.manualTokens(snapshot.manualStatus), label: "Manual")
             }
-            if showsForm || startsWithForm {
-                ManualTokenForm(isWorking: snapshot.isWorking) { access, refresh, expiry in
-                    if await actions.connectManually(access, refresh, expiry) { showsForm = false }
-                } cancel: {
-                    showsForm = false
-                }
-            } else {
-                buttons
-            }
+            stageContent
             if snapshot.isWorking {
                 Text("Checking the connection…")
                     .font(MeterFont.body(12, .semibold))
                     .foregroundStyle(Palette.inkMuted)
             } else if let message = snapshot.message {
-                Text(message)
-                    .font(MeterFont.body(12, .bold))
-                    .foregroundStyle(Palette.ink)
-                    .fixedSize(horizontal: false, vertical: true)
+                messageLine(message)
             }
         }
         .alert("Allow Keychain access?", isPresented: $showsConsent) {
@@ -71,6 +76,52 @@ struct ClaudeConnectionView: View {
                     + "macOS may ask you to allow it. Claude Meter never changes or deletes that login."
             )
         }
+    }
+
+    @ViewBuilder private var stageContent: some View {
+        switch stage {
+        case .buttons:
+            buttons
+        case .tokenForm:
+            ManualTokenForm(isWorking: snapshot.isWorking) { access, refresh, expiry in
+                if await actions.connectManually(access, refresh, expiry) { stage = .buttons }
+            } cancel: {
+                stage = .buttons
+                Task { await actions.abandonConnect() }
+            }
+        case .confirmingDisconnect:
+            if let confirmation = disconnectConfirmation {
+                InlineConfirmation(confirmation: confirmation) {
+                    stage = .buttons
+                    Task { await actions.disconnect() }
+                } cancel: {
+                    stage = .buttons
+                }
+            } else {
+                buttons
+            }
+        }
+    }
+
+    private var disconnectConfirmation: DataSourceText.Confirmation? {
+        DataSourceText.disconnectConfirmation(
+            connection: snapshot.connection, manualStatus: snapshot.manualStatus)
+    }
+
+    /// A failure in the error ink with a warning symbol; other news in ink.
+    private func messageLine(_ message: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if snapshot.messageIsProblem {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .accessibilityHidden(true)
+            }
+            Text(message)
+                .font(MeterFont.body(12, .bold))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(snapshot.messageIsProblem ? Palette.energyEmptyInk : Palette.ink)
+        .accessibilityElement(children: .combine)
     }
 
     private var buttons: some View {
@@ -87,7 +138,7 @@ struct ClaudeConnectionView: View {
                 .fixedSize()
             }
             Button {
-                showsForm = true
+                stage = .tokenForm
             } label: {
                 ChunkyButtonLabel(
                     title: snapshot.connection == .manual
@@ -97,7 +148,11 @@ struct ClaudeConnectionView: View {
             .buttonStyle(QuietButtonStyle(radius: 12))
             if snapshot.connection != .off {
                 Button {
-                    Task { await actions.disconnect() }
+                    if disconnectConfirmation == nil {
+                        Task { await actions.disconnect() }
+                    } else {
+                        stage = .confirmingDisconnect
+                    }
                 } label: {
                     ChunkyButtonLabel(title: "Disconnect", symbol: "xmark.circle")
                 }

@@ -38,7 +38,8 @@ import Testing
                 isImplicit: false, status: .signedOut),
         ]
         let actions = ClaudeConnectionView.Actions(
-            connectAutomatically: {}, connectManually: { _, _, _ in true }, disconnect: {})
+            connectAutomatically: {}, connectManually: { _, _, _ in true }, abandonConnect: {},
+            disconnect: {})
         let connected = ClaudeConnectionView.Snapshot(
             connection: .automatic, automaticStatus: .signedIn, manualStatus: .signedOut,
             message: "Connected.")
@@ -75,7 +76,7 @@ import Testing
         }
         Snapshot.render("settings-claude-manual") {
             SettingsCard {
-                ClaudeConnectionView(snapshot: off, actions: actions, startsWithForm: true)
+                ClaudeConnectionView(snapshot: off, actions: actions, stage: .tokenForm)
             }
             .padding(24)
             .frame(width: 580)
@@ -84,6 +85,18 @@ import Testing
             SettingsCard { ClaudeConnectionView(snapshot: off, actions: actions) }
                 .padding(24)
                 .frame(width: 580)
+        }
+        let manual = ClaudeConnectionView.Snapshot(
+            connection: .manual, automaticStatus: .signedIn, manualStatus: .signedIn,
+            message: "Anthropic rejected these tokens. Check them and try again.",
+            messageIsProblem: true)
+        Snapshot.render("settings-claude-disconnect") {
+            SettingsCard {
+                ClaudeConnectionView(
+                    snapshot: manual, actions: actions, stage: .confirmingDisconnect)
+            }
+            .padding(24)
+            .frame(width: 580)
         }
     }
 

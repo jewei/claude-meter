@@ -41,6 +41,10 @@ enum Palette {
     /// The raised primary button fill. Dark in both modes so white text stays readable.
     static let action = Color(nsColor: NSColor(hex: 0x287B12))
     static let actionShadow = Color(nsColor: NSColor(hex: 0x19550B))
+    /// The raised button that deletes something. Dark in both modes so white text stays
+    /// readable.
+    static let destructive = Color(nsColor: NSColor(hex: 0xB52C28))
+    static let destructiveShadow = Color(nsColor: NSColor(hex: 0x7A1A17))
     /// Tint for native controls, focus rings, and selected options.
     static let accent = energyFullInk
 

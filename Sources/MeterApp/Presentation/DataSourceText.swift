@@ -17,6 +17,51 @@ public enum DataSourceText {
     public static let grokSubtitle =
         "Read Grok Build weekly credit usage (unofficial API; may break)."
 
+    /// A question before an action that loses something the user entered.
+    public struct Confirmation: Equatable, Sendable {
+        public let title: String
+        public let message: String
+        /// The destructive button.
+        public let confirmTitle: String
+    }
+
+    /// Next to the manual token fields: where pasted tokens may come from. Claude Meter
+    /// refreshes them, which rotates the refresh token, so a copy of Claude Code's own login
+    /// would sign Claude Code out at its next renewal (`docs/providers/claude-oauth.md`).
+    public static let manualTokensSource =
+        "Use tokens from a separate Claude login, not Claude Code's own login. Claude Meter "
+        + "refreshes these tokens, so a copy of Claude Code's login would sign Claude Code out."
+
+    /// Asks first when Disconnect would delete tokens that the user entered, because they are
+    /// hard to get again. Nil when nothing the user entered would be lost.
+    public static func disconnectConfirmation(
+        connection: ClaudeSettings.Connection, manualStatus: SignInStatus?
+    ) -> Confirmation? {
+        guard connection == .manual || manualStatus == .signedIn else { return nil }
+        return Confirmation(
+            title: "Delete the saved tokens?",
+            message:
+                "Disconnect deletes the tokens that you entered from Claude Meter's Keychain "
+                + "item. To connect again, paste them again.",
+            confirmTitle: "Disconnect and Delete Tokens")
+    }
+
+    /// Asks first before a config dir or Codex home leaves the list with its settings.
+    public static func removeConfirmation(name: String) -> Confirmation {
+        Confirmation(
+            title: "Remove \(name)?",
+            message:
+                "Claude Meter forgets its name, plan badge, and card settings. "
+                + "The folder stays on disk.",
+            confirmTitle: "Remove")
+    }
+
+    /// The chip on a login that the user stopped tracking, so the row says it in words and
+    /// keeps its text at full contrast.
+    public static func trackingChip(isEnabled: Bool) -> String? {
+        isEnabled ? nil : "Not tracked"
+    }
+
     /// The avatar letter for an account row: the first letter or digit of its name.
     public static func initial(_ name: String) -> String {
         Formatting.initial(name)

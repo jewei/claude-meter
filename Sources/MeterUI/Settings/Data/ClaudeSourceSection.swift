@@ -29,7 +29,8 @@ struct ClaudeSourceSection: View {
         ClaudeConnectionView.Snapshot(
             connection: claude.connection, automaticStatus: claude.automaticStatus,
             manualStatus: claude.manualStatus, isWorking: claude.isWorking,
-            message: claude.message, needsKeychainConsent: claude.needsKeychainConsent)
+            message: claude.message, messageIsProblem: claude.messageIsProblem,
+            needsKeychainConsent: claude.needsKeychainConsent)
     }
 
     private var actions: ClaudeConnectionView.Actions {
@@ -39,6 +40,7 @@ struct ClaudeSourceSection: View {
                 await claude.connectManually(
                     accessToken: access, refreshToken: refresh, expiresAt: expiry)
             },
+            abandonConnect: { await claude.abandonConnect() },
             disconnect: { await claude.disconnect() })
     }
 

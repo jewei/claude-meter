@@ -47,7 +47,9 @@ public struct TokenHistory: Hashable, Sendable {
     public let observedAt: Date
     /// The time zone used to assign records to days. A change makes the history unknown.
     public let timeZoneID: String
-    /// False when the source has no records at all, which shows as unknown, not zero.
+    /// False when the read found no records for the account, which shows as unknown, not
+    /// zero. A local read sees only the files modified since ``coverageStart``, so an account
+    /// whose records are all older has none either.
     public let hasRecords: Bool
     /// Some records could not be counted, for example because a scan limit was reached.
     public let isPartial: Bool

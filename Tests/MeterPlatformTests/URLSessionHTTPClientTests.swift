@@ -6,6 +6,10 @@ import Testing
 
 /// Serves scripted responses to URLSession. Each test uses its own host, so tests can run in
 /// parallel without sharing routes. A host without steps never answers.
+///
+/// `@unchecked Sendable`: `URLProtocol` is not marked `Sendable`. The shared state, `routes`
+/// and `counts`, is static and guarded by the unfair lock of each `Locked`; an instance has no
+/// state of its own beyond what `URLProtocol` keeps.
 private final class StubProtocol: URLProtocol, @unchecked Sendable {
     enum Step: Sendable {
         case respond(status: Int, headers: [String: String], body: Data)

@@ -17,8 +17,9 @@ public final class CursorTokenHistory: TokenHistoryProvider {
     private let http: any HTTPClient
     /// Read once per call, so a time zone change applies to the next read.
     private let calendar: @Sendable () -> Calendar
-    /// The retry time of the last HTTP 429. No export is sent before it.
-    private let retryAt = Locked<Date?>(nil)
+    /// The pause after the last HTTP 429. It holds only the exports of the login that got it
+    /// (``RateLimitHold``). The app holds no history issue for the provider, so this lives here.
+    private let hold = Locked<RateLimitHold?>(nil)
     /// The last failure, so that the log records changes only.
     private let lastFailure = Locked<CursorFailure?>(nil)
 
@@ -76,9 +77,9 @@ public final class CursorTokenHistory: TokenHistoryProvider {
             throw self.failure(failure, status: .unknown, previous: previous)
         }
         let owner = credentials.owner
-        if let retryAt = retryAt.value, retryAt > now {
+        if let hold = hold.value, hold.holds(owner, now: now) {
             throw failure(
-                .rateLimited(retryAt: retryAt), status: .signedIn(owner), previous: previous)
+                .rateLimited(retryAt: hold.retryAt), status: .signedIn(owner), previous: previous)
         }
         let result: Result<ProviderTokenHistory, CursorFailure>
         do {
@@ -86,6 +87,8 @@ public final class CursorTokenHistory: TokenHistoryProvider {
         } catch let failure as CursorFailure {
             result = .failure(failure)
         }
+        // The answer is about the login that sent the export, even if the login changes now.
+        recordHold(after: result, owner: owner)
         // The response belongs to the login that sent it. Discard it if the login changed.
         let after = try await store.read().ownerStatus
         switch after {
@@ -98,7 +101,6 @@ public final class CursorTokenHistory: TokenHistoryProvider {
         }
         switch result {
         case .success(let history):
-            retryAt.withLock { $0 = nil }
             let recovered = lastFailure.withLock { last in
                 defer { last = nil }
                 return last != nil
@@ -106,8 +108,24 @@ public final class CursorTokenHistory: TokenHistoryProvider {
             if recovered { Self.log.notice("Cursor token history recovered.") }
             return history
         case .failure(let failure):
-            if case .rateLimited(let date?) = failure { retryAt.withLock { $0 = date } }
             throw self.failure(failure, status: .signedIn(owner), previous: previous)
+        }
+    }
+
+    /// Starts a hold for `owner` after HTTP 429 with a retry time, and ends the hold of
+    /// `owner` after a success. The hold of another login stays.
+    private func recordHold(
+        after result: Result<ProviderTokenHistory, CursorFailure>, owner: AccountOwner
+    ) {
+        hold.withLock { hold in
+            switch result {
+            case .failure(.rateLimited(let retryAt?)):
+                hold = RateLimitHold(owner: owner, retryAt: retryAt)
+            case .success where hold?.owner == owner:
+                hold = nil
+            case .success, .failure:
+                break
+            }
         }
     }
 

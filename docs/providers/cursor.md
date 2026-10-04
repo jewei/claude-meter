@@ -208,7 +208,10 @@ The email is never part of the reading.
     stays only while that set is exactly the signed-in login, or while the login cannot be read.
     After a login change in one run, every later failure clears the history, and the next
     success shows it again. A login change during the request rejects the result.
-33. After HTTP 429 with a `Retry-After`, no export is sent before the retry time.
+33. After HTTP 429 with a `Retry-After`, the shared rate-limit hold applies to the export
+    (`docs/architecture.md`): no export for the same login before the retry time, at most
+    1 hour after the 429. Another login exports at once. The provider keeps the hold of the
+    last 429 in memory, so a restart ends it.
 
 ### Messages
 

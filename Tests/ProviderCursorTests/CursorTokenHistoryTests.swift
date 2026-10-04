@@ -266,6 +266,56 @@ import Testing
         #expect(http.requests.count == 2)
     }
 
+    /// The hold of one login never stops the export of another login, and it stays for its
+    /// own login while another login reads.
+    @Test func aRateLimitHoldsOnlyTheLoginThatGotIt() async throws {
+        let first = CursorFixture.token(expiresAt: .reference(.days(1)))
+        let other = CursorFixture.token(subject: "auth0|other", expiresAt: .reference(.days(1)))
+        let status = Locked(429)
+        let http = FakeHTTPClient { _ in
+            .json(status.value, Self.header, headers: ["Retry-After": "120"])
+        }
+        let source = source(http)
+        keychain.store(first, service: "cursor-access-token")
+        let limited = await providerError {
+            try await source.history(now: .reference(), previous: nil)
+        }
+        #expect(limited?.issue.retryAt == .reference(120))
+
+        keychain.store(other, service: "cursor-access-token")
+        status.withLock { $0 = 200 }
+        _ = try await source.history(now: .reference(10), previous: nil)
+        #expect(http.requests.count == 2)
+
+        keychain.store(first, service: "cursor-access-token")
+        let held = await providerError {
+            try await source.history(now: .reference(20), previous: nil)
+        }
+        #expect(held?.issue.retryAt == .reference(120))
+        #expect(http.requests.count == 2)
+    }
+
+    /// A wrong `Retry-After` cannot stop the export for more than one hour.
+    @Test func aRateLimitHoldsTheExportAtMostOneHour() async throws {
+        keychain.store(
+            CursorFixture.token(expiresAt: .reference(.days(1))), service: "cursor-access-token")
+        let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "86400"])
+        let source = source(http)
+
+        let limited = await providerError {
+            try await source.history(now: .reference(), previous: nil)
+        }
+        _ = await providerError {
+            try await source.history(now: .reference(.hours(1) - 1), previous: nil)
+        }
+        #expect(limited?.issue.retryAt == .reference(.hours(1)))
+        #expect(http.requests.count == 1)
+        _ = await providerError {
+            try await source.history(now: .reference(.hours(1)), previous: nil)
+        }
+        #expect(http.requests.count == 2)
+    }
+
     @Test func signingOutClearsTheHistory() async throws {
         let error = await providerError {
             try await source(FakeHTTPClient(json: Self.header)).history(

@@ -19,7 +19,7 @@ that a change has broken before.
 | `make release VERSION=… BUILD=…` | Signed, notarized release. Maintainer only. See `docs/releasing.md`. |
 | `make release-candidate VERSION=… BUILD=…` | Signed candidate. It uploads to Apple notarization with the maintainer's identity. Maintainer only. |
 
-Agents never run `make release` or `make release-candidate`.
+Agents never run `make release`, `make release-candidate`, or `scripts/release.sh`.
 
 A change is done when `make check` passes and the docs that describe the behavior are
 updated in the same commit. A user-visible change also has an entry under

@@ -87,9 +87,10 @@ is a thin shell around it. It has one target, `ClaudeMeter`, a macOS app.
   uses Sparkle (`App/Sources/ReleaseSignature.swift`). A development build never replaces
   itself with a download.
 
-To update Sparkle, change the exact version in Xcode (project, Package Dependencies). Then
-commit `project.pbxproj` and `Package.resolved` together. Run a `--prepare-only` release to
-make sure that `sign_update` still works.
+Maintainer only. The Sparkle version pin is a release invariant (`AGENTS.md`), so only the
+maintainer changes it. To update Sparkle, change the exact version in Xcode (project,
+Package Dependencies). Then commit `project.pbxproj` and `Package.resolved` together. The
+maintainer then runs `make release-candidate` to make sure that `sign_update` still works.
 
 ## Where things live
 

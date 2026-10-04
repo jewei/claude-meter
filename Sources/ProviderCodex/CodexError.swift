@@ -6,8 +6,10 @@ import MeterDomain
 enum CodexError: Error, Equatable, LocalizedError, Sendable {
     // auth.json
     case authFileMissing
-    /// The auth file cannot be read, for example because of its permissions.
+    /// The system refused the read of the auth file, for example because of its permissions.
     case authFileUnreadable
+    /// The auth file is not a regular file, such as a folder, or is larger than 4 MiB.
+    case authFileUnusable
     /// The read of the auth file timed out or found no free thread. It can pass.
     case authFileTimedOut
     case authFileInvalid
@@ -53,6 +55,8 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
             "Codex auth file not found."
         case .authFileUnreadable:
             "Could not read Codex auth file. Check that your user can read it."
+        case .authFileUnusable:
+            "Codex auth file is not a normal file, or is larger than 4 MiB. Remove it, then run `codex login`."
         case .authFileTimedOut:
             "Reading the Codex auth file took too long. Claude Meter will try again soon."
         case .authFileInvalid:
@@ -137,8 +141,9 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
     /// Only the user can fix it, for example by signing in again.
     var needsAction: Bool {
         switch self {
-        case .authFileInvalid, .missingTokens, .apiKeyOnly, .homeMissing, .loginRequired,
-            .cliNotFound, .appServerLaunchFailed, .notSignedIn:
+        case .authFileUnreadable, .authFileUnusable, .authFileInvalid, .missingTokens,
+            .apiKeyOnly, .homeMissing, .loginRequired, .cliNotFound, .appServerLaunchFailed,
+            .notSignedIn:
             true
         case .recoveryFailed(_, _, let needsAction):
             needsAction

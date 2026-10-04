@@ -108,6 +108,7 @@ struct CodexAccountRefresh: Sendable {
             let error: CodexError =
                 switch after {
                 case .unreadable: .authFileUnreadable
+                case .unusable: .authFileUnusable
                 case .notReadInTime: .authFileTimedOut
                 default: .signInChanged
                 }
@@ -152,7 +153,7 @@ struct CodexAccountRefresh: Sendable {
             guard before == .missing, case .signedIn(let owner) = report else { return nil }
             return owner
         case (.recovery, .apiKey), (.recovery, .noHome), (.recovery, .invalid),
-            (.recovery, .unreadable), (.recovery, .notReadInTime):
+            (.recovery, .unreadable), (.recovery, .unusable), (.recovery, .notReadInTime):
             return nil
         }
     }

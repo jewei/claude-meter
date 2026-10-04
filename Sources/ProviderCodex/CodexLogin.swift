@@ -22,9 +22,12 @@ enum CodexLogin: Sendable, Equatable {
     case noTokens(fileDigest: String)
     /// The file is not JSON. Codex can be in the middle of rewriting it.
     case invalid
-    /// The file cannot be read: it is not a regular file, it is too large, or the system
-    /// refused the read. Only the user can change that.
+    /// The system refused the read, for example because of the file's permissions. Only the
+    /// user can change that.
     case unreadable
+    /// The path is not a regular file, such as a folder, or the file is larger than
+    /// ``maxFileBytes``. Codex never writes such a file, so only the user can change that.
+    case unusable
     /// The read did not finish in time, or no blocking-read thread was free. It can pass.
     case notReadInTime
 
@@ -51,6 +54,7 @@ enum CodexLogin: Sendable, Equatable {
         switch error {
         case is CancellationError: throw CancellationError()
         case is TimeoutError, is BlockingIO.BusyError: return .notReadInTime
+        case LocalFile.ReadError.notRegularFile, LocalFile.ReadError.tooLarge: return .unusable
         default: return .unreadable
         }
     }
@@ -79,7 +83,7 @@ enum CodexLogin: Sendable, Equatable {
         switch self {
         case .chatGPT(let credentials): credentials.owner
         case .noTokens(let digest): .credential(digest)
-        case .apiKey, .missing, .noHome, .invalid, .unreadable, .notReadInTime: nil
+        case .apiKey, .missing, .noHome, .invalid, .unreadable, .unusable, .notReadInTime: nil
         }
     }
 
@@ -93,7 +97,7 @@ enum CodexLogin: Sendable, Equatable {
         switch self {
         case .chatGPT, .noTokens: owner.map(OwnerStatus.signedIn) ?? .unknown
         case .apiKey, .noHome: .signedOut
-        case .missing, .invalid, .unreadable, .notReadInTime: .unknown
+        case .missing, .invalid, .unreadable, .unusable, .notReadInTime: .unknown
         }
     }
 
@@ -122,6 +126,7 @@ enum CodexLogin: Sendable, Equatable {
         case .apiKey: .stop(.apiKeyOnly, status: .signedOut)
         case .noHome: .stop(.homeMissing, status: .signedOut)
         case .unreadable: .stop(.authFileUnreadable, status: .unknown)
+        case .unusable: .stop(.authFileUnusable, status: .unknown)
         case .notReadInTime: .stop(.authFileTimedOut, status: .unknown)
         }
     }
@@ -136,6 +141,7 @@ enum CodexLogin: Sendable, Equatable {
         case .noTokens: "No tokens"
         case .invalid: "Unreadable JSON"
         case .unreadable: "Could not read the auth file"
+        case .unusable: "Not a regular file, or too large"
         case .notReadInTime: "Not read in time"
         }
     }

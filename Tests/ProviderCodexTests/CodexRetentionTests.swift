@@ -143,7 +143,7 @@ extension CodexTests {
             #expect(second.isStale)
             #expect(second.owner == first.accounts.first?.owner)
             #expect(second.observedAt == first.accounts.first?.observedAt)
-            #expect(second.issue?.message == CodexError.authFileUnreadable.localizedDescription)
+            #expect(second.issue?.message == CodexError.authFileUnusable.localizedDescription)
         }
 
         /// CDX-06: an API-key result from recovery never keeps an old subscription reading,

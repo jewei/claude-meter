@@ -109,7 +109,8 @@ extension CodexTests {
             #expect(bed.http.requests.isEmpty)
             #expect(!account.hasObservation)
             #expect(account.owner == nil)
-            #expect(account.issue?.message == CodexError.authFileUnreadable.localizedDescription)
+            #expect(account.issue?.message == CodexError.authFileUnusable.localizedDescription)
+            #expect(account.issue?.needsAction == true)
             let facts = await bed.provider.diagnostics()
             #expect(facts.contains { $0.label == "Codex source" && $0.value == "None" })
         }
@@ -328,9 +329,8 @@ extension CodexTests {
             try FileManager.default.removeItem(at: bed.root.path("home/auth.json"))
             _ = try bed.root.makeDirectory("home/auth.json")
             // A refresh does not check a file that cannot be read with the CLI either.
-            let unreadable = SignInStatus.unknown(
-                CodexError.authFileUnreadable.localizedDescription)
-            #expect(await bed.provider.signInStatus(for: home) == unreadable)
+            let unusable = SignInStatus.unknown(CodexError.authFileUnusable.localizedDescription)
+            #expect(await bed.provider.signInStatus(for: home) == unusable)
             try FileManager.default.removeItem(at: bed.root.path("home"))
             #expect(await bed.provider.signInStatus(for: home) == .signedOut)
             #expect(bed.recovery.calls == 0)

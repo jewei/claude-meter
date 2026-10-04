@@ -76,7 +76,19 @@ extension CodexTests {
             #expect(try await CodexLogin.read(home, timeout: .seconds(5)) == .missing)
 
             _ = try root.makeDirectory("home/auth.json")
-            #expect(try await CodexLogin.read(home, timeout: .seconds(5)) == .unreadable)
+            #expect(try await CodexLogin.read(home, timeout: .seconds(5)) == .unusable)
+
+            // A file that the system refuses to read.
+            let refusedHome = CodexHome(
+                directory: try root.makeDirectory("refused"), isImplicit: false)
+            let refused = try root.write(CodexFixtures.authJSON(), to: "refused/auth.json")
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0], ofItemAtPath: refused.path)
+            defer {
+                try? FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600], ofItemAtPath: refused.path)
+            }
+            #expect(try await CodexLogin.read(refusedHome, timeout: .seconds(5)) == .unreadable)
 
             // CDX-14: a home folder that does not exist, or a file in its place, has no login.
             let gone = CodexHome(directory: root.path("gone"), isImplicit: false)
@@ -85,15 +97,18 @@ extension CodexTests {
             #expect(try await CodexLogin.read(file, timeout: .seconds(5)) == .noHome)
         }
 
-        /// A slow read can pass at the next refresh; a refused read needs the user.
+        /// A slow read can pass at the next refresh; a refused read needs the user, and so
+        /// does a folder or a file over 4 MiB, each with its own action.
         @Test func aSlowReadIsTemporaryAndARefusedReadIsNot() throws {
             #expect(try CodexLogin.readFailure(TimeoutError(limit: .seconds(5))) == .notReadInTime)
             for error: any Error in [
                 LocalFile.ReadError.notRegularFile, LocalFile.ReadError.tooLarge(limit: 1),
-                LocalFile.ReadError.unreadable(errno: EACCES),
             ] {
-                #expect(try CodexLogin.readFailure(error) == .unreadable)
+                #expect(try CodexLogin.readFailure(error) == .unusable)
             }
+            #expect(
+                try CodexLogin.readFailure(LocalFile.ReadError.unreadable(errno: EACCES))
+                    == .unreadable)
             #expect(throws: CancellationError.self) {
                 try CodexLogin.readFailure(CancellationError())
             }
@@ -105,6 +120,17 @@ extension CodexTests {
                     == "Reading the Codex auth file took too long. Claude Meter will try again soon."
             )
             #expect(!CodexError.authFileTimedOut.needsAction)
+            #expect(CodexError.authFileUnreadable.needsAction)
+            #expect(
+                CodexError.authFileUnreadable.localizedDescription
+                    == "Could not read Codex auth file. Check that your user can read it.")
+            #expect(CodexError.authFileUnusable.needsAction)
+            #expect(
+                CodexError.authFileUnusable.localizedDescription
+                    == "Codex auth file is not a normal file, or is larger than 4 MiB. Remove it, then run `codex login`."
+            )
+            #expect(CodexLogin.unusable.ownerStatus == .unknown)
+            #expect(CodexLogin.unusable.owner == nil)
         }
 
         /// R3-P-02: only Codex can find a login without usable tokens, so only those logins
@@ -120,6 +146,7 @@ extension CodexTests {
                 (.apiKey, .stop(.apiKeyOnly, status: .signedOut)),
                 (.noHome, .stop(.homeMissing, status: .signedOut)),
                 (.unreadable, .stop(.authFileUnreadable, status: .unknown)),
+                (.unusable, .stop(.authFileUnusable, status: .unknown)),
                 (.notReadInTime, .stop(.authFileTimedOut, status: .unknown)),
             ]
             for (login, route) in cases {
@@ -136,6 +163,7 @@ extension CodexTests {
             let before = CodexLogin.parse(Data(CodexFixtures.authJSON().utf8))
             for (after, expected) in [
                 (CodexLogin.unreadable, CodexError.authFileUnreadable),
+                (.unusable, .authFileUnusable),
                 (.notReadInTime, .authFileTimedOut),
             ] {
                 guard
@@ -156,7 +184,7 @@ extension CodexTests {
             let home = CodexHome(directory: try root.makeDirectory("home"), isImplicit: true)
             #expect(mkfifo(home.authFile.path, 0o600) == 0)
             let start = ContinuousClock.now
-            #expect(try await CodexLogin.read(home, timeout: .seconds(5)) == .unreadable)
+            #expect(try await CodexLogin.read(home, timeout: .seconds(5)) == .unusable)
             // Well under the 5 s read limit, with room for a busy machine.
             #expect(ContinuousClock.now - start < .seconds(4))
         }

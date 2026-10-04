@@ -296,7 +296,8 @@ the app is regular; "About Claude Meter" opens the About tab.
   order" when `CardOrderHint.canReset`.
 - **Advanced**: Fetch usage, Launch at login (`LoginItem`, with approval and error text; the
   state is read again when the app or the window becomes active; an hourglass while waiting
-  for approval, a warning symbol when macOS cannot start this copy), automatic update checks
+  for approval, a warning symbol when macOS cannot start this copy; an error stays until
+  macOS reports the state that the user chose, `LaunchAtLoginError`), automatic update checks
   with "Check for Updates…" and the last check (renders every minute; the status line's tone
   comes from `UpdateCheckText.statusLine`, so an unknown version is muted, not green),
   Diagnostics (a sheet with a Copy button; Escape closes it), and "Write a log file" with

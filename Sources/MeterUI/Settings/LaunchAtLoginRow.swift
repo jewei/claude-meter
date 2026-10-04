@@ -1,13 +1,15 @@
 import AppKit
+import MeterApp
 import MeterPlatform
 import SwiftUI
 
 /// The launch-at-login switch. macOS owns the state, so the row reads it when it appears,
 /// after each change, and when the user comes back to the app or the window, for example
-/// after approving the item in System Settings.
+/// after approving the item in System Settings. An error stays until macOS reports the state
+/// that the user chose (``LaunchAtLoginError``).
 struct LaunchAtLoginRow: View {
     @State private var status = LoginItem.Status.disabled
-    @State private var error: String?
+    @State private var error = LaunchAtLoginError()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -42,19 +44,19 @@ struct LaunchAtLoginRow: View {
                     }
                 }
             }
-            if let error {
+            if let error = error.text {
                 Text(error)
                     .font(MeterFont.body(11, .bold))
                     .foregroundStyle(Palette.energyEmptyInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .onAppear { status = LoginItem.status }
+        .onAppear(perform: readStatus)
         .onReceive(
             NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
-        ) { _ in status = LoginItem.status }
+        ) { _ in readStatus() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) {
-            _ in status = LoginItem.status
+            _ in readStatus()
         }
     }
 
@@ -62,9 +64,14 @@ struct LaunchAtLoginRow: View {
         Binding {
             status.isOn
         } set: { isOn in
-            error = LoginItem.setEnabled(isOn)
-            status = LoginItem.status
+            error.chose(isOn, error: LoginItem.setEnabled(isOn))
+            readStatus()
         }
+    }
+
+    private func readStatus() {
+        status = LoginItem.status
+        error.read(status)
     }
 }
 

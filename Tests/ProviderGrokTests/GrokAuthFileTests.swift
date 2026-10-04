@@ -7,7 +7,6 @@ import Testing
 
 @testable import ProviderGrok
 
-// Serialized: parallel reads can pass `BlockingIO.capacity`, which rejects work at once.
 @Suite struct GrokAuthFileTests {
     /// 2026-07-11T05:00:00Z, before the fixture's `expires_at`.
     private let now = Date(timeIntervalSince1970: 1_783_746_000)
@@ -160,5 +159,19 @@ import Testing
         #expect(fromFile.identitySource == .authFile)
         let withUserID = credentials(#"{"a":{"key":"opaque","user_id":"u-7"}}"#)
         #expect(withUserID?.accountID == "u-7")
+    }
+
+    @Test func homeDirectoryUsesGrokHomeOnlyWhenItIsSet() {
+        let home = URL(fileURLWithPath: "/Users/someone", isDirectory: true)
+        let standard = home.appending(path: ".grok", directoryHint: .isDirectory)
+        #expect(GrokProvider.homeDirectory(environment: [:], home: home) == standard)
+        #expect(GrokProvider.homeDirectory(environment: ["GROK_HOME": ""], home: home) == standard)
+        #expect(GrokProvider.homeDirectory(environment: ["GROK_HOME": " "], home: home) == standard)
+        #expect(
+            GrokProvider.homeDirectory(environment: ["GROK_HOME": "~/custom"], home: home).path
+                == "/Users/someone/custom")
+        #expect(
+            GrokProvider.homeDirectory(environment: ["GROK_HOME": "/opt/grok"], home: home).path
+                == "/opt/grok")
     }
 }

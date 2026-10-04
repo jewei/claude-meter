@@ -6,10 +6,9 @@ import Testing
 
 @testable import ProviderCursor
 
-// Serialized: parallel reads can pass `BlockingIO.capacity`, which rejects work at once.
-@Suite struct CursorTokenHistoryTests {
-    private static let header =
-        "Date,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Cost"
+/// Each test gets its own instance, so its own Cursor home, which `deinit` removes.
+@Suite final class CursorTokenHistoryTests {
+    private static let header = CursorFixture.csvHeader
 
     private let home: CursorHome
     private let keychain = FakeKeychain()
@@ -19,20 +18,16 @@ import Testing
         home = try CursorHome()
     }
 
+    deinit {
+        home.remove()
+    }
+
     private func source(_ http: FakeHTTPClient) -> CursorTokenHistory {
         CursorTokenHistory(keychain: keychain, http: http, home: home.url, calendar: calendar)
     }
 
     private func range() throws -> DateInterval {
         try #require(TokenPeriod.lastSevenDays.interval(at: .reference(), calendar: calendar))
-    }
-
-    private func parse(_ csv: String, maxRecords: Int = CursorTokenCSV.maxRecords) throws
-        -> TokenHistory
-    {
-        try CursorTokenCSV.history(
-            Data(csv.utf8), range: try range(), now: .reference(), calendar: calendar,
-            maxRecords: maxRecords)
     }
 
     private func tokens(_ history: TokenHistory, _ period: TokenPeriod) -> Int64? {
@@ -50,60 +45,7 @@ import Testing
         }
     }
 
-    @Test func countsTheDisjointTokenColumnsWithoutPrices() throws {
-        let history = try parse(
-            """
-            \(Self.header)
-            2026-10-01T12:00:00.000Z,"unknown, model",2,10,"1,000",3,-
-            """)
-        #expect(tokens(history, .lastSevenDays) == 1015)
-        #expect(history.hasRecords)
-        #expect(!history.isPartial)
-    }
-
-    @Test func aHeaderOnlyExportIsZeroButAMalformedExportFails() throws {
-        let empty = try parse(Self.header + "\r\n")
-        #expect(tokens(empty, .lastSevenDays) == 0)
-        for csv in ["", "Date,Cost\n2026-10-01,1", "\(Self.header)\n\"unterminated,1,2,3,4,5,6"] {
-            #expect(throws: CursorFailure.unexpectedResponse) { try parse(csv) }
-        }
-    }
-
-    @Test func badRowsMakeTheHistoryPartialAndTheEighthDayIsOutside() throws {
-        let history = try parse(
-            """
-            \(Self.header)
-            2026-10-04T10:00:00Z,m,1,1,1,2,0.1
-            2026-10-03 08:00:00,m,8,,,,-
-            2026-09-27T12:00:00Z,m,100,0,0,0,-
-            2026-10-02T12:00:00Z,m,"1,00",0,0,0,-
-            2026-10-02T12:00:00Z,m,1
-            2026-10-04T13:00:00Z,m,7,0,0,0,-
-            """)
-        #expect(tokens(history, .today) == 5)
-        #expect(tokens(history, .yesterday) == 8)
-        #expect(tokens(history, .lastSevenDays) == 13)
-        #expect(history.isPartial)
-    }
-
-    @Test func moreRowsThanTheCapMakeTheHistoryPartialInsteadOfFailing() throws {
-        let rows = Array(repeating: "2026-10-04T10:00:00Z,m,1,0,0,0,-", count: 3)
-        let history = try parse(([Self.header] + rows).joined(separator: "\n"), maxRecords: 2)
-        #expect(tokens(history, .today) == 2)
-        #expect(history.isPartial)
-    }
-
-    @Test func integersAcceptOnlyStrictThousandsGroups() {
-        #expect(CursorTokenCSV.integer("1,000") == 1000)
-        #expect(CursorTokenCSV.integer(" 12 ") == 12)
-        #expect(CursorTokenCSV.integer("") == 0)
-        for text in ["1,00", "1000,000", "-1", "1.5", "x", "99999999999999999999"] {
-            #expect(CursorTokenCSV.integer(text) == nil)
-        }
-    }
-
     @Test func requestsSevenDaysWithTheSessionCookieOnly() async throws {
-        defer { home.remove() }
         let token = CursorFixture.token()
         try home.write(token: token)
         let http = FakeHTTPClient(json: Self.header)
@@ -134,14 +76,11 @@ import Testing
         #expect(Array(result.accounts.keys) == [.default])
         #expect(result.coverageStart == (try range().start))
         #expect(result.timeZoneID == calendar.timeZone.identifier)
-        #expect(
-            result.history(for: .default).tokens(in: .today, now: .reference(), calendar: calendar)
-                == 0)
+        #expect(tokens(result.history(for: .default), .today) == 0)
     }
 
     @Test(arguments: ["opaque token!", JWTFixture.token(["exp": 1_791_200_000])])
     func aTokenOfUnexpectedFormatIsNotCalledExpired(token: String) async throws {
-        defer { home.remove() }
         keychain.store(token, service: "cursor-access-token")
         let http = FakeHTTPClient(json: Self.header)
 
@@ -155,7 +94,6 @@ import Testing
     }
 
     @Test func aLoginChangeDuringTheRequestRejectsTheResult() async throws {
-        defer { home.remove() }
         let keychain = keychain
         keychain.store(CursorFixture.token(), service: "cursor-access-token")
         let http = FakeHTTPClient { _ in
@@ -171,7 +109,6 @@ import Testing
     }
 
     @Test func failuresKeepTheHistoryOnlyForTheSameLogin() async throws {
-        defer { home.remove() }
         keychain.store(CursorFixture.token(), service: "cursor-access-token")
         let status = Locked(200)
         let http = FakeHTTPClient { _ in .json(status.value, Self.header) }
@@ -195,7 +132,6 @@ import Testing
     }
 
     @Test func signingOutClearsTheHistory() async throws {
-        defer { home.remove() }
         let error = await providerError {
             try await source(FakeHTTPClient(json: Self.header)).history(now: .reference())
         }
@@ -204,7 +140,6 @@ import Testing
     }
 
     @Test func aBusyDatabaseKeepsTheHistory() async throws {
-        defer { home.remove() }
         try home.write(
             ["cursorAuth/accessToken": .text(CursorFixture.token())], journalMode: "DELETE")
         let lock = try home.lockExclusively()
@@ -219,7 +154,6 @@ import Testing
     }
 
     @Test func anExpiredTokenIsNeverSent() async throws {
-        defer { home.remove() }
         try home.write(token: CursorFixture.token(expiresAt: .reference(-1)))
         let http = FakeHTTPClient(json: Self.header)
 

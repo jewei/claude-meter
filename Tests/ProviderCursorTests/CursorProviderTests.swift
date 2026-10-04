@@ -6,14 +6,18 @@ import Testing
 
 @testable import ProviderCursor
 
-// Serialized: parallel reads can pass `BlockingIO.capacity`, which rejects work at once.
-@Suite struct CursorProviderTests {
+/// Each test gets its own instance, so its own Cursor home, which `deinit` removes.
+@Suite final class CursorProviderTests {
     private let home: CursorHome
     private let keychain = FakeKeychain()
     private let owner = CursorFixture.ownerOf(subject: "auth0|user_123")
 
     init() throws {
         home = try CursorHome()
+    }
+
+    deinit {
+        home.remove()
     }
 
     private func provider(_ http: FakeHTTPClient) -> CursorProvider {
@@ -37,7 +41,6 @@ import Testing
     }
 
     @Test func mapsTheUsageResponse() async throws {
-        defer { home.remove() }
         let token = CursorFixture.token()
         try home.write(token: token, membership: "pro")
         let http = FakeHTTPClient(json: CursorFixture.usage)
@@ -77,7 +80,6 @@ import Testing
     }
 
     @Test func asksForThePlanOnlyWhenCursorStoredNone() async throws {
-        defer { home.remove() }
         try home.write(token: CursorFixture.token())
         let http = FakeHTTPClient { request in
             request.url == CursorAPI.planURL
@@ -91,7 +93,6 @@ import Testing
     }
 
     @Test func planFailureIsSilent() async throws {
-        defer { home.remove() }
         try home.write(token: CursorFixture.token())
         let http = FakeHTTPClient { request in
             request.url == CursorAPI.planURL ? .json(500, "") : .json(200, CursorFixture.usage)
@@ -103,7 +104,6 @@ import Testing
     }
 
     @Test func plansKeepTheirCapitalization() async throws {
-        defer { home.remove() }
         try home.write(token: CursorFixture.token(), membership: "Enterprise Custom")
         let account = try account(
             try await provider(FakeHTTPClient(json: CursorFixture.usage)).fetch(previous: nil))
@@ -116,7 +116,6 @@ import Testing
     }
 
     @Test func anExpiredTokenIsNeverSent() async throws {
-        defer { home.remove() }
         try home.write(token: CursorFixture.token(expiresAt: .reference(-60)))
         let http = FakeHTTPClient(json: CursorFixture.usage)
 
@@ -132,7 +131,6 @@ import Testing
 
     @Test(arguments: [401, 403])
     func aRejectedSessionKeepsTheReadingWhileTheOwnerIsSignedIn(status: Int) async throws {
-        defer { home.remove() }
         try home.write(token: CursorFixture.token())
         let provider = provider(FakeHTTPClient(status: status, json: "{}"))
 
@@ -148,7 +146,6 @@ import Testing
     }
 
     @Test func signingOutDropsTheReading() async throws {
-        defer { home.remove() }
         let provider = provider(FakeHTTPClient(json: CursorFixture.usage))
 
         #expect(await provider.reconcile(previous()) == nil)
@@ -160,7 +157,6 @@ import Testing
     }
 
     @Test func aBusyDatabaseKeepsTheReading() async throws {
-        defer { home.remove() }
         try home.write(
             ["cursorAuth/accessToken": .text(CursorFixture.token())], journalMode: "DELETE")
         let lock = try home.lockExclusively()
@@ -177,7 +173,6 @@ import Testing
     }
 
     @Test func reconcileKeepsOnlyTheSignedInOwner() async throws {
-        defer { home.remove() }
         try home.write(token: CursorFixture.token())
         let provider = provider(FakeHTTPClient(json: CursorFixture.usage))
         #expect(await provider.reconcile(nil) == nil)
@@ -187,7 +182,6 @@ import Testing
     }
 
     @Test func aLoginChangeDuringTheRequestDiscardsTheResponse() async throws {
-        defer { home.remove() }
         keychain.store(CursorFixture.token(), service: "cursor-access-token")
         let keychain = keychain
         let http = FakeHTTPClient { _ in
@@ -207,7 +201,6 @@ import Testing
     }
 
     @Test func readsNumbersSentAsStrings() async throws {
-        defer { home.remove() }
         try home.write(token: CursorFixture.token(), membership: "pro")
         let body = """
             {"billingCycleEnd":"2026-10-31T00:00:00.000Z","planUsage":{"totalSpend":"1240","limit":"2000","totalPercentUsed":"62.5","autoPercentUsed":"10"}}
@@ -222,7 +215,6 @@ import Testing
 
     @Test(arguments: ["<html>", "[]", "null", ""])
     func anUnexpectedBodyKeepsTheReadingWithAPlainMessage(body: String) async throws {
-        defer { home.remove() }
         try home.write(token: CursorFixture.token(), membership: "pro")
         let account = try account(
             try await provider(FakeHTTPClient(json: body)).fetch(previous: previous()))
@@ -232,33 +224,7 @@ import Testing
                 == "Cursor returned an unexpected response. Claude Meter will try again soon.")
     }
 
-    @Test func zeroLimitMeansNoFixedLimit() throws {
-        let report = try CursorUsageReport(
-            body: Data(#"{"planUsage":{"totalSpend":500,"limit":0,"totalPercentUsed":5}}"#.utf8))
-        #expect(report.spend?.amount == 5)
-        #expect(report.spend?.limit == nil)
-    }
-
-    @Test func olderResponsesHaveNoBreakdown() throws {
-        let total = try CursorUsageReport(body: Data(#"{"planUsage":{"totalPercentUsed":5}}"#.utf8))
-        #expect(total.windows.map(\.id) == ["billing"])
-        let empty = try CursorUsageReport(body: Data("{}".utf8))
-        #expect(empty.windows.map(\.usedPercent) == [nil])
-        #expect(empty.spend == nil)
-        #expect(empty.isEnabled)
-    }
-
-    @Test func percentagesAboveOneHundredStayOverLimit() throws {
-        let report = try CursorUsageReport(
-            body: Data(
-                #"{"planUsage":{"totalPercentUsed":120,"autoPercentUsed":-5,"apiPercentUsed":"x"}}"#
-                    .utf8))
-        #expect(report.windows.map(\.usedPercent) == [100, 0, nil])
-        #expect(report.windows.map(\.isOverLimit) == [true, false, false])
-    }
-
     @Test func disabledUsageDropsTheReading() async throws {
-        defer { home.remove() }
         try home.write(token: CursorFixture.token())
         let http = FakeHTTPClient(json: #"{"enabled":false}"#)
         let account = try account(try await provider(http).fetch(previous: previous()))
@@ -268,7 +234,6 @@ import Testing
     }
 
     @Test func serverErrorsKeepTheReading() async throws {
-        defer { home.remove() }
         try home.write(token: CursorFixture.token())
         let account = try account(
             try await provider(FakeHTTPClient(status: 500, json: "")).fetch(previous: previous()))
@@ -280,7 +245,6 @@ import Testing
     }
 
     @Test func rateLimitsCarryTheRetryTime() async throws {
-        defer { home.remove() }
         try home.write(token: CursorFixture.token())
         let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "120"])
         let account = try account(try await provider(http).fetch(previous: nil))
@@ -288,7 +252,6 @@ import Testing
     }
 
     @Test func transportErrorsTellTheUserWhatHappened() async throws {
-        defer { home.remove() }
         try home.write(token: CursorFixture.token())
         let http = FakeHTTPClient { _ in throw HTTPError.offline }
         let account = try account(try await provider(http).fetch(previous: nil))
@@ -296,7 +259,6 @@ import Testing
     }
 
     @Test func cancellationIsNotAFailure() async throws {
-        defer { home.remove() }
         try home.write(token: CursorFixture.token())
         let http = FakeHTTPClient { _ in throw CancellationError() }
         await #expect(throws: CancellationError.self) {
@@ -305,7 +267,6 @@ import Testing
     }
 
     @Test func signInStatusSendsNoRequest() async throws {
-        defer { home.remove() }
         let http = FakeHTTPClient(json: CursorFixture.usage)
         let provider = provider(http)
         #expect(await provider.signInStatus() == .signedOut)
@@ -315,7 +276,6 @@ import Testing
     }
 
     @Test func diagnosticsNeverShowTheToken() async throws {
-        defer { home.remove() }
         let token = CursorFixture.token()
         try home.write(token: token, membership: "pro")
         let provider = provider(FakeHTTPClient(json: CursorFixture.usage))
@@ -329,21 +289,5 @@ import Testing
         #expect(
             facts.contains { $0.label == "Last usage request" && $0.value.hasPrefix("Succeeded") })
         #expect(!facts.contains { $0.value.contains(token) || $0.value.contains("alpha@") })
-    }
-
-    @Test func everyMessageTellsTheUserWhatToDo() {
-        let failures: [CursorFailure] = [
-            .signedOut, .sessionExpired, .sessionRejected, .accessDenied, .usageDisabled,
-            .rateLimited(retryAt: nil), .httpStatus(500), .unexpectedResponse, .unexpectedToken,
-            .offline, .timedOut, .network, .credentialsBusy, .credentialsUnreadable,
-            .keychainUnavailable, .signInChanged, .invalidDate,
-        ]
-        let instructions = [
-            "Open Cursor", "Check", "Claude Meter will", "Update", "Unlock", "Refresh", "Set",
-        ]
-        for failure in failures {
-            let message = failure.issue.message
-            #expect(instructions.contains { message.contains($0) }, "\(message)")
-        }
     }
 }

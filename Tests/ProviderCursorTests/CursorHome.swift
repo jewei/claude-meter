@@ -110,6 +110,10 @@ struct CursorHome {
 
 /// Recorded Cursor responses and tokens.
 enum CursorFixture {
+    /// The header of the usage export, with the columns that Cursor sends.
+    static let csvHeader =
+        "Date,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Cost"
+
     static let usage = """
         {"billingCycleStart":"1750000000000","billingCycleEnd":"1752592200000","planUsage":{"totalSpend":1240,"limit":2000,"autoPercentUsed":10.0,"apiPercentUsed":100.0,"totalPercentUsed":62.0},"enabled":true}
         """

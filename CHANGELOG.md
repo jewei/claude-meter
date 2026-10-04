@@ -5,9 +5,9 @@ Notable changes in each release. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Entries for 3.1.3 and earlier
 are in the `v3.1.3` tag.
 
-<!-- Add entries under [Unreleased] as you work. scripts/release.sh turns the heading into
-     the release version and uses the section as the release notes. Keep entries
-     user-facing. -->
+<!-- Every user-visible change has an entry under [Unreleased] (AGENTS.md). scripts/release.sh
+     turns the heading into the release version and uses the section as the release notes,
+     so keep entries user-facing. -->
 
 ## [Unreleased]
 

@@ -1,7 +1,8 @@
 # Claude Meter
 
 A macOS 14+ menu-bar app that shows coding quota for Claude, Codex, Cursor, and Grok as
-energy left. Swift 6, SwiftUI hosted in AppKit, Sparkle updates. No Dock icon.
+energy left. Swift 6, SwiftUI hosted in AppKit, Sparkle updates. No Dock icon, except while
+Settings is open.
 
 Read this file before you change anything. It is short on purpose: every rule here is one
 that a change has broken before.
@@ -21,7 +22,8 @@ that a change has broken before.
 Agents never run `make release` or `make release-candidate`.
 
 A change is done when `make check` passes and the docs that describe the behavior are
-updated in the same commit.
+updated in the same commit. A user-visible change also has an entry under
+`## [Unreleased]` in `CHANGELOG.md`.
 
 ## Map
 
@@ -50,6 +52,7 @@ Docs, each the single source for its topic:
 | `docs/token-history.md` | Local token history: files, counting rules, limits |
 | `docs/development.md` | Requirements, commands, the Xcode project, where things live |
 | `docs/releasing.md` | Signing, notarization, the update feed, recovery |
+| `CHANGELOG.md` | User-visible changes. `## [Unreleased]` becomes the next release notes. |
 
 ## Rules
 

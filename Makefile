@@ -48,6 +48,6 @@ release: ## Publish a signed release (maintainer only): make release VERSION=4.0
 	@test -n "$(VERSION)" -a -n "$(BUILD)" || { echo "usage: make release VERSION=4.0.0 BUILD=400"; exit 2; }
 	scripts/release.sh "$(VERSION)" "$(BUILD)"
 
-release-candidate: ## Build and validate a release without publishing anything.
+release-candidate: ## Sign and validate a candidate; uploads to Apple notarization; maintainer only.
 	@test -n "$(VERSION)" -a -n "$(BUILD)" || { echo "usage: make release-candidate VERSION=4.0.0 BUILD=400"; exit 2; }
 	scripts/release.sh "$(VERSION)" "$(BUILD)" --prepare-only

@@ -51,9 +51,9 @@ not on that team, use `make app` and `make run`. They build without a signature.
 | `make app` | Build the unsigned Debug app into `build/DerivedData`. |
 | `make run` | Build the Debug app and open it. |
 | `make release-build` | Build the unsigned universal Release app. |
-| `make release-candidate VERSION=… BUILD=…` | Build and validate a signed release without publishing. |
+| `make release-candidate VERSION=… BUILD=…` | Build and validate a signed candidate. It uploads to Apple notarization, but publishes nothing. Maintainer only. |
 | `make clean` | Remove `.build` and `build`. |
-| `make release VERSION=… BUILD=…` | Publish a signed release. See [releasing.md](releasing.md). |
+| `make release VERSION=… BUILD=…` | Publish a signed release. Maintainer only. See [releasing.md](releasing.md). |
 
 ## How the Xcode project works
 
@@ -106,7 +106,7 @@ make sure that `sign_update` still works.
 | `ClaudeMeter.xcodeproj/` | The project, the shared scheme, and the package pins. |
 | `scripts/` | The release script and its export options and CHANGELOG-to-HTML filter. |
 | `.github/workflows/ci.yml` | CI. It runs `make check`. |
-| `appcast.xml` | The live Sparkle feed. Only the release script changes it. |
+| `appcast.xml` | The live Sparkle feed. Only the release script changes it, except the maintainer's bad-release procedure. |
 | `docs/` | Architecture, development, and release documents. |
 
 ## Build output

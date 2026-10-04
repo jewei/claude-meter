@@ -70,7 +70,8 @@ Do these steps once on each Mac that makes releases.
    become the GitHub release text and the HTML text in the Sparkle update window.
 2. Commit and push everything to `main`. Make sure that CI passes.
 3. Select the version and the build number (see [The build number](#the-build-number)).
-4. Optional: make a private candidate first. This works on any branch:
+4. Optional: make a private candidate first. It uploads to Apple notarization, but publishes
+   nothing. This works on any branch:
 
    ```bash
    make release-candidate VERSION=4.0.0 BUILD=400

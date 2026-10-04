@@ -15,7 +15,10 @@ that a change has broken before.
 | `make test VERBOSE=1` | The same, and lists every test. Use it to find the test that crashed. |
 | `make format` | Format every Swift file with `swift format` and `.swift-format`. |
 | `make app` / `make run` | Build the unsigned Debug app / build and launch it. |
-| `make release VERSION=… BUILD=…` | Signed, notarized release. Maintainer only; agents never run it. See `docs/releasing.md`. |
+| `make release VERSION=… BUILD=…` | Signed, notarized release. Maintainer only. See `docs/releasing.md`. |
+| `make release-candidate VERSION=… BUILD=…` | Signed candidate. It uploads to Apple notarization with the maintainer's identity. Maintainer only. |
+
+Agents never run `make release` or `make release-candidate`.
 
 A change is done when `make check` passes and the docs that describe the behavior are
 updated in the same commit.

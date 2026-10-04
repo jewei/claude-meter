@@ -3,8 +3,11 @@ import MeterDomain
 import MeterPlatform
 
 extension AppModel {
-    /// Restores saved readings, applies the log setting, and starts refreshing. Call once.
+    /// Applies the log setting, restores saved readings, and starts refreshing. Call once.
     func start(archive: ReadingArchive?) async {
+        // First, so the log file also gets the warnings of the archive load. A change while
+        // the file loads reaches the log file through `settingsDidChange`.
+        logFile.setEnabled(settings.settings.writesLogFile)
         var restored: Set<ProviderID> = []
         if let archive {
             let saved = await archive.load()
@@ -14,9 +17,7 @@ extension AppModel {
             usage.restore(kept)
             restored = Set(kept.keys)
         }
-        let current = settings.settings
-        logFile.setEnabled(current.writesLogFile)
-        let configuration = Self.refreshConfiguration(current)
+        let configuration = Self.refreshConfiguration(settings.settings)
         scheduler?.update(configuration)
         // A refresh reconciles first. When no request may go out (paused, before onboarding,
         // or with the display asleep), still drop saved accounts whose login or folder is

@@ -30,7 +30,7 @@ app: ## Build the unsigned Debug app.
 		CODE_SIGNING_ALLOWED=NO build -quiet
 
 run: app ## Build and launch the Debug app.
-	-pkill -x ClaudeMeter
+	-pkill -f '$(APP)/Contents/MacOS/ClaudeMeter'
 	open $(APP)
 
 clean: ## Remove build output.

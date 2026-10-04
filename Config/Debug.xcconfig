@@ -4,6 +4,10 @@
 
 #include "Base.xcconfig"
 
+// A separate identity, so a development build never reads or writes the settings, saved
+// readings, or update state of an installed copy.
+PRODUCT_BUNDLE_IDENTIFIER = com.jewei.claudemeter.debug
+
 // Xcode signs with the team's Apple Development certificate when you run from Xcode.
 CODE_SIGN_STYLE = Automatic
 

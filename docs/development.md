@@ -27,9 +27,10 @@ To build and open the app:
 make run
 ```
 
-> **Caution:** The development build has the same bundle identifier as the release
-> (`com.jewei.claudemeter`). It uses the same settings and Keychain items as an installed
-> Claude Meter. `make run` quits every running Claude Meter before it opens the new build.
+> **Note:** The development build uses the bundle identifier `com.jewei.claudemeter.debug`.
+> Its settings and saved readings are separate from an installed Claude Meter. It reads the
+> same provider credentials, because Claude Code, Codex, Cursor, and Grok own them.
+> `make run` quits only an earlier development build before it opens the new one.
 
 To work in Xcode, open `ClaudeMeter.xcodeproj` and run the `ClaudeMeter` scheme. Xcode
 signs Debug builds with the Apple Development certificate of team 4L4SS26L9J. If you are

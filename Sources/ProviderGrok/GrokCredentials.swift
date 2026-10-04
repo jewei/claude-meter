@@ -40,7 +40,7 @@ struct GrokCredentials: Hashable, Sendable {
     /// after a clock difference or a slow request, with a harsher message.
     static let expiryMargin: TimeInterval = 30
 
-    /// Whether `expires_at` has passed or is less than ``expiryMargin`` away. Such a key is
+    /// Whether `expires_at` has passed or is at most ``expiryMargin`` away. Such a key is
     /// never sent.
     func isExpired(at now: Date) -> Bool {
         guard let expiresAt else { return false }

@@ -8,9 +8,9 @@ import Testing
 
 /// Retention: which failures keep the last observation, for whom, and for how long.
 extension GrokProviderTests {
-    /// A key that expires in less than 30 s counts as expired, so it never comes back as a
+    /// A key that expires in at most 30 s counts as expired, so it never comes back as a
     /// 401 with the harsher message.
-    @Test(arguments: ["2026-10-04T11:59:00Z", "2026-10-04T12:00:10Z"])
+    @Test(arguments: ["2026-10-04T11:59:00Z", "2026-10-04T12:00:10Z", "2026-10-04T12:00:30Z"])
     func anExpiredTokenIsNeverSent(expiresAt: String) async throws {
         try signIn(expiresAt: expiresAt)
         let http = FakeHTTPClient(json: Self.liveFixture)
@@ -21,6 +21,17 @@ extension GrokProviderTests {
         #expect(account.isStale)
         #expect(account.issue?.message == "Your Grok sign-in expired. Open Grok Build to renew it.")
         #expect(account.issue?.needsAction == true)
+    }
+
+    /// The margin is at most 30 s: a key with more time left is sent.
+    @Test func aKeyWithMoreThanTheMarginLeftIsSent() async throws {
+        try signIn(expiresAt: "2026-10-04T12:00:31Z")
+        let http = FakeHTTPClient(json: Self.liveFixture)
+
+        let account = try account(try await provider(http).fetch(previous: previous()))
+
+        #expect(http.requests.count == 1)
+        #expect(account.issue == nil)
     }
 
     @Test func signingOutDropsTheReading() async throws {

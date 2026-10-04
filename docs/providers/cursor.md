@@ -166,7 +166,7 @@ The email is never part of the reading.
 
 ### Quota
 
-11. A token with a known `exp` less than 30 s after now is never sent. It counts as expired,
+11. A token with a known `exp` at most 30 s after now is never sent. It counts as expired,
     because it would come back as HTTP 401 with a harsher message.
 12. Spend and limit never give a percentage. `totalPercentUsed` is the usage.
 13. A body that is not a JSON object is an unexpected response.
@@ -213,8 +213,9 @@ The email is never part of the reading.
 30. An export above the 8 MiB response limit fails, and the message points to the Cursor
     dashboard. The history is unknown, not partial, because no row arrives. Inside the limit,
     rows after the first 100,000 are not counted, and the history is partial.
-31. A token without a `sub` user ID, or with characters outside `A-Z a-z 0-9 _ - .`, is an
-    unexpected token format. No request is sent.
+31. A token without a `sub` user ID (the text after the last `|`, not empty), a user ID with
+    characters outside `A-Z a-z 0-9 _ -`, or a token with characters outside
+    `A-Z a-z 0-9 _ - .`, is an unexpected token format. No request is sent.
 32. History follows the quota lifecycle and retention rule (`docs/architecture.md`). Each
     history carries the owner of the login that read it (`ProviderTokenHistory.owner`).
     `reconcile` drops a held history whose login signed out or changed, and keeps it while
@@ -229,7 +230,8 @@ The email is never part of the reading.
 ### Messages
 
 34. Every message says what to do, for example "Open Cursor and sign in again."
-35. A decoding failure shows "Cursor returned an unexpected response.", never a system error.
+35. A decoding failure shows "Cursor returned an unexpected response. Claude Meter will try
+    again soon.", never a system error.
 36. Only a network that is down, or a host that cannot be found or reached, shows "Cannot reach
     Cursor. Check your internet connection." A connection that dropped had reached Cursor, so
     it shows "The Cursor request failed. Claude Meter will try again soon."

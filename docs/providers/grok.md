@@ -108,7 +108,7 @@ never reaches a reading, a log, or the disk.
 3. If that entry has expired, a later entry with the same owner that has not expired is used.
    Otherwise the login is expired, and no token is sent. An entry of another login, such as
    an old legacy key, is never sent in its place.
-4. An `expires_at` that does not parse means no known expiry. An `expires_at` less than 30 s
+4. An `expires_at` that does not parse means no known expiry. An `expires_at` at most 30 s
    after now counts as expired, because the key would come back as HTTP 401.
 5. A missing file, a missing folder, or no entry with a key means signed out.
 6. A file that is not a regular file, is larger than 4 MiB, or is not a JSON object is
@@ -141,7 +141,8 @@ never reaches a reading, a log, or the disk.
 ### Messages
 
 15. Every message says what to do, for example "Open Grok Build and run `grok login`."
-16. A decoding failure shows "Grok returned an unexpected response.", never a system error.
+16. A decoding failure shows "Grok returned an unexpected response. Claude Meter will try
+    again soon.", never a system error.
 17. Only a network that is down, or a host that cannot be found or reached, shows "Cannot reach
     Grok. Check your internet connection." A connection that dropped had reached Grok, so it
     shows "The Grok usage request failed. Claude Meter will try again soon."

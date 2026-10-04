@@ -37,7 +37,7 @@ struct CursorCredentials: Hashable, Sendable {
     /// 401 after a clock difference or a slow request, with a harsher message.
     static let expiryMargin: TimeInterval = 30
 
-    /// A token whose known expiry has passed, or is less than ``expiryMargin`` away, is never
+    /// A token whose known expiry has passed, or is at most ``expiryMargin`` away, is never
     /// sent.
     func isExpired(at now: Date) -> Bool {
         guard let expiresAt else { return false }

@@ -8,9 +8,9 @@ import Testing
 
 /// Retention: which failures keep the last observation, for whom, and for how long.
 extension CursorProviderTests {
-    /// A token that expires in less than 30 s counts as expired, so it never comes back as a
+    /// A token that expires in at most 30 s counts as expired, so it never comes back as a
     /// 401 with the harsher message.
-    @Test(arguments: [-60.0, 10.0])
+    @Test(arguments: [-60.0, 10.0, 30.0])
     func anExpiredTokenIsNeverSent(expiresIn: TimeInterval) async throws {
         try home.write(token: CursorFixture.token(expiresAt: .reference(expiresIn)))
         let http = FakeHTTPClient(json: CursorFixture.usage)
@@ -23,6 +23,17 @@ extension CursorProviderTests {
         #expect(account.issue?.message == "Your Cursor session expired. Open Cursor to renew it.")
         #expect(account.issue?.needsAction == true)
         #expect(account.attemptedAt == .reference())
+    }
+
+    /// The margin is at most 30 s: a token with more time left is sent.
+    @Test func aTokenWithMoreThanTheMarginLeftIsSent() async throws {
+        try home.write(token: CursorFixture.token(expiresAt: .reference(31)), membership: "pro")
+        let http = FakeHTTPClient(json: CursorFixture.usage)
+
+        let account = try account(try await provider(http).fetch(previous: previous()))
+
+        #expect(http.requests.count == 1)
+        #expect(account.issue == nil)
     }
 
     @Test(arguments: [401, 403])

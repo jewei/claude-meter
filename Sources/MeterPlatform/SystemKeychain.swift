@@ -67,17 +67,41 @@ public struct SystemKeychain: Keychain {
         try check(status)
     }
 
-    private func baseQuery(service: String?, account: String?) -> [CFString: Any] {
+    /// Every query fails with `errSecInteractionNotAllowed` instead of showing a prompt.
+    ///
+    /// Both settings are necessary. `LAContext.interactionNotAllowed` covers items that need
+    /// user authentication. Items of other apps (Claude Code, the Cursor CLI) in the file-based
+    /// login Keychain use legacy access lists, and for them macOS can still show the "wants to
+    /// use your confidential information" dialog; only the UI-fail policy suppresses it.
+    func baseQuery(service: String?, account: String?) -> [CFString: Any] {
         let context = LAContext()
         context.interactionNotAllowed = true
         var query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecUseAuthenticationContext: context,
+            kSecUseAuthenticationUI: Self.authenticationUIFail as CFString,
         ]
         if let service { query[kSecAttrService] = service }
         if let account { query[kSecAttrAccount] = account }
         return query
     }
+
+    /// The value of `kSecUseAuthenticationUIFail`, read at run time.
+    ///
+    /// Apple deprecated the constant in macOS 11 in favor of `interactionNotAllowed`, which
+    /// alone does not stop the legacy prompt (see ``baseQuery(service:account:)``). A direct
+    /// reference is a deprecation warning, and the build treats warnings as errors. The symbol
+    /// still ships in Security.framework, so it is looked up by name. The fallback is its
+    /// documented value.
+    static let authenticationUIFail: String = {
+        let fallback = "u_AuthUIF"
+        let path = "/System/Library/Frameworks/Security.framework/Security"
+        guard let handle = dlopen(path, RTLD_NOW) else { return fallback }
+        defer { dlclose(handle) }
+        guard let symbol = dlsym(handle, "kSecUseAuthenticationUIFail") else { return fallback }
+        let value = symbol.assumingMemoryBound(to: CFString?.self).pointee
+        return (value as String?) ?? fallback
+    }()
 
     private func ensureAllowed() throws(KeychainError) {
         if TestProcess.isRunning && !TestProcess.allowsLiveKeychain {

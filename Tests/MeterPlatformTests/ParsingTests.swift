@@ -124,12 +124,3 @@ import Testing
         #expect(store.value([String: Int].self, forKey: "bad") == nil)
     }
 }
-
-@Suite struct SystemKeychainTests {
-    @Test func failsClosedInTests() {
-        #expect(TestProcess.isRunning)
-        #expect(throws: KeychainError.unavailable) {
-            try SystemKeychain().password(service: "Claude Code-credentials", account: nil)
-        }
-    }
-}

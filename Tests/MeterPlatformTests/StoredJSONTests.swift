@@ -20,6 +20,10 @@ import Testing
         #expect(String(decoding: data, as: UTF8.self) == #"{"date":"2026-10-04T12:00:00.750Z"}"#)
         #expect(try roundTrip(Stamp(date: date)) == Stamp(date: date))
 
+        // A whole second keeps the format that earlier versions read.
+        let whole = try JSONEncoder.meter.encode(Stamp(date: .reference()))
+        #expect(String(decoding: whole, as: UTF8.self) == #"{"date":"2026-10-04T12:00:00Z"}"#)
+
         let store = MemoryStore()
         store.setValue(Stamp(date: date), forKey: "deadline")
         #expect(store.value(Stamp.self, forKey: "deadline") == Stamp(date: date))

@@ -125,9 +125,9 @@ There is one global cadence. No battery, network, or per-provider timers.
 | Manual Claude OAuth | Keychain, service `com.jewei.claudemeter.claude-oauth`, account `manual` | JSON `{accessToken, refreshToken, expiresAt, subscriptionType, connectionID}` |
 | Log file (opt-in) | `~/Library/Logs/ClaudeMeter/ClaudeMeter.log` | text, 0600, rotates once at 4 MiB |
 
-Every JSON value above stores dates as ISO-8601 text with milliseconds
-(`2026-10-04T12:00:00.750Z`, `JSONEncoder.meter`); values without fractional seconds from
-earlier versions still load. Token history is memory only and rebuilt after launch. Nothing
+Every JSON value above stores dates as ISO-8601 text (`JSONEncoder.meter`): a whole second
+as `2026-10-04T12:00:00Z`, and a date with a fraction with milliseconds, as
+`2026-10-04T12:00:00.750Z`. Both forms load. Token history is memory only and rebuilt after launch. Nothing
 else is written.
 
 ## Time limits

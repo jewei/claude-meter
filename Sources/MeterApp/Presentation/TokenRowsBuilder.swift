@@ -38,7 +38,7 @@ struct TokenRowsBuilder {
         reading: Reading<ProviderTokenHistory>?, history: TokenHistory?, provider: ProviderID,
         isAccountSource: Bool
     ) -> String? {
-        if let issue = reading?.issue { return issue.message }
+        if let issue = reading?.issue { return NoticeText.text(for: issue, now: context.now) }
         guard let history else {
             return context.refreshingHistory.contains(provider)
                 ? "Reading token usage…" : "Token usage unavailable"

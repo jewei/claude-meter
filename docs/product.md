@@ -114,7 +114,8 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    on this Mac, labeled **This Mac**. Cursor counts come from the account export, labeled
    **Account usage**. The label follows the source that the history reports.
 3. Missing history is unknown (`—`), never zero. Notes state partial history, missing
-   records, errors, and old data. History never changes quota, severity, or selection.
+   records, errors, and old data. An error with a retry time counts down, as notices do
+   (`Rate limited. Retrying in 3m.`). History never changes quota, severity, or selection.
 
 ## 6. Settings
 

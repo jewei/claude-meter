@@ -438,6 +438,20 @@ import Testing
         #expect(try tokenRows(.claude, history: old).note == "Token data may be stale")
     }
 
+    /// Cursor's export after HTTP 429: the note counts down to the retry, as notices do.
+    @Test func tokenRowsCountDownARetry() throws {
+        let issue = UsageIssue("Rate limited.", retryAt: .reference(.minutes(3)))
+        let value = try #require(history(.cursor, source: .account).value)
+        let held: Reading<ProviderTokenHistory> = .stale(
+            value, observedAt: value.observedAt, issue: issue)
+        #expect(try tokenRows(.cursor, history: held).note == "Rate limited. Retrying in 3m.")
+        #expect(
+            try tokenRows(.cursor, history: .failed(issue)).note == "Rate limited. Retrying in 3m.")
+        let plain = UsageIssue("Could not read the export.")
+        #expect(
+            try tokenRows(.cursor, history: .failed(plain)).note == "Could not read the export.")
+    }
+
     @Test func formattingIsTheSameOnEveryMac() {
         #expect(Formatting.tokens(35_800_000) == "35.8M tokens")
         #expect(Formatting.tokens(1) == "1 token")

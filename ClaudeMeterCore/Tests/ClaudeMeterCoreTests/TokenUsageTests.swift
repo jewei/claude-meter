@@ -47,6 +47,33 @@ struct TokenUsageTests {
         #expect(zero.tokens(for: .today, asOf: now, calendar: calendar) == nil)
     }
 
+    @Test func accountHistoryUsesOnlyThatAccountsFolders() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let now = Date(timeIntervalSince1970: 1_790_856_000)
+        let today = calendar.startOfDay(for: now)
+        let start = try #require(
+            TokenUsagePeriod.lastSevenDays.interval(asOf: now, calendar: calendar)
+        ).start
+        func snapshot(
+            _ count: Int64, accounts: [String: TokenUsageSnapshot] = [:]
+        ) -> TokenUsageSnapshot {
+            TokenUsageSnapshot(
+                provider: .claude, daily: [today: count], periodStart: start, observedAt: now,
+                timeZoneID: calendar.timeZone.identifier, accounts: accounts)
+        }
+        let local = snapshot(110, accounts: ["claude": snapshot(100), "claude-work": snapshot(10)])
+        #expect(
+            local.account("claude-work").tokens(for: .today, asOf: now, calendar: calendar) == 10)
+        // An account with no local folder has no records, not the provider total.
+        let unmapped = local.account("unmapped")
+        #expect(!unmapped.hasRecords)
+        #expect(unmapped.tokens(for: .today, asOf: now, calendar: calendar) == nil)
+        // A source without folders, such as Cursor's export, belongs to its one account.
+        let export = snapshot(42)
+        #expect(export.account("default") == export)
+    }
+
     @Test func invalidDatesAndOverflowNeverBecomeCounts() throws {
         let now = Date(timeIntervalSince1970: 1_790_856_000)
         var calendar = Calendar(identifier: .gregorian)

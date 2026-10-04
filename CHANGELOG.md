@@ -16,6 +16,9 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - A Claude account card shows the plan that its login reports, such as Max 5x. An older
   manual badge from Settings no longer hides it.
+- **Tokens used** on a Claude or Codex card counts only the records in that account's
+  config dir or Codex home. Before, each card showed the total of all accounts on this
+  Mac.
 
 ## [3.1.2] - 2026-10-04
 

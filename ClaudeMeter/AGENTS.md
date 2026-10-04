@@ -55,9 +55,9 @@ observation or timestamp.
 `UsageStore.tokenReadings` owns token history separately from quota, with independent
 refresh IDs and reading states. History uses the same scheduler opportunities. A scan
 must not delay quota publication or change quota freshness. Cancel both tasks on pause,
-sleep, disable, and source changes. Token sections in account cards label local provider
-totals **This Mac**, never as usage owned by the currently signed-in account. Each card
-for the same local provider shows the same total.
+sleep, disable, and source changes. Token sections in account cards label local history
+**This Mac**, never as usage owned by the currently signed-in account. Each card shows
+only the history of its own config dir or Codex home.
 
 ## Schedule refreshes and handle display sleep
 

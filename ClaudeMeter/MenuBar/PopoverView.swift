@@ -294,9 +294,9 @@ struct PopoverView: View {
         .padding(.bottom, 12)
     }
 
-    private func tokenUsage(for provider: ProviderID) -> TokenUsageRows {
+    private func tokenUsage(for provider: ProviderID, account: String) -> TokenUsageRows {
         TokenUsageRows(
-            provider: provider,
+            provider: provider, account: account,
             reading: appState.usageStore.tokenReadings[provider],
             isRefreshing: appState.usageStore.tokenRefreshing.contains(provider), now: now)
     }
@@ -548,7 +548,7 @@ struct PopoverView: View {
                     AccountRingCard(
                         model: model, now: now, thresholds: usageThresholds, usage: showsUsage,
                         showsProviderStatus: selectedProvider != .claude,
-                        tokenUsage: tokenUsage(for: .claude))
+                        tokenUsage: tokenUsage(for: .claude, account: model.id))
                 }
             }
         case .claudeExtraUsage:
@@ -658,7 +658,7 @@ struct PopoverView: View {
                 }
             }
             UsageResetsView(resets: model.usageResets, now: now)
-            tokenUsage(for: .claude)
+            tokenUsage(for: .claude, account: model.id)
         }
     }
 
@@ -981,7 +981,7 @@ struct PopoverView: View {
                             }
                         }
                     }
-                    tokenUsage(for: .cursor)
+                    tokenUsage(for: .cursor, account: cursor.id)
                 }
                 .popoverDisclosure(id: Self.cursorCardID)
             }
@@ -1054,7 +1054,7 @@ struct PopoverView: View {
                 thresholds: usageThresholds,
                 usage: showsUsage,
                 showsProviderStatus: selectedProvider != .codex,
-                tokenUsage: tokenUsage(for: .codex))
+                tokenUsage: tokenUsage(for: .codex, account: reading.id))
         } else {
             codexCard(reading, showsStatus: selectedProvider != .codex)
         }
@@ -1133,7 +1133,7 @@ struct PopoverView: View {
             if expanded {
                 VStack(alignment: .leading, spacing: 8) {
                     UsageResetsView(resets: resets, now: now)
-                    tokenUsage(for: .codex)
+                    tokenUsage(for: .codex, account: account.id)
                 }
                 .popoverDisclosure(id: cardID)
             }
@@ -1249,7 +1249,7 @@ struct PopoverView: View {
                     .foregroundStyle(Color.pfInkMuted)
             }
             if expanded {
-                tokenUsage(for: .grok)
+                tokenUsage(for: .grok, account: account.id)
                     .popoverDisclosure(id: Self.grokCardID)
             }
         }

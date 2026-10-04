@@ -3,9 +3,13 @@ import SwiftUI
 
 struct TokenUsageRows: View {
     let provider: ProviderID
+    /// The card's account. Local history counts only the folders of this account.
+    let account: String
     let reading: ReadingState<TokenUsageSnapshot>?
     let isRefreshing: Bool
     let now: Date
+
+    private var history: TokenUsageSnapshot? { reading?.value?.account(account) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -20,7 +24,7 @@ struct TokenUsageRows: View {
                     .foregroundStyle(Color.pfInkMuted)
             }
             ForEach(TokenUsagePeriod.allCases, id: \.self) { period in
-                let count = reading?.value?.tokens(for: period, asOf: now)
+                let count = history?.tokens(for: period, asOf: now)
                 HStack {
                     Text(period.rawValue)
                         .font(PFont.body(11, .semibold))
@@ -47,13 +51,13 @@ struct TokenUsageRows: View {
         .help(
             provider == .cursor
                 ? "Token records reported by Cursor for this account."
-                : "All retained local sessions for this provider, including earlier logins. The same total appears on each of its account cards. Other devices are not included."
+                : "Retained local sessions in this account's folder, including earlier logins that used the folder. Other folders and devices are not included."
         )
     }
 
     private var status: String? {
         if let error = reading?.error { return error }
-        guard let value = reading?.value else {
+        guard let value = history else {
             return isRefreshing ? "Reading token usage…" : "Token usage unavailable"
         }
         if value.isPartial { return "Partial history · some records could not be counted" }

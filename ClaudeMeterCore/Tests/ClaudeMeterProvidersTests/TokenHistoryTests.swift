@@ -54,6 +54,17 @@ private final class TokenHistoryFixture {
     }
 }
 
+extension TokenHistoryScanner {
+    /// Gives each root its own account, as separate config dirs do.
+    fileprivate func scan(roots: [URL], now: Date, calendar: Calendar) async throws
+        -> TokenUsageSnapshot
+    {
+        try await scan(
+            roots: roots.map { TokenHistoryRoot(account: $0.path, url: $0) }, now: now,
+            calendar: calendar)
+    }
+}
+
 struct TokenHistoryTests {
     @Test func claudeStreamingCopiesAndUnknownModelsKeepCorrectTokens() async throws {
         let fixture = try TokenHistoryFixture()
@@ -216,6 +227,61 @@ struct TokenHistoryTests {
             roots: [second.root], now: tokenNow, calendar: tokenCalendar)
         #expect(!changed.isPartial)
         #expect(changed.tokens(for: .today, asOf: tokenNow, calendar: tokenCalendar) == 112)
+    }
+
+    @Test func eachAccountCountsOnlyItsOwnFolders() async throws {
+        let personal = try TokenHistoryFixture()
+        let work = try TokenHistoryFixture()
+        _ = try personal.write("projects/a/session.jsonl", claudeLine("personal", count: 1_000))
+        _ = try personal.write("archive/session.jsonl", claudeLine("archived", count: 500))
+        _ = try work.write("projects/b/session.jsonl", claudeLine("work", count: 10))
+        let empty = personal.root.appendingPathComponent("empty", isDirectory: true)
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        let roots = [
+            TokenHistoryRoot(
+                account: "claude", url: personal.root.appendingPathComponent("projects")),
+            TokenHistoryRoot(
+                account: "claude", url: personal.root.appendingPathComponent("archive")),
+            TokenHistoryRoot(
+                account: "claude-work", url: work.root.appendingPathComponent("projects")),
+            TokenHistoryRoot(account: "claude-new", url: empty),
+        ]
+        let result = try await TokenHistoryScanner(provider: .claude).scan(
+            roots: roots, now: tokenNow, calendar: tokenCalendar)
+        func today(_ account: String) -> Int64? {
+            result.account(account).tokens(for: .today, asOf: tokenNow, calendar: tokenCalendar)
+        }
+        #expect(today("claude") == 1_524)
+        #expect(today("claude-work") == 22)
+        #expect(today("claude-new") == nil)
+        #expect(!result.account("claude-new").hasRecords)
+        #expect(today("unmapped") == nil)
+        #expect(result.tokens(for: .today, asOf: tokenNow, calendar: tokenCalendar) == 1_546)
+        #expect(!result.isPartial)
+        #expect(!result.account("claude-work").isPartial)
+    }
+
+    @Test func partialHistoryStaysWithTheAccountThatOwnsIt() async throws {
+        let personal = try TokenHistoryFixture()
+        let work = try TokenHistoryFixture()
+        _ = try personal.write(
+            "large.jsonl",
+            claudeLine("large", count: 100, padding: String(repeating: "x", count: 2_000)))
+        _ = try work.write("small.jsonl", claudeLine("small", count: 10))
+        let roots = [
+            TokenHistoryRoot(account: "claude", url: personal.root),
+            TokenHistoryRoot(account: "claude-work", url: work.root),
+        ]
+        // The oversized line makes only the personal folder partial.
+        let result = try await TokenHistoryScanner(
+            provider: .claude, limits: .init(lineBytes: 1_000)
+        ).scan(roots: roots, now: tokenNow, calendar: tokenCalendar)
+        #expect(result.isPartial)
+        #expect(result.account("claude").isPartial)
+        #expect(!result.account("claude-work").isPartial)
+        #expect(
+            result.account("claude-work").tokens(
+                for: .today, asOf: tokenNow, calendar: tokenCalendar) == 22)
     }
 
     @Test func completedSweepsFindInsertionsAndRemoveDeletedFiles() async throws {

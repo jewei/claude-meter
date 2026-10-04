@@ -242,7 +242,10 @@ final class AppState: ObservableObject {
                                 configuredDirs: configured, disabledKeys: disabled
                             )
                             .map {
-                                $0.configDir.appendingPathComponent("projects", isDirectory: true)
+                                TokenHistoryRoot(
+                                    account: $0.id,
+                                    url: $0.configDir.appendingPathComponent(
+                                        "projects", isDirectory: true))
                             }
                         }
                     }),
@@ -254,7 +257,10 @@ final class AppState: ObservableObject {
                             budget: AppSettings.codexHistoryConfigurationBudget)
                         return accounts.flatMap { account in
                             ["sessions", "archived_sessions"].map {
-                                account.home.appendingPathComponent($0, isDirectory: true)
+                                TokenHistoryRoot(
+                                    account: account.id,
+                                    url: account.home.appendingPathComponent(
+                                        $0, isDirectory: true))
                             }
                         }
                     }),
@@ -263,8 +269,10 @@ final class AppState: ObservableObject {
                     id: .grok,
                     roots: {
                         [
-                            GrokAuthStore.defaultAuthPath().deletingLastPathComponent()
-                                .appendingPathComponent("sessions", isDirectory: true)
+                            TokenHistoryRoot(
+                                account: "default",
+                                url: GrokAuthStore.defaultAuthPath().deletingLastPathComponent()
+                                    .appendingPathComponent("sessions", isDirectory: true))
                         ]
                     }),
             ])

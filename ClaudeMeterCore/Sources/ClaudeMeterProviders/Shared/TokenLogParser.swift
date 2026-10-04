@@ -184,10 +184,13 @@ struct TokenDayAccumulator {
         daily[day] = total
     }
 
-    func snapshot(provider: ProviderID, hasRecords: Bool) -> TokenUsageSnapshot {
+    func snapshot(
+        provider: ProviderID, hasRecords: Bool, accounts: [String: TokenUsageSnapshot] = [:]
+    ) -> TokenUsageSnapshot {
         TokenUsageSnapshot(
             provider: provider, daily: daily, periodStart: start, observedAt: now,
-            timeZoneID: calendar.timeZone.identifier, hasRecords: hasRecords, isPartial: isPartial)
+            timeZoneID: calendar.timeZone.identifier, hasRecords: hasRecords, isPartial: isPartial,
+            accounts: accounts)
     }
 }
 

@@ -312,8 +312,8 @@ resize animation. Ring cards remain always expanded. There is no separate token 
 A divider separates token usage from the details above it. The **Tokens used** heading
 uses Nunito 700/11 in `ink`. The source label uses Nunito 600/10 in `ink-muted`:
 **Account usage** for Cursor and **This Mac** for Claude Code, Codex, and Grok Build.
-Each account card for the same local provider shows the same total. The source tooltip
-explains this because local records do not prove historical account ownership.
+Each local account card shows only the records in its own config dir or Codex home. The
+source tooltip states that scope, because a folder can hold records from earlier logins.
 
 Each section has **Today**, **Yesterday**, and **Last 7 Days** rows. Labels align left
 and token counts align right, in Nunito 600/11 with monospaced digits. Counts use compact

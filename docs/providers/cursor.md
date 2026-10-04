@@ -138,43 +138,45 @@ The email is never part of the reading.
 7. No access token in the database or the Keychain means signed out.
 8. A cancelled read does not read the Keychain.
 9. Each refresh reads the credentials again, before and after its request.
+10. `signInStatus` reads the database and only the attributes of the Keychain item, and sends
+    nothing. It counts an expired token as signed in. The card asks the user to renew it.
 
 ### Quota
 
-10. A token with a known `exp` at or before now is never sent.
-11. Spend and limit never give a percentage. `totalPercentUsed` is the usage.
-12. A body that is not a JSON object is an unexpected response.
-13. The plan request runs only when Cursor stored no plan. Its failures are silent.
-14. The plan keeps the capitalization that Cursor used, except for the known names.
+11. A token with a known `exp` at or before now is never sent.
+12. Spend and limit never give a percentage. `totalPercentUsed` is the usage.
+13. A body that is not a JSON object is an unexpected response.
+14. The plan request runs only when Cursor stored no plan. Its failures are silent.
+15. The plan keeps the capitalization that Cursor used, except for the known names.
 
 ### Retention
 
-15. Signed out: drop the last observation.
-16. Expired token, HTTP 401, or HTTP 403: keep the last observation as stale, with an issue that
+16. Signed out: drop the last observation.
+17. Expired token, HTTP 401, or HTTP 403: keep the last observation as stale, with an issue that
     asks the user to act, while the owner is unchanged.
-17. Busy database, locked Keychain, network failure, other HTTP status, or an unexpected
+18. Busy database, locked Keychain, network failure, other HTTP status, or an unexpected
     response: keep the last observation as stale while the owner is unchanged.
-18. `"enabled": false`: drop the last observation, because it no longer describes the account.
-19. If the owner after the response differs from the owner before it, discard the response.
-20. `reconcile` drops the reading when the owner changed or the user signed out. It reads local
+19. `"enabled": false`: drop the last observation, because it no longer describes the account.
+20. If the owner after the response differs from the owner before it, discard the response.
+21. `reconcile` drops the reading when the owner changed or the user signed out. It reads local
     data only.
 
 ### Token history
 
-21. The export covers local midnight six days ago through now.
-22. The four token columns are disjoint. Their sum is the row's count. Prices never count.
-23. A header-only export is a real zero for the range.
-24. A missing header or malformed CSV is an unexpected response for the whole export.
-25. A row with the wrong column count, a bad date, or a bad number makes the history partial.
-26. A row before the range start is ignored. A row after now makes the history partial.
-27. Numbers accept thousands separators only in strict groups of three. An empty field is zero.
-28. After 100,000 rows, the remaining rows are not counted, and the history is partial.
-29. A token without a `sub` user ID, or with characters outside `A-Z a-z 0-9 _ - .`, is an
+22. The export covers local midnight six days ago through now.
+23. The four token columns are disjoint. Their sum is the row's count. Prices never count.
+24. A header-only export is a real zero for the range.
+25. A missing header or malformed CSV is an unexpected response for the whole export.
+26. A row with the wrong column count, a bad date, or a bad number makes the history partial.
+27. A row before the range start is ignored. A row after now makes the history partial.
+28. Numbers accept thousands separators only in strict groups of three. An empty field is zero.
+29. After 100,000 rows, the remaining rows are not counted, and the history is partial.
+30. A token without a `sub` user ID, or with characters outside `A-Z a-z 0-9 _ - .`, is an
     unexpected token format. No request is sent.
-30. A failure keeps the previous history only while the login of the last history is still
+31. A failure keeps the previous history only while the login of the last history is still
     signed in. A login change during the request rejects the result.
 
 ### Messages
 
-31. Every message says what to do, for example "Open Cursor and sign in again."
-32. A decoding failure shows "Cursor returned an unexpected response.", never a system error.
+32. Every message says what to do, for example "Open Cursor and sign in again."
+33. A decoding failure shows "Cursor returned an unexpected response.", never a system error.

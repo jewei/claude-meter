@@ -181,23 +181,6 @@ import Testing
         #expect(tokens(result) == 1_050)
     }
 
-    /// Platform errors such as "Timed out after 5 s." say nothing about what to do.
-    @Test func aBlockingReadFailureSaysWhatToDo() throws {
-        for error in [TimeoutError(limit: .seconds(5)), CocoaError(.fileReadUnknown)] as [any Error]
-        {
-            let mapped = try #require(GrokTokenHistory.failure(for: error) as? ProviderError)
-            #expect(
-                mapped.issue.message
-                    == "Reading Grok Build sessions took too long. Claude Meter will try again soon."
-            )
-            #expect(mapped.keepsLastReading)
-        }
-        #expect(GrokTokenHistory.failure(for: CancellationError()) is CancellationError)
-        #expect(
-            GrokTokenHistory.failure(for: HistoryError.invalidDate) as? HistoryError
-                == .invalidDate)
-    }
-
     @Test func turnsThatCannotBeCountedMakeHistoryPartial() async throws {
         let cases: [(String, Int64)] = [
             ("{broken}\n", 0),

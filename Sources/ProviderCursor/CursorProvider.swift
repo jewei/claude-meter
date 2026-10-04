@@ -63,6 +63,10 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
         case .found(let credentials):
             account = try await fetch(credentials, previous: previous, now: now)
         }
+        // Log a change of state: a failure that clears, not every success.
+        if account.issue == nil, previous?.issue != nil {
+            Self.log.notice("Cursor refresh recovered.")
+        }
         return ProviderUsage(provider: .cursor, accounts: [account])
     }
 
@@ -124,6 +128,7 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
         } catch let failure as CursorFailure {
             result = .failure(failure)
         }
+        recordRequest(result.map { _ in () }, at: now)
         // The response belongs to the login that sent it. Discard it if the login changed.
         let after = try await store.read().ownerStatus
         switch after {
@@ -136,7 +141,6 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
         }
         switch result {
         case .success(let account):
-            lastRequest.withLock { $0 = "Succeeded at \(now.formatted(.iso8601))" }
             return account
         case .failure(let failure):
             return failed(failure, previous: previous, status: .signedIn(owner), now: now)
@@ -188,9 +192,6 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
     private func failed(
         _ failure: CursorFailure, previous: AccountUsage?, status: OwnerStatus, now: Date
     ) -> AccountUsage {
-        lastRequest.withLock {
-            $0 = "Failed at \(now.formatted(.iso8601)): \(failure.issue.message)"
-        }
         // Log a change of state, not the same failure at every refresh.
         if previous?.issue != failure.issue {
             Self.log.warning("Cursor refresh failed: \(failure.issue.message)")
@@ -205,6 +206,18 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
         return .unavailable(
             id: .default, name: Self.accountName, issue: failure.issue, attemptedAt: now,
             owner: owner)
+    }
+
+    /// Diagnostics show how the last request that was sent ended. A refresh that sent nothing,
+    /// such as a signed-out one, leaves it unchanged.
+    private func recordRequest(_ outcome: Result<Void, CursorFailure>, at now: Date) {
+        let time = now.formatted(.iso8601)
+        lastRequest.withLock {
+            switch outcome {
+            case .success: $0 = "Succeeded at \(time)"
+            case .failure(let failure): $0 = "Failed at \(time): \(failure.issue.message)"
+            }
+        }
     }
 
     /// `previous` kept as stale with `issue`. ``AccountUsage/retained(issue:now:)`` makes a

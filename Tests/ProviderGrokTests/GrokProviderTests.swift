@@ -246,6 +246,27 @@ import Testing
         #expect(http.requests.isEmpty)
     }
 
+    /// A refresh that sent nothing, such as a signed-out or expired one, does not claim that a
+    /// request failed.
+    @Test func diagnosticsReportOnlyRequestsThatWereSent() async throws {
+        let provider = provider(FakeHTTPClient(status: 503, json: ""))
+        func lastRequest() async -> String? {
+            await provider.diagnostics().first { $0.label == "Last usage request" }?.value
+        }
+        _ = try await provider.fetch(previous: nil)
+        #expect(await lastRequest() == "None")
+
+        try signIn()
+        _ = try await provider.fetch(previous: nil)
+        let failed = await lastRequest()
+        #expect(failed?.hasPrefix("Failed at") == true)
+        #expect(failed?.contains("HTTP 503") == true)
+
+        try signIn(expiresAt: "2026-10-04T11:00:00Z")
+        _ = try await provider.fetch(previous: nil)
+        #expect(await lastRequest() == failed)
+    }
+
     @Test func diagnosticsNeverShowTheToken() async throws {
         try signIn()
         let provider = provider(FakeHTTPClient(json: Self.liveFixture))

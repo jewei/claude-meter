@@ -9,9 +9,11 @@ import Testing
 /// A sleep function that returns only when a test fires it.
 private final class ManualTimer: Sendable {
     private let gates = Locked<[Gate]>([])
+    private let requested = Locked<[TimeInterval]>([])
 
     var sleep: @Sendable (TimeInterval) async throws -> Void {
-        { [gates] _ in
+        { [gates, requested] interval in
+            requested.withLock { $0.append(interval) }
             let gate = Gate()
             gates.withLock { $0.append(gate) }
             await gate.wait()
@@ -20,6 +22,9 @@ private final class ManualTimer: Sendable {
     }
 
     var waiting: Int { gates.value.count }
+
+    /// The length of every sleep, in order.
+    var intervals: [TimeInterval] { requested.value }
 
     func fire() {
         let pending = gates.withLock { gates in
@@ -150,6 +155,13 @@ private final class ManualTimer: Sendable {
         await fireTimer(scheduler)
         #expect(claude.fetchCount == 2)
         #expect(codex.fetchCount == 2)
+    }
+
+    @Test func timerWaitsThreeHundredSeconds() async {
+        let (scheduler, _) = makeScheduler()
+        await start(scheduler)
+        await fireTimer(scheduler)
+        #expect(timer.intervals == [300, 300])
     }
 
     @Test func timerSkipsProvidersAlreadyRefreshing() async {

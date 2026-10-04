@@ -159,7 +159,7 @@ import Testing
         let store = makeStore([slow, fast])
         let refresh = Task { await store.refresh([.claude, .cursor]) }
         #expect(await gate.waitForArrivals())
-        while store.readings[.cursor] == nil { await Task.yield() }
+        #expect(await waitUntil { store.readings[.cursor] != nil })
         #expect(store.refreshing == [.claude])
         gate.open()
         await refresh.value
@@ -465,8 +465,10 @@ import Testing
         await store.refresh([.claude])
         // The gate ignores cancellation, like a provider that never checks for it.
         let gate = Gate()
+        let answered = Locked(false)
         provider.enqueue { _ in
             await gate.wait()
+            answered.withLock { $0 = true }
             return .sample(.claude, used: 99)
         }
         await store.refresh([.claude])
@@ -475,8 +477,12 @@ import Testing
         let message = store.readings[.claude]?.issue?.message ?? ""
         #expect(message.contains("Claude Meter will try again soon."))
         gate.open()
-        await Task.yield()
-        #expect(store.readings[.claude]?.value == .sample(.claude))
+        // The late answer arrives. Give a publish time to show up, and check that none does.
+        #expect(await waitUntil { answered.value })
+        #expect(
+            await !waitUntil(limit: .milliseconds(100)) {
+                store.readings[.claude]?.value != .sample(.claude)
+            })
     }
 
     @Test func fetchDeadlineFailsWithoutAReading() async {

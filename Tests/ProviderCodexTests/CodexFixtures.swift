@@ -136,7 +136,8 @@ struct CodexTestBed {
         self.provider = CodexProvider(
             configuration: { CodexConfiguration(extraHomes: extras) }, http: http,
             environment: ["CODEX_HOME": root.path("home").path, "PATH": ""],
-            home: root.url, recovery: recovery, now: { now }, limits: limits)
+            home: root.url, recovery: recovery, now: { now }, limits: limits,
+            installFolders: [])
     }
 
     /// Writes `auth.json` into a home folder (`home` is the implicit one).

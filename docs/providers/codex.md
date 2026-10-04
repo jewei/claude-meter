@@ -88,9 +88,10 @@ Executable search, in order:
 3. `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/.bun/bin`, `~/.npm-global/bin`,
    `~/.volta/bin`, `/Applications/Codex.app/Contents/Resources`, `/usr/bin`.
 
-The first executable regular file wins.
+The first executable regular file wins. The search has a 5 s limit.
 
-Environment: the app environment, with `CODEX_HOME` set to the home, without these variables:
+Environment: the app environment, with `CODEX_HOME` set to the home and a new `PATH` (below),
+without these variables:
 
 ```text
 ANTHROPIC_API_KEY  ANTHROPIC_AUTH_TOKEN  ANTHROPIC_BASE_URL  CLAUDE_CODE_OAUTH_TOKEN
@@ -98,6 +99,12 @@ CLAUDE_CODE_USE_BEDROCK  CLAUDE_CODE_USE_VERTEX  ANTHROPIC_BEDROCK_BASE_URL
 ANTHROPIC_VERTEX_BASE_URL  OPENAI_API_KEY  OPENAI_BASE_URL  CODEX_API_KEY
 CODEX_AGENT_IDENTITY  CODEX_ACCESS_TOKEN  OPENAI_FEDERATION_RULE_ID  OPENAI_IDENTITY_TOKEN_FILE
 ```
+
+An npm or bun install of Codex is a script that starts with `#!/usr/bin/env node`, and an app
+started from the Finder has `PATH=/usr/bin:/bin:/usr/sbin:/sbin`. So the child `PATH` is, in
+order and without duplicates: the folder of the found command, the folder of its symbolic-link
+target, `<prefix>/bin` when the target is in `<prefix>/lib/node_modules/`, the app `PATH`
+entries, the install folders of the search, then `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`.
 
 JSON-RPC over stdin and stdout, one compact JSON object per line, no `jsonrpc` field:
 

@@ -103,7 +103,8 @@ extension CodexTests {
                     return CodexConfiguration()
                 },
                 http: FakeHTTPClient(json: CodexFixtures.usage), environment: [:], home: root.url,
-                recovery: FakeRecovery(), now: { .reference() }, limits: limits)
+                recovery: FakeRecovery(), now: { .reference() }, limits: limits,
+                installFolders: [])
             await #expect(throws: ProviderError.self) { try await provider.fetch(previous: nil) }
         }
     }

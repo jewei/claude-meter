@@ -14,6 +14,7 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
     private let configuration: @Sendable () async -> CodexConfiguration
     private let environment: [String: String]
     private let userHome: URL
+    private let installFolders: [URL]
     private let limits: CodexLimits
     private let refresh: CodexAccountRefresh
     private let now: @Sendable () -> Date
@@ -48,16 +49,20 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
         home: URL,
         recovery: (any CodexRecovery)?,
         now: @escaping @Sendable () -> Date,
-        limits: CodexLimits
+        limits: CodexLimits,
+        installFolders: [URL]? = nil
     ) {
+        let installFolders = installFolders ?? CodexExecutable.installFolders(userHome: home)
         self.configuration = configuration
         self.environment = environment
         self.userHome = home
+        self.installFolders = installFolders
         self.limits = limits
         self.now = now
         self.refresh = CodexAccountRefresh(
             api: CodexUsageAPI(http: http, resetDetailsLimit: limits.resetDetails),
-            recovery: recovery ?? CodexAppServer(userHome: home, stepLimit: limits.appServerStep),
+            recovery: recovery
+                ?? CodexAppServer(installFolders: installFolders, stepLimit: limits.appServerStep),
             environment: environment,
             fileReadLimit: limits.fileRead,
             now: now)
@@ -238,6 +243,7 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
 
     private func locateCLI() async throws -> URL {
         try await CodexExecutable.locate(
-            environment: environment, userHome: userHome, timeout: limits.appServerStep)
+            environment: environment, installFolders: installFolders, timeout: limits.appServerStep
+        ).url
     }
 }

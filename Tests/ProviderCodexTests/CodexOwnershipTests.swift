@@ -177,7 +177,8 @@ extension CodexTests {
                 configuration: { CodexConfiguration(extraHomes: extras.value) },
                 http: FakeHTTPClient(json: CodexFixtures.usage),
                 environment: ["CODEX_HOME": root.path("home").path], home: root.url,
-                recovery: FakeRecovery(), now: { .reference() }, limits: .standard)
+                recovery: FakeRecovery(), now: { .reference() }, limits: .standard,
+                installFolders: [])
             let usage = try await provider.fetch(previous: nil)
             #expect(usage.accounts.map(\.name) == ["Codex", "work"])
             #expect(usage.accounts.allSatisfy { $0.sharesLogin })

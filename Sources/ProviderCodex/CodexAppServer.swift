@@ -10,19 +10,20 @@ struct CodexAppServer: CodexRecovery {
     /// non-interactive.
     static let arguments = ["-s", "read-only", "-a", "never", "app-server"]
 
-    /// The user's home folder, for the install folders that `PATH` does not list.
-    let userHome: URL
+    /// The install folders that `PATH` does not list, for the search and the child's `PATH`.
+    let installFolders: [URL]
     /// The limit for each JSON-RPC step and for finding the executable.
     let stepLimit: Duration
 
     func recover(
         _ home: CodexHome, environment: [String: String]
     ) async throws -> CodexRecoveryReply {
-        let executable = try await CodexExecutable.locate(
-            environment: environment, userHome: userHome, timeout: stepLimit)
+        let command = try await CodexExecutable.locate(
+            environment: environment, installFolders: installFolders, timeout: stepLimit)
         let process = LineProcess(
-            executable: executable, arguments: Self.arguments,
-            environment: CodexEnvironment.scrubbed(environment))
+            executable: command.url, arguments: Self.arguments,
+            environment: CodexEnvironment.child(
+                environment, command: command, installFolders: installFolders))
         do {
             try process.start()
         } catch {

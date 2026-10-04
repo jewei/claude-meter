@@ -274,15 +274,17 @@ the app is regular; "About Claude Meter" opens the About tab.
 - **Data** (`Data/DataSettingsView`): one `DataSourceCard` per source with its switch.
   Controls for a source go in its card content, below a divider, while the source is on.
   Claude: the connection (`ClaudeConnectionView`: both logins' states, Connect automatically
-  with a Keychain consent alert, Enter tokens manually, Disconnect, and the last message,
-  which shows a failure in `energyEmptyInk` with a warning symbol) and, in automatic mode,
+  with a Keychain consent alert, Enter tokens manually or Update tokens, and Disconnect, as
+  `DataSourceText.connectionButtons` says for the connection, and the last message, which
+  shows a failure in `energyEmptyInk` with a warning symbol) and, in automatic mode,
   the config dirs (`ClaudeAccountsList`). While Claude is off these controls are hidden, so
   the Claude subtitle says when turning Claude off kept a Connect from being saved
   (`DataSourceText.claudeSubtitle`). The token form (`ManualTokenForm`) says first, in
   `ink` with an amber warning symbol, that the tokens must come from a separate Claude login
   (`DataSourceText.manualTokensSource`). Return connects; Cancel discards the draft and
   abandons a running Connect, so nothing is saved after it; Escape cancels only while both
-  token fields are empty. Disconnect asks first in the page (`InlineConfirmation`) when it
+  token fields are empty. The draft rules (trimming, when Connect is enabled, Escape) are in
+  `ManualTokenDraft`. Disconnect asks first in the page (`InlineConfirmation`) when it
   would delete tokens that the user entered (`DataSourceText.disconnectConfirmation`). Codex:
   the homes (`CodexHomesList`). Rows (`FolderRow`) show an avatar, a display-name field that
   saves on Return, focus loss, leaving the page or the window, and Quit (while it is empty it

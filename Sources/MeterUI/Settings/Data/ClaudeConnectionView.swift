@@ -60,7 +60,7 @@ struct ClaudeConnectionView: View {
             }
             stageContent
             if snapshot.isWorking {
-                Text("Checking the connection…")
+                Text(DataSourceText.checkingConnection)
                     .font(MeterFont.body(12, .semibold))
                     .foregroundStyle(Palette.inkMuted)
             } else if let message = snapshot.message {
@@ -125,8 +125,9 @@ struct ClaudeConnectionView: View {
     }
 
     private var buttons: some View {
-        HStack(spacing: 10) {
-            if snapshot.connection != .automatic {
+        let shown = DataSourceText.connectionButtons(snapshot.connection)
+        return HStack(spacing: 10) {
+            if shown.showsConnectAutomatically {
                 Button("Connect automatically") {
                     if snapshot.needsKeychainConsent {
                         showsConsent = true
@@ -140,13 +141,10 @@ struct ClaudeConnectionView: View {
             Button {
                 stage = .tokenForm
             } label: {
-                ChunkyButtonLabel(
-                    title: snapshot.connection == .manual
-                        ? "Update tokens…" : "Enter tokens manually…",
-                    symbol: "key")
+                ChunkyButtonLabel(title: shown.tokensTitle, symbol: "key")
             }
             .buttonStyle(.chunky)
-            if snapshot.connection != .off {
+            if shown.showsDisconnect {
                 Button {
                     if disconnectConfirmation == nil {
                         Task { await actions.disconnect() }

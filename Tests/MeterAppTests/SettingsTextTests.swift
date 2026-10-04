@@ -40,6 +40,24 @@ import Testing
                 == "Not connected. Choose a connection below.")
     }
 
+    /// The connection buttons follow the saved connection (review R3-U-09).
+    @Test func connectionButtonsFollowTheConnection() {
+        let off = DataSourceText.connectionButtons(.off)
+        #expect(off.showsConnectAutomatically)
+        #expect(off.tokensTitle == "Enter tokens manually…")
+        #expect(!off.showsDisconnect)
+
+        let automatic = DataSourceText.connectionButtons(.automatic)
+        #expect(!automatic.showsConnectAutomatically)
+        #expect(automatic.tokensTitle == "Enter tokens manually…")
+        #expect(automatic.showsDisconnect)
+
+        let manual = DataSourceText.connectionButtons(.manual)
+        #expect(manual.showsConnectAutomatically)
+        #expect(manual.tokensTitle == "Update tokens…")
+        #expect(manual.showsDisconnect)
+    }
+
     @Test func signInStatesNameTheProblem() {
         #expect(DataSourceText.claudeCode(.signedIn).isSignedIn)
         #expect(DataSourceText.claudeCode(.signedOut).isProblem)

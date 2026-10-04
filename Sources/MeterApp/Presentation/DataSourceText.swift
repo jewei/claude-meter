@@ -32,6 +32,28 @@ public enum DataSourceText {
         "Use tokens from a separate Claude login, not Claude Code's own login. Claude Meter "
         + "refreshes these tokens, so a copy of Claude Code's login would sign Claude Code out."
 
+    /// The buttons below the Claude sign-in states, for the saved connection.
+    public struct ConnectionButtons: Equatable, Sendable {
+        /// "Connect automatically": shown unless the connection is automatic already.
+        public let showsConnectAutomatically: Bool
+        /// The button that opens the token form.
+        public let tokensTitle: String
+        /// Disconnect: shown while a connection is saved.
+        public let showsDisconnect: Bool
+    }
+
+    public static func connectionButtons(_ connection: ClaudeSettings.Connection)
+        -> ConnectionButtons
+    {
+        ConnectionButtons(
+            showsConnectAutomatically: connection != .automatic,
+            tokensTitle: connection == .manual ? "Update tokens…" : "Enter tokens manually…",
+            showsDisconnect: connection != .off)
+    }
+
+    /// Below the connection buttons while a Connect or Disconnect runs.
+    public static let checkingConnection = "Checking the connection…"
+
     /// Asks first when Disconnect would delete tokens that the user entered, because they are
     /// hard to get again. Nil when nothing the user entered would be lost.
     public static func disconnectConfirmation(

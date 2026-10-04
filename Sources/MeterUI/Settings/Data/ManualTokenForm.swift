@@ -1,28 +1,20 @@
 import MeterApp
 import SwiftUI
 
-/// The form for pasted Claude OAuth tokens: where they may come from, an access token, an
-/// optional refresh token, and an optional expiry. Tokens stay hidden until the user shows
-/// them.
+/// The form for pasted Claude OAuth tokens: what Claude Meter does with them, where they may
+/// come from, an access token, an optional refresh token, and an optional expiry. Tokens stay
+/// hidden until the user shows them.
 ///
-/// Return connects. Cancel discards the draft and stops a Connect that is still running, so
-/// nothing is saved after it. Escape cancels only while both token fields are empty, so a
-/// stray key never loses pasted tokens.
+/// The draft rules are in ``ManualTokenDraft``. Cancel discards the draft and stops a Connect
+/// that is still running, so nothing is saved after it.
 struct ManualTokenForm: View {
     let isWorking: Bool
     let connect: (_ access: String, _ refresh: String?, _ expiry: Date?) async -> Void
     let cancel: () -> Void
 
-    @State private var accessToken = ""
-    @State private var refreshToken = ""
+    @State private var draft = ManualTokenDraft(now: Date())
     @State private var showsTokens = false
-    @State private var hasExpiry = false
-    @State private var expiry = Date().addingTimeInterval(8 * 3_600)
     @State private var connecting: Task<Void, Never>?
-
-    private var isDraftEmpty: Bool {
-        Self.cleaned(accessToken) == nil && Self.cleaned(refreshToken) == nil
-    }
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -34,18 +26,20 @@ struct ManualTokenForm: View {
             .foregroundStyle(Palette.inkMuted)
             .fixedSize(horizontal: false, vertical: true)
             sourceNote
-            TokenField(title: "Access token", text: $accessToken, isRevealed: showsTokens)
+            TokenField(title: "Access token", text: $draft.accessToken, isRevealed: showsTokens)
             TokenField(
-                title: "Refresh token (optional)", text: $refreshToken, isRevealed: showsTokens)
+                title: "Refresh token (optional)", text: $draft.refreshToken,
+                isRevealed: showsTokens)
             HStack(spacing: 10) {
-                MeterSwitch(label: "Set an expiry", isOn: $hasExpiry)
+                MeterSwitch(label: "Set an expiry", isOn: $draft.hasExpiry)
                 Text("Set an expiry")
                     .font(MeterFont.body(12, .bold))
                     .foregroundStyle(Palette.ink)
                     .accessibilityHidden(true)
-                if hasExpiry {
+                if draft.hasExpiry {
                     DatePicker(
-                        "Expiry", selection: $expiry, displayedComponents: [.date, .hourAndMinute]
+                        "Expiry", selection: $draft.expiry,
+                        displayedComponents: [.date, .hourAndMinute]
                     )
                     .labelsHidden()
                     .datePickerStyle(.compact)
@@ -97,23 +91,21 @@ struct ManualTokenForm: View {
                 ChunkyButtonLabel(title: "Cancel")
             }
             .buttonStyle(.chunky)
-            .keyboardShortcut(isDraftEmpty ? .cancelAction : nil)
-            Button("Connect") {
-                let access = Self.cleaned(accessToken) ?? ""
-                let refresh = Self.cleaned(refreshToken)
-                let expiry = hasExpiry ? expiry : nil
-                connecting = Task { await connect(access, refresh, expiry) }
-            }
-            .buttonStyle(RaisedButtonStyle())
-            .fixedSize()
-            .keyboardShortcut(.defaultAction)
-            .disabled(Self.cleaned(accessToken) == nil || isWorking)
+            .keyboardShortcut(draft.escapeCancels ? .cancelAction : nil)
+            Button("Connect", action: submit)
+                .buttonStyle(RaisedButtonStyle())
+                .fixedSize()
+                .keyboardShortcut(.defaultAction)
+                .disabled(!draft.canConnect(isWorking: isWorking))
         }
     }
 
-    /// The pasted text without surrounding spaces or line breaks, or nil when empty.
-    static func cleaned(_ text: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+    private func submit() {
+        guard draft.canConnect(isWorking: isWorking), let submission = draft.submission else {
+            return
+        }
+        connecting = Task {
+            await connect(submission.accessToken, submission.refreshToken, submission.expiresAt)
+        }
     }
 }

@@ -159,5 +159,15 @@ is missing from that place.
 9. Logo: add `Sources/MeterUI/Resources/Images/<name>.png` and name it in
    `ProviderMark.image(for:)`. Without the file, the mark falls back to a symbol
    **(no compiler check)**.
-10. Docs: `docs/providers/<name>.md`, the rules in `docs/product.md`, the features and the
-    affiliation line in `README.md`, and a `CHANGELOG.md` entry.
+10. Docs **(no compiler check)**. `git grep -n -E "Cursor,? (and )?Grok"` finds most of the
+    places that list the providers:
+    - `docs/providers/<name>.md`, and the rules in `docs/product.md`;
+    - `AGENTS.md`: the first line, and the provider row of the Map;
+    - `README.md`: the first paragraph, the features, the privacy paragraph, and the
+      affiliation line;
+    - `docs/architecture.md`: the data-flow diagram, and the rate-limit section when the
+      provider uses `RateLimitHold`;
+    - `docs/development.md`: the note on the provider credentials that a development build
+      reads;
+    - `docs/token-history.md`, when the provider has local history;
+    - a `CHANGELOG.md` entry.

@@ -14,12 +14,18 @@ public struct TokenDayTally: Sendable {
     public var hasRecords = false
 
     /// Throws ``HistoryError/invalidDate`` when `now` cannot be placed in a calendar day.
+    ///
+    /// The tally keeps the time zone that `calendar` has now, so a time zone change during a
+    /// read cannot mix days of two zones. Pass `Calendar.autoupdatingCurrent` to follow the
+    /// system on the next read.
     public init(now: Date, calendar: Calendar) throws(HistoryError) {
-        guard let interval = TokenPeriod.lastSevenDays.interval(at: now, calendar: calendar) else {
+        var fixed = Calendar(identifier: calendar.identifier)
+        fixed.timeZone = calendar.timeZone
+        guard let interval = TokenPeriod.lastSevenDays.interval(at: now, calendar: fixed) else {
             throw .invalidDate
         }
         self.now = now
-        self.calendar = calendar
+        self.calendar = fixed
         self.start = interval.start
     }
 

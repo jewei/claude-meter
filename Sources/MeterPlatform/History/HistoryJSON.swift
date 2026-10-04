@@ -13,6 +13,13 @@ public enum HistoryJSON {
         /// The count, or nil when the value is present but invalid.
         public let value: Int64?
 
+        /// The count of an optional field: zero when the field is missing or null, and nil when
+        /// it is present but invalid.
+        public static func orZero(_ field: Count?) -> Int64? {
+            guard let field else { return 0 }
+            return field.value
+        }
+
         public init(from decoder: any Decoder) {
             guard let container = try? decoder.singleValueContainer() else {
                 value = nil

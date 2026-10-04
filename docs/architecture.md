@@ -116,10 +116,15 @@ retry time, so the card's countdown is true. One pure rule decides (`RateLimitHo
 - A 429 without a usable `Retry-After` holds nothing.
 
 Quota keeps the hold in the account's issue (`AccountUsage.rateLimitHold(for:now:)`): the
-refresh keeps the account as stale with that issue and sends nothing. The hold survives a
-restart in the reading archive and still ends within 1 hour. Cursor token history keeps the
-hold of its last 429 in memory. Claude has its own gate, because one Claude limit covers every
-account and the Settings check (`docs/providers/claude-oauth.md`).
+refresh keeps the account as stale with that issue and sends nothing. A refresh that sends
+nothing for another reason (an expired token, a login that cannot be read now, or a Codex home
+that did not finish in time) keeps the hold's issue, not its own, while the login can still be
+the same (`AccountUsage.rateLimitHold(admittedBy:now:)`). A sign-out or another login ends the
+hold for that account.
+
+The hold survives a restart in the reading archive and still ends within 1 hour. Cursor token
+history keeps the hold of its last 429 in memory. Claude has its own gate, because one Claude
+limit covers every account and the Settings check (`docs/providers/claude-oauth.md`).
 
 ## Scheduling (`RefreshScheduler`)
 

@@ -70,6 +70,30 @@ extension CodexTests {
             #expect(bed.http.requests.count == 1)
         }
 
+        /// A home that did not finish in time sent nothing for the held login, so the hold
+        /// stays. A sign-out ends it.
+        @Test func aHomeThatTimedOutKeepsTheHold() async throws {
+            let bed = try CodexTestBed(http: Self.limited())
+            defer { bed.remove() }
+            try bed.writeAuth()
+            let limited = try #require(try await bed.provider.fetch(previous: nil).accounts.first)
+            let home = try #require(await bed.homes().first)
+
+            let timedOut = CodexAttempt(home: home, outcome: .timedOut, attemptedAt: .reference(60))
+                .account(previous: limited)
+            let signedOut = CodexAttempt(
+                home: home,
+                outcome: .init(kind: .failed(.apiKeyOnly, status: .signedOut)),
+                attemptedAt: .reference(60)
+            ).account(previous: limited)
+
+            #expect(timedOut.issue?.retryAt == .reference(120))
+            #expect(timedOut.owner == limited.owner)
+            #expect(timedOut.attemptedAt == .reference(60))
+            #expect(signedOut.issue?.message == CodexError.apiKeyOnly.localizedDescription)
+            #expect(signedOut.owner == nil)
+        }
+
         @Test func anotherLoginIsNotHeld() async throws {
             let bed = try CodexTestBed(http: Self.limited())
             defer { bed.remove() }

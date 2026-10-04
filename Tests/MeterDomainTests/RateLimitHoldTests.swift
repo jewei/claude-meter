@@ -50,6 +50,23 @@ import Testing
         #expect(noOwner.rateLimitHold(for: alice, now: .reference()) == nil)
     }
 
+    /// A refresh that sends nothing keeps the hold while the login can still be the one that
+    /// got the 429. A sign-out or another login ends it.
+    @Test func aHoldStaysWhileTheStatusCanStillBeItsLogin() {
+        let issue = UsageIssue("Limited.", retryAt: .reference(120))
+        let limited = AccountUsage(
+            id: "a", name: "A", observedAt: .reference(-60), issue: issue, owner: alice)
+        #expect(limited.rateLimitHold(admittedBy: .unknown, now: .reference()) == issue)
+        #expect(limited.rateLimitHold(admittedBy: .signedIn(alice), now: .reference()) == issue)
+        #expect(limited.rateLimitHold(admittedBy: .signedIn(bob), now: .reference()) == nil)
+        #expect(limited.rateLimitHold(admittedBy: .signedOut, now: .reference()) == nil)
+        #expect(limited.rateLimitHold(admittedBy: .unknown, now: .reference(120)) == nil)
+
+        var noOwner = limited
+        noOwner.owner = nil
+        #expect(noOwner.rateLimitHold(admittedBy: .unknown, now: .reference()) == nil)
+    }
+
     /// An account without an observation still holds, so a first 429 is not sent again.
     @Test func anUnavailableAccountHoldsToo() {
         let issue = UsageIssue("Limited.", retryAt: .reference(120))

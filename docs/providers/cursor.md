@@ -182,7 +182,9 @@ The email is never part of the reading.
     billing period of a kept observation ends, its window is unknown and its spend is dropped.
 19. After HTTP 429 with a `Retry-After`, the shared rate-limit hold applies
     (`docs/architecture.md`): no request for the same login before the retry time, at most
-    1 hour after the 429, so the card's countdown is true. Another login sends at once.
+    1 hour after the 429, so the card's countdown is true. Another login sends at once. The
+    hold comes before the expiry check, and a login that cannot be read keeps it, so a refresh
+    that sends nothing never ends it early.
 20. `"enabled": false`: drop the last observation, because it no longer describes the account.
 21. If the owner after the response differs from the owner before it, discard the response.
 22. `reconcile` drops the reading when the owner changed or the user signed out. It reads local

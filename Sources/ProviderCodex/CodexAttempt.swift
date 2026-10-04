@@ -12,11 +12,19 @@ struct CodexAttempt: Sendable {
     /// A failure keeps `previous` as stale only while it belongs to the current owner status
     /// (``AccountUsage/belongs(to:)``). Otherwise the account is unavailable with the issue and
     /// the signed-in owner, so a rate limit holds the next request even without an observation.
+    /// A running rate-limit hold of `previous` stays while the status can still be its login
+    /// (``AccountUsage/rateLimitHold(admittedBy:now:)``): nothing was sent for that login.
     func account(previous: AccountUsage?) -> AccountUsage {
         switch outcome.kind {
         case .observed(let quota, let owner):
             return quota.usage(for: home, observedAt: attemptedAt, owner: owner)
         case .failed(let error, let status):
+            if let previous, let hold = previous.rateLimitHold(admittedBy: status, now: attemptedAt)
+            {
+                var kept = previous.retained(issue: hold, now: attemptedAt)
+                kept.name = home.name
+                return kept
+            }
             if let previous, previous.hasObservation, previous.belongs(to: status) {
                 var kept = previous.retained(issue: error.issue, now: attemptedAt)
                 kept.name = home.name

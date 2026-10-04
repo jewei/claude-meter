@@ -48,4 +48,15 @@ extension AccountUsage {
         else { return nil }
         return issue
     }
+
+    /// The HTTP 429 issue that still holds this account's own login at `now`, while `status`
+    /// can still be that login (``OwnerStatus/admits(_:)``), or nil.
+    ///
+    /// A refresh that sends nothing for the held login, such as one with an expired token or a
+    /// login that cannot be read now, keeps this issue instead of its own. So the hold and the
+    /// card's countdown stay true. A sign-out or another login ends the hold for this account.
+    public func rateLimitHold(admittedBy status: OwnerStatus, now: Date) -> UsageIssue? {
+        guard let owner, status.admits(owner) else { return nil }
+        return rateLimitHold(for: owner, now: now)
+    }
 }

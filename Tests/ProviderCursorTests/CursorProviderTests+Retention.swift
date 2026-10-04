@@ -203,6 +203,48 @@ extension CursorProviderTests {
         #expect(http.requests.count == 2)
     }
 
+    /// A refresh that sends nothing does not end the hold early: an expired token keeps it, and
+    /// so does the renewed token of the same login.
+    @Test func anExpiredTokenKeepsTheHold() async throws {
+        try home.write(token: CursorFixture.token(expiresAt: .reference(100)))
+        let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "120"])
+        let provider = provider(http)
+        let limited = try await provider.fetch(previous: previous())
+
+        advance(80)
+        let expired = try account(try await provider.fetch(previous: limited))
+        #expect(expired.issue?.retryAt == .reference(120))
+        #expect(expired.owner == owner)
+        try home.write(token: CursorFixture.token(expiresAt: .reference(.hours(1))))
+        advance(20)
+        let renewed = try await provider.fetch(
+            previous: ProviderUsage(provider: .cursor, accounts: [expired]))
+
+        #expect(http.requests.count == 1)
+        #expect(try account(renewed).issue?.retryAt == .reference(120))
+    }
+
+    /// A login that cannot be read now proves nothing, so the hold of the last login stays.
+    @Test func aLoginThatCannotBeReadKeepsTheHold() async throws {
+        try home.write(token: CursorFixture.token())
+        let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "120"])
+        let provider = provider(http)
+        let limited = try await provider.fetch(previous: previous())
+
+        try home.directory.write(
+            "not a database",
+            to: "Library/Application Support/Cursor/User/globalStorage/state.vscdb")
+        advance(30)
+        let unreadable = try await provider.fetch(previous: limited)
+        #expect(try account(unreadable).issue?.retryAt == .reference(120))
+        #expect(try account(unreadable).windows.first?.usedPercent == 40)
+        try home.write(token: CursorFixture.token())
+        advance(30)
+        _ = try await provider.fetch(previous: unreadable)
+
+        #expect(http.requests.count == 1)
+    }
+
     @Test func aRateLimitOfAnotherLoginHoldsNothing() async throws {
         try home.write(token: CursorFixture.token())
         let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "120"])

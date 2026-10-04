@@ -143,13 +143,13 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
         _ credentials: GrokCredentials, previous: AccountUsage?, now: Date
     ) async throws -> AccountUsage {
         let owner = credentials.owner
-        guard !credentials.isExpired(at: now) else {
-            return failed(.sessionExpired, previous: previous, status: .signedIn(owner), now: now)
-        }
         // Grok asked this login to pause after HTTP 429. Send nothing before the retry time, so
-        // the card's countdown is true.
+        // the card's countdown is true. This comes first, so an expired key keeps the hold.
         if let previous, let hold = previous.rateLimitHold(for: owner, now: now) {
             return previous.retained(issue: hold, now: now)
+        }
+        guard !credentials.isExpired(at: now) else {
+            return failed(.sessionExpired, previous: previous, status: .signedIn(owner), now: now)
         }
         let result: Result<AccountUsage, GrokFailure>
         do {
@@ -210,6 +210,12 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
     private func failed(
         _ failure: GrokFailure, previous: AccountUsage?, status: OwnerStatus, now: Date
     ) -> AccountUsage {
+        // A refresh that sent nothing for a login that got HTTP 429, such as one that could not
+        // read the login, keeps the hold while the login can still be the same. Otherwise the
+        // next refresh would send before the retry time.
+        if let previous, let hold = previous.rateLimitHold(admittedBy: status, now: now) {
+            return previous.retained(issue: hold, now: now)
+        }
         // Log a change of state, not the same failure at every refresh.
         if previous?.issue != failure.issue {
             Self.log.warning("Grok refresh failed: \(failure.issue.message)")

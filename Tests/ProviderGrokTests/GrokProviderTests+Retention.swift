@@ -93,6 +93,47 @@ extension GrokProviderTests {
         #expect(http.requests.count == 2)
     }
 
+    /// A refresh that sends nothing does not end the hold early: an expired key keeps it, and
+    /// so does the renewed key of the same login.
+    @Test func anExpiredKeyKeepsTheHold() async throws {
+        try signIn(expiresAt: "2026-10-04T12:01:40Z")
+        let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "120"])
+        let provider = provider(http)
+        let limited = try await provider.fetch(previous: previous())
+
+        advance(80)
+        let expired = try account(try await provider.fetch(previous: limited))
+        #expect(expired.issue?.retryAt == .reference(120))
+        #expect(expired.owner == owner)
+        try signIn()
+        advance(20)
+        let renewed = try await provider.fetch(
+            previous: ProviderUsage(provider: .grok, accounts: [expired]))
+
+        #expect(http.requests.count == 1)
+        #expect(try account(renewed).issue?.retryAt == .reference(120))
+    }
+
+    /// A sign-in file that cannot be read now proves nothing, so the hold of the last login
+    /// stays.
+    @Test func aFileThatCannotBeReadKeepsTheHold() async throws {
+        try signIn()
+        let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "120"])
+        let provider = provider(http)
+        let limited = try await provider.fetch(previous: previous())
+
+        try directory.write("{", to: ".grok/auth.json")
+        advance(30)
+        let unreadable = try await provider.fetch(previous: limited)
+        #expect(try account(unreadable).issue?.retryAt == .reference(120))
+        #expect(try account(unreadable).windows.first?.usedPercent == 20)
+        try signIn()
+        advance(30)
+        _ = try await provider.fetch(previous: unreadable)
+
+        #expect(http.requests.count == 1)
+    }
+
     @Test func aRateLimitOfAnotherLoginHoldsNothing() async throws {
         try signIn()
         let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "120"])

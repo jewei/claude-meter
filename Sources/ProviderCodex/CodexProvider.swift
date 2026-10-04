@@ -158,8 +158,9 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
     }
 
     /// Refreshes every configured home, at most three at once, within one 60-second deadline
-    /// that includes home resolution (``CodexLimits/worstCaseFetch`` fits it). A home that fails keeps its previous observation as stale
-    /// while that observation still belongs to the login, and is unavailable otherwise.
+    /// that includes home resolution (``CodexLimits/worstCaseFetch`` fits it). A home that
+    /// fails keeps its previous observation as stale while that observation still belongs to
+    /// the login, and is unavailable otherwise.
     public func fetch(previous: ProviderUsage?) async throws -> ProviderUsage {
         let deadline = ContinuousClock.now + limits.fetch
         let homes: [CodexHome]

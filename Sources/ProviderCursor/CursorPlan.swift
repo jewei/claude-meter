@@ -22,7 +22,6 @@ enum CursorPlan {
 
     /// The plan name in a `GetPlanInfo` response: `{"planInfo":{"planName":"pro"}}`.
     static func name(planInfo body: Data) -> String? {
-        let json = try? JSONDecoder().decode(JSONValue.self, from: body)
-        return json?["planInfo"]?["planName"]?.stringValue
+        JSONValue.parse(body)?["planInfo"]?["planName"]?.stringValue
     }
 }

@@ -52,7 +52,7 @@ struct GrokAuthFile: Sendable {
     /// the card asks the user to renew it. An entry of another login, often an old legacy key,
     /// is never sent in its place.
     static func lookup(_ data: Data, now: Date) -> GrokCredentialLookup {
-        guard let json = try? JSONDecoder().decode(JSONValue.self, from: data),
+        guard let json = JSONValue.parse(data),
             case .object(let entries) = json
         else { return .unreadable(.credentialsUnreadable) }
         let keys = entries.keys.sorted()

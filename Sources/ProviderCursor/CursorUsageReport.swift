@@ -20,7 +20,7 @@ struct CursorUsageReport: Hashable, Sendable {
     let spend: Balance?
 
     init(body: Data) throws(CursorFailure) {
-        guard let json = try? JSONDecoder().decode(JSONValue.self, from: body),
+        guard let json = JSONValue.parse(body),
             case .object = json
         else { throw .unexpectedResponse }
         let usage = json["planUsage"]

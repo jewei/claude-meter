@@ -13,7 +13,7 @@ struct GrokBillingReport: Hashable, Sendable {
     let prepaid: Balance
 
     init(body: Data) throws(GrokFailure) {
-        guard let json = try? JSONDecoder().decode(JSONValue.self, from: body),
+        guard let json = JSONValue.parse(body),
             let config = json["config"], case .object = config,
             let period = config["currentPeriod"], case .object = period
         else { throw .unexpectedResponse }

@@ -71,6 +71,17 @@ import Testing
         #expect(history.isPartial)
     }
 
+    @Test func epochDatesInSecondsOrMillisecondsCount() throws {
+        let history = try parse(
+            """
+            \(Self.header)
+            1791100000,m,1,0,0,0,-
+            "1791100000000",m,2,0,0,0,-
+            """)
+        #expect(tokens(history, .today) == 3)
+        #expect(!history.isPartial)
+    }
+
     @Test func integersAcceptOnlyStrictThousandsGroups() {
         #expect(CursorTokenCSV.integer("1,000") == 1000)
         #expect(CursorTokenCSV.integer(" 12 ") == 12)

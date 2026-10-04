@@ -24,8 +24,14 @@ enum CSVRecords {
             var reader = Reader(consume: consume)
             let bytes = [UInt8](data)
             var index = bytes.starts(with: [0xEF, 0xBB, 0xBF]) ? 3 : 0
+            // A byte pair such as `""` can step over a multiple of the interval, so the check
+            // runs once in each block, not at exact multiples.
+            var checkedBlock = -1
             while index < bytes.count {
-                if index.isMultiple(of: cancellationInterval) { try Task.checkCancellation() }
+                if index / cancellationInterval != checkedBlock {
+                    checkedBlock = index / cancellationInterval
+                    try Task.checkCancellation()
+                }
                 let byte = bytes[index]
                 index += 1
                 let next = index < bytes.count ? bytes[index] : nil

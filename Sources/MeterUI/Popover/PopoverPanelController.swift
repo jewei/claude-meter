@@ -4,10 +4,12 @@ import SwiftUI
 
 /// Shows ``PopoverView`` in a ``PopoverPanel`` under the status button.
 ///
-/// The panel closes on a second click of the button, Escape, a click outside, app
-/// deactivation, and when Settings opens. Its height follows the content: a change animates
-/// with the top edge fixed, using the card disclosure curve, and applies at once under
-/// Reduce Motion, while hidden, and just after opening.
+/// The panel closes on a second click of the button, Escape, Command-W, a click outside, and
+/// when the user leaves it: another app activates, the Space changes, the app hides or
+/// resigns active, another window takes the keyboard, or Settings opens
+/// (``PopoverDismissal``). Its height follows the content: a change animates with the top
+/// edge fixed, using the card disclosure curve, and applies at once under Reduce Motion,
+/// while hidden, and just after opening.
 @MainActor final class PopoverPanelController {
     /// Changes in the first moments after opening are the content settling, not a card
     /// opening, so they apply without animation.
@@ -26,6 +28,8 @@ import SwiftUI
     private var headerHeight: CGFloat = 56
     private var contentHeight: CGFloat = PanelLayout.minimumBodyHeight
     private var openedAt = Date.distantPast
+    /// System uptime of the last close that the user did not ask for.
+    private var lastAutomaticClose: TimeInterval?
     private var monitors: [Any] = []
     private var observers: [any NSObjectProtocol] = []
 
@@ -39,26 +43,21 @@ import SwiftUI
         panel.onCancel = { [weak self] in self?.close() }
         hostingView.rootView = PopoverView(
             model: model, presentation: presentation, actions: makeActions())
-        let center = NotificationCenter.default
-        observers.append(
-            center.addObserver(
-                forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.close() }
-            })
-        observers.append(
-            center.addObserver(
-                forName: NSApplication.didChangeScreenParametersNotification, object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.updateFrame(animated: false) }
-            })
+        observeChanges()
     }
 
     var isShown: Bool { presentation.isVisible }
 
+    /// Opens or closes the popover for a click on the status button.
     func toggle() {
-        isShown ? close() : show()
+        let now = ProcessInfo.processInfo.systemUptime
+        switch PopoverDismissal.toggle(
+            isShown: isShown, now: now, lastAutomaticClose: lastAutomaticClose)
+        {
+        case .open: show()
+        case .close: close()
+        case .ignore: break
+        }
     }
 
     func show() {
@@ -75,10 +74,17 @@ import SwiftUI
     }
 
     func close() {
+        close(automatic: false)
+    }
+
+    /// Hides the panel, which also stops its clock. The state changes first, so the focus
+    /// change that ordering out causes finds the popover closed already.
+    private func close(automatic: Bool) {
         guard presentation.isVisible else { return }
+        presentation.isVisible = false
+        if automatic { lastAutomaticClose = ProcessInfo.processInfo.systemUptime }
         removeMonitors()
         panel.orderOut(nil)
-        presentation.isVisible = false
         model.popoverDidClose()
         onVisibilityChange(false)
     }
@@ -88,6 +94,11 @@ import SwiftUI
     private func makeActions() -> PopoverActions {
         PopoverActions(
             openSettings: { [weak self] in self?.onOpenSettings() },
+            checkForUpdates: { [weak self] in
+                // Sparkle's window opens in front; the panel must not cover it.
+                self?.close()
+                self?.model.updater.checkForUpdates()
+            },
             quit: { NSApplication.shared.terminate(nil) },
             headerHeightChanged: { [weak self] height in
                 self?.measured(header: height)
@@ -151,25 +162,71 @@ import SwiftUI
             && abs(lhs.width - rhs.width) < tolerance && abs(lhs.height - rhs.height) < tolerance
     }
 
+    // MARK: - Leaving the popover
+
+    private func observeChanges() {
+        let app = NotificationCenter.default
+        let workspace = NSWorkspace.shared.notificationCenter
+        let ownProcess = ProcessInfo.processInfo.processIdentifier
+        observe(app, NSApplication.didResignActiveNotification) { _ in .appResignedActive }
+        observe(app, NSApplication.didHideNotification) { _ in .appHidden }
+        observe(workspace, NSWorkspace.activeSpaceDidChangeNotification) { _ in .spaceChanged }
+        observe(workspace, NSWorkspace.didActivateApplicationNotification) { activated in
+            activated == ownProcess ? nil : .otherAppActivated
+        }
+        observe(app, NSWindow.didResignKeyNotification, object: panel) { [weak panel] _ in
+            guard let key = NSApp.keyWindow else { return .panelResignedKey(toChildWindow: false) }
+            return .panelResignedKey(toChildWindow: key.parent != nil && key.parent === panel)
+        }
+        observers.append(
+            app.addObserver(
+                forName: NSApplication.didChangeScreenParametersNotification, object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateFrame(animated: false) }
+            })
+    }
+
+    /// Closes the open popover when `change` names a change that closes it. The closure gets
+    /// the process ID of the app that the notification names, if any.
+    private func observe(
+        _ center: NotificationCenter, _ name: Notification.Name, object: AnyObject? = nil,
+        change: @escaping @MainActor (pid_t?) -> PopoverDismissal.Change?
+    ) {
+        observers.append(
+            center.addObserver(forName: name, object: object, queue: .main) { [weak self] note in
+                let app =
+                    note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                let pid = app?.processIdentifier
+                MainActor.assumeIsolated {
+                    guard let self, self.isShown, let change = change(pid),
+                        PopoverDismissal.closes(for: change)
+                    else { return }
+                    self.close(automatic: true)
+                }
+            })
+    }
+
     // MARK: - Clicks outside
 
     private func installMonitors() {
         let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
-        // Clicks in other apps, including their menu bar items.
+        // Clicks in other apps, including their menu bar items. On macOS 26 and later this
+        // can include a click on this app's own status button.
         if let global = NSEvent.addGlobalMonitorForEvents(
             matching: mask,
             handler: { [weak self] _ in
-                MainActor.assumeIsolated { self?.close() }
+                MainActor.assumeIsolated { self?.clicked(inWindow: nil) }
             })
         {
             monitors.append(global)
         }
-        // Clicks in this app's other windows. The status button toggles by itself.
+        // Clicks in this app's other windows.
         if let local = NSEvent.addLocalMonitorForEvents(
             matching: mask,
             handler: { [weak self] event in
-                let window = event.windowNumber
-                MainActor.assumeIsolated { self?.localClick(inWindow: window) }
+                let number = event.windowNumber
+                MainActor.assumeIsolated { self?.clicked(inWindow: number) }
                 return event
             })
         {
@@ -177,11 +234,23 @@ import SwiftUI
         }
     }
 
-    private func localClick(inWindow number: Int) {
-        guard number != panel.windowNumber, number != anchor()?.window?.windowNumber else {
-            return
-        }
-        close()
+    /// - Parameter number: the window number of a click in this app, or nil for a click in
+    ///   another app.
+    private func clicked(inWindow number: Int?) {
+        let click = PopoverDismissal.Click(
+            location: NSEvent.mouseLocation, window: number.map(window(numbered:)))
+        let button = anchor()?.window == nil ? nil : placement().anchor
+        guard isShown,
+            PopoverDismissal.closes(for: click, statusButton: button, panel: panel.frame)
+        else { return }
+        close(automatic: true)
+    }
+
+    private func window(numbered number: Int) -> PopoverDismissal.Window {
+        if number == panel.windowNumber { return .panel }
+        if let button = anchor()?.window, number == button.windowNumber { return .statusButton }
+        guard let window = NSApp.window(withWindowNumber: number) else { return .other }
+        return window.styleMask.contains(.titled) ? .titled : .other
     }
 
     private func removeMonitors() {

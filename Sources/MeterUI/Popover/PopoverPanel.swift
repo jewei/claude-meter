@@ -6,7 +6,7 @@ import AppKit
 /// It can become key without activating the app, so Escape reaches it and the user's app
 /// keeps its focus.
 final class PopoverPanel: NSPanel {
-    /// Called for Escape and Command-period.
+    /// Called for Escape, Command-period, and Command-W.
     var onCancel: (() -> Void)?
 
     init() {
@@ -32,6 +32,17 @@ final class PopoverPanel: NSPanel {
         onCancel?()
     }
 
+    /// Command-W closes the popover. A borderless window has no close button, so the
+    /// standard implementation only beeps.
+    override func performClose(_ sender: Any?) {
+        onCancel?()
+    }
+
+    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(performClose(_:)) { return true }
+        return super.validateMenuItem(menuItem)
+    }
+
     override func keyDown(with event: NSEvent) {
         // 53 is Escape. Some first responders do not forward it as `cancelOperation`.
         if event.keyCode == 53 {
@@ -39,5 +50,12 @@ final class PopoverPanel: NSPanel {
         } else {
             super.keyDown(with: event)
         }
+    }
+
+    /// Keys that nothing in the popover handles, such as letters, do nothing instead of
+    /// beeping.
+    override func noResponder(for eventSelector: Selector) {
+        guard eventSelector != #selector(NSResponder.keyDown(with:)) else { return }
+        super.noResponder(for: eventSelector)
     }
 }

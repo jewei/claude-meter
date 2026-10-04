@@ -12,7 +12,7 @@ struct PopoverBody: View {
         VStack(spacing: 0) {
             if popover.showsUpdateNotice {
                 Button {
-                    model.updater.checkForUpdates()
+                    actions.checkForUpdates()
                 } label: {
                     NoticeBanner(
                         text: "Update available — click to install",

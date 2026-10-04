@@ -128,11 +128,16 @@ its focus.
 - When the content height changes, the frame animates 0.18 s ease-in-out with the top edge
   fixed. It changes at once under Reduce Motion, while hidden, and in the first 0.25 s after
   opening.
-- It closes on a second click of the status button, Escape, a click in another app or in
-  another window of this app, app deactivation, and when Settings opens. It calls
+- It closes (`PopoverDismissal`, pure) on a click of the status button, Escape, Command-W, a
+  click in another app or in a titled window of this app, another app activating, a Space
+  change, Command-H, app deactivation, another window taking the keyboard (Spotlight),
+  "Update available", and when Settings opens. One click changes the popover once: the mouse
+  monitors ignore clicks on the status button (macOS 26 draws the menu bar in another
+  process, so such a click can reach the global monitor), and a toggle within 0.35 s of an
+  automatic close does nothing. Keys that nothing handles do not beep. It calls
   `popoverDidOpen()` and `popoverDidClose()`.
 - While visible, `SecondClock` renders the content every whole second. While hidden the clock
-  stops and spinners are static.
+  stops, spinners are static, and a store change renders for the current time.
 
 ```text
 ┌──────────────────────────────────────────────┐

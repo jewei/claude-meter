@@ -3,7 +3,7 @@ import MeterDomain
 import SwiftUI
 
 /// Claude's controls in Settings > Data: the connection, then the config dirs while the
-/// connection is automatic.
+/// connection is automatic, or the plan badge while it is manual.
 struct ClaudeSourceSection: View {
     let claude: ClaudeSettingsModel
     let settings: ClaudeSettings
@@ -21,6 +21,19 @@ struct ClaudeSourceSection: View {
                     setPlan: { claude.setPlanOverride($0, $1) },
                     remove: { claude.removeDirectory($0) },
                     add: addDirectory, message: claude.directoryMessage)
+            } else if claude.connection == .manual {
+                CardDivider()
+                HStack(spacing: 8) {
+                    Text("Plan")
+                        .font(MeterFont.body(12, .semibold))
+                        .foregroundStyle(Palette.inkMuted)
+                    switch claude.manualPlan {
+                    case .reported(let badge): PlanBadgeView(badge: badge)
+                    case .pickable(let current):
+                        PlanMenu(current: current, choose: { claude.setManualPlan($0) })
+                    }
+                    Spacer(minLength: 0)
+                }
             }
         }
     }

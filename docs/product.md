@@ -117,23 +117,23 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 ## 6. Settings
 
 1. **Data**: one switch per source, then each provider's accounts: Claude config dirs and
-   connection, Codex homes, display names, and plan badges for logins that report none.
-   Removing a config dir or a Codex home also removes its name, plan badge, switch, pin, and
-   card state (`Settings.forgetAccount`). Every connect and disconnect refreshes Claude, also
-   when the connection mode stays the same (`ClaudeSettingsModel`). Claude Code's active
-   login with no config dir (`oauth-…`) is listed too, to name it and set its plan; it has
-   no switch and no Remove. A config dir is listed once by its canonical path. Removing a
-   folder, and a Disconnect that would delete tokens that the user entered, ask first, inside
-   the page (`DataSourceText.removeConfirmation`, `.disconnectConfirmation`). The implicit
-   Codex home (`$CODEX_HOME` or `~/.codex`) has no Remove and cannot be added again, also
-   before the list loads. A name edit for a Codex home that is no longer listed is dropped
-   (`CodexSettingsModel`). Claude refuses a folder whose account key (its folder name) is
-   already listed, and drops a name edit for an account that is no longer listed. Cancel,
-   and turning Claude off, abandon a running Claude Connect, never a Disconnect; Settings
-   says when turning Claude off kept a Connect from being saved. A Disconnect turns the
-   connection off even when the saved tokens cannot be deleted; Settings says so, and the
-   next reload (at launch, and when Settings opens) deletes a manual login that no manual
-   connection uses (`ClaudeSettingsModel`).
+   connection, Codex homes, display names, and plan badges for logins that report none. Removing a
+   config dir or a Codex home also removes its name, plan badge, switch, pin, and card state
+   (`Settings.forgetAccount`). Every connect and disconnect refreshes Claude, also when the
+   connection mode stays the same (`ClaudeSettingsModel`). Claude Code's active login with no config
+   dir (`oauth-…`) is listed too, to name it and set its plan; it has no switch and no Remove. In
+   manual mode, Settings shows the plan badge of the manual login, which reports no plan
+   (`ClaudeSettingsModel.manualPlan`). A config dir is listed once by its canonical path. Removing a
+   folder, and a Disconnect that would delete tokens that the user entered, ask first, inside the
+   page (`DataSourceText.removeConfirmation`, `.disconnectConfirmation`). The implicit Codex home
+   (`$CODEX_HOME` or `~/.codex`) has no Remove and cannot be added again, also before the list
+   loads. A name edit for a Codex home that is no longer listed is dropped (`CodexSettingsModel`).
+   Claude refuses a folder whose account key (its folder name) is already listed, and drops a name
+   edit for an account that is no longer listed. Cancel, and turning Claude off, abandon a running
+   Claude Connect, never a Disconnect; Settings says when turning Claude off kept a Connect from
+   being saved. A Disconnect turns the connection off even when the saved tokens cannot be deleted;
+   Settings says so, and the next reload (at launch, and when Settings opens) deletes a manual login
+   that no manual connection uses (`ClaudeSettingsModel`).
 2. **Appearance**: card style, energy left or used, the menu-bar window, warning and critical
    thresholds (warning 50–90, critical 60–100, steps of 5; critical stays above warning),
    and automatic order.

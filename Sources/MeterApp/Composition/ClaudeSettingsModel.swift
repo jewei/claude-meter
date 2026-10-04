@@ -92,6 +92,20 @@ public final class ClaudeSettingsModel {
         !settings.settings.claude.hasConfirmedKeychainAccess
     }
 
+    /// The plan badge of the manual login. Manual mode reads one login under the default
+    /// account key, and its tokens report no plan, so the user picks the badge.
+    public var manualPlan: PlanChoice {
+        let id = ClaudeAccount.defaultID
+        return PlanChoice(
+            reported: usage.readings[.claude]?.value?.account(id)?.plan,
+            override: settings.settings.claude.planOverrides[id])
+    }
+
+    /// Sets or removes the plan badge of the manual login.
+    public func setManualPlan(_ plan: String?) {
+        setPlanOverride(ClaudeAccount.defaultID, plan)
+    }
+
     /// Lists the config dirs and checks both logins without reading a secret. A reload that a
     /// newer one overtook stops without writing. When the config dirs cannot be listed in
     /// time, the last list stays.

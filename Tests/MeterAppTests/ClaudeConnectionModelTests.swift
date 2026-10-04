@@ -19,6 +19,16 @@ import Testing
     private var settings: SettingsStore { fixture.settings }
     private var gate: Gate { fixture.gate }
 
+    /// Manual tokens report no plan, so the user picks the badge of the default account.
+    @Test func theManualPlanIsTheDefaultAccountsBadge() {
+        #expect(model.manualPlan == .pickable(current: nil))
+        model.setManualPlan(" Max 5x ")
+        #expect(settings.settings.claude.planOverrides["claude"] == "Max 5x")
+        #expect(model.manualPlan == .pickable(current: PlanBadge(plan: "Max 5x")))
+        model.setManualPlan(nil)
+        #expect(settings.settings.claude.planOverrides["claude"] == nil)
+    }
+
     @Test func failedConnectKeepsTheConnectionOff() async {
         #expect(await !model.connectAutomatically())
         #expect(settings.settings.claude.connection == .off)

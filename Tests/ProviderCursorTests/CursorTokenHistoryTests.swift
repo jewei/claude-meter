@@ -79,6 +79,34 @@ import Testing
         #expect(tokens(result.history(for: .default), .today) == 0)
     }
 
+    /// A time zone change applies to the next read. A history labeled with the old zone would
+    /// stay unknown and make every refresh export again.
+    @Test func eachReadUsesTheTimeZoneOfThatMoment() async throws {
+        try home.write(token: CursorFixture.token())
+        let zone = Locked(Calendar.fixed("UTC"))
+        let http = FakeHTTPClient(json: Self.header)
+        let source = CursorTokenHistory(
+            keychain: keychain, http: http, home: home.url, calendar: { zone.value })
+
+        let first = try await source.history(now: .reference())
+        zone.withLock { $0 = .fixed("Asia/Tokyo") }
+        let second = try await source.history(now: .reference())
+
+        let tokyo = Calendar.fixed("Asia/Tokyo")
+        let range = try #require(
+            TokenPeriod.lastSevenDays.interval(at: .reference(), calendar: tokyo))
+        #expect(first.timeZoneID == calendar.timeZone.identifier)
+        #expect(second.timeZoneID == "Asia/Tokyo")
+        #expect(second.coverageStart == range.start)
+        let history = second.history(for: .default)
+        #expect(history.timeZoneID == "Asia/Tokyo")
+        #expect(history.tokens(in: .today, now: .reference(), calendar: tokyo) == 0)
+        let request = try #require(http.requests.last)
+        let components = URLComponents(url: request.url, resolvingAgainstBaseURL: false)
+        let start = components?.queryItems?.first { $0.name == "startDate" }?.value
+        #expect(start == String(Int64(range.start.timeIntervalSince1970 * 1000)))
+    }
+
     @Test(arguments: ["opaque token!", JWTFixture.token(["exp": 1_791_200_000])])
     func aTokenOfUnexpectedFormatIsNotCalledExpired(token: String) async throws {
         keychain.store(token, service: "cursor-access-token")

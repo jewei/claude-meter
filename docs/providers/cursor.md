@@ -178,7 +178,9 @@ The email is never part of the reading.
 
 ### Token history
 
-22. The export covers local midnight six days ago through now.
+22. The export covers local midnight six days ago through now. Each read uses the system time
+    zone of that moment for the range, the days, and the history's label, so a time zone change
+    applies at the next read.
 23. The four token columns are disjoint. Their sum is the row's count. Prices never count.
 24. A header-only export is a real zero for the range.
 25. A missing header or malformed CSV is an unexpected response for the whole export.

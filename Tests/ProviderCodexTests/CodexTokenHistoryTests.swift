@@ -7,97 +7,8 @@ import Testing
 
 /// Codex rollout files, read from synthetic Codex homes. Each test has its own scanner and
 /// folders, so the suite runs in parallel with the rest of the package.
-@Suite struct CodexTokenHistoryTests {
-    private let calendar = Calendar.fixed("UTC")
-
-    private func json(_ objects: [String: Any]...) throws -> String {
-        try objects.map { object in
-            let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
-            return String(decoding: data, as: UTF8.self) + "\n"
-        }.joined()
-    }
-
-    private func metadata(
-        _ id: String, parent: String? = nil, ordinal: Any? = nil, extra: [String: Any] = [:]
-    ) -> [String: Any] {
-        var payload: [String: Any] = [
-            "id": id, "timestamp": Date.reference(-5).ISO8601Format(), "cwd": "/secret/path",
-        ]
-        payload["forked_from_id"] = parent
-        payload["subagent_history_start_ordinal"] = ordinal
-        payload.merge(extra) { _, new in new }
-        return [
-            "type": "session_meta", "timestamp": Date.reference(-5).ISO8601Format(),
-            "payload": payload,
-        ]
-    }
-
-    /// A `token_count` event with cumulative `total` and per-response `last` usage.
-    private func event(
-        total: (Int, Int)?, last: (Int, Int)?, at date: Date = .reference(),
-        ordinal: Int = 0, id: String? = "response", extra: [String: Any] = [:]
-    ) -> [String: Any] {
-        func usage(_ counts: (Int, Int)) -> [String: Any] {
-            [
-                "input_tokens": counts.0, "output_tokens": counts.1,
-                "cached_input_tokens": counts.0 / 2, "reasoning_output_tokens": counts.1 / 2,
-                "total_tokens": counts.0 + counts.1,
-            ].merging(extra) { _, new in new }
-        }
-        var info: [String: Any] = [:]
-        info["total_token_usage"] = total.map(usage)
-        info["last_token_usage"] = last.map(usage)
-        info["response_id"] = id
-        return [
-            "type": "event_msg", "timestamp": date.ISO8601Format(), "ordinal": ordinal,
-            "payload": ["type": "token_count", "info": info],
-        ]
-    }
-
-    private func history(_ homes: [String: TemporaryDirectory]) async throws
-        -> ProviderTokenHistory
-    {
-        let roots = homes.map { HistoryRoot(account: AccountID($0.key), directory: $0.value.url) }
-        return try await CodexTokenHistory(roots: { roots }, calendar: calendar)
-            .history(now: .reference())
-    }
-
-    private func tokens(
-        _ history: ProviderTokenHistory, _ account: AccountID = "home",
-        _ period: TokenPeriod = .today
-    ) -> Int64? {
-        history.history(for: account).tokens(in: period, now: .reference(), calendar: calendar)
-    }
-
-    @Test func cumulativeCountersAndArchivedCopiesCountOnceAcrossMidnight() async throws {
-        let home = try TemporaryDirectory()
-        defer { home.remove() }
-        let first = event(
-            total: (100, 10), last: (100, 10), at: .reference(-.days(1)), id: "one")
-        let second = event(total: (160, 16), last: (60, 6), id: "two")
-        let log = try json(metadata("session"), first, second, second)
-        try home.write(log, to: "sessions/2026/10/04/rollout-a.jsonl")
-        try home.write(log, to: "archived_sessions/rollout-a.jsonl")
-        let result = try await history(["home": home])
-        #expect(result.provider == .codex)
-        #expect(result.source == .thisMac)
-        #expect(tokens(result) == 66)
-        #expect(tokens(result, "home", .yesterday) == 110)
-        #expect(!result.history(for: "home").isPartial)
-    }
-
-    @Test func cacheWriteTokensArePartOfInput() async throws {
-        let home = try TemporaryDirectory()
-        defer { home.remove() }
-        // Upstream Codex fills cached_input_tokens and cache_write_input_tokens from the
-        // Responses API input_tokens_details, so both are parts of input_tokens.
-        let line = event(
-            total: (100, 10), last: (100, 10),
-            extra: ["cached_input_tokens": 40, "cache_write_input_tokens": 60])
-        try home.write(try json(metadata("session"), line), to: "sessions/a.jsonl")
-        let result = try await history(["home": home])
-        #expect(tokens(result) == 110)
-    }
+@Suite struct CodexTokenHistoryTests: CodexRolloutTesting {
+    let calendar = Calendar.fixed("UTC")
 
     @Test func aSubagentCountsOnlyTheHistoryAfterItsOrdinal() async throws {
         let home = try TemporaryDirectory()
@@ -154,16 +65,6 @@ import Testing
         #expect(!result.history(for: "other").isPartial)
     }
 
-    @Test func repeatedCountersWithoutResponseIDsAreNotPartial() async throws {
-        let home = try TemporaryDirectory()
-        defer { home.remove() }
-        let repeated = event(total: (100, 10), last: (100, 10), id: nil)
-        try home.write(try json(metadata("session"), repeated, repeated), to: "sessions/a.jsonl")
-        let result = try await history(["home": home])
-        #expect(tokens(result) == 110)
-        #expect(!result.history(for: "home").isPartial)
-    }
-
     @Test func conflictingCopiesKeepTheLongerCopyAndArePartial() async throws {
         let home = try TemporaryDirectory()
         defer { home.remove() }
@@ -206,51 +107,6 @@ import Testing
             #expect(result.history(for: "home").isPartial, "\(line)")
             #expect((tokens(result) ?? 0) == 0, "\(line)")
         }
-    }
-
-    @Test func nullInfoAndOtherLinesAreIgnored() async throws {
-        let home = try TemporaryDirectory()
-        defer { home.remove() }
-        let log = try json(
-            metadata("session"),
-            [
-                "type": "event_msg", "timestamp": Date.reference().ISO8601Format(),
-                "payload": ["type": "token_count", "info": NSNull()],
-            ],
-            ["type": "response_item", "payload": ["type": "message", "content": "secret"]],
-            ["type": "turn_context", "payload": ["turn_id": "t1"]],
-            event(total: (10, 1), last: (10, 1), id: "one"))
-        try home.write(log, to: "sessions/a.jsonl")
-        let result = try await history(["home": home])
-        #expect(tokens(result) == 11)
-        #expect(!result.history(for: "home").isPartial)
-    }
-
-    /// CDX-12: counters that restart inside one file (a resumed session) still count. A
-    /// restart seen at its first response is exact.
-    @Test func countersThatRestartInsideAFileStillCount() async throws {
-        let home = try TemporaryDirectory()
-        defer { home.remove() }
-        let log = try json(
-            metadata("session"), event(total: (100, 10), last: (100, 10), id: "a"),
-            event(total: (10, 1), last: (10, 1), id: "b"),
-            event(total: (30, 3), last: (20, 2), id: "c"))
-        try home.write(log, to: "sessions/a.jsonl")
-        let result = try await history(["home": home])
-        #expect(tokens(result) == 143)
-        #expect(!result.history(for: "home").isPartial)
-    }
-
-    @Test func aRestartFoundLateCountsTheEventAndIsPartial() async throws {
-        let home = try TemporaryDirectory()
-        defer { home.remove() }
-        let log = try json(
-            metadata("session"), event(total: (100, 10), last: (100, 10), id: "a"),
-            event(total: (30, 3), last: (20, 2), id: "b"))
-        try home.write(log, to: "sessions/a.jsonl")
-        let result = try await history(["home": home])
-        #expect(tokens(result) == 132)
-        #expect(result.history(for: "home").isPartial)
     }
 
     /// A subagent whose counters restart at its ordinal owns its whole total.
@@ -313,38 +169,6 @@ import Testing
 
         failing.withLock { $0 = false }
         #expect(tokens(try await source.history(now: .reference())) == 110)
-    }
-
-    @Test func lastOnlyEventsCountOncePerTurnResponseAndValue() async throws {
-        let home = try TemporaryDirectory()
-        defer { home.remove() }
-        let withIDs = try json(
-            metadata("ids"), event(total: nil, last: (10, 1), id: "r1"),
-            event(total: nil, last: (10, 1), id: "r1"), event(total: nil, last: (20, 2), id: "r2"))
-        try home.write(withIDs, to: "sessions/ids.jsonl")
-        let result = try await history(["home": home])
-        #expect(tokens(result) == 33)
-        #expect(!result.history(for: "home").isPartial)
-
-        let other = try TemporaryDirectory()
-        defer { other.remove() }
-        let repeated = event(total: nil, last: (10, 1), id: nil)
-        try other.write(try json(metadata("plain"), repeated, repeated), to: "sessions/a.jsonl")
-        let plain = try await history(["home": other])
-        #expect(tokens(plain) == 11)
-        #expect(plain.history(for: "home").isPartial)
-    }
-
-    @Test func aRepeatedResponseWithOtherUsageCountsOnceAndIsPartial() async throws {
-        let home = try TemporaryDirectory()
-        defer { home.remove() }
-        let log = try json(
-            metadata("session"), event(total: (100, 10), last: (100, 10), id: "r"),
-            event(total: (150, 15), last: (50, 5), id: "r"))
-        try home.write(log, to: "sessions/a.jsonl")
-        let result = try await history(["home": home])
-        #expect(tokens(result) == 110)
-        #expect(result.history(for: "home").isPartial)
     }
 
     /// A fork without an ordinal needs valid parent counters to find its boundary.

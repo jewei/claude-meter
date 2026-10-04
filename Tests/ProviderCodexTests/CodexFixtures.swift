@@ -6,11 +6,7 @@ import Testing
 
 @testable import ProviderCodex
 
-/// The parent of every Codex suite.
-///
-/// The provider reads files through `BlockingIO`, whose process-wide cap of 16 also counts
-/// queued work. Parallel test cases can pass that cap and get `BusyError`, so the Codex suites
-/// run one test at a time.
+/// The parent of every Codex suite. The suites run in parallel with the rest of the package.
 @Suite struct CodexTests {}
 
 /// Tokens, files, and responses for Codex tests.

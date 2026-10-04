@@ -61,6 +61,18 @@ extension CodexTests {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             }
 
+            /// Waits until the child has logged a request that contains `text`.
+            func waitForRequest(containing text: String) async -> Bool {
+                let deadline = ContinuousClock.now + .seconds(5)
+                while ContinuousClock.now < deadline {
+                    if (try? requests())?.contains(where: { $0.contains(text) }) == true {
+                        return true
+                    }
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+                return false
+            }
+
             /// The child no longer exists: it was stopped and reaped.
             func childIsGone() -> Bool {
                 guard let pid = Int32(file("pid")) else { return false }
@@ -152,7 +164,8 @@ extension CodexTests {
             let home = cli.home
             let environment = cli.environment
             let task = Task { try await server.recover(home, environment: environment) }
-            try await Task.sleep(for: .milliseconds(500))
+            // Cancel only once the child is waiting in account/read, not after a fixed delay.
+            #expect(await cli.waitForRequest(containing: "account/read"))
             task.cancel()
             await #expect(throws: CancellationError.self) { try await task.value }
             #expect(!(try cli.requests()).contains { $0.contains("rateLimits") })

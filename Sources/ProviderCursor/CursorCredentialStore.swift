@@ -31,9 +31,10 @@ struct CursorCredentialStore: Sendable {
     /// The Keychain item that holds the access token when the database has none.
     static let accessTokenService = "cursor-access-token"
     static let readTimeout: Duration = .seconds(5)
-    /// Token history reads the credentials twice inside the app's 20 s history limit, so each
-    /// read gets less time there. See ``CursorAPI/exportDeadline``.
-    static let historyReadTimeout: Duration = .seconds(3)
+    /// Token history reads the credentials three times inside the app's 20 s history limit
+    /// (in `reconcile`, and before and after the export), so each read gets less time there.
+    /// See ``CursorAPI/exportDeadline``.
+    static let historyReadTimeout: Duration = .seconds(2)
 
     let database: URL
     private let keychain: any Keychain

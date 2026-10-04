@@ -14,9 +14,9 @@ enum CursorAPI {
     static let usageDeadline: Duration = .seconds(20)
     /// The plan name is optional, so its request gets less time.
     static let planDeadline: Duration = .seconds(10)
-    /// The app gives one history read 20 s. The two credential reads take at most 3 s each
-    /// (``CursorCredentialStore/historyReadTimeout``), so 3 + 10 + 3 = 16 s leaves time to
-    /// parse the export.
+    /// The app gives `reconcile` and one history read 20 s together. They read the credentials
+    /// three times, at most 2 s each (``CursorCredentialStore/historyReadTimeout``), so
+    /// 2 + 2 + 10 + 2 = 16 s leaves at least 4 s to parse the export.
     static let exportDeadline: Duration = .seconds(10)
 
     /// A Connect RPC call with an empty JSON body. Cursor has its own rate limits, so the

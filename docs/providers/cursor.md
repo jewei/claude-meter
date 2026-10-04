@@ -105,8 +105,9 @@ Cookie: WorkosCursorSessionToken=<user ID>%3A%3A<access token>
 - `startDate`: local midnight six days before today, in milliseconds.
 - `endDate`: now, in milliseconds.
 - No `Authorization` header. The cookie exists only in this request.
-- Retry: never. Deadline: 10 s. The credential reads before and after it take at most 3 s
-  each, so one history read fits the app's 20 s limit with time left to parse.
+- Retry: never. Deadline: 10 s. The app's 20 s history limit covers `reconcile` and the
+  read. They read the credentials three times (in `reconcile`, and before and after the
+  export), at most 2 s each, so 2 + 2 + 10 + 2 = 16 s leaves at least 4 s to parse.
 - The HTTP client accepts at most 8 MiB. Export rows are about 90 to 150 bytes, so an export
   of roughly 55,000 rows or more fails as too large.
 
@@ -150,8 +151,9 @@ The email is never part of the reading.
 5. A locked database (`SQLITE_BUSY`, `SQLITE_LOCKED`) fails at once. It is busy, not signed out.
    The Keychain is not read.
 6. A locked, refused, or failed Keychain read is a temporary failure, not a sign-out. A refused
-   item asks the user to allow access in Keychain Access. A read that takes more than 5 s is
-   temporary too.
+   item asks the user to allow access in Keychain Access. A credential read (the database and
+   the Keychain together) that takes more than 5 s, or 2 s for token history, is temporary
+   too.
 7. No access token in the database and no Keychain item means signed out. A Keychain item that
    exists but holds no usable token is unreadable, because `signInStatus` sees only the item.
 8. A cancelled read does not read the Keychain.

@@ -240,9 +240,14 @@ import Testing
         )
     }
 
-    /// Both credential reads and the export fit the app's 20 s limit for one history read.
-    @Test func theExportAndBothCredentialReadsFitTheHistoryLimit() {
-        let worstCase = CursorCredentialStore.historyReadTimeout * 2 + CursorAPI.exportDeadline
+    /// The app's 20 s history limit covers `reconcile` and the read: the credential read of
+    /// `reconcile`, the reads before and after the export, and the export, with at least 4 s
+    /// left to parse.
+    @Test func threeCredentialReadsAndTheExportFitTheHistoryLimit() {
+        let reconcileRead = CursorCredentialStore.historyReadTimeout
+        let readBefore = CursorCredentialStore.historyReadTimeout
+        let readAfter = CursorCredentialStore.historyReadTimeout
+        let worstCase = reconcileRead + readBefore + CursorAPI.exportDeadline + readAfter
         #expect(worstCase <= .seconds(16))
     }
 

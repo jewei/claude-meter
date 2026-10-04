@@ -140,7 +140,9 @@ is missing from that place.
 3. `Sources/Provider<Name>/`: implement `UsageProvider` and `DiagnosticsReporting`, and
    `TokenHistoryProvider` if the provider has local history. Wire types stay in the module.
 4. `Sources/MeterDomain/Redactor.swift`: add a rule for each token format of the provider,
-   with a case in `Tests/MeterDomainTests/RedactorTests.swift` **(no compiler check)**.
+   with a case in `Tests/MeterDomainTests/RedactorTests.swift` **(no compiler check)**. Give
+   every repeated part a bound (`{1,64}`, not `+` after a prefix group), so the rule stays
+   linear; `longRunsRedactQuickly` checks this.
 5. `Sources/MeterApp/Composition/LiveProviders.swift`: build the provider, then add it to
    `usageProviders`, `historyProviders`, and `diagnostics` **(no compiler check)**.
 6. `Sources/MeterApp/Settings/Settings.swift`: add a source property with a default. The

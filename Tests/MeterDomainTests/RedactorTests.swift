@@ -102,4 +102,31 @@ import Testing
         #expect(reason.text == "The Keychain is locked for [redacted].")
         #expect("\(reason)" == reason.text)
     }
+
+    /// A long run without separators took 10 s for 16 KiB when two rules backtracked over the
+    /// whole text (review R3-D). Every rule is linear now; the limit leaves a wide margin.
+    @Test(arguments: ["a", "aB3", "a_", "a@"])
+    func longRunsRedactQuickly(unit: String) {
+        let text = String(repeating: unit, count: Redactor.maximumLength / unit.count)
+        let start = ContinuousClock.now
+        _ = Redactor.redact(text)
+        #expect(ContinuousClock.now - start < .seconds(2))
+    }
+
+    @Test func longTextIsCutWithoutAPartialSecret() {
+        let words = String(repeating: "word ", count: Redactor.maximumLength / 5 - 2)
+        let text = words + "sk-ant-" + String(repeating: "x", count: 50_000)
+        let result = Redactor.redact(text)
+        #expect(result.hasSuffix(" …"))
+        #expect(!result.contains("sk-ant"))
+        #expect(!result.contains("xxx"))
+        #expect(result.count <= Redactor.maximumLength + 2)
+        #expect(Redactor.redact(String(repeating: "x", count: 50_000)) == "…")
+    }
+
+    @Test func boundedRulesStillFindPrefixedKeysAndEmails() {
+        #expect(Redactor.redact("my_app_access_token=abc123") == "my_app_access_token=[redacted]")
+        #expect(Redactor.redact("contact first.last+tag@example.co.uk") == "contact [redacted]")
+    }
+
 }

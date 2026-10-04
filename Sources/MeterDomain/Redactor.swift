@@ -4,18 +4,33 @@ import Foundation
 ///
 /// Every error message and log line passes through ``redact(_:)``. The rules run in order, and
 /// earlier rules handle the more specific token formats.
+///
+/// Every rule is linear in the length of the text: a repeated part has a bound, so a long run
+/// of letters cannot make the regular expressions backtrack over the whole text.
 public enum Redactor {
     public static let placeholder = "[redacted]"
 
+    /// Longer text is cut first, so a redaction always ends quickly. The UI, a log line, and
+    /// Diagnostics never need more.
+    public static let maximumLength = 16_384
+
     public static func redact(_ text: String) -> String {
         guard !text.isEmpty else { return text }
-        var result = text
+        var result = text.count > maximumLength ? truncated(text) : text
         for rule in rules {
             let range = NSRange(result.startIndex..., in: result)
             result = rule.expression.stringByReplacingMatches(
                 in: result, range: range, withTemplate: rule.template)
         }
         return result
+    }
+
+    /// The first ``maximumLength`` characters without their last word, which the cut can split
+    /// so that no rule finds it, then an ellipsis.
+    private static func truncated(_ text: String) -> String {
+        let head = text.prefix(maximumLength)
+        guard let lastSpace = head.lastIndex(where: \.isWhitespace) else { return "…" }
+        return head[..<lastSpace] + " …"
     }
 
     private struct Rule {
@@ -62,14 +77,16 @@ public enum Redactor {
         // `"access_token": "…"`, `{\"session_token\":\"…\"}`, `OPENAI_API_KEY=…`,
         // `"secret_key": "…"`.
         Rule(
-            #"(?i)((?:[A-Za-z0-9]+[_-])*(?:access|refresh|id|session|auth)[_-]?token|(?:[A-Za-z0-9]+[_-])*(?:api|secret|private|access)[_-]?key|client[_-]?secret|password)(\\?["']?\s*[:=]\s*\\?["']?)[^"'\\,\s;}&]+"#,
+            #"(?i)((?:[A-Za-z0-9]{1,64}[_-]){0,8}(?:access|refresh|id|session|auth)[_-]?token|(?:[A-Za-z0-9]{1,64}[_-]){0,8}(?:api|secret|private|access)[_-]?key|client[_-]?secret|password)(\\?["']?\s*[:=]\s*\\?["']?)[^"'\\,\s;}&]+"#,
             "$1$2\(placeholder)"),
         // Secrets in URL query parameters: `?token=…`, `&code=…`.
         Rule(
             #"(?i)([?&](?:token|key|code|secret|signature|access_token)=)[^&\s#"']+"#,
             "$1\(placeholder)"),
         // Tokens and secrets assigned in prose: `token=…`, `refresh_secret=…`.
-        Rule(#"(?i)\b((?:[A-Za-z0-9]+[_-])*(?:token|secret))=[^\s&"',;]+"#, "$1=\(placeholder)"),
+        Rule(
+            #"(?i)\b((?:[A-Za-z0-9]{1,64}[_-]){0,8}(?:token|secret))=[^\s&"',;]+"#,
+            "$1=\(placeholder)"),
         // Generic secret fields in JSON and in escaped JSON: `"key": "…"`, `\"token\":\"…\"`.
         Rule(#"(?i)"(key|token|secret)"(\s*:\s*)"(?:[^"\\]|\\.)*""#, "\"$1\"$2\"\(placeholder)\""),
         Rule(
@@ -77,8 +94,8 @@ public enum Redactor {
             #"\\"$1\\"$2\\"\#(placeholder)\\""#),
         // UUIDs identify accounts and organizations.
         Rule(#"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#),
-        // Email addresses.
-        Rule(#"[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#),
+        // Email addresses, with the length limits of RFC 5321.
+        Rule(#"[A-Z0-9a-z._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}"#),
         // Home directories reveal the macOS user name. `/Users/Shared` is no user, and a
         // command shown on a card must keep a path in it.
         Rule(#"/Users/(?!Shared(?![^/\s"']))[^/\s"']+"#, "/Users/\(placeholder)"),

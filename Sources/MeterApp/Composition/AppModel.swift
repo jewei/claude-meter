@@ -67,7 +67,8 @@ public final class AppModel {
 
     // MARK: - Popover actions
 
-    /// Refreshes readings that are missing, failed, stale, or at least 60 s old.
+    /// Refreshes quota readings that are missing, failed, stale, or at least 60 s old, and
+    /// token histories that are due (``UsageStore/historyNeedsRefresh(_:)``).
     public func popoverDidOpen() {
         scheduler?.popoverDidOpen()
     }

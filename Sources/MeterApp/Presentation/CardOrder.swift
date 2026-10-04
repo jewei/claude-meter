@@ -30,7 +30,9 @@ public enum CardOrder {
 
     public enum MoveResult: Equatable, Sendable {
         case moved(Move)
-        /// The card is already there, and is the main card or not first.
+        /// Nothing to save: the card or the index is not in the visible order, or the card is
+        /// already there and the drop does not make it the main meter (it is not first, cannot
+        /// own the menu bar, or is the main card already).
         case unchanged
         /// The move would put a card first that cannot own the menu bar (Cursor, Grok, extra
         /// usage) while a card that can is visible, or would take the main card off the top.

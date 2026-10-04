@@ -115,16 +115,20 @@ import Testing
     /// An unknown version is not a success (review UI-34).
     @Test func statusToneFollowsWhatIsKnown() {
         let current = UpdateCheckText.statusLine(
-            version: "4.0.0", build: "400", isUpdateAvailable: false)
+            version: "4.0.0", build: "400", isUpdateAvailable: false, canUpdate: true)
         #expect(current.text == "Installed v4.0.0 (400)")
         #expect(current.tone == .current)
-        let unknown = UpdateCheckText.statusLine(version: nil, build: nil, isUpdateAvailable: false)
+        let unknown = UpdateCheckText.statusLine(
+            version: nil, build: nil, isUpdateAvailable: false, canUpdate: true)
         #expect(unknown.text == "Installed version unknown")
         #expect(unknown.tone == .neutral)
         #expect(
-            UpdateCheckText.statusLine(version: "", build: "1", isUpdateAvailable: false).tone
+            UpdateCheckText.statusLine(
+                version: "", build: "1", isUpdateAvailable: false, canUpdate: true
+            ).tone
                 == .neutral)
-        let update = UpdateCheckText.statusLine(version: nil, build: nil, isUpdateAvailable: true)
+        let update = UpdateCheckText.statusLine(
+            version: nil, build: nil, isUpdateAvailable: true, canUpdate: true)
         #expect(update.tone == .attention)
     }
 

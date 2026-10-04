@@ -32,7 +32,7 @@ public enum UpdateCheckText {
     /// The status text with its tone. An unknown version is neutral, never a success, and so
     /// is a build that cannot update itself.
     public static func statusLine(
-        version: String?, build: String?, isUpdateAvailable: Bool, canUpdate: Bool = true
+        version: String?, build: String?, isUpdateAvailable: Bool, canUpdate: Bool
     ) -> (text: String, tone: Tone) {
         guard canUpdate else { return (unavailable, .neutral) }
         let text = status(version: version, build: build, isUpdateAvailable: isUpdateAvailable)

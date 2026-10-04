@@ -1,7 +1,8 @@
 import Foundation
 
 /// Software updates. The app target implements it with Sparkle; tests and previews use
-/// ``DisabledUpdater``. Implementations are `@Observable`, so views see changes.
+/// ``DisabledUpdater``. An implementation whose values change must be `@Observable`, so
+/// views see the changes. ``DisabledUpdater`` never changes, so it is not.
 @MainActor public protocol Updater: AnyObject {
     /// Whether this build can update itself at all. False for development and unsigned
     /// builds, which never check.

@@ -34,9 +34,11 @@ public final class ReadingArchive: Sendable {
             .appending(path: "Library/Application Support/\(AppIdentity.folderName)/readings.json")
     }
 
-    /// Reads the saved readings. A missing or unreadable file reads as empty. A provider that
-    /// was recorded or forgotten before the load keeps that newer value: it is neither merged
-    /// nor returned.
+    /// Reads the saved readings. A missing or unreadable file reads as empty. Each provider
+    /// loads on its own: an entry that does not decode (an unknown provider or window kind,
+    /// for example from another version) is skipped, and the others still load. A provider
+    /// that was recorded or forgotten before the load keeps that newer value: it is neither
+    /// merged nor returned.
     public func load() async -> [ProviderID: ProviderUsage] {
         let file = file
         let loaded: [ProviderID: ProviderUsage]
@@ -44,8 +46,22 @@ public final class ReadingArchive: Sendable {
             let data = try await BlockingIO.run(timeout: .seconds(5)) { _ in
                 try LocalFile.read(file, maxBytes: Self.maxFileBytes)
             }
-            let decoded = try JSONDecoder.meter.decode([ProviderID: ProviderUsage].self, from: data)
-            loaded = decoded.compactMapValues(\.persistable)
+            let entries = try JSONDecoder.meter.decode([String: Entry].self, from: data)
+            var readings: [ProviderID: ProviderUsage] = [:]
+            var skipped = 0
+            for (key, entry) in entries {
+                guard let id = ProviderID(rawValue: key), let usage = entry.usage,
+                    usage.provider == id
+                else {
+                    skipped += 1
+                    continue
+                }
+                if let usage = usage.persistable { readings[id] = usage }
+            }
+            if skipped > 0 {
+                log.warning("Skipped \(skipped) saved readings that did not load.")
+            }
+            loaded = readings
         } catch LocalFile.ReadError.notFound {
             loaded = [:]
         } catch {
@@ -56,6 +72,15 @@ public final class ReadingArchive: Sendable {
             let older = loaded.filter { !state.recorded.contains($0.key) }
             state.readings.merge(older) { current, _ in current }
             return older
+        }
+    }
+
+    /// One saved provider value, or nil when it does not decode.
+    private struct Entry: Decodable {
+        let usage: ProviderUsage?
+
+        init(from decoder: any Decoder) throws {
+            usage = try? ProviderUsage(from: decoder)
         }
     }
 

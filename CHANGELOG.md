@@ -62,6 +62,8 @@ core.
   of a spinner.
 - Settings no longer saves the default Codex home again as an added home when you add it
   before the list loads, and a name typed for a removed Codex home no longer comes back.
+- One saved reading that cannot be read no longer discards the saved readings of the other
+  sources at launch.
 
 ### Removed
 

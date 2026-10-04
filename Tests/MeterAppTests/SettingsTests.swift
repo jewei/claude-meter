@@ -227,6 +227,34 @@ import Testing
         #expect(mode as? Int == 0o700)
     }
 
+    /// One entry that does not decode (an unknown provider or window kind) is skipped; the
+    /// other saved readings still load.
+    @Test func aBadEntrySkipsOnlyThatProvider() async throws {
+        let directory = try TemporaryDirectory()
+        defer { directory.remove() }
+        let claude = try JSONEncoder.meter.encode(ProviderUsage.sample(.claude))
+        var codex = try #require(
+            try JSONSerialization.jsonObject(
+                with: JSONEncoder.meter.encode(ProviderUsage.sample(.codex)))
+                as? [String: Any])
+        var accounts = try #require(codex["accounts"] as? [[String: Any]])
+        var windows = try #require(accounts[0]["windows"] as? [[String: Any]])
+        windows[0]["kind"] = "hourly"
+        accounts[0]["windows"] = windows
+        codex["accounts"] = accounts
+        let object: [String: Any] = [
+            "claude": try JSONSerialization.jsonObject(with: claude),
+            "codex": codex,
+            "bard": try JSONSerialization.jsonObject(with: claude),
+            // A value saved under the wrong key.
+            "grok": try JSONSerialization.jsonObject(with: claude),
+        ]
+        let file = directory.path("readings.json")
+        try JSONSerialization.data(withJSONObject: object).write(to: file)
+        let loaded = await ReadingArchive(file: file).load()
+        #expect(loaded == [.claude: .sample(.claude)])
+    }
+
     @Test func unreadableFilesLoadAsEmpty() async throws {
         let directory = try TemporaryDirectory()
         defer { directory.remove() }

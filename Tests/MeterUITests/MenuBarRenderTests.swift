@@ -55,6 +55,8 @@ import Testing
             ("loading", model(nil, refreshing: [.claude]), nil),
             ("error", model(nil, failed: true), nil),
             ("paused", model(account(session: 20)) { $0.isPaused = true }, nil),
+            ("paused-no-data", model(nil, failed: true) { $0.isPaused = true }, nil),
+            ("not-set-up", model(nil, failed: true) { $0.hasCompletedOnboarding = false }, nil),
             (
                 "both",
                 model(account(session: 1, weekly: 27)) { $0.appearance.menuBarWindow = .both }, nil
@@ -66,6 +68,11 @@ import Testing
         }
         #expect(states[0].1.text == "80% 5h")
         #expect(states[6].1.icon == .loading)
+        // Before setup and while paused, a failure left from earlier never shows the warning
+        // bolt (review UI-03).
+        #expect(states[9].1.icon == .bolt(.none))
+        #expect(states[10].1.icon == .bolt(.none))
+        #expect(states[10].1.isDimmed)
     }
 }
 

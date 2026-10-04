@@ -1,15 +1,19 @@
 import AppKit
 import MeterApp
+import MeterPlatform
 import Observation
 import SwiftUI
 
 /// Owns the `NSStatusItem`. Its button hosts ``MenuBarLabel`` and speaks the model's summary.
 ///
 /// The label renders again when the model's inputs change and on a 30-second clock, so a
-/// reset or an old reading shows without a refresh.
+/// reset or an old reading shows without a refresh. A render that would show the same thing
+/// does not touch the button. The clock stops while the display sleeps.
 @MainActor final class StatusItemController {
     /// The clock that keeps countdown-driven state (resets, staleness) current.
     static let clockInterval: TimeInterval = 30
+    /// How late the clock may fire, so the system can group its wake-ups.
+    static let clockTolerance: TimeInterval = 5
     /// Space between the label and the edges of the status button.
     static let horizontalPadding: CGFloat = 5
 
@@ -19,9 +23,20 @@ import SwiftUI
     private let model: AppModel
     private let statusItem: NSStatusItem
     private let hostingView: LabelHostingView
+    private let displaySleep = DisplaySleepMonitor()
     private var clock: Timer?
     private var pulse = CriticalPulse()
     private var pulseEnd: Task<Void, Never>?
+    /// What the button shows now.
+    private var shown: Shown?
+    /// Each render tracks the model again; only the newest tracking renders on a change.
+    private var tracking = 0
+
+    /// The label state that the button shows.
+    private struct Shown: Equatable {
+        let model: MenuBarModel
+        let pulseStartedAt: Date?
+    }
 
     init(model: AppModel) {
         self.model = model
@@ -29,6 +44,9 @@ import SwiftUI
         statusItem.autosaveName = "ClaudeMeter"
         hostingView = LabelHostingView(
             rootView: MenuBarLabel(model: model.menuBarModel(at: Date())))
+        // Flexible margins keep the label centered when the menu bar changes height, for
+        // example on a move between a notched and a plain display.
+        hostingView.autoresizingMask = [.minYMargin, .maxYMargin]
         if let button = statusItem.button {
             button.addSubview(hostingView)
             button.target = self
@@ -36,10 +54,11 @@ import SwiftUI
             button.sendAction(on: [.leftMouseDown, .rightMouseDown])
         }
         render()
-        observeModel()
-        clock = Timer.scheduledTimer(withTimeInterval: Self.clockInterval, repeats: true) {
-            [weak self] _ in
-            MainActor.assumeIsolated { self?.render() }
+        startClock()
+        displaySleep.onSleep = { [weak self] in self?.stopClock() }
+        displaySleep.onWake = { [weak self] in
+            self?.render()
+            self?.startClock()
         }
     }
 
@@ -51,18 +70,33 @@ import SwiftUI
         statusItem.button?.highlight(highlighted)
     }
 
-    /// Builds the model for now and puts it on the button.
+    /// Builds the model for now, tracks what it reads, and puts it on the button when it
+    /// changed.
     func render() {
         let now = Date()
-        let menuBar = model.menuBarModel(at: now)
+        tracking += 1
+        let current = tracking
+        let menuBar = withObservationTracking {
+            model.menuBarModel(at: now)
+        } onChange: { [weak self] in
+            // Called before the change lands; render on the next turn of the main loop.
+            Task { @MainActor [weak self] in
+                guard let self, self.tracking == current else { return }
+                self.render()
+            }
+        }
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         if pulse.update(icon: menuBar.icon, now: now, reduceMotion: reduceMotion) {
             schedulePulseEnd()
         }
-        hostingView.rootView = MenuBarLabel(
-            model: menuBar, pulseStartedAt: pulse.runningStart(at: now))
+        let next = Shown(model: menuBar, pulseStartedAt: pulse.runningStart(at: now))
+        guard next != shown else { return }
+        if next.model.accessibilityLabel != shown?.model.accessibilityLabel {
+            statusItem.button?.setAccessibilityLabel(menuBar.accessibilityLabel)
+        }
+        shown = next
+        hostingView.rootView = MenuBarLabel(model: menuBar, pulseStartedAt: next.pulseStartedAt)
         layout()
-        statusItem.button?.setAccessibilityLabel(menuBar.accessibilityLabel)
     }
 
     private func layout() {
@@ -76,6 +110,22 @@ import SwiftUI
             width: ceil(size.width), height: size.height)
     }
 
+    private func startClock() {
+        clock?.invalidate()
+        let clock = Timer(timeInterval: Self.clockInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.render() }
+        }
+        clock.tolerance = Self.clockTolerance
+        // Common modes: the label stays current while a menu is open.
+        RunLoop.main.add(clock, forMode: .common)
+        self.clock = clock
+    }
+
+    private func stopClock() {
+        clock?.invalidate()
+        clock = nil
+    }
+
     /// Renders once more when the pulse ends, so the dot stops redrawing.
     private func schedulePulseEnd() {
         pulseEnd?.cancel()
@@ -83,19 +133,6 @@ import SwiftUI
             try? await Task.sleep(for: .seconds(CriticalPulse.duration + 0.05))
             guard !Task.isCancelled else { return }
             self?.render()
-        }
-    }
-
-    /// Re-renders after any change to what the menu-bar model reads.
-    private func observeModel() {
-        withObservationTracking {
-            _ = model.menuBarModel(at: Date())
-        } onChange: { [weak self] in
-            // Called before the change lands; render on the next turn of the main loop.
-            Task { @MainActor [weak self] in
-                self?.render()
-                self?.observeModel()
-            }
         }
     }
 

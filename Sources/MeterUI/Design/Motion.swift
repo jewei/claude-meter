@@ -11,6 +11,8 @@ enum Motion {
     static let pulseFrameInterval: TimeInterval = 1.0 / 12
     /// One turn of the loading arrow.
     static let spinPeriod: TimeInterval = 1
+    /// The loading arrow redraws at most this often, not at the display refresh rate.
+    static let spinFrameInterval: TimeInterval = 1.0 / 30
 
     static func disclosure(reduceMotion: Bool) -> Animation? {
         reduceMotion ? nil : .easeInOut(duration: disclosureDuration)

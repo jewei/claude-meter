@@ -23,8 +23,9 @@ struct MenuBarLabel: View {
                     .lineLimit(1)
             }
         }
+        // Dimmed is the system's secondary label color, which stays readable on every menu
+        // bar; a second fade on top made a paused item almost invisible.
         .foregroundStyle(model.isDimmed ? .secondary : .primary)
-        .opacity(model.isDimmed ? 0.55 : 1)
         .fixedSize()
         .accessibilityHidden(true)
     }
@@ -94,13 +95,14 @@ private struct BadgeView: View {
     }
 }
 
-/// The loading arrow. It turns once a second unless Reduce Motion is on.
+/// The loading arrow. It turns once a second, redrawn at most 30 times a second, unless
+/// Reduce Motion is on.
 private struct LoadingArrow: View {
     let spins: Bool
 
     var body: some View {
         if spins {
-            TimelineView(.animation) { timeline in
+            TimelineView(.animation(minimumInterval: Motion.spinFrameInterval)) { timeline in
                 arrow.rotationEffect(.degrees(Self.angle(at: timeline.date)))
             }
         } else {

@@ -217,20 +217,24 @@ All cards: padding 14×13, `chunkyCard()`, full width.
 `StatusItemController` owns an `NSStatusItem`. Its button hosts `MenuBarLabel` in a hosting
 view that ignores clicks and stays out of the accessibility tree. The button's accessibility
 label is `MenuBarModel.accessibilityLabel`. The label renders again on every change to what
-the model reads (Observation) and on a 30 s clock, so resets and staleness show without a
-refresh. Colors are real colors, not a template.
+the model reads (Observation, tracked in the render itself) and on a 30 s clock (5 s
+tolerance, common run-loop modes, stopped while the display sleeps), so resets and staleness
+show without a refresh. A render whose model and pulse equal the shown ones does not touch
+the button. The label keeps flexible top and bottom margins, so it stays centered when the
+menu bar changes height. Colors are real colors, not a template.
 
 | `MenuBarModel.icon` | Drawing |
 | --- | --- |
 | `.bolt(.dot(severity))` | `bolt.fill` 13 bold, 6 pt dot at top trailing in the severity fill |
-| `.bolt(.stale)` | gray dot, no number |
+| `.bolt(.stale)` | dot in the system secondary color, no number |
 | `.bolt(.exhausted)` | red capsule with "0" (7 pt heavy, white) |
-| `.bolt(.none)` | no badge (paused) |
-| `.loading` | `arrow.clockwise` that turns once a second |
+| `.bolt(.none)` | no badge (before setup, paused, or no reading yet) |
+| `.loading` | `arrow.clockwise` that turns once a second, redrawn at most 30 times a second |
 | `.error` | `bolt.trianglebadge.exclamationmark.fill`, hierarchical |
 
-The number is system rounded 12 bold with monospaced digits. `isDimmed` draws the item in
-the secondary color at 55%.
+The number is system rounded 12 bold with monospaced digits. `isDimmed` (before setup and
+while paused) draws the item in the system secondary label color, with no further fade, so
+it stays visible. A dot of unknown severity also uses the secondary color.
 
 Critical pulse (`CriticalPulse`, pure): when the badge becomes critical, the dot scales to
 135% and fades to 55% three times over 1.2 s each, redrawn at most 12 times a second. Then it
@@ -292,7 +296,7 @@ the app is regular; "About Claude Meter" opens the About tab.
 | Card expand and collapse, chevron, card reorder | ease-in-out 0.18 s | none |
 | Panel height | ease-in-out 0.18 s, top edge fixed | at once |
 | Button press | spring 0.2 / 0.85, down 2 pt | darker tint only |
-| Loading arrow | one turn per second | still |
+| Loading arrow | one turn per second, ≤ 30 fps | still |
 | Critical pulse | 3 × 1.2 s, ≤ 12 fps | none |
 
 `Design/Motion.swift` holds every duration. A hidden popover runs no clock and no animation.

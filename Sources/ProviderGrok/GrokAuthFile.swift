@@ -26,17 +26,21 @@ struct GrokAuthFile: Sendable {
             data = try await BlockingIO.run(timeout: Self.readTimeout) { [url] _ in
                 try LocalFile.read(url, maxBytes: Self.maxBytes)
             }
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch LocalFile.ReadError.notFound {
-            return .missing
-        } catch is LocalFile.ReadError {
-            return .unreadable(.credentialsUnreadable)
         } catch {
-            // A timeout or a full blocking-I/O pool is temporary.
-            return .unreadable(.credentialsBusy)
+            return try Self.lookup(after: error)
         }
         return Self.lookup(data, now: now)
+    }
+
+    /// The login after a failed read. A missing file is a sign-out; a file that cannot be read
+    /// is unreadable; a timeout or a full blocking-I/O pool is temporary. Rethrows
+    /// `CancellationError`.
+    static func lookup(after error: any Error) throws -> GrokCredentialLookup {
+        if error is CancellationError { throw CancellationError() }
+        guard let readError = error as? LocalFile.ReadError else {
+            return .unreadable(.credentialsBusy)
+        }
+        return readError == .notFound ? .missing : .unreadable(.credentialsUnreadable)
     }
 
     /// Chooses an entry. Keys sort inside each group, so the choice never depends on

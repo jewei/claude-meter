@@ -119,6 +119,32 @@ import Testing
         #expect(found.isExpired(at: now))
     }
 
+    @Test func readsANumericExpiryInSecondsOrMilliseconds() {
+        for value in ["1783752187", "1783752187000"] {
+            let found = credentials(#"{"https://auth.x.ai::a":{"key":"k","expires_at":\#(value)}}"#)
+            #expect(found?.expiresAt == Date(timeIntervalSince1970: 1_783_752_187), "\(value)")
+            #expect(found?.isExpired(at: now) == false, "\(value)")
+        }
+    }
+
+    /// A read that times out or finds no free thread proves nothing about the login.
+    @Test func aFailedReadMapsToTheRightLookup() throws {
+        let timedOut = try GrokAuthFile.lookup(after: TimeoutError(limit: .seconds(5)))
+        guard case .unreadable(let failure) = timedOut else {
+            Issue.record("Expected a temporary failure")
+            return
+        }
+        #expect(failure == .credentialsBusy)
+        #expect(timedOut.ownerStatus == .unknown)
+        #expect(
+            try GrokAuthFile.lookup(after: LocalFile.ReadError.notFound).ownerStatus == .signedOut)
+        let tooLarge = try GrokAuthFile.lookup(after: LocalFile.ReadError.tooLarge(limit: 1))
+        #expect(tooLarge.ownerStatus == .unknown)
+        #expect(throws: CancellationError.self) {
+            try GrokAuthFile.lookup(after: CancellationError())
+        }
+    }
+
     @Test func anUnreadableExpiryIsNotExpired() {
         let found = credentials(#"{"https://auth.x.ai::a":{"key":"k","expires_at":"soon"}}"#)
         #expect(found?.expiresAt == nil)

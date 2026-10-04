@@ -253,6 +253,36 @@ import Testing
         #expect(account.issue == GrokFailure.signInChanged.issue)
     }
 
+    @Test func aSignOutDuringTheRequestDropsTheReading() async throws {
+        try signIn()
+        let directory = directory
+        let http = FakeHTTPClient { _ in
+            try FileManager.default.removeItem(at: directory.path(".grok/auth.json"))
+            return .json(200, Self.liveFixture)
+        }
+
+        let account = try account(try await provider(http).fetch(previous: previous()))
+
+        #expect(!account.hasObservation)
+        #expect(account.issue == GrokFailure.signedOut.issue)
+    }
+
+    /// An unreadable file after the response proves nothing, so the response stands.
+    @Test func anUnreadableFileAfterTheResponseKeepsTheResponse() async throws {
+        try signIn()
+        let directory = directory
+        let http = FakeHTTPClient { _ in
+            try directory.write("{", to: ".grok/auth.json")
+            return .json(200, Self.liveFixture)
+        }
+
+        let account = try account(try await provider(http).fetch(previous: previous()))
+
+        #expect(account.observedAt == .reference())
+        #expect(account.issue == nil)
+        #expect(account.owner == owner)
+    }
+
     @Test func cancellationIsNotAFailure() async throws {
         try signIn()
         let http = FakeHTTPClient { _ in throw CancellationError() }

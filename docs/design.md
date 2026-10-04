@@ -1,0 +1,288 @@
+# Design system
+
+How Claude Meter looks and moves, and where each part lives in `Sources/MeterUI`. Read this
+before you change a view. Views render presentation models from `MeterApp/Presentation`;
+they never decide data rules (see `AGENTS.md`).
+
+## Tone
+
+Quota shows as energy left. The style is playful: a warm cream background, bright green,
+orange, and red, rounded type, rings, and "chunky" cards with a solid plate under them. The
+app lives in the menu bar and has no Dock icon, except while Settings is open.
+
+## Color tokens
+
+All tokens are in `Design/Palette.swift`. Each is an `NSColor` with a dynamic provider, so one
+value serves SwiftUI, AppKit chrome, and the menu bar in both appearances.
+
+### Surfaces and text
+
+| Token | Light | Dark | Use |
+| --- | --- | --- | --- |
+| `popover` | `#FBF9F2` | `#201E18` | Popover and Settings background, folder rows |
+| `popoverBorder` | `#EFE9DA` | `#3A372E` | Popover border, Settings and Diagnostics rules |
+| `card` | `#FFFFFF` | `#2A2820` | Cards |
+| `cardBorder` | `#EFEAD9` | `#3D3A30` | Card border, dividers inside cards |
+| `cardLip` | `#E4DDC9` | `#15140F` | The plate 3 pt below a card |
+| `track` | `#ECE9DD` | `#3A372E` | Empty part of rings and bars, chips |
+| `ink` | `#3A382F` | `#ECE8DC` | Primary text |
+| `inkMuted` | `#6A665B` | `#ADA798` | Secondary text, section labels |
+
+### Energy
+
+| Token | Light | Dark | Use |
+| --- | --- | --- | --- |
+| `energyFull` | `#4FC51C` | `#62D62C` | Green fills and dots |
+| `energyLow` | `#FF9D0A` | `#FFAE33` | Orange fills and dots |
+| `energyEmpty` | `#FF5A5A` | `#FF6B6B` | Red fills, dots, the "0" pill |
+| `energyFullInk` | `#2E7D12` | `#8FE25A` | Green text; `accent` for focus, tint, selection |
+| `energyLowInk` | `#965000` | `#FFC368` | Amber text: warnings, failed status lines |
+| `energyEmptyInk` | `#B52C28` | `#FF9B96` | Red text: errors |
+| `energyUnknown` | `inkMuted` at 45% | same | Dots of unknown values |
+| `action` | `#287B12` | `#287B12` | Raised button fill |
+| `actionShadow` | `#19550B` | `#19550B` | Raised button plate |
+
+Bright energy colors are for fills only. Small text uses the `…Ink` colors, which keep at
+least 4.5:1 contrast on `card` and `popover`.
+
+`Severity` maps to colors in `Design/SeverityColors.swift`: `normal` → full, `warning` →
+low, `critical` and `exhausted` → empty, `unknown` → unknown. Header numbers on bar cards
+stay `ink` while energy is full (`headlineInk`).
+
+### Hero, plan badges, tiles
+
+| Hero tone | Background | Border | Title | Subtitle |
+| --- | --- | --- | --- | --- |
+| full | `#EAF8E0` / `#22311A` | `#CFEEB8` / `#3C5A2A` | `#2E7D12` / `#8FE25A` | `#547236` / `#A6C98A` |
+| low | `#FFF1DD` / `#332715` | `#FAD9A0` / `#5A4424` | `#965000` / `#FFC368` | `#8A6A3A` / `#D8B488` |
+| empty | `#FFE4E1` / `#3A1F1E` | `#F6C0BC` / `#5E2F2D` | `#C0322E` / `#FF9B96` | `#8A4B47` / `#E0A8A4` |
+| neutral | `card` | `cardBorder` | `ink` | `inkMuted` |
+
+| Plan tier | Text | Background |
+| --- | --- | --- |
+| max | `#8133BC` / `#D9B3FF` | `#F2E6FF` / `#3A2A50` |
+| pro | `#287B12` / `#7FD65A` | `#E7F8DC` / `#23381A` |
+| free | `#6F6A5B` / `#B8B3A2` | `#EFECE0` / `#33312A` |
+
+Values are light / dark. Settings tiles use fixed bright fills (`Palette.Tile`) with white
+glyphs. Account avatars pick one of eight tile colors from a djb2 hash of the account ID.
+
+## Type
+
+Fredoka (display) and Nunito (body) are bundled in `Resources/Fonts` and registered for the
+process with `CTFontManagerRegisterFontURLs` on first use (`Design/MeterFont.swift`). A face
+that is not available falls back to the system rounded font with the same weight. The menu
+bar uses the system rounded font.
+
+| Role | Face | Size | Use |
+| --- | --- | --- | --- |
+| Page title | Fredoka Bold | 26 | Settings page titles |
+| Status title | Fredoka SemiBold | 20 | Welcome, Paused, errors |
+| Hero title, app name | Fredoka SemiBold | 18 | "You're cruising", "Claude Meter" |
+| Account name | Fredoka SemiBold | 15 ring / 14 bar | "Work" |
+| Settings row title | Fredoka SemiBold | 16 | "Launch at login" |
+| Big number | Fredoka Bold | 14 | "78%" |
+| Ring letter | Fredoka Bold | 19 | "W" |
+| Plan badge | Fredoka Bold | 10 | "MAX 20X" |
+| Primary button | Fredoka Bold | 14 | "Open Settings" |
+| Metric label | Nunito Bold | 11 | "5-hr", "week" |
+| Caption | Nunito SemiBold | 11 | "Resets in 3h 12m" |
+| Section label | Nunito ExtraBold | 11, tracking 0.99, uppercase | "ACCOUNTS" |
+| Note | Nunito SemiBold | 10 | "Token usage unavailable" |
+
+Every changing number uses `.monospacedDigit()`.
+
+## Components (`Design/`)
+
+| Component | Spec |
+| --- | --- |
+| `ChunkyCard` (`.chunkyCard()`) | Radius 18 continuous. Plate `cardLip` 3 pt below; fill; white wash 12% light / 6% dark from the top; 2 pt border; 1 pt inner top highlight. |
+| `RaisedTile` | Rounded square with a brand fill, a 1 pt white top-light border, and a 3 pt `black 13%` band inside the bottom edge. Header 30/9, Settings 40/11, About 104/26. |
+| `RaisedButtonStyle` | `action` fill, white Fredoka Bold 14, padding 20×12, radius 14, plate at y 4. Pressed: label down 2 pt, plate at y 2, spring 0.2/0.85. Hover: white 6%. Focus: 2 pt `accent` ring. Disabled: 45%. Reduce Motion: no movement, darker tint. |
+| `QuietButtonStyle` | `ink` surface at 6% hover and 12% press, 2 pt focus border, 45% when disabled. Nothing moves. |
+| `EnergyDot` | 9 pt rounded square, radius 3. |
+| `EnergyBar` | Capsule on `track`. Fill width = share × width. A white 45% highlight, 2 pt high, inset 3 pt, runs along the top of the fill only when the fill is wider than 6 pt. |
+| `ActivityRings` | 88 pt. Outer weekly ring radius 34, inner session ring radius 24, 8 pt strokes, round caps, start at the top, `track` behind, a white 30% highlight along each arc. Center disc 30 pt in `popover` with the letter. Hidden from accessibility. |
+| `PlanBadgeView` | Capsule, padding 8×3, tier colors, one line. |
+| `ChipView` | Neutral capsule for "same login" and "paused". |
+| `ProviderMark` | Bundled logo as a 15 pt template image in `ink`; Grok uses the `atom` symbol. |
+| `NoticeBanner` | Top-aligned 12 pt icon, wrapping Nunito SemiBold 11, padding 12×9, tint 8% fill, 16% 1 pt border, radius 12. Action: `key.slash.fill`, warning: `exclamationmark.triangle.fill` (both `energyLowInk`); info: `clock.fill` (`inkMuted`). |
+| `SquareIconButton` | 28 pt target, glyph 12 bold, quiet style on a chunky surface. |
+| `MeterSwitch` | Native switch with the `accent` tint and a spoken label. |
+| `Spinner` | Native spinner; static while the popover is hidden. |
+
+## Popover (`Popover/`)
+
+`PopoverPanelController` shows `PopoverView` in a borderless, non-activating `PopoverPanel`.
+The panel can become key without activating the app, so Escape works and the user's app keeps
+its focus.
+
+- Width 360 pt. SwiftUI draws the chrome: `popover` fill, 2 pt `popoverBorder`, radius 22.
+- Position (`PanelLayout`, pure): the top edge sits 4 pt below the menu bar (below the status
+  button when the menu bar hides itself), centered under the button, at least 8 pt from the
+  sides of the visible frame.
+- Height = header + body. Body = content height, at least 120 pt, at most
+  `max(560, visibleFrame.height − 72)`. Taller content scrolls. The panel never leaves the
+  visible frame.
+- When the content height changes, the frame animates 0.18 s ease-in-out with the top edge
+  fixed. It changes at once under Reduce Motion, while hidden, and in the first 0.25 s after
+  opening.
+- It closes on a second click of the status button, Escape, a click in another app or in
+  another window of this app, app deactivation, and when Settings opens. It calls
+  `popoverDidOpen()` and `popoverDidClose()`.
+- While visible, `SecondClock` renders the content every whole second. While hidden the clock
+  stops and spinners are static.
+
+```text
+┌──────────────────────────────────────────────┐
+│ [⚡] Claude Meter        2m ago      (⚙) (⏻) │  header: padding 15, top 14, bottom 12
+│ ┌ update notice (when available) ──────────┐ │
+│ ┌ notices ─────────────────────────────────┐ │  body: padding 15, top 2, bottom 16
+│ ┌ hero ────────────────────────────────────┐ │  spacing 12
+│  ACCOUNTS                 ◌ weekly ● 5-hour  │
+│  Drag a Claude or Codex card to the top…     │
+│  (▭ Menu bar)                                 │  pill above the main card
+│ ┌ card ────────────────────────────────────┐ │  card list spacing 10
+└──────────────────────────────────────────────┘
+```
+
+Header: a 30 pt bolt tile, "Claude Meter" (never wraps), the updated time (truncates first),
+then Settings and Quit (28 pt). Settings, "Get started →", and "Open Settings" all call
+`completeOnboarding()` and open Settings.
+
+Status screens (`StatusScreenView`): a 76 pt raised disc with the mascot (hidden from
+accessibility), Fredoka SemiBold 20 title, wrapping Nunito SemiBold 12 message (inline code
+in monospace), and a raised button. Loading: a spinner over a Nunito SemiBold 13 message.
+
+Hero (`HeroView`): a 46 pt disc with the mascot, title and subtitle that wrap, tone colors,
+padding 14×13. VoiceOver reads it as one element: "title. subtitle".
+
+### Card list and reordering
+
+`CardList` renders `AccountsModel.cards`. A local `DragGesture` (minimum 8 pt, named
+coordinate space) tracks the pointer in `@GestureState`, so it resets on end and cancel.
+`CardReorder.targetIndex` (pure) moves the card only after the pointer crosses a
+neighbor's midpoint. The view calls `AppModel.moveCard(_:to:visible:)`, which refuses a
+move that puts Cursor, Grok, or extra usage first. No pasteboard, no drops from outside, and
+a hidden popover does not reorder. Each card has "Move up" and "Move down" accessibility
+actions.
+
+## Cards (`Cards/`)
+
+All cards: padding 14×13, `chunkyCard()`, full width.
+
+- **Ring card** (`RingCardView`): the name (Fredoka SemiBold 15) with badges at the trailing
+  edge, or below the name when they do not fit. Then rings and rows, 14 pt apart. Each row
+  (`RingMetricRow`): dot, short title, value in severity ink, caption, and "Resets in …"
+  below, indented 15 pt. Details and the status line follow; ring cards are always open.
+- **Bar card** (`BarCardView`): a header button (provider mark, name, badges, headline
+  value, chevron; 28 pt minimum height) that calls `toggleCard`. One 12 pt `BarRow` per
+  window with "Session · 60% left" and the reset, unless `BarsModel.showsBarLabels` is false
+  (Cursor, Grok: the caption names the window and reset). Then the caption and status line.
+  Expanded details reveal from the top with the card height; the card clips its content.
+- **Extra usage** (`ExtraUsageCardView`): 💳, title, "paused" chip, amount, and a green bar
+  when the share is known.
+- **Details** (`DetailSectionsView`), each after a 1 pt `cardBorder` rule: limit rows
+  (`LimitRow`), usage bars (`UsageBarRow`, 7 pt bars), usage-limit resets
+  (`ResetsSectionView`: count, rows with the exact date in a tooltip, note), and tokens used
+  (`TokensSectionView`: source label with a scope tooltip, three rows with full counts in
+  tooltips and accessibility values, note).
+- **Status line**: Nunito SemiBold 11, `energyLowInk` for failures, `inkMuted` otherwise.
+
+## Menu bar (`MenuBar/`)
+
+`StatusItemController` owns an `NSStatusItem`. Its button hosts `MenuBarLabel` in a hosting
+view that ignores clicks and stays out of the accessibility tree. The button's accessibility
+label is `MenuBarModel.accessibilityLabel`. The label renders again on every change to what
+the model reads (Observation) and on a 30 s clock, so resets and staleness show without a
+refresh. Colors are real colors, not a template.
+
+| `MenuBarModel.icon` | Drawing |
+| --- | --- |
+| `.bolt(.dot(severity))` | `bolt.fill` 13 bold, 6 pt dot at top trailing in the severity fill |
+| `.bolt(.stale)` | gray dot, no number |
+| `.bolt(.exhausted)` | red capsule with "0" (7 pt heavy, white) |
+| `.bolt(.none)` | no badge (paused) |
+| `.loading` | `arrow.clockwise` that turns once a second |
+| `.error` | `bolt.trianglebadge.exclamationmark.fill`, hierarchical |
+
+The number is system rounded 12 bold with monospaced digits. `isDimmed` draws the item in
+the secondary color at 55%.
+
+Critical pulse (`CriticalPulse`, pure): when the badge becomes critical, the dot scales to
+135% and fades to 55% three times over 1.2 s each, redrawn at most 12 times a second. Then it
+stays still. Loading, stale, and error periods do not restart it. Reduce Motion turns it off.
+
+## Settings (`Settings/`)
+
+`SettingsWindowController` owns a titled 580×700 window, "Claude Meter Settings". While it is
+open the app uses the regular activation policy (Dock icon, menu bar, Command-Tab) and comes
+to the front; it returns to accessory when the window closes. `MainMenu` provides the app,
+Edit, and Window menus for that time.
+
+- Tab bar (`SettingsTabBar`): Data, Appearance, Advanced, About; 112 pt targets; the selected
+  tab has the hero-full fill and border and the selected trait; Command-1 to Command-4.
+- Pages (`SettingsPage`): Fredoka Bold 26 title, Nunito SemiBold 13 subtitle, 24 pt insets,
+  scrolling. Cards (`SettingsCard`) use padding 16 and radius 18. Rows (`SettingsRow`) have a
+  40 pt tile, a Fredoka SemiBold 16 title, a Nunito SemiBold 12 subtitle, and a trailing
+  control.
+- **Data** (`Data/DataSettingsView`): one `DataSourceCard` per source with its switch.
+  Controls for a source go in its card content, below a divider, while the source is on.
+  Claude: the connection (`ClaudeConnectionView`: both logins' states, Connect automatically
+  with a Keychain consent alert, Enter tokens manually with a form whose Cancel discards the
+  draft, Disconnect) and, in automatic mode, the config dirs (`ClaudeAccountsList`). Codex:
+  the homes (`CodexHomesList`). Rows (`FolderRow`) show an avatar, a display-name field that
+  saves on Return or focus loss, a path chip with the full path in its tooltip, and 28 pt
+  controls. Folders are added with the open panel (hidden folders shown).
+- **Appearance**: card style as two visual options with a checkmark; Energy left / Usage;
+  menu bar 5h / 7d / Both; warning and critical sliders (`ThresholdSlider`: step 5, arrow
+  keys, VoiceOver adjustable, focus border) written through `Thresholds`; "Use automatic
+  order" when `CardOrderHint.canReset`.
+- **Advanced**: Fetch usage, Launch at login (`LoginItem`, with approval and error text),
+  automatic update checks with "Check for Updates…" and the last check, Diagnostics (a sheet
+  with a Copy button; Escape closes it), and "Write a log file" with Show in Finder.
+- **About**: the bolt tile, name, version and build, the GitHub link, MIT license, font
+  credits, and the disclaimer.
+
+## Animation
+
+| Trigger | Animation | Reduce Motion |
+| --- | --- | --- |
+| Ring arc, bar fill | ease-out 0.4 s | none |
+| Hero tone | ease-in-out 0.3 s | none |
+| Card expand and collapse, chevron, card reorder | ease-in-out 0.18 s | none |
+| Panel height | ease-in-out 0.18 s, top edge fixed | at once |
+| Button press | spring 0.2 / 0.85, down 2 pt | darker tint only |
+| Loading arrow | one turn per second | still |
+| Critical pulse | 3 × 1.2 s, ≤ 12 fps | none |
+
+`Design/Motion.swift` holds every duration. A hidden popover runs no clock and no animation.
+
+## Accessibility
+
+- Rings and bars expose a label and a value: "Session", "78 percent left, full energy,
+  resets in 3h". The band is in the words, not only the color.
+- The hero is one element: "title. subtitle".
+- The menu-bar button speaks the model's summary; the drawn label is hidden.
+- Every icon button has a label and a tooltip, and a target of at least 28 pt.
+- Tabs and options expose the selected trait. Sliders are adjustable.
+- Decorative mascots and drawings are hidden.
+- Text contrast is at least 4.5:1 in both appearances.
+
+## Visual checks
+
+`Tests/MeterUITests` renders the popover states, the menu-bar states, and every Settings tab
+with `ImageRenderer` in light and dark. Set `CLAUDE_METER_RENDER_DIR` to a folder to write
+the PNGs; a normal `swift test` writes nothing. `rendersStatically` draws native switches and
+spinners as shapes and lays out scroll views at full height, because `ImageRenderer` cannot
+draw AppKit controls.
+
+## Changes from v3
+
+- One integer percent format everywhere, and the bar-card chevron is always last.
+- The popover is an app-owned panel with the 22 pt chrome that v3 described but did not draw.
+- Cursor and Grok bars have no label row, because their caption already states the window
+  and the reset.
+- Unknown values use `inkMuted` at 45%, as v3 drew them, not `track`, which is too faint for
+  a dot.
+- Grok's mark is ink like the others; v3 tinted it with the severity.

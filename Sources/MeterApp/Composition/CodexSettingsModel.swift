@@ -167,13 +167,12 @@ public final class CodexSettingsModel {
     private static func canonicalPaths(of saved: [String]) async throws -> [String: String] {
         guard !saved.isEmpty else { return [:] }
         return try await BlockingIO.run(timeout: folderCheckLimit) { _ in
-            Dictionary(
-                saved.map {
-                    (
-                        $0,
-                        URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath().path
-                    )
-                }, uniquingKeysWith: { first, _ in first })
+            var canonical: [String: String] = [:]
+            for path in saved {
+                let url = URL(fileURLWithPath: path).standardizedFileURL
+                canonical[path] = url.resolvingSymlinksInPath().path
+            }
+            return canonical
         }
     }
 }

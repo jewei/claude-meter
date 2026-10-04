@@ -26,6 +26,22 @@ import Testing
         #expect(value == "done")
     }
 
+    @Test func manyConcurrentReadsNeverCountAsAbandoned() async throws {
+        try await withThrowingTaskGroup(of: Int.self) { group in
+            for index in 0..<64 {
+                group.addTask {
+                    try await BlockingIO.run(timeout: .seconds(5)) { _ in
+                        usleep(2_000)
+                        return index
+                    }
+                }
+            }
+            var total = 0
+            for try await value in group { total += value }
+            #expect(total == (0..<64).reduce(0, +))
+        }
+    }
+
     @Test func rethrowsWorkErrors() async {
         struct Failure: Error {}
         await #expect(throws: Failure.self) {

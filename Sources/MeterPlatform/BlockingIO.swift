@@ -22,24 +22,20 @@ public enum BlockingIO {
         public var isCancelled: Bool { flag.value }
     }
 
-    /// The most operations that can run at once, including abandoned ones.
+    /// The most abandoned operations that may still hold threads. New work fails fast beyond
+    /// this, so a stuck volume cannot exhaust the thread pool.
     public static let capacity = 16
 
     private static let queue = DispatchQueue(
         label: "com.jewei.claudemeter.blocking-io", qos: .utility, attributes: .concurrent)
-    private static let running = Locked(0)
+    private static let abandoned = Locked(0)
 
     public static func run<Value: Sendable>(
         timeout: Duration,
         _ work: @escaping @Sendable (Cancellation) throws -> Value
     ) async throws -> Value {
         try Task.checkCancellation()
-        let admitted = running.withLock { count in
-            guard count < capacity else { return false }
-            count += 1
-            return true
-        }
-        guard admitted else { throw BusyError() }
+        guard abandoned.value < capacity else { throw BusyError() }
 
         let cancellation = Cancellation()
         let outcome = Outcome<Value>()
@@ -48,18 +44,23 @@ public enum BlockingIO {
                 outcome.install(continuation)
                 queue.async {
                     let result = Result { try work(cancellation) }
-                    running.withLock { $0 -= 1 }
-                    outcome.finish(result)
+                    // Work that finishes after its caller gave up is no longer abandoned.
+                    if !outcome.finish(result) { abandoned.withLock { $0 -= 1 } }
                 }
                 queue.asyncAfter(deadline: .now() + timeout.timeInterval) {
-                    cancellation.flag.withLock { $0 = true }
-                    outcome.finish(.failure(TimeoutError(limit: timeout)))
+                    giveUp(outcome, cancellation, with: TimeoutError(limit: timeout))
                 }
             }
         } onCancel: {
-            cancellation.flag.withLock { $0 = true }
-            outcome.finish(.failure(CancellationError()))
+            giveUp(outcome, cancellation, with: CancellationError())
         }
+    }
+
+    private static func giveUp<Value>(
+        _ outcome: Outcome<Value>, _ cancellation: Cancellation, with error: any Error
+    ) {
+        cancellation.flag.withLock { $0 = true }
+        if outcome.finish(.failure(error)) { abandoned.withLock { $0 += 1 } }
     }
 
     /// Resumes a continuation once, whichever of result, timeout, or cancellation comes first.
@@ -83,18 +84,22 @@ public enum BlockingIO {
             if let early { continuation.resume(with: early) }
         }
 
-        func finish(_ result: Result<Value, any Error>) {
-            let continuation = state.withLock { state -> CheckedContinuation<Value, any Error>? in
-                guard !state.isFinished else { return nil }
+        /// Returns true when this call decided the outcome.
+        @discardableResult
+        func finish(_ result: Result<Value, any Error>) -> Bool {
+            let (won, continuation) = state.withLock {
+                state -> (Bool, CheckedContinuation<Value, any Error>?) in
+                guard !state.isFinished else { return (false, nil) }
                 state.isFinished = true
                 guard let continuation = state.continuation else {
                     state.early = result
-                    return nil
+                    return (true, nil)
                 }
                 state.continuation = nil
-                return continuation
+                return (true, continuation)
             }
             continuation?.resume(with: result)
+            return won
         }
     }
 }

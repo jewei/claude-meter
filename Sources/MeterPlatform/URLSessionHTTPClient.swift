@@ -14,6 +14,8 @@ public final class URLSessionHTTPClient: HTTPClient {
     public let maxResponseBytes: Int
     private let session: URLSession
     private static let maxAttempts = 3
+    /// Server states that usually pass. Never 429: rate limits have their own rules.
+    private static let retryableStatuses: Set<Int> = [408, 500, 502, 503, 504]
     private static let maxBackoff: TimeInterval = 8
 
     public convenience init(maxResponseBytes: Int = 8 * 1024 * 1024) {
@@ -60,7 +62,8 @@ public final class URLSessionHTTPClient: HTTPClient {
                 attempt += 1
                 continue
             }
-            guard retries, attempt < Self.maxAttempts, [502, 503, 504].contains(response.status)
+            guard retries, attempt < Self.maxAttempts,
+                Self.retryableStatuses.contains(response.status)
             else { return response }
             // A server delay is never shortened. If it does not fit, return the response.
             let wait =

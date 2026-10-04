@@ -109,7 +109,7 @@ public enum SQLiteReader {
             throw FileManager.default.fileExists(atPath: database.path)
                 ? .notRegularFile : .notFound
         }
-        for suffix in ["-wal", "-shm"] {
+        for suffix in ["-wal", "-shm", "-journal"] {
             let sidecar = URL(fileURLWithPath: database.path + suffix)
             if FileManager.default.fileExists(atPath: sidecar.path),
                 !LocalFile.isRegularFile(sidecar)

@@ -14,6 +14,7 @@ import Testing
             #"{"access_token": "[redacted]", "refreshToken":"[redacted]"}"#
         ),
         ("api_key=secret&x=1", "api_key=[redacted]&x=1"),
+        (#"{"key": "xai-123", "name": "ok"}"#, #"{"key": "[redacted]", "name": "ok"}"#),
         ("org 123e4567-e89b-12d3-a456-426614174000", "org [redacted]"),
         ("mail me@example.com now", "mail [redacted] now"),
         ("/Users/alice/.claude/settings.json", "/Users/[redacted]/.claude/settings.json"),

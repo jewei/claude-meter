@@ -10,7 +10,8 @@ public struct HTTPRequest: Sendable {
     public enum Retry: Sendable {
         /// Send once. Use for every request with its own rate-limit rules.
         case never
-        /// Retry a GET after a dropped connection or HTTP 502, 503, or 504. Never after 429.
+        /// Retry a GET after a dropped connection or HTTP 408, 500, 502, 503, or 504.
+        /// Never after 429.
         case transientFailures
     }
 

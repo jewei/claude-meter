@@ -44,6 +44,8 @@ public enum Redactor {
         Rule(
             #"(?i)\b(access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|password)(["']?\s*[:=]\s*["']?)[^"',\s;}&]+"#,
             "$1$2\(placeholder)"),
+        // Generic secret fields in JSON: `"key": "…"`, `"token": "…"`, `"secret": "…"`.
+        Rule(#"(?i)"(key|token|secret)"(\s*:\s*)"[^"]*""#, "\"$1\"$2\"\(placeholder)\""),
         // UUIDs identify accounts and organizations.
         Rule(#"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#),
         // Email addresses.

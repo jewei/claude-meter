@@ -128,6 +128,31 @@ add a test, then render the new field in `Sources/MeterUI`.
 fixture, and its doc in `docs/providers/` in the same commit. (Claude's is
 `claude-oauth.md`: a file named `claude.md` would load as a `CLAUDE.md` memory file.)
 
-**Add a provider.** Add a `ProviderID` case, a `Provider<Name>` module that implements
-`UsageProvider` (and `TokenHistoryProvider` if it has history), register it in
-`MeterApp/Composition`, add a doc in `docs/providers/`, and give it a card builder.
+**Add a provider.** Do every step in one change. After step 1 the compiler names each
+`switch` over `ProviderID` that needs the new case. It does not find a step marked
+**(no compiler check)**: if you miss one, the app builds and the tests pass, but the provider
+is missing from that place.
+
+1. `Sources/MeterDomain/ProviderID.swift`: add the case. Keep `canOwnMenuBar` false
+   (rule 6). Then add the case to every `switch` that the compiler names.
+2. `Package.swift`: add the `Provider<Name>` target and add its name to `providers`. Add the
+   `Provider<Name>Tests` test target **(no compiler check)**.
+3. `Sources/Provider<Name>/`: implement `UsageProvider` and `DiagnosticsReporting`, and
+   `TokenHistoryProvider` if the provider has local history. Wire types stay in the module.
+4. `Sources/MeterDomain/Redactor.swift`: add a rule for each token format of the provider,
+   with a case in `Tests/MeterDomainTests/RedactorTests.swift` **(no compiler check)**.
+5. `Sources/MeterApp/Composition/LiveProviders.swift`: build the provider, then add it to
+   `usageProviders`, `historyProviders`, and `diagnostics` **(no compiler check)**.
+6. `Sources/MeterApp/Settings/Settings.swift`: add a source property with a default, and a
+   line in `enabledProviders` **(no compiler check)**.
+7. Settings > Data: add a `DataSourceCard` in
+   `Sources/MeterUI/Settings/Data/DataSettingsView.swift`, with its subtitle in
+   `Sources/MeterApp/Presentation/DataSourceText.swift` **(no compiler check)**.
+8. Popover: add the provider to the automatic order in `CardBuilder.cards()` and to the
+   sign-in hint in `StatusScreen.setup` (`Sources/MeterApp/Presentation/PopoverModel.swift`)
+   **(no compiler check)**. Add card tests in `Tests/MeterAppTests/CardTests.swift`.
+9. Logo: add `Sources/MeterUI/Resources/Images/<name>.png` and name it in
+   `ProviderMark.image(for:)`. Without the file, the mark falls back to a symbol
+   **(no compiler check)**.
+10. Docs: `docs/providers/<name>.md`, the rules in `docs/product.md`, the features and the
+    affiliation line in `README.md`, and a `CHANGELOG.md` entry.

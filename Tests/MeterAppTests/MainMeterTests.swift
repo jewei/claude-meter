@@ -217,6 +217,20 @@ import Testing
         #expect(failed.accessibilityLabel == "Claude Meter. Claude. Usage unavailable.")
     }
 
+    /// Only the first reading loads. A retry after a failure keeps the warning bolt.
+    @Test func aRetryOfAFailedReadingShowsTheError() {
+        let settings = Fixture.settings()
+        let failed: [ProviderID: Reading<ProviderUsage>] = [
+            .claude: .failed(UsageIssue("Sign in"))
+        ]
+        let retry = MenuBarModel(Fixture.context(settings, readings: failed, refreshing: [.claude]))
+        #expect(retry.icon == .error)
+        #expect(retry.accessibilityLabel == "Claude Meter. Claude. Usage unavailable. Refreshing.")
+        let meter = MainMeter(Fixture.context(settings, readings: failed, refreshing: [.claude]))
+        #expect(meter.isRefreshing)
+        #expect(!meter.isLoadingFirstReading)
+    }
+
     @Test func notSetUpShowsACalmDimmedBolt() {
         // The first launch: Claude's switch is on, nothing is connected or read yet.
         var fresh = Settings()

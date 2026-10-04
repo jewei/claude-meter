@@ -15,7 +15,11 @@ public struct MainMeter: Equatable, Sendable {
     public let hasFailure: Bool
     /// The highest severity of the pinned account, or of every account without a pin.
     public let severity: Severity
-    public let isLoading: Bool
+    /// A refresh of the provider is in flight.
+    public let isRefreshing: Bool
+    /// The first reading is on its way
+    /// (``PresentationContext/isLoadingFirstReading(_:)``).
+    public let isLoadingFirstReading: Bool
 
     /// The selected account shows as stale (see ``PresentationContext/isStale(_:reading:)``).
     public var isStale: Bool { selected?.isStale ?? false }
@@ -26,7 +30,8 @@ public struct MainMeter: Equatable, Sendable {
         let provider = context.mainProvider
         let name = provider.displayName
         self.provider = provider
-        isLoading = context.refreshing.contains(provider)
+        isRefreshing = context.refreshing.contains(provider)
+        isLoadingFirstReading = context.isLoadingFirstReading(provider)
         guard context.isEnabled(provider) else {
             accounts = []
             selected = nil

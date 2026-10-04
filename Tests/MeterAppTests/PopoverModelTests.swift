@@ -46,6 +46,20 @@ import Testing
                 == .loading("Checking your tanks…"))
     }
 
+    @Test func aRetryOfAFailedReadingShowsTheError() {
+        let failed: [ProviderID: Reading<ProviderUsage>] = [
+            .claude: .failed(UsageIssue("Sign in to Claude Code."))
+        ]
+        #expect(
+            content(Fixture.settings(), readings: failed, refreshing: [.claude])
+                == .status(.error(.claude, message: "Sign in to Claude Code.")))
+        // Another source that loads its first reading still shows the spinner.
+        #expect(
+            content(
+                Fixture.settings(enabled: [.claude, .cursor]), readings: failed,
+                refreshing: [.claude, .cursor]) == .loading("Checking your tanks…"))
+    }
+
     @Test func failureWithoutCardsShowsTheError() {
         let content = content(
             Fixture.settings(), readings: [.claude: .failed(UsageIssue("Sign in to Claude Code."))])

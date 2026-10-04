@@ -8,7 +8,7 @@ public struct MenuBarModel: Equatable, Sendable {
         /// The bolt with its badge. Also the calm state with no data: before setup, while
         /// paused, or before the first reading.
         case bolt(Badge)
-        /// The first reading is on its way.
+        /// The first reading is on its way. A retry after a failure shows ``error`` instead.
         case loading
         /// The warning bolt: no reading because something failed (``MainMeter/hasFailure``).
         case error
@@ -40,7 +40,7 @@ public struct MenuBarModel: Equatable, Sendable {
 
         if isPaused {
             icon = .bolt(.none)
-        } else if selected == nil && meter.isLoading {
+        } else if selected == nil && meter.isLoadingFirstReading {
             icon = .loading
         } else if selected == nil {
             icon = meter.hasFailure ? .error : .bolt(.none)
@@ -92,11 +92,12 @@ public struct MenuBarModel: Equatable, Sendable {
         meter: MainMeter, parts: [Part], isPaused: Bool, showsUsed: Bool
     ) -> String {
         let title = "Claude Meter. \(meter.provider.displayName)."
-        let refreshing = meter.isLoading ? " Refreshing." : ""
+        let refreshing = meter.isRefreshing ? " Refreshing." : ""
         if isPaused { return "\(title) Paused." }
         if meter.isStale { return "\(title) Data is stale.\(refreshing)" }
         guard meter.selected != nil else {
-            return meter.isLoading ? "\(title) Loading." : "\(title) Usage unavailable."
+            return meter.isLoadingFirstReading
+                ? "\(title) Loading." : "\(title) Usage unavailable.\(refreshing)"
         }
         let details = parts.map { part in
             let name = part.window.kind == .session ? "Session" : "Weekly"

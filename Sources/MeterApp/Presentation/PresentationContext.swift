@@ -61,6 +61,12 @@ public struct PresentationContext: Sendable {
         settings.enabledProviders.contains(provider)
     }
 
+    /// The first reading of `provider` is on its way: a refresh is in flight and nothing was
+    /// read yet. A retry after a failure is not loading, so the failure stays on screen.
+    public func isLoadingFirstReading(_ provider: ProviderID) -> Bool {
+        refreshing.contains(provider) && readings[provider] == nil
+    }
+
     /// The accounts of an enabled provider as they apply now: display names and plan
     /// overrides applied, staleness combined, and windows resolved.
     public func accounts(for provider: ProviderID) -> [AccountUsage] {

@@ -58,6 +58,8 @@ core.
   account.
 - A saved card order no longer keeps Cursor, Grok, or extra usage first while a Claude or
   Codex card shows.
+- A retry after a failed refresh keeps the error in the menu bar and the popover, instead
+  of a spinner.
 
 ### Removed
 

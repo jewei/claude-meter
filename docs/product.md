@@ -59,7 +59,8 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 
 1. The icon is the bolt with a badge: a severity dot, a gray dot when stale, or a red `0`
    pill when exhausted. A spinner replaces it while the first reading loads; a warning bolt
-   shows when there is no reading because something failed (`MainMeter.hasFailure`). Before
+   shows when there is no reading because something failed (`MainMeter.hasFailure`), also
+   while a retry runs (`PresentationContext.isLoadingFirstReading`). Before
    setup, while paused, and before the first reading, the bolt has no badge.
 2. The number follows **Menu bar shows**: `99% 5h` (session, or the weekly window with a
    `7d` suffix when there is no session value), `73% 7d`, or both joined by ` · `.
@@ -77,8 +78,8 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    `3h ago`, `2d ago`), Settings, and Quit.
 2. The content is the first match of: welcome (onboarding), paused with no data, no source
    switch on, loading before the first reading, accounts, an error screen for the first
-   failed provider (main first), and setup help (which asks to connect Claude when its
-   switch is on without a connection).
+   failed provider (main first; also while a retry runs), and setup help (which asks to
+   connect Claude when its switch is on without a connection).
 3. Every path into Settings from the popover finishes the welcome and starts updates.
 4. Notices above the hero state, without repeats: the main provider's failed refresh, each
    main account's issue (prefixed with its name when there are several accounts), old data,

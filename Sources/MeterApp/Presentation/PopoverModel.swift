@@ -37,7 +37,8 @@ public struct PopoverModel: Equatable, Sendable {
         if settings.isPaused, automatic.isEmpty { return .status(.paused) }
         guard !switchedOn.isEmpty else { return .status(.noSources) }
         if automatic.isEmpty {
-            if !context.refreshing.isDisjoint(with: enabled) {
+            // Only a first reading loads; a retry after a failure keeps the error screen.
+            if enabled.contains(where: context.isLoadingFirstReading) {
                 return .loading(loadingMessage(enabled))
             }
             if let (provider, issue) = firstFailure(context, meter: meter) {

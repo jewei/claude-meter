@@ -51,7 +51,9 @@ protocol UsageProvider: Sendable {
   its issue (`AccountUsage.retained(issue:now:)`) or listed as unavailable
   (`AccountUsage.unavailable`). It throws `ProviderError` only when the provider as a whole
   failed.
-- Each provider bounds its own work. The store adds a 90 s safety deadline.
+- Each provider bounds its own work. The store adds a 90 s safety deadline over reconcile and
+  fetch together. It ends the refresh even when the provider ignores cancellation, so the
+  provider is free for the next refresh, and it drops the late result.
 
 `TokenHistoryProvider` is separate and independent: history never changes quota freshness,
 selection, severity, or the menu bar.
@@ -68,8 +70,9 @@ Each provider has at most one refresh in flight, identified by a token.
 4. If the token is still current and the provider is still enabled, publish:
    - any account has an observation → `.current(usage, observedAt: usage.observedAt)`;
    - none → `.failed(firstIssue, partial: usage)`.
-5. On `ProviderError`: keep the previous value as `.stale` when `keepsLastReading` is true
-   and a value exists; otherwise `.failed`. Cancellation changes nothing.
+5. On `ProviderError` or the safety deadline: keep the previous value as `.stale` when
+   `keepsLastReading` is true (always for the deadline) and a value exists; otherwise
+   `.failed`. Cancellation changes nothing.
 6. Save the published value to the reading archive (newest value wins, written off-main).
 
 Disabling a provider cancels its refresh, removes its readings, and rejects late results.

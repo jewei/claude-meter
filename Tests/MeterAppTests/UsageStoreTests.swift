@@ -11,12 +11,13 @@ import Testing
 
     private func makeStore(
         _ providers: [FakeUsageProvider], history: [FakeHistoryProvider] = [],
-        archive: ReadingArchive? = nil
+        archive: ReadingArchive? = nil, deadline: Duration = UsageStore.fetchDeadline
     ) -> UsageStore {
         let clock = clock
         let store = UsageStore(
             providers: providers, historyProviders: history, archive: archive,
-            now: { clock.now }, calendar: { clock.calendar })
+            now: { clock.now }, calendar: { clock.calendar }, fetchDeadline: deadline,
+            historyDeadline: min(deadline, UsageStore.historyDeadline))
         store.setEnabled(Set(providers.map(\.id)))
         return store
     }
@@ -241,6 +242,76 @@ import Testing
         await store.refresh(quota: [], history: [.claude])
         #expect(provider.fetchCount == 0)
         #expect(history.callCount == 1)
+    }
+
+    // MARK: - Safety deadline
+
+    @Test func nonCooperativeFetchTimesOutAndClearsRefreshing() async {
+        let provider = FakeUsageProvider(.claude)
+        provider.enqueue(.sample(.claude))
+        let store = makeStore([provider], deadline: .milliseconds(50))
+        await store.refresh([.claude])
+        // The gate ignores cancellation, like a provider that never checks for it.
+        let gate = Gate()
+        provider.enqueue { _ in
+            await gate.wait()
+            return .sample(.claude, used: 99)
+        }
+        await store.refresh([.claude])
+        #expect(store.refreshing.isEmpty)
+        #expect(store.readings[.claude]?.isStale == true)
+        #expect(store.readings[.claude]?.issue?.message.hasPrefix("Timed out") == true)
+        gate.open()
+        await Task.yield()
+        #expect(store.readings[.claude]?.value == .sample(.claude))
+    }
+
+    @Test func fetchDeadlineFailsWithoutAReading() async {
+        let provider = FakeUsageProvider(.grok)
+        let gate = Gate()
+        provider.enqueue { _ in
+            await gate.wait()
+            return .sample(.grok)
+        }
+        let store = makeStore([provider], deadline: .milliseconds(50))
+        await store.refresh([.grok])
+        #expect(store.readings[.grok]?.issue?.message.hasPrefix("Timed out") == true)
+        #expect(store.readings[.grok]?.value == nil)
+        // The provider is free again: the next refresh runs and publishes.
+        gate.open()
+        provider.enqueue(.sample(.grok))
+        await store.refresh([.grok])
+        #expect(store.readings[.grok]?.value == .sample(.grok))
+    }
+
+    @Test func stuckReconcileAlsoTimesOut() async {
+        let provider = FakeUsageProvider(.codex)
+        provider.enqueue(.sample(.codex))
+        let store = makeStore([provider], deadline: .milliseconds(50))
+        await store.refresh([.codex])
+        let gate = Gate()
+        provider.setReconcile { previous in
+            await gate.wait()
+            return previous
+        }
+        await store.refresh([.codex])
+        #expect(store.refreshing.isEmpty)
+        #expect(store.readings[.codex]?.isStale == true)
+        gate.open()
+    }
+
+    @Test func nonCooperativeHistoryTimesOut() async {
+        let gate = Gate()
+        let history = FakeHistoryProvider(.cursor) { now in
+            await gate.wait()
+            return .sample(.cursor, now: now)
+        }
+        let store = makeStore(
+            [FakeUsageProvider(.cursor)], history: [history], deadline: .milliseconds(50))
+        await store.refresh(quota: [], history: [.cursor])
+        #expect(store.refreshingHistory.isEmpty)
+        #expect(store.histories[.cursor]?.issue?.message.hasPrefix("Timed out") == true)
+        gate.open()
     }
 
     // MARK: - Archive

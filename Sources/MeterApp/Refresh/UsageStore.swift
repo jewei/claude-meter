@@ -27,6 +27,8 @@ public final class UsageStore {
     @ObservationIgnored private let archive: ReadingArchive?
     @ObservationIgnored private let now: @Sendable () -> Date
     @ObservationIgnored private let calendar: @Sendable () -> Calendar
+    @ObservationIgnored private let quotaLimit: Duration
+    @ObservationIgnored private let historyLimit: Duration
     @ObservationIgnored private var enabled: Set<ProviderID> = []
     @ObservationIgnored private var quotaJobs: [ProviderID: Job] = [:]
     @ObservationIgnored private var historyJobs: [ProviderID: Job] = [:]
@@ -47,13 +49,19 @@ public final class UsageStore {
     ///   - now: The clock for reading ages and history attempts.
     ///   - calendar: The calendar for the local day of token history. Read on each use, so a
     ///     time-zone change applies at once.
+    ///   - fetchDeadline: The safety net for one quota refresh, reconcile included.
+    ///   - historyDeadline: The limit for one history refresh.
     public init(
         providers: [any UsageProvider],
         historyProviders: [any TokenHistoryProvider] = [],
         archive: ReadingArchive? = nil,
         now: @escaping @Sendable () -> Date = Date.init,
-        calendar: @escaping @Sendable () -> Calendar = { Calendar.current }
+        calendar: @escaping @Sendable () -> Calendar = { Calendar.current },
+        fetchDeadline: Duration = UsageStore.fetchDeadline,
+        historyDeadline: Duration = UsageStore.historyDeadline
     ) {
+        self.quotaLimit = fetchDeadline
+        self.historyLimit = historyDeadline
         self.providers = Dictionary(
             providers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         self.historyProviders = Dictionary(
@@ -164,11 +172,16 @@ public final class UsageStore {
     ) async {
         let id = provider.id
         defer { finishQuota(id, token: token) }
-        let reconciled = await provider.reconcile(previous)
-        guard isCurrentQuota(id, token) else { return }
-        if reconciled != previous { applyReconciled(reconciled, for: id) }
+        // One deadline covers reconcile and fetch, and holds even when the provider ignores
+        // cancellation, so a stuck provider never stays "refreshing".
+        let deadline = ContinuousClock.now + quotaLimit
         do {
-            let usage = try await withDeadline(Self.fetchDeadline) {
+            let reconciled = try await SafetyDeadline.run(until: deadline, limit: quotaLimit) {
+                await provider.reconcile(previous)
+            }
+            guard isCurrentQuota(id, token) else { return }
+            if reconciled != previous { applyReconciled(reconciled, for: id) }
+            let usage = try await SafetyDeadline.run(until: deadline, limit: quotaLimit) {
                 try await provider.fetch(previous: reconciled)
             }
             guard isCurrentQuota(id, token) else { return }
@@ -253,7 +266,8 @@ public final class UsageStore {
         let id = source.id
         defer { finishHistory(id, token: token) }
         do {
-            let history = try await withDeadline(Self.historyDeadline) {
+            let limit = historyLimit
+            let history = try await SafetyDeadline.run(until: .now + limit, limit: limit) {
                 try await source.history(now: date)
             }
             guard isCurrentHistory(id, token) else { return }

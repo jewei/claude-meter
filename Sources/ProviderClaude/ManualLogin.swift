@@ -55,7 +55,9 @@ actor ManualLogin {
     }
 
     /// The stored login, or a newer in-memory rotation of the same connection. A locked
-    /// Keychain falls back to the in-memory credential. Throws ``Failure``.
+    /// Keychain falls back to the in-memory credential, and so do tokens that a Connect saved
+    /// but did not store: they are never the login, and without a credential in memory they
+    /// throw ``Failure/changed``. Throws ``Failure``.
     func current() async throws -> ManualCredential {
         guard !isDisconnected else { throw Failure.missing }
         let startGeneration = generation

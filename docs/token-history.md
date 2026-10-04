@@ -31,15 +31,20 @@ each provider module (`ClaudeTokenHistory`, `CodexTokenHistory`, `GrokTokenHisto
 | Grok Build | `<Grok home>/sessions` | `updates.jsonl` at any depth |
 
 9. The scanner skips hidden files and hidden folders (names that start with a dot).
-10. The scanner does not follow symbolic links. A link or a special file (such as a FIFO)
-    with a matching name is skipped. This does not make history partial.
+10. Each root folder in the table (such as `<config dir>/projects`) goes through `realpath`,
+    so a root that is a symbolic link, or that is inside a linked folder, is read. Below each
+    root, the scanner does not follow symbolic links. A link or a special file (such as a
+    FIFO) with a matching name is skipped. This does not make history partial.
 11. A folder with a matching name, such as `notes.jsonl/`, is a folder. The scanner looks
     inside it.
 12. The scanner skips a file that was last modified before the first covered day.
 
 ## Record shapes
 
-Only the fields below are read. All other fields are skipped.
+Each example shows every field that history reads, in its usual spelling. The line after an
+example lists the other spellings that are also read. Real lines have more fields, and the
+parsers ignore them, but each line must be one valid JSON object, or it makes history
+partial (rule 64).
 
 ### Claude Code
 
@@ -49,6 +54,8 @@ Only the fields below are read. All other fields are skipped.
   "cache_read_input_tokens":7,"cache_creation_input_tokens":2,
   "cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":1}}}}
 ```
+
+Other spellings: `request_id` for `requestId`.
 
 ### Codex
 
@@ -60,21 +67,27 @@ Only the fields below are read. All other fields are skipped.
 {"type":"turn_context","payload":{"turn_id":"…"}}
 {"type":"event_msg","payload":{"type":"task_started","turn_id":"…"}}
 {"type":"event_msg","timestamp":"…","ordinal":17,"payload":{"type":"token_count",
- "info":{"total_token_usage":{"input_tokens":160,"cached_input_tokens":80,
-  "cache_write_input_tokens":0,"output_tokens":16,"reasoning_output_tokens":8},
+ "turn_id":"…","response_id":"…",
+ "info":{"total_token_usage":{"input_tokens":160,"output_tokens":16},
   "last_token_usage":{"input_tokens":60,"output_tokens":6},"response_id":"…"}}}
 ```
+
+Other spellings: `session_id` for the session `id`; `turnId` for `turn_id`; `request_id`
+for `response_id`, in `payload` and in `info`; `forkedFromId`, `parent_session_id`, and
+`parentSessionId` for the parent. A `token_count` event takes the response ID from `info`
+first, then from `payload`, and the turn ID from its own `payload`, then from the last
+`turn_context` or `task_started` line.
 
 ### Grok Build
 
 ```json
 {"params":{"_meta":{"eventId":"e1","agentTimestampMs":1790856000000},
  "update":{"sessionUpdate":"turn_completed","usage":{"modelUsage":{"model-a":
-  {"inputTokens":1000,"outputTokens":50,"cachedReadTokens":700,"reasoningTokens":20}}}}}}
+  {"inputTokens":1000,"outputTokens":50}}}}},"timestamp":"…"}
 ```
 
-`update` and `_meta` can also be at the top level. A top-level `timestamp` is used when
-`agentTimestampMs` is missing.
+Other spellings: `update` and `_meta` can also be at the top level. The top-level
+`timestamp` is used when `agentTimestampMs` is missing.
 
 ## Field values
 
@@ -131,7 +144,8 @@ Only the fields below are read. All other fields are skipped.
     - Without it, the boundary is the first event after the fork time whose counters
       continue the parent's counters.
 
-    A file has a parent when it names one (`forked_from_id`, `parent_thread_id`, or
+    A file has a parent when it names one (`forked_from_id`, `forkedFromId`,
+    `parent_session_id`, `parentSessionId`, `parent_thread_id`, or
     `source.subagent.thread_spawn.parent_thread_id`), has an ordinal, or repeats another
     session's metadata. A subagent without any of these (such as `{"subagent":"review"}`)
     starts its own history and owns all its events.

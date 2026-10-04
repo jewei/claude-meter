@@ -58,7 +58,7 @@ enum CodexExecutable {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            throw CodexError.appServerTimedOut(step: "launch")
+            throw CodexError.cliSearchFailed
         }
         guard let found else { throw CodexError.cliNotFound }
         return found

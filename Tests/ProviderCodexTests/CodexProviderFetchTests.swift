@@ -149,22 +149,53 @@ extension CodexTests {
             #expect(format.recovery.calls == 0)
         }
 
-        @Test func aFailedRecoveryKeepsBothReasons() async throws {
+        /// CDX-07: the card shows one sentence with one action. Diagnostics keep both reasons.
+        @Test func aFailedRecoveryShowsOneSentenceAndKeepsBothReasons() async throws {
             struct Boom: Error, LocalizedError {
-                var errorDescription: String? {
-                    "Codex CLI not found. Install Codex, then refresh."
-                }
+                var errorDescription: String? { "The child said no." }
             }
             let bed = try CodexTestBed(recovery: FakeRecovery { _, _ in throw Boom() })
             defer { bed.remove() }
             try bed.writeAuth(#"{"auth_mode":"chatgpt"}"#)
+
             let account = try #require(try await bed.provider.fetch(previous: nil).accounts.first)
-            #expect(
-                account.issue?.message
-                    == "Codex App Server failed: Codex CLI not found. Install Codex, then refresh. "
-                    + "Direct OAuth failed: Codex auth file has no ChatGPT OAuth tokens. Run `codex login`."
-            )
+
+            #expect(account.issue?.message == CodexError.missingTokens.localizedDescription)
             #expect(account.issue?.needsAction == true)
+            let facts = await bed.provider.diagnostics()
+            #expect(
+                facts.contains {
+                    $0.label == "Codex reasons"
+                        && $0.value
+                            == "Usage request: \(CodexError.missingTokens.localizedDescription) "
+                            + "Codex app-server: The child said no."
+                })
+        }
+
+        @Test func theCardShowsTheReasonThatTheUserCanActOn() {
+            let timeout = CodexError.appServerTimedOut(step: "account/read")
+            let cases: [(any Error, CodexError, CodexError, Bool)] = [
+                // Without an auth file, only Codex can read the login.
+                (timeout, .authFileMissing, timeout, false),
+                (CodexError.cliNotFound, .authFileMissing, .cliNotFound, true),
+                // A recovery that only the user can fix wins.
+                (CodexError.cliNotFound, .accessTokenExpired, .cliNotFound, true),
+                (CodexError.appServerLaunchFailed, .loginRequired, .appServerLaunchFailed, true),
+                // Codex answered, so the login works.
+                (CodexError.noUsageData, .loginRequired, .noUsageData, true),
+                // Otherwise the login problem and its fix.
+                (timeout, .accessTokenExpired, .accessTokenExpired, false),
+                (CodexError.appServerStopped, .loginRequired, .loginRequired, true),
+                (CodexError.appServerFailed("revoked"), .authFileInvalid, .authFileInvalid, true),
+            ]
+            for (recovery, direct, shown, needsAction) in cases {
+                let combined = CodexError.combining(recovery, direct: direct)
+                #expect(combined.localizedDescription == shown.localizedDescription, "\(shown)")
+                #expect(combined.needsAction == needsAction, "\(shown)")
+                #expect(combined.reasons?.contains(direct.localizedDescription) == true)
+                #expect(!combined.localizedDescription.contains("App Server"))
+                #expect(!combined.localizedDescription.contains("OAuth failed"))
+            }
         }
 
         @Test func apiKeyAuthNeverRequestsOrRecovers() async throws {

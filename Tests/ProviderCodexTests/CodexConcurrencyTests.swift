@@ -62,7 +62,7 @@ extension CodexTests {
             #expect(ContinuousClock.now - start < .seconds(3))
             #expect(
                 usage.accounts.first?.issue?.message
-                    == "Codex did not answer within 1 seconds. Refresh again later.")
+                    == "Codex did not answer in time. Refresh again later.")
             #expect(usage.accounts.dropFirst().allSatisfy { $0.hasObservation })
         }
 

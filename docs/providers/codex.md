@@ -170,8 +170,13 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
     `account/rateLimits/read`.
 11. Lines that are not JSON objects, notifications, and server requests (lines with a
     `method`) are skipped while the client waits for a response.
-12. A failed recovery shows both reasons: `Codex App Server failed: … Direct OAuth failed: …`.
-    An API-key result shows only the API-key message.
+12. A failed recovery shows one sentence with one action. It is the recovery reason when the
+    home has no auth file (only Codex can read that login), when only the user can fix the
+    recovery (such as a missing CLI), or when Codex answered without usage. Otherwise it is
+    the reason that sent the login to recovery (such as "login required"), because that names
+    the problem and its fix. Diagnostics show both reasons. An API-key result, and
+    `"account": null`, show only their own message. A search for the executable that does not
+    finish in 5 s has its own message; it never says "launch".
 
 ### Quota
 
@@ -236,7 +241,8 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
 31. One 60 s deadline covers a whole fetch, including home resolution.
 32. At most three homes refresh at once. A free slot starts the next home.
 33. A home that does not finish by the deadline shows
-    `Codex did not answer within 60 seconds. Refresh again later.`
+    `Codex did not answer in time. Refresh again later.` The text names no number, because a
+    home that started late had less time.
 34. Home resolution and each `auth.json` read have a 5 s limit and run off the cooperative
     threads.
 35. When the homes cannot be resolved, the fetch throws a provider error that keeps the last
@@ -246,4 +252,4 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
 
 36. Diagnostics show the Codex CLI path and, for each home of the last fetch, the home path,
     what the auth file held, the source (`Usage request` or `Codex app-server`), the attempt
-    time, and the result. They are in memory only.
+    time, the result, and both reasons of a failed recovery. They are in memory only.

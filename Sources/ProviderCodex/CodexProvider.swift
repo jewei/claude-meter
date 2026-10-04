@@ -180,10 +180,9 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
     ) async -> [CodexAttempt] {
         let refresh = self.refresh
         let now = self.now
-        let limit = limits.fetch
         let attempt: @Sendable (CodexHome) async -> CodexAttempt = { home in
             let remaining = deadline - .now
-            var outcome = CodexAccountRefresh.Outcome.timedOut(after: limit)
+            var outcome = CodexAccountRefresh.Outcome.timedOut
             if remaining > .zero,
                 let finished = try? await withDeadline(remaining, { try await refresh.run(home) })
             {

@@ -46,12 +46,16 @@ struct CodexAttempt: Sendable {
             case .observed: "Updated"
             case .failed(let error, _): error.localizedDescription
             }
-        return [
+        var facts = [
             DiagnosticFact("\(label) home", home.directory.path),
             DiagnosticFact("\(label) auth file", outcome.login ?? "Not read"),
             DiagnosticFact("\(label) source", outcome.source?.rawValue ?? "None"),
             DiagnosticFact("\(label) last attempt", attemptedAt.formatted(.iso8601)),
             DiagnosticFact("\(label) result", result),
         ]
+        if case .failed(let error, _) = outcome.result, let reasons = error.reasons {
+            facts.append(DiagnosticFact("\(label) reasons", reasons))
+        }
+        return facts
     }
 }

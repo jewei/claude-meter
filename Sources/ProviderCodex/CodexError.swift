@@ -1,7 +1,8 @@
 import Foundation
 import MeterDomain
 
-/// Every expected Codex failure. Each message says what the user can do.
+/// Every expected Codex failure. Each message is a short sentence that says what the user
+/// can do.
 enum CodexError: Error, Equatable, LocalizedError, Sendable {
     // auth.json
     case authFileMissing
@@ -21,6 +22,8 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
 
     // App-server recovery
     case cliNotFound
+    /// The search for the `codex` command did not finish in time.
+    case cliSearchFailed
     case appServerLaunchFailed
     case appServerTimedOut(step: String)
     case appServerFailed(String)
@@ -28,16 +31,18 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
     case appServerUnexpected
     /// `account/read` reported no account: Codex has no login for the home.
     case notSignedIn
-    case allSourcesFailed(appServer: String, direct: String, needsAction: Bool)
+    /// Recovery failed after the direct path sent the login to it. `message` is the one
+    /// sentence for the card; `reasons` holds both raw reasons, for Diagnostics.
+    case recoveryFailed(message: String, reasons: String, needsAction: Bool)
 
     // The whole account
     case signInChanged
-    case timedOut(seconds: Int)
+    case timedOut
 
     var errorDescription: String? {
         switch self {
         case .authFileMissing:
-            "Codex auth file not found; using Codex CLI if available."
+            "Codex auth file not found."
         case .authFileUnreadable:
             "Could not read Codex auth file. Check that your user can read it."
         case .authFileInvalid:
@@ -62,6 +67,8 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
             "Codex returned no usage windows. Refresh again later."
         case .cliNotFound:
             "Codex CLI not found. Install Codex, then refresh."
+        case .cliSearchFailed:
+            "Could not look for the Codex CLI in time. Refresh again."
         case .appServerLaunchFailed:
             "Codex CLI could not start. Reinstall Codex, then refresh."
         case .appServerTimedOut(let step):
@@ -69,17 +76,17 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
         case .appServerFailed(let reason):
             "Codex CLI request failed: \(reason)"
         case .appServerStopped:
-            "Codex CLI stopped before it answered. Update Codex, then refresh."
+            "Codex CLI stopped before it answered. Check that `codex` runs in Terminal, then refresh."
         case .appServerUnexpected:
-            "Codex CLI returned an unexpected response. Update Codex, then refresh."
+            "Codex CLI sent a response that Claude Meter cannot read. Update Codex and Claude Meter."
         case .notSignedIn:
             "Codex is not signed in. Run `codex login`."
-        case .allSourcesFailed(let appServer, let direct, _):
-            "Codex App Server failed: \(appServer) Direct OAuth failed: \(direct)"
+        case .recoveryFailed(let message, _, _):
+            message
         case .signInChanged:
             "Codex sign-in changed or could not be verified. Refresh again."
-        case .timedOut(let seconds):
-            "Codex did not answer within \(seconds) seconds. Refresh again later."
+        case .timedOut:
+            "Codex did not answer in time. Refresh again later."
         }
     }
 
@@ -89,7 +96,7 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
         case .authFileInvalid, .missingTokens, .apiKeyOnly, .homeMissing, .loginRequired,
             .cliNotFound, .appServerLaunchFailed, .notSignedIn:
             true
-        case .allSourcesFailed(_, _, let needsAction):
+        case .recoveryFailed(_, _, let needsAction):
             needsAction
         default:
             false
@@ -110,11 +117,28 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
         }
     }
 
+    /// Both raw reasons of a failed recovery, for Diagnostics. Nil for other errors.
+    var reasons: String? {
+        if case .recoveryFailed(_, let reasons, _) = self { return reasons }
+        return nil
+    }
+
     /// A failed recovery after `direct` sent the login to it.
+    ///
+    /// The card shows one sentence. The recovery reason shows when the login has no auth file
+    /// (only Codex can read it), when only the user can fix the recovery (such as a missing
+    /// CLI), or when Codex answered without usage. Otherwise the direct reason shows, because
+    /// it names the login problem and its fix.
     static func combining(_ recovery: any Error, direct: CodexError) -> CodexError {
-        let recoveryNeedsAction = (recovery as? CodexError)?.needsAction ?? false
-        return .allSourcesFailed(
-            appServer: recovery.localizedDescription, direct: direct.localizedDescription,
+        let recoveryError = recovery as? CodexError
+        let recoveryNeedsAction = recoveryError?.needsAction ?? false
+        let showsRecovery =
+            direct == .authFileMissing || recoveryNeedsAction || recoveryError == .noUsageData
+        let shown = showsRecovery ? recovery.localizedDescription : direct.localizedDescription
+        return .recoveryFailed(
+            message: shown,
+            reasons: "Usage request: \(direct.localizedDescription) "
+                + "Codex app-server: \(recovery.localizedDescription)",
             needsAction: recoveryNeedsAction || direct.needsAction)
     }
 

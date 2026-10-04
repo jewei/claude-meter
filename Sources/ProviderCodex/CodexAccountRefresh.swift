@@ -29,10 +29,9 @@ struct CodexAccountRefresh: Sendable {
         /// What the auth file held before the request, for Diagnostics.
         var login: String?
 
-        static func timedOut(after limit: Duration) -> Outcome {
-            let seconds = Int(limit.timeInterval.rounded())
-            return Outcome(result: .failed(.timedOut(seconds: seconds), status: .unknown))
-        }
+        /// A home that did not finish by the fetch deadline. The text names no number of
+        /// seconds, because a home that started late had less time.
+        static let timedOut = Outcome(result: .failed(.timedOut, status: .unknown))
     }
 
     /// What Codex itself said about the login during recovery.

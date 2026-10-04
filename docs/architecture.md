@@ -99,7 +99,7 @@ account history (Cursor's export) carries the owner of its login
 signed in or the login cannot be read. Local history (`.thisMac`) belongs to its folders, not
 to a login, so it always belongs.
 
-## Rate limits: one hold for Cursor and Grok
+## Rate limits: one hold for Codex, Cursor, and Grok
 
 After HTTP 429 with `Retry-After`, a provider sends no request for the same login before the
 retry time, so the card's countdown is true. One pure rule decides (`RateLimitHold`):

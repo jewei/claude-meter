@@ -243,7 +243,7 @@ extension CodexTests {
 
         @Test func statusAfterAFailureTable() {
             typealias Report = CodexAccountRefresh.CodexReport
-            let http = CodexError.httpStatus(500, retryAt: nil)
+            let http = CodexError.httpStatus(500)
             let signedIn = OwnerStatus.signedIn
             let cases: [(CodexLogin, CodexError, Report?, OwnerStatus)] = [
                 (Self.identity, http, nil, signedIn(Self.identity.owner!)),

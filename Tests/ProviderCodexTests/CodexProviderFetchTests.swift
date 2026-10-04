@@ -116,7 +116,9 @@ extension CodexTests {
             #expect(recovery.calls == 1)
         }
 
-        @Test(arguments: [404, 429, 500, 502, 503])
+        /// HTTP 429 has its own message and hold (`CodexRateLimitTests`). Other statuses show
+        /// no countdown, because nothing waits for their `Retry-After`.
+        @Test(arguments: [404, 500, 502, 503])
         func otherStatusesDoNotStartRecovery(status: Int) async throws {
             let http = FakeHTTPClient(status: status, json: "{}", headers: ["Retry-After": "120"])
             let bed = try CodexTestBed(http: http)
@@ -127,7 +129,7 @@ extension CodexTests {
             #expect(
                 account.issue?.message
                     == "Codex usage request failed (HTTP \(status)). Refresh again later.")
-            #expect(account.issue?.retryAt == Date.reference(120))
+            #expect(account.issue?.retryAt == nil)
             #expect(account.attemptedAt == .reference())
             #expect(bed.recovery.calls == 0)
         }

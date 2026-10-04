@@ -10,7 +10,8 @@ struct CodexAttempt: Sendable {
     /// The account for this attempt.
     ///
     /// A failure keeps `previous` as stale only while it belongs to the current owner status
-    /// (``AccountUsage/belongs(to:)``). Otherwise the account is unavailable with the issue.
+    /// (``AccountUsage/belongs(to:)``). Otherwise the account is unavailable with the issue and
+    /// the signed-in owner, so a rate limit holds the next request even without an observation.
     func account(previous: AccountUsage?) -> AccountUsage {
         switch outcome.kind {
         case .observed(let quota, let owner):
@@ -21,8 +22,11 @@ struct CodexAttempt: Sendable {
                 kept.name = home.name
                 return kept
             }
+            var owner: AccountOwner?
+            if case .signedIn(let current) = status { owner = current }
             return .unavailable(
-                id: home.id, name: home.name, issue: error.issue, attemptedAt: attemptedAt)
+                id: home.id, name: home.name, issue: error.issue, attemptedAt: attemptedAt,
+                owner: owner)
         }
     }
 

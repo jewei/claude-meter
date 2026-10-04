@@ -156,10 +156,11 @@ struct CodexTestBed {
             installFolders: [root.path("bin")])
     }
 
-    /// Another provider for the same homes, HTTP client, and recovery, with other limits.
-    func provider(limits: CodexLimits) -> CodexProvider {
+    /// Another provider for the same homes, HTTP client, and recovery, with other limits or
+    /// another clock.
+    func provider(limits: CodexLimits = .standard, now: Date? = nil) -> CodexProvider {
         let extras = self.extras
-        let now = self.now
+        let now = now ?? self.now
         return CodexProvider(
             configuration: { CodexConfiguration(extraHomes: extras) }, http: http,
             environment: ["CODEX_HOME": root.path("home").path, "PATH": ""],

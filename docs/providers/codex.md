@@ -51,7 +51,8 @@ User-Agent: ClaudeMeter
 ChatGPT-Account-Id: <account ID>      (only when not empty)
 ```
 
-No retries. Response fields:
+No retries. HTTP 401 and 403 start recovery (rule 6). HTTP 429 holds the next requests
+(rule 31). Response fields:
 
 | Path | Type | Strict |
 | --- | --- | --- |
@@ -241,21 +242,28 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
     the account from `account/read` decides, no Codex CLI is signed out, and otherwise the
     status is unknown. With a file, rule 26 decides.
 30. Observed homes with the same owner have `sharesLogin` set.
+31. After HTTP 429 the shared rate-limit hold applies (`docs/architecture.md`): no usage
+    request and no recovery for the same login before the retry time, at most 1 hour after
+    the 429, so the card's countdown is true. The home keeps its previous observation as
+    stale with the 429 issue, or stays unavailable with its owner, so a first 429 holds too.
+    Another login sends at once. The card says
+    `Codex limited the number of requests. Claude Meter will try again later.` Other HTTP
+    statuses show no countdown, because nothing waits for their `Retry-After`.
 
 ### Time and concurrency
 
-31. One 60 s deadline covers a whole fetch, including home resolution.
-32. At most three homes refresh at once. A free slot starts the next home.
-33. A home that does not finish by the deadline shows
+32. One 60 s deadline covers a whole fetch, including home resolution.
+33. At most three homes refresh at once. A free slot starts the next home.
+34. A home that does not finish by the deadline shows
     `Codex did not answer in time. Refresh again later.` The text names no number, because a
     home that started late had less time.
-34. Home resolution and each `auth.json` read have a 5 s limit and run off the cooperative
+35. Home resolution and each `auth.json` read have a 5 s limit and run off the cooperative
     threads.
-35. When the homes cannot be resolved, the fetch throws a provider error that keeps the last
+36. When the homes cannot be resolved, the fetch throws a provider error that keeps the last
     reading.
 
 ### Diagnostics
 
-36. Diagnostics show the Codex CLI path and, for each home of the last fetch, the home path,
+37. Diagnostics show the Codex CLI path and, for each home of the last fetch, the home path,
     what the auth file held, the source (`Usage request` or `Codex app-server`), the attempt
     time, the result, and both reasons of a failed recovery. They are in memory only.

@@ -166,7 +166,7 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
             Self.log.error("Codex homes could not be resolved", error)
             throw Self.homesUnresolved
         }
-        let attempts = await refreshAll(homes, until: deadline)
+        let attempts = await refreshAll(homes, previous: previous, until: deadline)
         try Task.checkCancellation()
         lastAttempts.withLock { $0 = attempts }
         let accounts = attempts.map { attempt in
@@ -200,15 +200,17 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
     /// home while time is left; after the deadline or a cancel, the homes that did not start
     /// time out without a task. Results keep the configured order.
     private func refreshAll(
-        _ homes: [CodexHome], until deadline: ContinuousClock.Instant
+        _ homes: [CodexHome], previous: ProviderUsage?, until deadline: ContinuousClock.Instant
     ) async -> [CodexAttempt] {
         let refresh = self.refresh
         let now = self.now
         let attempt: @Sendable (CodexHome) async -> CodexAttempt = { home in
             let remaining = deadline - .now
+            let earlier = previous?.account(home.id)
             var outcome = CodexAccountRefresh.Outcome.timedOut
             if remaining > .zero,
-                let finished = try? await withDeadline(remaining, { try await refresh.run(home) })
+                let finished = try? await withDeadline(
+                    remaining, { try await refresh.run(home, previous: earlier) })
             {
                 outcome = finished
             }

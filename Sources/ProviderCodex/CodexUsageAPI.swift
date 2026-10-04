@@ -12,7 +12,8 @@ struct CodexUsageAPI: Sendable {
     /// The limit for the optional reset-credit details request.
     let resetDetailsLimit: Duration
 
-    /// Sends `GET wham/usage` once. HTTP 401 and 403 throw ``CodexError/loginRequired``.
+    /// Sends `GET wham/usage` once. HTTP 401 and 403 throw ``CodexError/loginRequired``, and
+    /// HTTP 429 throws ``CodexError/rateLimited(retryAt:)``.
     /// When the response reports reset credits, one more request reads their details.
     /// Throws ``CodexError``, or `CancellationError` only when this refresh was cancelled.
     func quota(with credentials: CodexCredentials, now: Date) async throws -> CodexQuota {
@@ -35,10 +36,11 @@ struct CodexUsageAPI: Sendable {
             break
         case 401, 403:
             throw CodexError.loginRequired
-        default:
+        case 429:
             let delay = RetryAfter.delay(response.header("retry-after"), now: now)
-            throw CodexError.httpStatus(
-                response.status, retryAt: delay.map { now.addingTimeInterval($0) })
+            throw CodexError.rateLimited(retryAt: RateLimitHold.retryAt(delay: delay, now: now))
+        default:
+            throw CodexError.httpStatus(response.status)
         }
         var quota = try CodexUsageResponse.quota(from: response.body)
         if let count = quota.resetCount, count > 0 {

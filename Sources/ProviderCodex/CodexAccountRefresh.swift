@@ -58,8 +58,10 @@ struct CodexAccountRefresh: Sendable {
     let fileReadLimit: Duration
     let now: @Sendable () -> Date
 
-    /// Throws only `CancellationError`.
-    func run(_ home: CodexHome) async throws -> Outcome {
+    /// Refreshes `home`. `previous` is the account that the app holds now: while it holds a
+    /// rate limit for the same login (``AccountUsage/rateLimitHold(for:now:)``), nothing is
+    /// sent, not even recovery. Throws only `CancellationError`.
+    func run(_ home: CodexHome, previous: AccountUsage?) async throws -> Outcome {
         let before = try await CodexLogin.read(home, timeout: fileReadLimit)
         switch before {
         case .apiKey:
@@ -70,6 +72,11 @@ struct CodexAccountRefresh: Sendable {
                 kind: .failed(.homeMissing, status: .signedOut), login: before.summary)
         case .chatGPT, .missing, .noTokens, .invalid, .unreadable:
             break
+        }
+        if let owner = before.owner, let hold = previous?.rateLimitHold(for: owner, now: now()) {
+            return Outcome(
+                kind: .failed(.rateLimited(retryAt: hold.retryAt), status: .signedIn(owner)),
+                login: before.summary)
         }
         let request = try await obtain(home, login: before)
         let after = try await CodexLogin.read(home, timeout: fileReadLimit)

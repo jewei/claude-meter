@@ -15,7 +15,9 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
 
     // The usage request
     case loginRequired
-    case httpStatus(Int, retryAt: Date?)
+    /// HTTP 429. Requests for the same login wait until `retryAt` (``RateLimitHold``).
+    case rateLimited(retryAt: Date?)
+    case httpStatus(Int)
     case network(String)
     case unexpectedResponse
     case noUsageData
@@ -57,7 +59,9 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
             "Codex home folder not found. Run `codex login`, or check the folder in Settings."
         case .loginRequired:
             "Codex login required. Run `codex login`."
-        case .httpStatus(let status, _):
+        case .rateLimited:
+            "Codex limited the number of requests. Claude Meter will try again later."
+        case .httpStatus(let status):
             "Codex usage request failed (HTTP \(status)). Refresh again later."
         case .network(let reason):
             "Could not reach Codex. \(reason) Refresh again later."
@@ -144,7 +148,7 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
 
     var issue: UsageIssue {
         let retryAt: Date? =
-            if case .httpStatus(_, let retryAt) = self { retryAt } else { nil }
+            if case .rateLimited(let retryAt) = self { retryAt } else { nil }
         return UsageIssue(
             errorDescription ?? "Codex failed.", retryAt: retryAt, needsAction: needsAction)
     }

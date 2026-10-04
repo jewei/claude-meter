@@ -28,12 +28,17 @@ public struct Settings: Codable, Equatable, Sendable {
     /// connection has nothing to read, so it stays quiet until the user connects it
     /// (``ClaudeSettings/needsConnection``).
     public var enabledProviders: Set<ProviderID> {
-        var enabled: Set<ProviderID> = []
-        if claude.isEnabled && claude.connection != .off { enabled.insert(.claude) }
-        if codex.isEnabled { enabled.insert(.codex) }
-        if cursor.isEnabled { enabled.insert(.cursor) }
-        if grok.isEnabled { enabled.insert(.grok) }
-        return enabled
+        Set(ProviderID.allCases.filter(isInUse))
+    }
+
+    /// Whether `provider` is in use; see ``enabledProviders``.
+    public func isInUse(_ provider: ProviderID) -> Bool {
+        switch provider {
+        case .claude: claude.isEnabled && claude.connection != .off
+        case .codex: codex.isEnabled
+        case .cursor: cursor.isEnabled
+        case .grok: grok.isEnabled
+        }
     }
 
     /// The user-chosen display name for an account, if any.

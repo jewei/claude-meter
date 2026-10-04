@@ -35,18 +35,24 @@ public struct StatusScreen: Equatable, Sendable {
     }
 
     static func setup(_ enabled: Set<ProviderID>) -> StatusScreen {
-        let message: String =
-            switch enabled {
-            case [.codex]:
-                "Install Codex or run `codex login` so Claude Meter can read Codex usage."
-            case [.cursor]: "Sign in to the Cursor app so Claude Meter can read your billing usage."
-            case [.grok]:
-                "Install Grok Build or run `grok login` so Claude Meter can read Grok usage."
-            case [.claude]: "Connect Claude in Settings to read your usage."
-            default: "Sign in to the enabled sources, or connect Claude in Settings."
+        let message =
+            if enabled.count == 1, let only = enabled.first {
+                signInHint(only)
+            } else {
+                "Sign in to the enabled sources, or connect Claude in Settings."
             }
         return StatusScreen(
             emoji: "🪫", title: "No usage yet", message: message, action: .openSettings,
             actionTitle: "Open Settings")
+    }
+
+    /// What to do so that `provider`, the only source in use, can be read.
+    private static func signInHint(_ provider: ProviderID) -> String {
+        switch provider {
+        case .claude: "Connect Claude in Settings to read your usage."
+        case .codex: "Install Codex or run `codex login` so Claude Meter can read Codex usage."
+        case .cursor: "Sign in to the Cursor app so Claude Meter can read your billing usage."
+        case .grok: "Install Grok Build or run `grok login` so Claude Meter can read Grok usage."
+        }
     }
 }

@@ -143,14 +143,14 @@ is missing from that place.
    with a case in `Tests/MeterDomainTests/RedactorTests.swift` **(no compiler check)**.
 5. `Sources/MeterApp/Composition/LiveProviders.swift`: build the provider, then add it to
    `usageProviders`, `historyProviders`, and `diagnostics` **(no compiler check)**.
-6. `Sources/MeterApp/Settings/Settings.swift`: add a source property with a default, and a
-   line in `enabledProviders` **(no compiler check)**.
+6. `Sources/MeterApp/Settings/Settings.swift`: add a source property with a default. The
+   compiler names the case in `isInUse(_:)`.
 7. Settings > Data: add a `DataSourceCard` in
    `Sources/MeterUI/Settings/Data/DataSettingsView.swift`, with its subtitle in
    `Sources/MeterApp/Presentation/DataSourceText.swift` **(no compiler check)**.
-8. Popover: add the provider to the automatic order in `CardBuilder.cards()` and to the
-   sign-in hint in `StatusScreen.setup` (`Sources/MeterApp/Presentation/PopoverModel.swift`)
-   **(no compiler check)**. Add card tests in `Tests/MeterAppTests/CardTests.swift`.
+8. Popover: the automatic order in `CardBuilder.cards()` takes every provider, and the
+   compiler names the sign-in hint in `StatusScreen.signInHint(_:)`. Add card tests in
+   `Tests/MeterAppTests/CardTests.swift`.
 9. Logo: add `Sources/MeterUI/Resources/Images/<name>.png` and name it in
    `ProviderMark.image(for:)`. Without the file, the mark falls back to a symbol
    **(no compiler check)**.

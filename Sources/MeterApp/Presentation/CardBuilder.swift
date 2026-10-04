@@ -9,14 +9,15 @@ struct CardBuilder {
     private var gauges: GaugeBuilder { GaugeBuilder(context: context) }
 
     /// Automatic order: the main provider's accounts with the selected one first, then Claude
-    /// extra usage, then the other main-capable provider, then Cursor and Grok.
+    /// extra usage, then the other providers that can own the menu bar, then the rest, each in
+    /// `ProviderID` order. Every provider gets cards without a change here.
     func cards() -> [CardModel] {
-        let other: ProviderID = meter.provider == .claude ? .codex : .claude
         var cards = accountCards(meter.provider, selectedFirst: true)
         if let extra = extraUsageCard() { cards.append(extra) }
-        cards += accountCards(other, selectedFirst: false)
-        cards += accountCards(.cursor, selectedFirst: false)
-        cards += accountCards(.grok, selectedFirst: false)
+        let others = ProviderID.allCases.filter { $0 != meter.provider }
+        for provider in others.filter(\.canOwnMenuBar) + others.filter({ !$0.canOwnMenuBar }) {
+            cards += accountCards(provider, selectedFirst: false)
+        }
         return cards
     }
 

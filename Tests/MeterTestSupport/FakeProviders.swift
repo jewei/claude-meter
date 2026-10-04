@@ -60,10 +60,13 @@ public final class FakeUsageProvider: UsageProvider {
 /// A token history provider whose answers a test scripts.
 public final class FakeHistoryProvider: TokenHistoryProvider {
     public typealias Answer = @Sendable (Date) async throws -> ProviderTokenHistory
+    public typealias Reconcile = @Sendable (ProviderTokenHistory?) async -> ProviderTokenHistory?
 
     public let id: ProviderID
     private let answer: Locked<Answer?>
+    private let reconciler = Locked<Reconcile?>(nil)
     private let calls = Locked(0)
+    private let previousValues = Locked<[ProviderTokenHistory?]>([])
 
     public init(_ id: ProviderID, answer: Answer? = nil) {
         self.id = id
@@ -74,12 +77,25 @@ public final class FakeHistoryProvider: TokenHistoryProvider {
         self.answer.withLock { $0 = answer }
     }
 
+    public func setReconcile(_ reconcile: @escaping Reconcile) {
+        reconciler.withLock { $0 = reconcile }
+    }
+
     public var callCount: Int { calls.value }
 
-    public func history(now: Date, previous _: ProviderTokenHistory?) async throws
+    /// The `previous` value of each read, in order.
+    public var receivedPrevious: [ProviderTokenHistory?] { previousValues.value }
+
+    public func reconcile(_ previous: ProviderTokenHistory?) async -> ProviderTokenHistory? {
+        guard let reconcile = reconciler.value else { return previous }
+        return await reconcile(previous)
+    }
+
+    public func history(now: Date, previous: ProviderTokenHistory?) async throws
         -> ProviderTokenHistory
     {
         calls.withLock { $0 += 1 }
+        previousValues.withLock { $0.append(previous) }
         guard let answer = answer.value else { throw ProviderError("No scripted history.") }
         return try await answer(now)
     }

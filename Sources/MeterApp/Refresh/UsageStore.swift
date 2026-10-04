@@ -272,19 +272,23 @@ public final class UsageStore {
         guard let source = historyProviders[id] else { return nil }
         historyJobs[id]?.task.cancel()
         let token = UUID()
-        let date = now()
-        historyAttempts[id] = Attempt(date: date, timeZoneID: calendar().timeZone.identifier)
+        let attempt = Attempt(date: now(), timeZoneID: calendar().timeZone.identifier)
         refreshingHistory.insert(id)
         let task = Task { [weak self] in
             guard let self else { return }
-            await self.runHistory(source, token: token, now: date)
+            await self.runHistory(source, token: token, attempt: attempt)
         }
         historyJobs[id] = Job(token: token, task: task)
         return task
     }
 
-    private func runHistory(_ source: any TokenHistoryProvider, token: UUID, now date: Date) async {
+    /// The attempt counts only when the read ends with a result or a failure, so a cancelled
+    /// read (sleep, pause) leaves the history due, as a cancelled quota refresh is.
+    private func runHistory(_ source: any TokenHistoryProvider, token: UUID, attempt: Attempt)
+        async
+    {
         let id = source.id
+        let date = attempt.date
         defer { finishHistory(id, token: token) }
         let start = ContinuousClock.now
         let limit = historyLimit
@@ -300,11 +304,13 @@ public final class UsageStore {
                 try await source.history(now: date, previous: reconciled)
             }
             guard isCurrentHistory(id, token) else { return }
+            historyAttempts[id] = attempt
             histories[id] = .current(history, observedAt: history.observedAt)
         } catch is CancellationError {
             return
         } catch {
             guard isCurrentHistory(id, token) else { return }
+            historyAttempts[id] = attempt
             let failure = Self.failure(error, provider: id, isHistory: true)
             if failure.keepsLastReading, let value = histories[id]?.value,
                 let observedAt = histories[id]?.observedAt
@@ -316,14 +322,15 @@ public final class UsageStore {
         }
     }
 
-    /// Keeps the outer state and replaces the value; nil removes the history.
+    /// Keeps the outer state and replaces the value; nil removes the history. As for quota,
+    /// the date is the reconciled value's own.
     private func applyReconciledHistory(_ history: ProviderTokenHistory?, for id: ProviderID) {
         guard let history else {
             histories[id] = nil
             return
         }
-        if case .stale(_, let observedAt, let issue) = histories[id] {
-            histories[id] = .stale(history, observedAt: observedAt, issue: issue)
+        if case .stale(_, _, let issue) = histories[id] {
+            histories[id] = .stale(history, observedAt: history.observedAt, issue: issue)
         } else {
             histories[id] = .current(history, observedAt: history.observedAt)
         }

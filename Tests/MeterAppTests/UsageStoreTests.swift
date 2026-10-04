@@ -315,6 +315,84 @@ import Testing
         #expect(store.histories[.grok] == nil)
     }
 
+    @Test func reconciledHistoryIsPublishedBeforeTheReadAndPassedToIt() async {
+        let history = FakeHistoryProvider(.cursor) { now in .sample(.cursor, now: now) }
+        let store = makeStore([FakeUsageProvider(.cursor)], history: [history])
+        await store.refresh(quota: [], history: [.cursor])
+        #expect(history.receivedPrevious == [nil])
+
+        history.setReconcile { _ in nil }
+        let gate = Gate()
+        history.setAnswer { now in
+            await gate.wait()
+            return .sample(.cursor, now: now)
+        }
+        let refresh = Task { await store.refresh(quota: [], history: [.cursor]) }
+        #expect(await gate.waitForArrivals())
+        #expect(store.histories[.cursor] == nil)
+        gate.open()
+        await refresh.value
+        #expect(history.receivedPrevious == [nil, nil])
+        #expect(store.histories[.cursor]?.value == .sample(.cursor, now: .reference()))
+    }
+
+    @Test func theReadReceivesTheHeldHistory() async {
+        let history = FakeHistoryProvider(.claude) { now in .sample(.claude, now: now) }
+        let store = makeStore([FakeUsageProvider(.claude)], history: [history])
+        await store.refresh(quota: [], history: [.claude])
+        await store.refresh(quota: [], history: [.claude])
+        #expect(history.receivedPrevious == [nil, .sample(.claude, now: .reference())])
+    }
+
+    @Test func reconcileKeepsAStaleHistoryStale() async {
+        let history = FakeHistoryProvider(.claude) { now in .sample(.claude, now: now) }
+        let store = makeStore([FakeUsageProvider(.claude)], history: [history])
+        await store.refresh(quota: [], history: [.claude])
+        history.setAnswer { _ in throw ProviderError("Scan failed") }
+        await store.refresh(quota: [], history: [.claude])
+
+        let replaced = ProviderTokenHistory.sample(.claude, now: .reference(-60))
+        history.setReconcile { _ in replaced }
+        let gate = Gate()
+        history.setAnswer { _ in
+            await gate.wait()
+            throw ProviderError("Still failing")
+        }
+        let refresh = Task { await store.refresh(quota: [], history: [.claude]) }
+        #expect(await gate.waitForArrivals())
+        #expect(
+            store.histories[.claude]
+                == .stale(replaced, observedAt: .reference(-60), issue: UsageIssue("Scan failed")))
+        gate.open()
+        await refresh.value
+    }
+
+    @Test func aFailureAfterADroppedHistoryFails() async {
+        let history = FakeHistoryProvider(.cursor) { now in .sample(.cursor, now: now) }
+        let store = makeStore([FakeUsageProvider(.cursor)], history: [history])
+        await store.refresh(quota: [], history: [.cursor])
+        history.setReconcile { _ in nil }
+        history.setAnswer { _ in throw ProviderError("Offline") }
+        await store.refresh(quota: [], history: [.cursor])
+        #expect(store.histories[.cursor] == .failed(UsageIssue("Offline")))
+    }
+
+    @Test func aCancelledHistoryReadStaysDue() async {
+        let gate = Gate()
+        let history = FakeHistoryProvider(.claude) { now in
+            await gate.wait()
+            return .sample(.claude, now: now)
+        }
+        let store = makeStore([FakeUsageProvider(.claude)], history: [history])
+        let refresh = Task { await store.refresh(quota: [], history: [.claude]) }
+        #expect(await gate.waitForArrivals())
+        store.cancel()
+        gate.open()
+        await refresh.value
+        #expect(store.histories[.claude] == nil)
+        #expect(store.historyNeedsRefresh(.claude))
+    }
+
     @Test func historyFailureKeepsTheLastHistoryAsStale() async {
         let history = FakeHistoryProvider(.claude) { now in .sample(.claude, now: now) }
         let store = makeStore([FakeUsageProvider(.claude)], history: [history])

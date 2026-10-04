@@ -30,8 +30,10 @@ extension UsageProvider {
 /// Counts tokens from local session records or from the provider's account export.
 ///
 /// History follows the same lifecycle and retention rule as quota: the app reconciles the
-/// history it holds, then reads a new one, and keeps the old one after a failure only while
-/// ``ProviderTokenHistory/belongs(to:)`` allows it.
+/// history it holds, then reads a new one. After a ``ProviderError`` it keeps the old one,
+/// marked stale, only when `keepsLastReading` is true; a provider sets it only while
+/// ``ProviderTokenHistory/belongs(to:)`` allows it. After the app's safety deadline it always
+/// keeps the old one, as for quota, and the next refresh reconciles it first.
 public protocol TokenHistoryProvider: Sendable {
     var id: ProviderID { get }
 

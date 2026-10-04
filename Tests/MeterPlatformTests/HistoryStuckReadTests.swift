@@ -19,15 +19,22 @@ extension HistoryScans {
             try home.touch("stuck.jsonl", at: .reference())
             try home.touch("ok.jsonl", at: .reference(-.hours(1)))
             let pool = BlockingIO(label: "test")
-            let scanner = CountingScanner(
-                match: jsonl, limits: HistoryLimits(blockingTimeout: .milliseconds(100)),
-                pool: pool)
+            let scanner = CountingScanner(match: jsonl, limits: HistoryLimits(), pool: pool)
 
-            // The newest file blocks. Its read times out, and reading stops for this scan.
-            let first = try await scanner.scan([home.root()], since: rangeStart)
+            // The newest file blocks. Its read times out, and reading stops for this scan. The
+            // time limit is short only until the read arrives: on a loaded machine another
+            // read can pass it too, and the scan then tries again.
+            await scanner.setBlockingTimeout(.milliseconds(100))
+            var first = try await scanner.scan([home.root()], since: rangeStart)
+            for _ in 0..<50 where !BlockedLines.hasArrived(blocked) {
+                first = try await scanner.scan([home.root()], since: rangeStart)
+            }
+            #expect(BlockedLines.hasArrived(blocked))
             #expect(first.isPartial())
             #expect(first.total() == 0)
-            #expect(pool.abandonedCount == 1)
+            // Reads abandoned by earlier tries end at once; the stuck read stays.
+            #expect(await waitUntil { pool.abandonedCount == 1 })
+            await scanner.setBlockingTimeout(.seconds(30))
 
             // The stuck file is skipped, the other file counts, and no thread is abandoned.
             for _ in 0..<3 {

@@ -46,10 +46,10 @@ core.
 - Cursor and Grok keep showing the last reading, marked stale, when the sign-in expires,
   until you sign in again. Signing out removes it.
 - After a rate limit, Codex, Cursor, and Grok wait for the retry time before they ask
-  again, at most one hour, and only for the limited account.
-- The expand arrow is always last in the header of a bar card.
+  again, at most one hour, and only for the limited login.
 - When the Codex auth file cannot be read, the Codex card says what to do, and Claude Meter
   no longer starts the Codex CLI at each refresh.
+- The expand arrow is always last in the header of a bar card.
 - The Grok mark has the same color as the other marks, not the color of its energy level.
 
 ### Fixed

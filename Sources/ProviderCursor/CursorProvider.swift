@@ -108,6 +108,13 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
         guard !credentials.isExpired(at: now) else {
             return failed(.sessionExpired, previous: previous, status: .signedIn(owner), now: now)
         }
+        // Cursor asked for a pause after HTTP 429. Send nothing before its retry time, so the
+        // card's countdown is true.
+        if let previous, previous.owner == owner, let issue = previous.issue,
+            let retryAt = issue.retryAt, retryAt > now
+        {
+            return previous.retained(issue: issue, now: now)
+        }
         let result: Result<AccountUsage, CursorFailure>
         do {
             result = .success(try await requestUsage(credentials, now: now))

@@ -11,6 +11,7 @@ import Testing
     private let home: CursorHome
     private let keychain = FakeKeychain()
     private let owner = CursorFixture.ownerOf(subject: "auth0|user_123")
+    private let clock = Locked(Date.reference())
 
     init() throws {
         home = try CursorHome()
@@ -21,7 +22,12 @@ import Testing
     }
 
     private func provider(_ http: FakeHTTPClient) -> CursorProvider {
-        CursorProvider(keychain: keychain, http: http, home: home.url, now: { .reference() })
+        let clock = clock
+        return CursorProvider(keychain: keychain, http: http, home: home.url, now: { clock.value })
+    }
+
+    private func advance(_ seconds: TimeInterval) {
+        clock.withLock { $0 = $0.addingTimeInterval(seconds) }
     }
 
     private func previous(owner: AccountOwner? = nil) -> ProviderUsage {
@@ -255,6 +261,39 @@ import Testing
         let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "120"])
         let account = try account(try await provider(http).fetch(previous: nil))
         #expect(account.issue?.retryAt == .reference(120))
+    }
+
+    /// Nothing is sent before the server's retry time, so the countdown on the card is true.
+    @Test func aRateLimitHoldsEveryRequestUntilItsRetryTime() async throws {
+        try home.write(token: CursorFixture.token())
+        let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "120"])
+        let provider = provider(http)
+
+        let limited = try await provider.fetch(previous: previous())
+        #expect(http.requests.count == 1)
+        advance(60)
+        let held = try await provider.fetch(previous: limited)
+
+        #expect(http.requests.count == 1)
+        let account = try account(held)
+        #expect(account.isStale)
+        #expect(account.windows.first?.usedPercent == 40)
+        #expect(account.issue?.retryAt == .reference(120))
+
+        advance(61)
+        _ = try await provider.fetch(previous: held)
+        #expect(http.requests.count == 2)
+    }
+
+    @Test func aRateLimitOfAnotherLoginHoldsNothing() async throws {
+        try home.write(token: CursorFixture.token())
+        let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "120"])
+        let limited = try await provider(http).fetch(previous: nil)
+        try home.write(token: CursorFixture.token(subject: "auth0|other"))
+
+        _ = try await provider(http).fetch(previous: limited)
+
+        #expect(http.requests.count == 2)
     }
 
     @Test func transportErrorsTellTheUserWhatHappened() async throws {

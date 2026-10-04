@@ -168,7 +168,9 @@ The email is never part of the reading.
 17. Expired token, HTTP 401, or HTTP 403: keep the last observation as stale, with an issue that
     asks the user to act, while the owner is unchanged.
 18. Busy database, locked Keychain, network failure, other HTTP status, or an unexpected
-    response: keep the last observation as stale while the owner is unchanged.
+    response: keep the last observation as stale while the owner is unchanged. After HTTP 429
+    with a `Retry-After`, no request is sent before the retry time, so the card's countdown is
+    true.
 19. `"enabled": false`: drop the last observation, because it no longer describes the account.
 20. If the owner after the response differs from the owner before it, discard the response.
 21. `reconcile` drops the reading when the owner changed or the user signed out. It reads local

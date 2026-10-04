@@ -175,6 +175,21 @@ extension ClaudeTests {
             #expect(http.usageTokens == ["main", "work"])
         }
 
+        @Test func theAsyncCheckReturnsTheCanonicalConfigDir() async throws {
+            let home = try TemporaryDirectory()
+            defer { home.remove() }
+            let real = try home.write("{}", to: "real/.claude-work/settings.json")
+                .deletingLastPathComponent()
+            try FileManager.default.createSymbolicLink(
+                at: home.path("link"), withDestinationURL: real)
+            _ = try home.makeDirectory("empty")
+
+            let found = await ClaudeProvider.configDirectory(at: home.path("link"))
+            #expect(found?.path == real.resolvingSymlinksInPath().path)
+            #expect(await ClaudeProvider.configDirectory(at: home.path("empty")) == nil)
+            #expect(await ClaudeProvider.configDirectory(at: home.path("missing")) == nil)
+        }
+
         @Test func configDirectoryCheckNeedsSettingsOrProjects() throws {
             let home = try TemporaryDirectory()
             defer { home.remove() }

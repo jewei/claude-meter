@@ -3,7 +3,8 @@
 #
 # Usage: scripts/release.sh VERSION BUILD [--prepare-only]
 #   VERSION         Marketing version, for example 4.0.0.
-#   BUILD           CFBundleVersion. Must be greater than every sparkle:version in appcast.xml.
+#   BUILD           CFBundleVersion. Step 1 checks the rules in "The build number" in
+#                   docs/releasing.md.
 #   --prepare-only  Build and validate a candidate in build/release. Change no tracked file,
 #                   publish nothing, and allow any branch.
 #
@@ -128,6 +129,7 @@ main() {
     [[ "$VERSION" =~ ^4\.[0-9]+(\.[0-9]+)?$ ]] ||
         die "VERSION must be 4.x, such as 4.0.0. Decide the minimumUpdateVersion for a new major."
     [[ "$BUILD" =~ ^[1-9][0-9]*$ ]] || die "BUILD must be a positive integer."
+    ((BUILD >= MAJOR_START_BUILD)) || die "BUILD must be $MAJOR_START_BUILD or greater for 4.x."
     require_clean_tree
     if [[ -z "$PREPARE_ONLY" ]]; then
         [[ "$(git branch --show-current)" == "main" ]] || die "Publish from the main branch."
@@ -150,6 +152,20 @@ main() {
         sort -n | tail -n 1)"
     ((BUILD > ${latest_build:-0})) ||
         die "BUILD $BUILD must be greater than $latest_build, the newest build in appcast.xml."
+    # The release commit writes the released build into Config/Version.xcconfig. When the tag of
+    # that version exists, the build was published and is never used again, even after a bad
+    # item leaves the feed. Before the first release of 4.x, the file has 400, still unused.
+    local project_version project_build minimum_build
+    project_version="$(sed -n 's/^MARKETING_VERSION = //p' Config/Version.xcconfig)"
+    project_build="$(sed -n 's/^CURRENT_PROJECT_VERSION = \([0-9][0-9]*\)$/\1/p' \
+        Config/Version.xcconfig)"
+    [[ -n "$project_build" ]] || die "Config/Version.xcconfig has no CURRENT_PROJECT_VERSION."
+    minimum_build="$project_build"
+    if git rev-parse -q --verify "refs/tags/v$project_version" >/dev/null; then
+        minimum_build=$((project_build + 1))
+    fi
+    ((BUILD >= minimum_build)) || die "BUILD must be $minimum_build or greater:" \
+        "Config/Version.xcconfig has build $project_build of version $project_version."
     # The newest release tag is the base of the CHANGELOG compare link. The feed can lose a
     # bad item, but tags keep the history.
     PREVIOUS_VERSION="$(git describe --tags --abbrev=0 --match 'v*')"

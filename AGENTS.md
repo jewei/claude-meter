@@ -92,7 +92,8 @@ Every installed copy depends on these. Never change them without the maintainer:
 - `appcast.xml` is the live update feed. Only `scripts/release.sh` edits it; keep every item.
 - The bundle identifier, team, `SUFeedURL`, `SUPublicEDKey`, `ClaudeMeterUpdateRequirement`,
   and the Sparkle version pin.
-- `CURRENT_PROJECT_VERSION` only grows, and stays above every build in `appcast.xml`.
+- `CURRENT_PROJECT_VERSION` only grows, and is never lower than the newest build in
+  `appcast.xml`. The release commit sets it (`docs/releasing.md`, "The build number").
 
 ### Style
 

@@ -93,8 +93,8 @@ step prints `==> <step>`.
 
 1. **Check preconditions.** VERSION is 4.x. The working tree is clean, with no untracked
    files. When it publishes: the branch is `main`, `HEAD` equals the fetched `origin/main`,
-   and tag `vVERSION` does not exist. BUILD is greater than every `sparkle:version` in
-   `appcast.xml`. `CHANGELOG.md` has a `## [Unreleased]` section that is not empty.
+   and tag `vVERSION` does not exist. BUILD obeys the rules in
+   [The build number](#the-build-number). `CHANGELOG.md` has a `## [Unreleased]` section that is not empty.
    `ClaudeMeterUpdateRequirement` in `App/Info.plist` compiles with `csreq`. The signing
    identity, the notarization profile, and the Sparkle key are present.
 2. **Run `make check`.** The same gate as CI, including an unsigned Release build.
@@ -136,12 +136,18 @@ release also has a copy.
 ## The build number
 
 `CFBundleVersion` is an integer build number. Sparkle compares it with `sparkle:version` in
-the feed to find an update. These rules apply:
+the feed to find an update. These rules apply, and the script stops in step 1 if BUILD
+breaks one of them:
 
-- Every release must have a build number greater than every build in `appcast.xml`. The
-  script stops if it is not. The last 3.x release, 3.1.3, is build 337.
-- The 4.x line starts at 400. Increase the number by at least one for each release, for
-  example 4.0.1 is 401.
+- BUILD is greater than every build in `appcast.xml`. The last 3.x release, 3.1.3, is
+  build 337.
+- BUILD is 400 or greater. The 4.x line starts at 400 (`MAJOR_START_BUILD` in
+  `scripts/release.sh`).
+- BUILD is not lower than `CURRENT_PROJECT_VERSION` in `Config/Version.xcconfig`. The
+  release commit writes the released version and build into that file. If the tag of the
+  file's `MARKETING_VERSION` exists, that build is published, and BUILD must be greater. So
+  a build is never used twice, even after its item leaves the feed.
+- Increase the number by at least one for each release, for example 4.0.1 is 401.
 - Do not use the Git commit count. The 4.x history has fewer commits than 3.x had, so
   the count is smaller than 337, and no installed app would see the update.
 - A build number that the script used for a candidate that was not published can be

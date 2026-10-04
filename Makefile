@@ -26,7 +26,8 @@ test: ## Build with warnings as errors and run every test.
 	swift test $(SWIFT_FLAGS)
 
 app: ## Build the unsigned Debug app.
-	$(XCODEBUILD) -configuration Debug CODE_SIGNING_ALLOWED=NO build -quiet
+	$(XCODEBUILD) -configuration Debug -destination 'platform=macOS,arch=$(shell uname -m)' \
+		CODE_SIGNING_ALLOWED=NO build -quiet
 
 run: app ## Build and launch the Debug app.
 	-pkill -x ClaudeMeter

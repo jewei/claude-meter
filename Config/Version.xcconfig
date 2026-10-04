@@ -1,0 +1,7 @@
+// The app version. scripts/release.sh rewrites both lines in the release commit.
+//
+// CURRENT_PROJECT_VERSION is CFBundleVersion, the number that Sparkle compares. It must be
+// greater than every sparkle:version in appcast.xml. The last 3.x build is 337.
+
+MARKETING_VERSION = 4.0.0
+CURRENT_PROJECT_VERSION = 400

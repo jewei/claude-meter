@@ -1,0 +1,259 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		10F00CCF4E06773D0B07CC8C /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 7C85E4E094095728DF381BC9 /* Sparkle */; };
+		35D25DC72B18B63F047BB1AC /* MeterUI in Frameworks */ = {isa = PBXBuildFile; productRef = 05C4951A935454461E91A8CE /* MeterUI */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		20268331742471B35077ECA1 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
+		63C7DAB29C575CE400207873 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		6C9490E456192838C4B1CD6F /* ClaudeMeter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClaudeMeter.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		6DED17EF517A6AB4DB0E80E7 /* ClaudeMeter.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClaudeMeter.entitlements; sourceTree = "<group>"; };
+		71B152A8A532256D1D595ADE /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		844DE736A16DF1D92B79595C /* Version.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Version.xcconfig; sourceTree = "<group>"; };
+		B9DBDCA210D540B7D23E7B83 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		748E729F31515827B5D41C13 /* Sources */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		FD3EE7912796E96C9AF6B7F5 /* Resources */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Resources;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		50BB0B90A6DF6BE92E23F5C1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				35D25DC72B18B63F047BB1AC /* MeterUI in Frameworks */,
+				10F00CCF4E06773D0B07CC8C /* Sparkle in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		32D1FC8C8BE43F56225492DF = {
+			isa = PBXGroup;
+			children = (
+				F7CC4962BB2EB04447B77439 /* App */,
+				80D013408C80D115A7BA6C17 /* Config */,
+				331A46C41F4E380E6CF782FD /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		331A46C41F4E380E6CF782FD /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				6C9490E456192838C4B1CD6F /* ClaudeMeter.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		80D013408C80D115A7BA6C17 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				71B152A8A532256D1D595ADE /* Base.xcconfig */,
+				B9DBDCA210D540B7D23E7B83 /* Debug.xcconfig */,
+				20268331742471B35077ECA1 /* Release.xcconfig */,
+				844DE736A16DF1D92B79595C /* Version.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		F7CC4962BB2EB04447B77439 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				748E729F31515827B5D41C13 /* Sources */,
+				FD3EE7912796E96C9AF6B7F5 /* Resources */,
+				63C7DAB29C575CE400207873 /* Info.plist */,
+				6DED17EF517A6AB4DB0E80E7 /* ClaudeMeter.entitlements */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		FBDC3702D0CEB4E44FD3C0D3 /* ClaudeMeter */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DC06EBEC9FE1CDEE4E36C305 /* Build configuration list for PBXNativeTarget "ClaudeMeter" */;
+			buildPhases = (
+				3DD1255A9DBD30BAB485CD8F /* Sources */,
+				50BB0B90A6DF6BE92E23F5C1 /* Frameworks */,
+				E3ACD70A0C364BE15F235401 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				748E729F31515827B5D41C13 /* Sources */,
+				FD3EE7912796E96C9AF6B7F5 /* Resources */,
+			);
+			name = ClaudeMeter;
+			packageProductDependencies = (
+				05C4951A935454461E91A8CE /* MeterUI */,
+				7C85E4E094095728DF381BC9 /* Sparkle */,
+			);
+			productName = ClaudeMeter;
+			productReference = 6C9490E456192838C4B1CD6F /* ClaudeMeter.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1CD3EBDBD9DA2FDEDE87ECC3 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					FBDC3702D0CEB4E44FD3C0D3 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+				};
+			};
+			buildConfigurationList = 893C17FCD2953E3AAA513340 /* Build configuration list for PBXProject "ClaudeMeter" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 32D1FC8C8BE43F56225492DF;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				1AE55F2E1068CDC0E429FA4D /* XCLocalSwiftPackageReference "." */,
+				0127D0CA16A9D12F1097FFB0 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 331A46C41F4E380E6CF782FD /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				FBDC3702D0CEB4E44FD3C0D3 /* ClaudeMeter */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		E3ACD70A0C364BE15F235401 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		3DD1255A9DBD30BAB485CD8F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		08DA39EAD254B3F28851CABD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = B9DBDCA210D540B7D23E7B83 /* Debug.xcconfig */;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		42AE97CEA17534BA4FFDFA00 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		4721C66322E8BEADB3A35226 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		AD0159638061130C2F79339A /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 20268331742471B35077ECA1 /* Release.xcconfig */;
+			buildSettings = {
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		893C17FCD2953E3AAA513340 /* Build configuration list for PBXProject "ClaudeMeter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4721C66322E8BEADB3A35226 /* Debug */,
+				42AE97CEA17534BA4FFDFA00 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		DC06EBEC9FE1CDEE4E36C305 /* Build configuration list for PBXNativeTarget "ClaudeMeter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				08DA39EAD254B3F28851CABD /* Debug */,
+				AD0159638061130C2F79339A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		1AE55F2E1068CDC0E429FA4D /* XCLocalSwiftPackageReference "." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = .;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		0127D0CA16A9D12F1097FFB0 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = exactVersion;
+				version = 2.9.3;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		05C4951A935454461E91A8CE /* MeterUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1AE55F2E1068CDC0E429FA4D /* XCLocalSwiftPackageReference "." */;
+			productName = MeterUI;
+		};
+		7C85E4E094095728DF381BC9 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0127D0CA16A9D12F1097FFB0 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 1CD3EBDBD9DA2FDEDE87ECC3 /* Project object */;
+}

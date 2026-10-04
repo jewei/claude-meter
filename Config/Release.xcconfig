@@ -1,0 +1,16 @@
+// Distribution builds. scripts/release.sh archives this configuration and exports it with
+// Developer ID. Build it without a signature with CODE_SIGNING_ALLOWED=NO.
+
+#include "Base.xcconfig"
+
+// Developer ID signing with the hardened runtime, which notarization requires.
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = Developer ID Application
+CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO
+ENABLE_HARDENED_RUNTIME = YES
+
+// Keep dSYMs: the release attaches them to the GitHub release for crash symbolication.
+DEBUG_INFORMATION_FORMAT = dwarf-with-dsym
+ENABLE_NS_ASSERTIONS = NO
+SWIFT_COMPILATION_MODE = wholemodule
+SWIFT_OPTIMIZATION_LEVEL = -O

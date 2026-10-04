@@ -60,13 +60,15 @@ struct CodexQuota: Equatable, Sendable {
     }
 
     /// The duration decides the kind. The position decides only when the duration is unknown.
+    static func kind(of window: Window, slot: Slot) -> QuotaWindow.Kind {
+        if let duration = window.duration {
+            return duration > sessionLimit ? .weekly : .session
+        }
+        return slot == .primary ? .session : .weekly
+    }
+
     static func quotaWindow(_ window: Window, slot: Slot) -> QuotaWindow {
-        let kind: QuotaWindow.Kind =
-            if let duration = window.duration {
-                duration > sessionLimit ? .weekly : .session
-            } else {
-                slot == .primary ? .session : .weekly
-            }
+        let kind = kind(of: window, slot: slot)
         return QuotaWindow(
             id: slot.rawValue, title: title(kind: kind), kind: kind,
             usedPercent: window.usedPercent, resetsAt: window.resetsAt)

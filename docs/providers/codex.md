@@ -111,11 +111,22 @@ JSON-RPC over stdin and stdout, one compact JSON object per line, no `jsonrpc` f
 ← {"id":3,"result":{"rateLimits":{…},"rateLimitResetCredits":{…}}}
 ```
 
-`rateLimits` fields: `primary`, `secondary`, and `rateLimitsByLimitId` (or
-`rate_limits_by_limit_id`), each window with `usedPercent`, `windowDurationMins`, and
-`resetsAt` (Unix seconds); `credits` with `unlimited` and `balance`; `planType` (or
-`plan_type`). `rateLimitResetCredits` has `availableCount` and `credits` rows with `title` and
-`expiresAt` (Unix seconds). An error reply is `{"id":N,"error":{"message":"…"}}`.
+The shapes are the upstream protocol types in `openai/codex`
+(`codex-rs/app-server-protocol`, `GetAccountResponse` and `GetAccountRateLimitsResponse`).
+
+| Path in the `account/rateLimits/read` result | Use |
+| --- | --- |
+| `rateLimits` | Required object: the snapshot of the `codex` limit |
+| `rateLimits.primary`, `rateLimits.secondary` | Positional windows |
+| `rateLimits.credits` | `unlimited` and `balance` |
+| `rateLimits.planType` (or `plan_type`) | Plan |
+| `rateLimitsByLimitId` (or `rate_limits_by_limit_id`) | Map of limit ID to a snapshot with its own `primary` and `secondary`; fills empty slots (rule 16) |
+| `rateLimitResetCredits` | `availableCount` and `credits` rows with `status`, `title`, and `expiresAt` (Unix seconds) |
+
+A window has `usedPercent` (required), `windowDurationMins`, and `resetsAt` (Unix seconds).
+`account/read` returns `account`: `{"type":"chatgpt","email":…,"planType":…}`,
+`{"type":"apiKey"}`, another type, or `null` when Codex has no login. An error reply is
+`{"id":N,"error":{"message":"…"}}`.
 
 The app never calls an endpoint or method that uses a reset credit or renews a token itself.
 
@@ -159,10 +170,12 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
 14. A present usage window with a value of the wrong type fails the usage request. Malformed
     plan, credits, or reset metadata is dropped, and the windows stay.
 15. A reading needs a window or credits. Plan or reset metadata alone is "no usage windows".
-16. Positional `primary` and `secondary` windows win. Keyed windows fill only an empty slot:
-    the most used window of at most 24 hours fills `primary`, and the most used longer window
-    fills `secondary`. A tie keeps the smallest limit ID. A malformed keyed window drops only
-    itself.
+16. Positional `primary` and `secondary` windows win. Keyed snapshots fill only an empty slot:
+    of their `primary` and `secondary` windows, the most used session window (rule 17) fills
+    `primary`, and the most used weekly window fills `secondary`. A tie keeps the smallest
+    limit ID. A malformed keyed window drops only itself. An app-server window without a
+    numeric `usedPercent` is not a window. A value that is not a snapshot, or a map in another
+    place, never becomes a window.
 17. A window of at most 24 hours is a session window. A longer window is weekly. Without a
     duration, `primary` is session and `secondary` is weekly.
 18. Window titles are `Session` and `Weekly`, from the kind, the same as Claude. A limit ID
@@ -179,7 +192,8 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
     details count is equal. Only `available` rows that are not expired stay.
 23. A failed details request (any status, timeout, network, or format) keeps the quota and the
     count, shows no rows, and never starts recovery. Only cancellation of the refresh stops it.
-24. Recovery reset rows have no status. Expired rows are dropped.
+24. Codex lists only available credits in recovery rows. A row with another `status` and an
+    expired row are dropped. A row without a status stays.
 
 ### Ownership and retention
 

@@ -26,14 +26,12 @@ struct DiscoveryCursor: Sendable {
         var isFinished = false
     }
 
-    let roots: [String]
     private var walks: [Walk]
     private var nextRoot = 0
     /// Roots where a directory could not be listed in this sweep. Their files can be missing.
     private(set) var failedRoots: Set<Int> = []
 
     init(roots: [String]) {
-        self.roots = roots
         walks = roots.map { Walk(directories: [$0]) }
     }
 

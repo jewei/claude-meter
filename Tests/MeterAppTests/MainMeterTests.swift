@@ -1,0 +1,173 @@
+import Foundation
+import MeterDomain
+import MeterTestSupport
+import Testing
+
+@testable import MeterApp
+
+@Suite struct MainMeterTests {
+    private func meter(
+        _ accounts: [AccountUsage], pin: AccountID? = nil, enabled: Set<ProviderID> = [.claude],
+        reading: ((ProviderUsage) -> Reading<ProviderUsage>)? = nil, now: Date = .reference()
+    ) -> MainMeter {
+        let usage = ProviderUsage(provider: .claude, accounts: accounts)
+        let settings = Fixture.settings(enabled: enabled) {
+            $0.menuBar.pinnedAccounts[.claude] = pin
+        }
+        let context = Fixture.context(
+            settings, readings: [.claude: reading?(usage) ?? Fixture.current(usage)], now: now)
+        return MainMeter(context)
+    }
+
+    @Test func selectsTheAccountNearestItsLimit() {
+        let meter = meter([
+            Fixture.account("home", session: 20), Fixture.account("work", session: 80),
+        ])
+        #expect(meter.selected?.id == "work")
+        #expect(meter.severity == .warning)
+        #expect(meter.cardID == .account(.claude, "work"))
+    }
+
+    @Test func exactPinWinsAndLimitsSeverity() {
+        let meter = meter(
+            [Fixture.account("home", session: 20), Fixture.account("work", session: 99)],
+            pin: "home")
+        #expect(meter.selected?.id == "home")
+        #expect(meter.severity == .normal)
+    }
+
+    @Test func missingPinIsUnavailableWithoutFallback() {
+        let meter = meter([Fixture.account("home")], pin: "gone")
+        #expect(meter.selected == nil)
+        #expect(meter.severity == .unknown)
+        #expect(meter.issue?.message == "The selected Claude account is no longer configured.")
+    }
+
+    @Test func pinnedAccountWithoutReadingExplainsItself() {
+        let meter = meter([Fixture.account("home", observedAt: nil)], pin: "home")
+        #expect(meter.issue?.message == "The selected Claude account has no usage reading.")
+    }
+
+    @Test func disabledProviderNeverFallsBack() {
+        let meter = meter([Fixture.account("home")], enabled: [.codex])
+        #expect(meter.selected == nil)
+        #expect(meter.issue?.message == "Claude is off. Turn it on in Settings > Data.")
+    }
+
+    @Test func oldObservationsAreStale() {
+        let fresh = meter([Fixture.account("home")], now: .reference(600))
+        let old = meter([Fixture.account("home")], now: .reference(601))
+        #expect(!fresh.isStale)
+        #expect(old.isStale)
+    }
+
+    @Test func futureObservationsBeyondSkewAreStale() {
+        let meter = meter([Fixture.account("home", observedAt: .reference(301))])
+        #expect(meter.isStale)
+    }
+
+    @Test func failedRefreshMakesTheReadingStale() {
+        let meter = meter([Fixture.account("home")]) {
+            .stale($0, observedAt: .reference(), issue: UsageIssue("Offline"))
+        }
+        #expect(meter.isStale)
+        #expect(meter.issue?.message == "Offline")
+    }
+
+    @Test func displayNamesAndPlanOverridesApply() {
+        let usage = Fixture.usage(.claude, Fixture.account("claude-work"))
+        let settings = Fixture.settings {
+            $0.claude.planOverrides = ["claude-work": "Pro"]
+        }
+        let context = Fixture.context(settings, readings: [.claude: Fixture.current(usage)])
+        #expect(context.accounts(for: .claude).first?.name == "Claude Work")
+        #expect(context.accounts(for: .claude).first?.plan == "Pro")
+
+        var named = settings
+        named.claude.accountNames = ["claude-work": "Day job"]
+        let renamed = Fixture.context(named, readings: [.claude: Fixture.current(usage)])
+        #expect(renamed.accounts(for: .claude).first?.name == "Day job")
+    }
+
+    @Test func reportedPlanWinsOverTheOverride() {
+        let usage = Fixture.usage(.claude, Fixture.account("claude", plan: "Max 20x"))
+        let settings = Fixture.settings { $0.claude.planOverrides = ["claude": "Pro"] }
+        let context = Fixture.context(settings, readings: [.claude: Fixture.current(usage)])
+        #expect(context.accounts(for: .claude).first?.plan == "Max 20x")
+    }
+}
+
+@Suite struct MenuBarModelTests {
+    private func model(
+        _ account: AccountUsage, configure: (inout Settings) -> Void = { _ in },
+        refreshing: Set<ProviderID> = [], now: Date = .reference()
+    ) -> MenuBarModel {
+        let settings = Fixture.settings(configure: configure)
+        let reading = Fixture.current(Fixture.usage(.claude, account))
+        return MenuBarModel(
+            Fixture.context(
+                settings, readings: [.claude: reading], refreshing: refreshing, now: now))
+    }
+
+    @Test func showsTheSessionWindowByDefault() {
+        let model = model(Fixture.account("a", session: 1, weekly: 27))
+        #expect(model.text == "99% 5h")
+        #expect(model.icon == .bolt(.dot(.normal)))
+        #expect(!model.isDimmed)
+    }
+
+    @Test func fallsBackToWeeklyWithoutASessionValue() {
+        let model = model(Fixture.account("a", session: nil, weekly: 27))
+        #expect(model.text == "73% 7d")
+    }
+
+    @Test func showsBothWindowsOrUsedPercentages() {
+        let both = model(Fixture.account("a", session: 1, weekly: 27)) {
+            $0.appearance.menuBarWindow = .both
+        }
+        #expect(both.text == "99% 5h · 73% 7d")
+        let used = model(Fixture.account("a", session: 1, weekly: 27)) {
+            $0.appearance.meterMode = .used
+            $0.appearance.menuBarWindow = .weekly
+        }
+        #expect(used.text == "27% 7d")
+    }
+
+    @Test func exhaustedAtExactlyOneHundredPercent() {
+        #expect(model(Fixture.account("a", session: 100)).icon == .bolt(.exhausted))
+        #expect(model(Fixture.account("a", session: 96)).icon == .bolt(.dot(.critical)))
+    }
+
+    @Test func staleHidesTheNumber() {
+        let model = model(Fixture.account("a"), now: .reference(601))
+        #expect(model.icon == .bolt(.stale))
+        #expect(model.text == nil)
+        #expect(model.accessibilityLabel == "Claude Meter. Claude. Data is stale.")
+    }
+
+    @Test func pausedDimsAndHidesTheNumber() {
+        let model = model(Fixture.account("a")) { $0.isPaused = true }
+        #expect(model.isDimmed)
+        #expect(model.text == nil)
+        #expect(model.icon == .bolt(.none))
+        #expect(model.accessibilityLabel == "Claude Meter. Claude. Paused.")
+    }
+
+    @Test func spokenSummaryNamesWindowAndSeverity() {
+        let model = model(Fixture.account("a", session: 85, weekly: 10))
+        #expect(
+            model.accessibilityLabel
+                == "Claude Meter. Claude. Session 15 percent left. Overall quota warning.")
+    }
+
+    @Test func loadingAndErrorIcons() {
+        let settings = Fixture.settings()
+        let loading = MenuBarModel(Fixture.context(settings, readings: [:], refreshing: [.claude]))
+        #expect(loading.icon == .loading)
+        #expect(loading.accessibilityLabel == "Claude Meter. Claude. Loading.")
+        let failed = MenuBarModel(
+            Fixture.context(settings, readings: [.claude: .failed(UsageIssue("Sign in"))]))
+        #expect(failed.icon == .error)
+        #expect(failed.accessibilityLabel == "Claude Meter. Claude. Usage unavailable.")
+    }
+}

@@ -166,6 +166,51 @@ import Testing
         #expect(claude.fetchCount == 0)
     }
 
+    /// Writes a saved Claude reading to the archive in the test folder.
+    private func archive(_ usage: ProviderUsage) -> ReadingArchive {
+        let file = directory.path("readings.json")
+        let writer = ReadingArchive(file: file)
+        writer.record(usage, for: .claude)
+        writer.flush()
+        return ReadingArchive(file: file)
+    }
+
+    /// Records the `previous` value of each Claude reconcile, and keeps it unchanged.
+    private func recordReconciles() -> Locked<[ProviderUsage?]> {
+        let received = Locked<[ProviderUsage?]>([])
+        claude.setReconcile { previous in
+            received.withLock { $0.append(previous) }
+            return previous
+        }
+        return received
+    }
+
+    @Test func startShowsTheSavedReadingUntilARefresh() async throws {
+        let saved = ProviderUsage.sample(.claude, account: "claude")
+        var settings = active()
+        settings.isPaused = true
+        let model = makeModel(settings)
+        let received = recordReconciles()
+        await model.start(archive: archive(saved))
+        #expect(received.value == [saved])
+        #expect(model.usage.readings[.claude] == .current(saved, observedAt: .reference()))
+        #expect(claude.fetchCount == 0)
+        let meter = MainMeter(model.context(at: .reference()))
+        #expect(meter.selected?.id == "claude")
+    }
+
+    /// The first refresh starts from the saved reading, so a provider can keep it as stale
+    /// when the request fails.
+    @Test func theFirstRefreshReconcilesTheSavedReading() async throws {
+        let saved = ProviderUsage.sample(.claude, account: "claude")
+        let model = makeModel(active())
+        let received = recordReconciles()
+        await model.start(archive: archive(saved))
+        await model.scheduler?.waitForWork()
+        #expect(received.value == [saved])
+        #expect(claude.fetchCount == 1)
+    }
+
     @Test func startWithTheDisplayAsleepReconcilesWithoutRefreshing() async throws {
         let directory = try TemporaryDirectory()
         defer { directory.remove() }

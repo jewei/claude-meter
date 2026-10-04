@@ -40,6 +40,9 @@ public final class AppModel {
         settings.onChange = { [weak self] old, new in
             self?.settingsDidChange(from: old, to: new)
         }
+        claudeSettings?.onCredentialsChange = { [weak self] in
+            self?.scheduler?.refreshNow([.claude])
+        }
     }
 
     // MARK: - Models

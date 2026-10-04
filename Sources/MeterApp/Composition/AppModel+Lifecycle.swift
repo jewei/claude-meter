@@ -49,6 +49,9 @@ extension AppModel {
         {
             scheduler?.refreshNow([.claude])
         }
+        if old.claude.extraDirectories != new.claude.extraDirectories {
+            Task { await claudeSettings?.reload() }
+        }
         if old.codex.extraHomes != new.codex.extraHomes {
             scheduler?.refreshNow([.codex])
             Task { await codexSettings?.reload() }

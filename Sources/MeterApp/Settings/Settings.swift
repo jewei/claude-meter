@@ -44,6 +44,27 @@ public struct Settings: Codable, Equatable, Sendable {
         let name = names[account]?.trimmingCharacters(in: .whitespacesAndNewlines)
         return name?.isEmpty == false ? name : nil
     }
+
+    /// Removes everything stored for an account that the user removed: its display name, plan
+    /// badge, off switch, pin, saved card position, and open state.
+    mutating func forgetAccount(_ account: AccountID, of provider: ProviderID) {
+        switch provider {
+        case .claude:
+            claude.accountNames[account] = nil
+            claude.planOverrides[account] = nil
+            claude.disabledAccounts.remove(account)
+        case .codex:
+            codex.accountNames[account] = nil
+        case .cursor, .grok:
+            break
+        }
+        if menuBar.pinnedAccounts[provider] == account {
+            menuBar.pinnedAccounts[provider] = nil
+        }
+        let card = CardID.account(provider, account)
+        cards.order.removeAll { $0 == card }
+        cards.expanded.remove(card)
+    }
 }
 
 public struct ClaudeSettings: Codable, Equatable, Sendable {

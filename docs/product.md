@@ -91,6 +91,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 
 1. **Data**: one switch per source, then each provider's accounts: Claude config dirs and
    connection, Codex homes, display names, and plan badges for logins that report none.
+   Removing a config dir or a Codex home also removes its name, plan badge, switch, pin, and
+   card state (`Settings.forgetAccount`). Every connect and disconnect refreshes Claude, also
+   when the connection mode stays the same (`ClaudeSettingsModel`).
 2. **Appearance**: card style, energy left or used, the menu-bar window, warning and critical
    thresholds (warning 50–90, critical 60–100, steps of 5; critical stays above warning),
    and automatic order.

@@ -30,8 +30,10 @@ extension DisplaySleepMonitor: DisplayStateMonitoring {}
 /// Decides when providers refresh. ``UsageStore`` decides how.
 ///
 /// One global cadence: every 300 s while the display is awake. Opening the popover refreshes
-/// readings at least 60 s old. Display sleep stops all work; wake refreshes readings at least
-/// 300 s old. Requests made in the same main-actor turn merge into one store call.
+/// quota readings at least 60 s old. Display sleep stops all work; wake refreshes quota
+/// readings at least 300 s old. Token history follows its own due rule at each of these
+/// events and never adds a quota request. Requests made in the same main-actor turn merge
+/// into one store call.
 @MainActor
 public final class RefreshScheduler {
     public static let interval: TimeInterval = 300
@@ -43,8 +45,10 @@ public final class RefreshScheduler {
     private var configuration: RefreshConfiguration?
     private var timer: Task<Void, Never>?
     private var pendingRequest: Task<Void, Never>?
-    private var pending: Set<ProviderID> = []
-    private var pendingForcesHistory = false
+    private var pendingQuota: Set<ProviderID> = []
+    private var pendingHistory: Set<ProviderID> = []
+    /// The newest store call, so tests can wait for the work that an event caused.
+    private(set) var latestWork: Task<Void, Never>?
 
     public init(
         store: UsageStore,
@@ -66,26 +70,28 @@ public final class RefreshScheduler {
         let previous = self.configuration
         self.configuration = configuration
         store.setEnabled(configuration.enabledProviders)
-        pending.formIntersection(configuration.enabledProviders)
+        pendingQuota.formIntersection(configuration.enabledProviders)
+        pendingHistory.formIntersection(configuration.enabledProviders)
         guard configuration.canRefresh else {
             cancelWork()
             return
         }
         let alreadyRunning =
             previous?.canRefresh == true ? previous?.enabledProviders ?? [] : []
-        request(configuration.enabledProviders.subtracting(alreadyRunning))
+        let started = configuration.enabledProviders.subtracting(alreadyRunning)
+        request(quota: started, history: started)
         startTimer()
     }
 
-    /// Refreshes `ids` now, superseding work in progress. Use after credential, account, or
-    /// source changes.
+    /// Refreshes quota and history of `ids` now, superseding work in progress. Use after
+    /// credential, account, or source changes.
     public func refreshNow(_ ids: Set<ProviderID>) {
         store.cancel(ids)
-        request(ids, forceHistory: true)
+        request(quota: ids, history: ids, force: true)
     }
 
     public func popoverDidOpen() {
-        request(due(maxAge: Self.popoverMaxAge))
+        request(quota: due(maxAge: Self.popoverMaxAge), history: enabledProviders)
     }
 
     public func stop() {
@@ -98,14 +104,21 @@ public final class RefreshScheduler {
     }
 
     func displayDidWake() {
-        request(due(maxAge: Self.interval))
+        request(quota: due(maxAge: Self.interval), history: enabledProviders)
         startTimer()
     }
 
+    /// Waits for the newest store call to finish. For tests.
+    func waitForWork() async {
+        await latestWork?.value
+    }
+
+    private var enabledProviders: Set<ProviderID> {
+        configuration?.enabledProviders ?? []
+    }
+
     private func due(maxAge: TimeInterval) -> Set<ProviderID> {
-        (configuration?.enabledProviders ?? []).filter {
-            store.needsRefresh($0, maxAge: maxAge)
-        }
+        enabledProviders.filter { store.needsRefresh($0, maxAge: maxAge) }
     }
 
     private func cancelWork() {
@@ -113,8 +126,8 @@ public final class RefreshScheduler {
         timer = nil
         pendingRequest?.cancel()
         pendingRequest = nil
-        pending.removeAll()
-        pendingForcesHistory = false
+        pendingQuota.removeAll()
+        pendingHistory.removeAll()
         store.cancel()
     }
 
@@ -125,29 +138,38 @@ public final class RefreshScheduler {
             while !Task.isCancelled {
                 do { try await sleep(Self.interval) } catch { return }
                 guard let self, !Task.isCancelled else { return }
-                self.request(self.configuration?.enabledProviders ?? [])
+                self.request(quota: self.enabledProviders, history: self.enabledProviders)
             }
         }
     }
 
-    private func request(_ ids: Set<ProviderID>, forceHistory: Bool = false) {
+    /// Queues quota refreshes for `quota` and history refreshes for `history`. Without
+    /// `force`, quota already refreshing and history that is not due are left out; forcing
+    /// applies only to these ids, never to others that merge into the same store call.
+    private func request(quota: Set<ProviderID>, history: Set<ProviderID>, force: Bool = false) {
         guard let configuration, configuration.canRefresh, display?.isDisplayAsleep != true else {
             return
         }
-        let wanted = ids.intersection(configuration.enabledProviders)
-        let new = forceHistory ? wanted : wanted.subtracting(store.refreshing)
-        guard !new.isEmpty else { return }
-        pending.formUnion(new)
-        pendingForcesHistory = pendingForcesHistory || forceHistory
-        guard pendingRequest == nil else { return }
-        pendingRequest = Task { [weak self] in
-            guard let self, !Task.isCancelled else { return }
-            let ids = self.pending
-            let forceHistory = self.pendingForcesHistory
-            self.pending.removeAll()
-            self.pendingForcesHistory = false
-            self.pendingRequest = nil
-            await self.store.refresh(ids, forceHistory: forceHistory)
+        var quota = quota.intersection(configuration.enabledProviders)
+        var history = history.intersection(configuration.enabledProviders)
+        if !force {
+            quota.subtract(store.refreshing)
+            history = history.filter(store.historyNeedsRefresh)
         }
+        guard !quota.isEmpty || !history.isEmpty else { return }
+        pendingQuota.formUnion(quota)
+        pendingHistory.formUnion(history)
+        guard pendingRequest == nil else { return }
+        let task = Task { [weak self] in
+            guard let self, !Task.isCancelled else { return }
+            let quota = self.pendingQuota
+            let history = self.pendingHistory
+            self.pendingQuota.removeAll()
+            self.pendingHistory.removeAll()
+            self.pendingRequest = nil
+            await self.store.refresh(quota: quota, history: history)
+        }
+        pendingRequest = task
+        latestWork = task
     }
 }

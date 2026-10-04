@@ -87,7 +87,7 @@ A reading may outlive a failed refresh only while it belongs to the signed-in lo
 
 ## Scheduling (`RefreshScheduler`)
 
-| Event | Refreshes |
+| Event | Refreshes quota of |
 | --- | --- |
 | Start or resume | Every enabled provider |
 | Every 300 s while the display is awake | Every enabled provider not already refreshing |
@@ -95,6 +95,12 @@ A reading may outlive a failed refresh only while it belongs to the signed-in lo
 | Display wakes | Readings at least 300 s old; then the timer restarts |
 | A provider is enabled, or its accounts or credentials change | That provider only |
 | Display sleeps, pause, quit | Nothing; cancels the timer and in-flight work |
+
+Token history has its own due rule, checked at each of these events for every enabled
+provider: a history is due when it was never read, when the local day or time zone changed
+since its last attempt, or when that attempt is at least 240 s old (a failed history waits
+too). A due history never adds a quota request, and a quota request never adds a history
+that is not due. An account or credential change refreshes that provider's history at once.
 
 There is one global cadence. No battery, network, or per-provider timers.
 

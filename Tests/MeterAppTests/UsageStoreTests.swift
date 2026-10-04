@@ -7,13 +7,16 @@ import Testing
 
 @MainActor
 @Suite(.timeLimit(.minutes(1))) struct UsageStoreTests {
+    private let clock = TestClock()
+
     private func makeStore(
         _ providers: [FakeUsageProvider], history: [FakeHistoryProvider] = [],
         archive: ReadingArchive? = nil
     ) -> UsageStore {
+        let clock = clock
         let store = UsageStore(
             providers: providers, historyProviders: history, archive: archive,
-            now: { .reference() })
+            now: { clock.now }, calendar: { clock.calendar })
         store.setEnabled(Set(providers.map(\.id)))
         return store
     }
@@ -173,29 +176,71 @@ import Testing
     @Test func historyRefreshesOnlyWhenDue() async {
         let provider = FakeUsageProvider(.codex)
         provider.enqueue(.sample(.codex))
-        let history = FakeHistoryProvider(.codex) { now in
-            ProviderTokenHistory(
-                provider: .codex, source: .thisMac, accounts: [:], coverageStart: now,
-                observedAt: now, timeZoneID: Calendar.current.timeZone.identifier)
-        }
+        let history = FakeHistoryProvider(.codex) { now in .sample(.codex, now: now) }
         let store = makeStore([provider], history: [history])
         await store.refresh([.codex])
         await store.refresh([.codex])
         #expect(history.callCount == 1)
         await store.refresh([.codex], forceHistory: true)
         #expect(history.callCount == 2)
+        clock.advance(UsageStore.historyMaxAge)
+        await store.refresh([.codex])
+        #expect(history.callCount == 3)
     }
 
-    @Test func needsRefreshFollowsTheReadingAge() async {
+    @Test func historyIsDueAfterMidnightOrTimeZoneChange() async {
+        let provider = FakeUsageProvider(.codex)
+        provider.enqueue(.sample(.codex))
+        let history = FakeHistoryProvider(.codex) { now in .sample(.codex, now: now) }
+        let store = makeStore([provider], history: [history])
+        // The reference time is 12:00 UTC. Read at 23:58, then cross midnight 3 min later,
+        // before the history is old enough to be due by age.
+        clock.advance(.hours(11) + .minutes(58))
+        await store.refresh(quota: [], history: [.codex])
+        #expect(!store.historyNeedsRefresh(.codex))
+        clock.advance(.minutes(3))
+        #expect(store.historyNeedsRefresh(.codex))
+        await store.refresh(quota: [], history: [.codex])
+        #expect(!store.historyNeedsRefresh(.codex))
+        clock.setTimeZone("Asia/Tokyo")
+        #expect(store.historyNeedsRefresh(.codex))
+    }
+
+    @Test func failedHistoryWaitsBeforeItsNextAttempt() async {
+        let history = FakeHistoryProvider(.claude) { _ in throw ProviderError("Scan failed") }
+        let store = makeStore([FakeUsageProvider(.claude)], history: [history])
+        await store.refresh(quota: [], history: [.claude])
+        #expect(store.histories[.claude] == .failed(UsageIssue("Scan failed")))
+        #expect(!store.historyNeedsRefresh(.claude))
+        clock.advance(UsageStore.historyMaxAge)
+        #expect(store.historyNeedsRefresh(.claude))
+    }
+
+    @Test func needsRefreshFollowsOnlyTheQuotaAge() async {
         let provider = FakeUsageProvider(.claude)
-        provider.enqueue(.sample(.claude, observedAt: .reference(-120)))
-        let store = makeStore([provider])
+        provider.enqueue(.sample(.claude, observedAt: .reference(-30)))
+        let history = FakeHistoryProvider(.claude) { _ in throw ProviderError("Scan failed") }
+        let store = makeStore([provider], history: [history])
         #expect(store.needsRefresh(.claude, maxAge: 60))
         await store.refresh([.claude])
-        #expect(store.needsRefresh(.claude, maxAge: 60))
+        #expect(store.needsRefresh(.claude, maxAge: 30))
+        #expect(!store.needsRefresh(.claude, maxAge: 60))
+        clock.advance(UsageStore.historyMaxAge)
+        #expect(store.historyNeedsRefresh(.claude))
         #expect(!store.needsRefresh(.claude, maxAge: 300))
         store.setEnabled([])
         #expect(!store.needsRefresh(.claude, maxAge: 0))
+        #expect(!store.historyNeedsRefresh(.claude))
+    }
+
+    @Test func historyRefreshAloneSendsNoQuotaRequest() async {
+        let provider = FakeUsageProvider(.claude)
+        provider.enqueue(.sample(.claude))
+        let history = FakeHistoryProvider(.claude) { now in .sample(.claude, now: now) }
+        let store = makeStore([provider], history: [history])
+        await store.refresh(quota: [], history: [.claude])
+        #expect(provider.fetchCount == 0)
+        #expect(history.callCount == 1)
     }
 
     @Test func restoredReadingsShowUntilTheFirstRefresh() async {

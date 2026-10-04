@@ -6,15 +6,16 @@ import Observation
 /// The only owner of provider readings and token histories.
 ///
 /// Each provider has at most one quota refresh and one history refresh in flight. A newer
-/// refresh supersedes only its own provider; only the newest refresh can publish. Disabling a
-/// provider cancels its work, removes its readings, and rejects late results. See
-/// `docs/architecture.md` for the full lifecycle.
+/// refresh supersedes only its own provider; only the newest refresh can publish. Quota and
+/// history are independent: each has its own due rule, token, and deadline, so a due history
+/// never starts a quota request. Disabling a provider cancels its work, removes its readings,
+/// and rejects late results. See `docs/architecture.md` for the full lifecycle.
 @MainActor @Observable
 public final class UsageStore {
-    public static let fetchDeadline: Duration = .seconds(90)
-    public static let historyDeadline: Duration = .seconds(20)
-    /// A history older than this is refreshed with the next quota refresh.
-    public static let historyMaxAge: TimeInterval = 240
+    public nonisolated static let fetchDeadline: Duration = .seconds(90)
+    public nonisolated static let historyDeadline: Duration = .seconds(20)
+    /// A history is due again when its last attempt is at least this old.
+    public nonisolated static let historyMaxAge: TimeInterval = 240
 
     public private(set) var readings: [ProviderID: Reading<ProviderUsage>] = [:]
     public private(set) var histories: [ProviderID: Reading<ProviderTokenHistory>] = [:]
@@ -25,20 +26,33 @@ public final class UsageStore {
     @ObservationIgnored private let historyProviders: [ProviderID: any TokenHistoryProvider]
     @ObservationIgnored private let archive: ReadingArchive?
     @ObservationIgnored private let now: @Sendable () -> Date
+    @ObservationIgnored private let calendar: @Sendable () -> Calendar
     @ObservationIgnored private var enabled: Set<ProviderID> = []
     @ObservationIgnored private var quotaJobs: [ProviderID: Job] = [:]
     @ObservationIgnored private var historyJobs: [ProviderID: Job] = [:]
+    /// When each history refresh last started, and in which time zone.
+    @ObservationIgnored private var historyAttempts: [ProviderID: Attempt] = [:]
 
     private struct Job {
         let token: UUID
         let task: Task<Void, Never>
     }
 
+    private struct Attempt {
+        let date: Date
+        let timeZoneID: String
+    }
+
+    /// - Parameters:
+    ///   - now: The clock for reading ages and history attempts.
+    ///   - calendar: The calendar for the local day of token history. Read on each use, so a
+    ///     time-zone change applies at once.
     public init(
         providers: [any UsageProvider],
         historyProviders: [any TokenHistoryProvider] = [],
         archive: ReadingArchive? = nil,
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = Date.init,
+        calendar: @escaping @Sendable () -> Calendar = { Calendar.current }
     ) {
         self.providers = Dictionary(
             providers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -46,6 +60,7 @@ public final class UsageStore {
             historyProviders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         self.archive = archive
         self.now = now
+        self.calendar = calendar
     }
 
     /// Shows readings saved by an earlier launch until the first refresh replaces them.
@@ -64,17 +79,23 @@ public final class UsageStore {
             cancel([id])
             readings[id] = nil
             histories[id] = nil
+            historyAttempts[id] = nil
             archive?.record(nil, for: id)
         }
     }
 
-    /// Refreshes quota for `ids` and history for those whose history is due. Starts every
-    /// provider before waiting, so one slow provider never delays another. Cancelling the
-    /// caller cancels only these refreshes, never a newer one.
+    /// Refreshes quota for `ids`, and history for those whose history is due, or for all of
+    /// them with `forceHistory`.
     public func refresh(_ ids: Set<ProviderID>, forceHistory: Bool = false) async {
-        let targets = ids.intersection(enabled).sorted { $0.rawValue < $1.rawValue }
-        var tasks = targets.compactMap(startQuota)
-        tasks += targets.filter { forceHistory || historyIsDue($0) }.compactMap(startHistory)
+        await refresh(quota: ids, history: forceHistory ? ids : ids.filter(historyNeedsRefresh))
+    }
+
+    /// Refreshes quota for `quota` and token history for `history`, whether due or not.
+    /// Starts every job before waiting, so one slow provider never delays another. Cancelling
+    /// the caller cancels only these refreshes, never a newer one.
+    public func refresh(quota: Set<ProviderID>, history: Set<ProviderID>) async {
+        var tasks = targets(quota).compactMap(startQuota)
+        tasks += targets(history).compactMap(startHistory)
         await withTaskCancellationHandler {
             for task in tasks { await task.value }
         } onCancel: {
@@ -92,11 +113,34 @@ public final class UsageStore {
         }
     }
 
-    /// Whether `id` should refresh when the reading may be at most `maxAge` seconds old.
+    /// Whether the quota reading of `id` is missing, failed, stale, or at least `maxAge` seconds
+    /// old. History never makes quota due; it has its own rule (``historyNeedsRefresh(_:)``).
     public func needsRefresh(_ id: ProviderID, maxAge: TimeInterval) -> Bool {
         guard enabled.contains(id) else { return false }
-        let quotaDue = readings[id]?.needsRefresh(at: now(), maxAge: maxAge) ?? true
-        return quotaDue || historyIsDue(id)
+        return readings[id]?.needsRefresh(at: now(), maxAge: maxAge) ?? true
+    }
+
+    /// Whether the token history of `id` is due: it was never read, the local day or time zone
+    /// changed since the last attempt, or that attempt is at least ``historyMaxAge`` old. A
+    /// failed history waits for the same age, so a scan that keeps failing does not run again
+    /// on every popover open.
+    public func historyNeedsRefresh(_ id: ProviderID) -> Bool {
+        guard enabled.contains(id), historyProviders[id] != nil, !refreshingHistory.contains(id)
+        else { return false }
+        guard let attempt = historyAttempts[id] else { return true }
+        let date = now()
+        let calendar = calendar()
+        if attempt.timeZoneID != calendar.timeZone.identifier
+            || !calendar.isDate(attempt.date, inSameDayAs: date)
+        {
+            return true
+        }
+        let age = date.timeIntervalSince(attempt.date)
+        return !age.isFinite || age < 0 || age >= Self.historyMaxAge
+    }
+
+    private func targets(_ ids: Set<ProviderID>) -> [ProviderID] {
+        ids.intersection(enabled).sorted { $0.rawValue < $1.rawValue }
     }
 
     // MARK: - Quota
@@ -186,37 +230,24 @@ public final class UsageStore {
 
     // MARK: - History
 
-    private func historyIsDue(_ id: ProviderID) -> Bool {
-        guard historyProviders[id] != nil, !refreshingHistory.contains(id) else { return false }
-        guard let reading = histories[id] else { return true }
-        let date = now()
-        let calendar = Calendar.current
-        if let history = reading.value,
-            history.timeZoneID != calendar.timeZone.identifier
-                || !calendar.isDate(history.observedAt, inSameDayAs: date)
-        {
-            return true
-        }
-        return reading.needsRefresh(at: date, maxAge: Self.historyMaxAge)
-    }
-
     private func startHistory(_ id: ProviderID) -> Task<Void, Never>? {
         guard let source = historyProviders[id] else { return nil }
         historyJobs[id]?.task.cancel()
         let token = UUID()
+        let date = now()
+        historyAttempts[id] = Attempt(date: date, timeZoneID: calendar().timeZone.identifier)
         refreshingHistory.insert(id)
         let task = Task { [weak self] in
             guard let self else { return }
-            await self.runHistory(source, token: token)
+            await self.runHistory(source, token: token, now: date)
         }
         historyJobs[id] = Job(token: token, task: task)
         return task
     }
 
-    private func runHistory(_ source: any TokenHistoryProvider, token: UUID) async {
+    private func runHistory(_ source: any TokenHistoryProvider, token: UUID, now date: Date) async {
         let id = source.id
         defer { finishHistory(id, token: token) }
-        let date = now()
         do {
             let history = try await withDeadline(Self.historyDeadline) {
                 try await source.history(now: date)

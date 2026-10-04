@@ -1,5 +1,6 @@
 import Foundation
 import MeterDomain
+import MeterPlatform
 import MeterTestSupport
 import Testing
 
@@ -393,7 +394,9 @@ import Testing
         await store.refresh([.claude])
         #expect(store.refreshing.isEmpty)
         #expect(store.readings[.claude]?.isStale == true)
-        #expect(store.readings[.claude]?.issue?.message.hasPrefix("Timed out") == true)
+        #expect(
+            store.readings[.claude]?.issue?.message.contains("Claude Meter will try again soon.")
+                == true)
         gate.open()
         await Task.yield()
         #expect(store.readings[.claude]?.value == .sample(.claude))
@@ -408,7 +411,9 @@ import Testing
         }
         let store = makeStore([provider], deadline: .milliseconds(50))
         await store.refresh([.grok])
-        #expect(store.readings[.grok]?.issue?.message.hasPrefix("Timed out") == true)
+        #expect(
+            store.readings[.grok]?.issue?.message.contains("Claude Meter will try again soon.")
+                == true)
         #expect(store.readings[.grok]?.value == nil)
         // The provider is free again: the next refresh runs and publishes.
         gate.open()
@@ -443,7 +448,9 @@ import Testing
             [FakeUsageProvider(.cursor)], history: [history], deadline: .milliseconds(50))
         await store.refresh(quota: [], history: [.cursor])
         #expect(store.refreshingHistory.isEmpty)
-        #expect(store.histories[.cursor]?.issue?.message.hasPrefix("Timed out") == true)
+        #expect(
+            store.histories[.cursor]?.issue?.message.contains("Claude Meter will try again soon.")
+                == true)
         gate.open()
     }
 
@@ -564,5 +571,28 @@ import Testing
         let store = makeStore([provider])
         store.restore([.claude: .sample(.claude, used: 12)])
         #expect(store.readings[.claude]?.value == .sample(.claude, used: 12))
+    }
+}
+
+@Suite struct UsageStoreFailureTextTests {
+    @Test func timeoutsSayWhatHappensNext() {
+        let quota = UsageStore.failure(
+            TimeoutError(limit: .seconds(90)), provider: .codex, isHistory: false)
+        #expect(
+            quota.issue.message == "Codex did not answer in time. Claude Meter will try again soon."
+        )
+        let history = UsageStore.failure(
+            TimeoutError(limit: .seconds(20)), provider: .grok, isHistory: true)
+        #expect(
+            history.issue.message
+                == "Reading Grok token history took too long. Claude Meter will try again soon.")
+        #expect(history.keepsLastReading)
+    }
+
+    @Test func providerErrorsPassThrough() {
+        let error = ProviderError("Sign in again.", needsAction: true, keepsLastReading: false)
+        let failure = UsageStore.failure(error, provider: .cursor, isHistory: false)
+        #expect(failure.issue == error.issue)
+        #expect(!failure.keepsLastReading)
     }
 }

@@ -210,7 +210,7 @@ public final class UsageStore {
             return
         } catch {
             guard isCurrentQuota(id, token) else { return }
-            recordFailure(ProviderError(wrapping: error), for: id)
+            recordFailure(Self.failure(error, provider: id, isHistory: false), for: id)
         }
     }
 
@@ -296,7 +296,7 @@ public final class UsageStore {
             return
         } catch {
             guard isCurrentHistory(id, token) else { return }
-            let failure = ProviderError(wrapping: error)
+            let failure = Self.failure(error, provider: id, isHistory: true)
             if failure.keepsLastReading, let value = histories[id]?.value,
                 let observedAt = histories[id]?.observedAt
             {
@@ -315,5 +315,16 @@ public final class UsageStore {
         guard historyJobs[id]?.token == token else { return }
         historyJobs[id] = nil
         refreshingHistory.remove(id)
+    }
+
+    /// A provider error as is; a safety timeout as a sentence that says what happens next.
+    nonisolated static func failure(_ error: any Error, provider: ProviderID, isHistory: Bool)
+        -> ProviderError
+    {
+        guard error is TimeoutError else { return ProviderError(wrapping: error) }
+        let what =
+            isHistory ? "Reading \(provider.displayName) token history" : "\(provider.displayName)"
+        let verb = isHistory ? "took too long" : "did not answer in time"
+        return ProviderError("\(what) \(verb). Claude Meter will try again soon.")
     }
 }

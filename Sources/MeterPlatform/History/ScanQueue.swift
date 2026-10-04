@@ -10,6 +10,9 @@ actor ScanQueue {
     private var waiters: [(id: UInt64, continuation: CheckedContinuation<Void, any Error>)] = []
     private var nextID: UInt64 = 0
 
+    /// Scans that wait for their turn. Tests use it to wait without sleeping.
+    var waitingCount: Int { waiters.count }
+
     /// Returns when the caller may scan. Throws `CancellationError` when the task is cancelled
     /// while it waits. Every successful call needs one ``leave()``.
     func enter() async throws {

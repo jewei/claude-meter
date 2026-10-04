@@ -27,7 +27,10 @@ public struct QuotaWindow: Codable, Hashable, Sendable, Identifiable {
     /// When the provider says the window resets or ends. Never predicted.
     public let resetsAt: Date?
     /// Whether the window limits the account. Binding windows select the main account and set
-    /// severity. Informational windows (most scoped caps, billing periods) only display.
+    /// severity. Informational windows, such as most scoped caps and Claude's extra usage, only
+    /// display. A billing window can bind: Cursor's billing period and Grok's credits set the
+    /// severity of their cards. ``ProviderID/canOwnMenuBar`` keeps those providers out of the
+    /// menu bar.
     public let isBinding: Bool
 
     public init(

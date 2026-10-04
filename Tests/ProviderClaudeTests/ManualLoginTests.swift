@@ -226,6 +226,23 @@ extension ClaudeTests {
             #expect(http.requests(to: TokenRefresher.url).count == 2)
         }
 
+        @Test func theBackoffDoublesUpToSixHours() async throws {
+            let harness = try connected(expiresAt: .reference(10))
+            let http = usageServer([:], tokenResponse: .json(503, "{}"))
+            let provider = harness.provider(http)
+
+            for failure in 1...8 {
+                _ = try await provider.fetch(previous: nil)
+                #expect(http.requests(to: TokenRefresher.url).count == failure)
+                let delay = min(300 * pow(2, Double(failure - 1)), 6 * 60 * 60)
+                harness.advance(delay - 1)
+                let waiting = try await provider.fetch(previous: nil)
+                #expect(waiting.accounts[0].issue?.message == "Retrying the Claude token refresh…")
+                #expect(http.requests(to: TokenRefresher.url).count == failure)
+                harness.advance(1)
+            }
+        }
+
         @Test func disconnectWinsOverARefreshInFlight() async throws {
             let harness = try connected(expiresAt: .reference(10))
             let started = Latch()

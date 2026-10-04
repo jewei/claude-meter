@@ -117,6 +117,46 @@ extension ClaudeTests {
             #expect(error?.keepsLastReading == true)
         }
 
+        @Test func aSignOutDuringTheRequestDropsTheResponse() async throws {
+            let harness = try signedInDefault()
+            let signOut = Locked(false)
+            let http = FakeHTTPClient { _ in
+                if signOut.value {
+                    try harness.signOut(harness.home.path(".claude"), legacy: true)
+                }
+                return .json(200, ClaudeFixtures.usage(session: 3))
+            }
+            let provider = harness.provider(http)
+            let first = try await provider.fetch(previous: nil)
+            signOut.withLock { $0 = true }
+
+            let second = try await provider.fetch(previous: first)
+
+            #expect(!second.accounts[0].hasObservation)
+            #expect(
+                second.accounts[0].issue?.message
+                    == "Claude Code isn't signed in. Open Claude Code and run /login.")
+        }
+
+        @Test func configFoldersThatCannotBeListedKeepTheReading() async throws {
+            let harness = try signedInDefault()
+            let provider = harness.provider(usageServer(["main": "{}"]))
+            let usage = try await provider.fetch(previous: nil)
+            // Enough folders that listing them takes far longer than the limit.
+            for index in 0..<300 { _ = try harness.home.makeDirectory(".claude-\(index)/projects") }
+            var limits = ClaudeLimits()
+            limits.discovery = .nanoseconds(1)
+            let slow = harness.provider(usageServer(["main": "{}"]), limits: limits)
+
+            #expect(await slow.reconcile(usage) == usage)
+            let error = await #expect(throws: ProviderError.self) {
+                try await slow.fetch(previous: usage)
+            }
+            #expect(
+                error?.issue.message.hasPrefix("Could not read the Claude config folders.") == true)
+            #expect(error?.keepsLastReading == true)
+        }
+
         @Test func theLegacyLoginWithoutAConfigDirUsesTheHomeIdentityFile() async throws {
             let harness = try ClaudeHarness()
             try harness.home.write(ClaudeFixtures.identity(account: "acc-1"), to: ".claude.json")

@@ -7,11 +7,11 @@ import MeterPlatform
 /// One account is read on every refresh, and first: the account of Claude Code's active login
 /// (see ``Plan/alwaysReadID``). Every other account is read when it has no previous attempt,
 /// or when its previous attempt (a refresh that sent its usage request) started at least
-/// 290 s before this refresh started; otherwise its previous value is returned unchanged. Requests go out one at a time. Each account has its
-/// own deadline inside the budget of the whole refresh, so a slow account cannot discard the
-/// others. HTTP 429, or the end of the budget, stops the rest of the refresh; accounts not
-/// attempted keep their previous value and `attemptedAt`, so they are due again at the next
-/// refresh.
+/// 290 s before this refresh started; otherwise its previous value is returned unchanged.
+/// Requests go out one at a time. Each account has its own deadline inside the budget of the
+/// whole refresh, so a slow account cannot discard the others. HTTP 429, or the end of the
+/// budget, stops the rest of the refresh; accounts not attempted keep their previous value and
+/// `attemptedAt`, so they are due again at the next refresh.
 struct AutomaticRefresh: Sendable {
     static let otherAccountInterval: TimeInterval = 300
     /// Refreshes start a little later than the 300 s timer ticks, by a varying amount (local

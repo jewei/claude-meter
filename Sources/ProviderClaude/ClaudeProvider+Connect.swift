@@ -60,8 +60,8 @@ extension ClaudeProvider {
             throw CancellationError()
         } catch {
             throw ProviderError(
-                "Could not save the tokens in the Keychain. \(error.localizedDescription) Try again."
-            )
+                "Could not save the tokens in the Keychain. \(error.localizedDescription) "
+                    + "Try again.")
         }
     }
 

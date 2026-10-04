@@ -31,6 +31,15 @@ enum ClaudeFixtures {
         }
         """
 
+    /// A token response that rotates both tokens for one hour.
+    static let rotated =
+        #"{"access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 3600}"#
+
+    /// The card text of manual tokens that no longer work.
+    static let manualConnectAgain = UsageIssue(
+        "The saved Claude tokens no longer work. Connect again in Settings with new tokens.",
+        needsAction: true)
+
     static func usage(session: Double, weekly: Double = 10) -> String {
         """
         {"five_hour": {"utilization": \(session), "resets_at": "2026-10-04T15:00:00Z"},

@@ -9,9 +9,6 @@ import Testing
 extension ClaudeTests {
     /// Connect never spends a refresh token for nothing, and never loses the tokens it got.
     @Suite struct ManualConnectTests {
-        private static let rotated =
-            #"{"access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 3600}"#
-
         /// Closes the shared gate for 600 s with one 429.
         private func closeGate(_ provider: ClaudeProvider) async {
             _ = try? await provider.connectManually(
@@ -21,7 +18,7 @@ extension ClaudeTests {
         @Test func aClosedGateStopsConnectBeforeItSpendsTheRefreshToken() async throws {
             let harness = try ClaudeHarness(.off)
             let http = FakeHTTPClient { request in
-                if request.url == TokenRefresher.url { return .json(200, Self.rotated) }
+                if request.url == TokenRefresher.url { return .json(200, ClaudeFixtures.rotated) }
                 return .json(429, "{}", headers: ["Retry-After": "600"])
             }
             let provider = harness.provider(http)
@@ -46,7 +43,7 @@ extension ClaudeTests {
             let harness = try ClaudeHarness(.off)
             let limited = Locked(true)
             let http = FakeHTTPClient { request in
-                if request.url == TokenRefresher.url { return .json(200, Self.rotated) }
+                if request.url == TokenRefresher.url { return .json(200, ClaudeFixtures.rotated) }
                 if limited.value { return .json(429, "{}", headers: ["Retry-After": "60"]) }
                 return bearer(request) == "new-access" ? .json(200, "{}") : .json(401, "{}")
             }
@@ -72,7 +69,7 @@ extension ClaudeTests {
 
         @Test func rejectedRotatedTokensAreForgotten() async throws {
             let harness = try ClaudeHarness(.off)
-            let http = usageServer([:], tokenResponse: .json(200, Self.rotated))
+            let http = usageServer([:], tokenResponse: .json(200, ClaudeFixtures.rotated))
             let provider = harness.provider(http)
 
             for _ in 0..<2 {
@@ -93,7 +90,7 @@ extension ClaudeTests {
             let http = FakeHTTPClient { request in
                 if request.url == TokenRefresher.url {
                     await refreshing.wait()
-                    return .json(200, Self.rotated)
+                    return .json(200, ClaudeFixtures.rotated)
                 }
                 return bearer(request) == "new-access" ? .json(200, "{}") : .json(401, "{}")
             }
@@ -126,7 +123,7 @@ extension ClaudeTests {
             let http = FakeHTTPClient { request in
                 if request.url == TokenRefresher.url {
                     await refreshing.wait()
-                    return .json(200, Self.rotated)
+                    return .json(200, ClaudeFixtures.rotated)
                 }
                 return bearer(request) == "new-access" ? .json(200, "{}") : .json(401, "{}")
             }
@@ -166,7 +163,8 @@ extension ClaudeTests {
 
         @Test func aStaleTokenWithoutExpiryTriesTheRefreshTokenOnce() async throws {
             let harness = try ClaudeHarness(.off)
-            let http = usageServer(["new-access": "{}"], tokenResponse: .json(200, Self.rotated))
+            let http = usageServer(
+                ["new-access": "{}"], tokenResponse: .json(200, ClaudeFixtures.rotated))
             let provider = harness.provider(http)
 
             try await provider.connectManually(

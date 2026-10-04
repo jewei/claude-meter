@@ -180,6 +180,25 @@ final class Signal: Sendable {
 }
 
 extension ClaudeHarness {
+    /// `~/.claude` signed in with the legacy item and `~/.claude-work` with its hashed item.
+    static func twoAccounts() throws -> ClaudeHarness {
+        let harness = try ClaudeHarness()
+        let main = try harness.directory(".claude", account: "acc-1")
+        let work = try harness.directory(".claude-work", account: "acc-2")
+        harness.signIn(main, token: "main", legacy: true)
+        harness.signIn(work, token: "work")
+        return harness
+    }
+
+    /// A manual harness with a stored login, `old-access` of `connection-1`.
+    static func manual(expiresAt: Date?, refreshToken: String? = "old-refresh") throws
+        -> ClaudeHarness
+    {
+        let harness = try ClaudeHarness(.manual)
+        try harness.storeManual(refreshToken: refreshToken, expiresAt: expiresAt)
+        return harness
+    }
+
     /// Stores a manual login, as a Connect would.
     func storeManual(
         accessToken: String = "old-access", refreshToken: String? = "old-refresh",

@@ -20,16 +20,6 @@ extension ClaudeTests {
             return harness
         }
 
-        /// `~/.claude` signed in with the legacy item and `~/.claude-work` with its hashed item.
-        private func twoAccounts() throws -> ClaudeHarness {
-            let harness = try ClaudeHarness()
-            let main = try harness.directory(".claude", account: "acc-1")
-            let work = try harness.directory(".claude-work", account: "acc-2")
-            harness.signIn(main, token: "main", legacy: true)
-            harness.signIn(work, token: "work")
-            return harness
-        }
-
         @Test func theActiveLoginIsRequestedFirst() async throws {
             let harness = try activeWork()
             let http = usageServer(["main": "{}", "work": "{}"])
@@ -84,7 +74,7 @@ extension ClaudeTests {
         }
 
         @Test func theActiveLoginIsReadEveryTimeAndOthersAtEachFiveMinuteTick() async throws {
-            let harness = try twoAccounts()
+            let harness = try ClaudeHarness.twoAccounts()
             // Each request takes 2 s of clock time, as a real one does.
             let http = FakeHTTPClient { request in
                 harness.advance(2)
@@ -115,7 +105,7 @@ extension ClaudeTests {
         func aRefreshThatStartsALittleEarlyStillReadsOtherAccounts(
             start: TimeInterval, readsWork: Bool
         ) async throws {
-            let harness = try twoAccounts()
+            let harness = try ClaudeHarness.twoAccounts()
             let http = usageServer(["main": "{}", "work": "{}"])
             let provider = harness.provider(http)
             let first = try await provider.fetch(previous: nil)

@@ -20,6 +20,9 @@ enum CursorFailure: Error, Equatable, Sendable {
     case httpStatus(Int)
     /// The body or the access token does not have the expected shape.
     case unexpectedResponse
+    /// The body passed the HTTP client's size limit. In practice only a usage export with
+    /// many thousands of rows does this.
+    case responseTooLarge
     case unexpectedToken
     case offline
     case timedOut
@@ -70,6 +73,10 @@ enum CursorFailure: Error, Equatable, Sendable {
         case .unexpectedResponse:
             UsageIssue(
                 "Cursor returned an unexpected response. Claude Meter will try again soon.")
+        case .responseTooLarge:
+            UsageIssue(
+                "Cursor sent more usage records than Claude Meter can count. Check your usage in the Cursor dashboard."
+            )
         case .unexpectedToken:
             UsageIssue(
                 "The Cursor sign-in token has an unexpected format. Update Claude Meter if this continues."
@@ -121,7 +128,8 @@ enum CursorFailure: Error, Equatable, Sendable {
         switch error as? HTTPError {
         case .offline: self = .offline
         case .timedOut: self = .timedOut
-        case .responseTooLarge, .redirectRejected: self = .unexpectedResponse
+        case .responseTooLarge: self = .responseTooLarge
+        case .redirectRejected: self = .unexpectedResponse
         case .transport, nil: self = .network
         }
     }

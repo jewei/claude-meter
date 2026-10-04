@@ -70,7 +70,7 @@ import Testing
         #expect(request.headers["Origin"] == "https://cursor.com")
         #expect(request.headers["Authorization"] == nil)
         #expect(request.retry == .never)
-        #expect(request.deadline == .seconds(12))
+        #expect(request.deadline == .seconds(10))
         #expect(result.provider == .cursor)
         #expect(result.source == .account)
         #expect(Array(result.accounts.keys) == [.default])
@@ -204,6 +204,26 @@ import Testing
         let back = await providerError { try await source.history(now: .reference()) }
         #expect(back?.issue == CursorFailure.signInChanged.issue)
         #expect(back?.keepsLastReading == true)
+    }
+
+    /// The HTTP client's 8 MiB limit, not the row limit, bounds a large export in practice.
+    /// The failure says so instead of calling the response unexpected.
+    @Test func anExportAboveTheResponseLimitSaysWhereToLook() async throws {
+        keychain.store(CursorFixture.token(), service: "cursor-access-token")
+        let http = FakeHTTPClient { _ in throw HTTPError.responseTooLarge(limit: 8 * 1024 * 1024) }
+
+        let error = await providerError { try await source(http).history(now: .reference()) }
+
+        #expect(
+            error?.issue.message
+                == "Cursor sent more usage records than Claude Meter can count. Check your usage in the Cursor dashboard."
+        )
+    }
+
+    /// Both credential reads and the export fit the app's 20 s limit for one history read.
+    @Test func theExportAndBothCredentialReadsFitTheHistoryLimit() {
+        let worstCase = CursorCredentialStore.historyReadTimeout * 2 + CursorAPI.exportDeadline
+        #expect(worstCase <= .seconds(16))
     }
 
     /// Nothing is sent before the server's retry time.

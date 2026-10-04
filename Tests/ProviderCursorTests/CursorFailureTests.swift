@@ -8,7 +8,8 @@ import Testing
     @Test func everyMessageTellsTheUserWhatToDo() {
         let failures: [CursorFailure] = [
             .signedOut, .sessionExpired, .sessionRejected, .accessDenied, .usageDisabled,
-            .rateLimited(retryAt: nil), .httpStatus(500), .unexpectedResponse, .unexpectedToken,
+            .rateLimited(retryAt: nil), .httpStatus(500), .unexpectedResponse, .responseTooLarge,
+            .unexpectedToken,
             .offline, .timedOut, .network, .credentialsBusy, .credentialsTimedOut,
             .credentialsUnreadable, .keychainUnavailable, .keychainDenied, .keychainFailed,
             .signInChanged, .invalidDate,

@@ -103,7 +103,10 @@ Cookie: WorkosCursorSessionToken=<user ID>%3A%3A<access token>
 - `startDate`: local midnight six days before today, in milliseconds.
 - `endDate`: now, in milliseconds.
 - No `Authorization` header. The cookie exists only in this request.
-- Retry: never. Deadline: 12 s.
+- Retry: never. Deadline: 10 s. The credential reads before and after it take at most 3 s
+  each, so one history read fits the app's 20 s limit with time left to parse.
+- The HTTP client accepts at most 8 MiB. Export rows are about 90 to 150 bytes, so an export
+  of roughly 55,000 rows or more fails as too large.
 
 Required CSV columns (names trimmed, unique): `Date`, `Input (w/ Cache Write)`,
 `Input (w/o Cache Write)`, `Cache Read`, `Output Tokens`. Other columns, such as `Model` and
@@ -187,7 +190,9 @@ The email is never part of the reading.
 26. A row with the wrong column count, a bad date, or a bad number makes the history partial.
 27. A row before the range start is ignored. A row after now makes the history partial.
 28. Numbers accept thousands separators only in strict groups of three. An empty field is zero.
-29. After 100,000 rows, the remaining rows are not counted, and the history is partial.
+29. An export above the 8 MiB response limit fails, and the message points to the Cursor
+    dashboard. The history is unknown, not partial, because no row arrives. Inside the limit,
+    rows after the first 100,000 are not counted, and the history is partial.
 30. A token without a `sub` user ID, or with characters outside `A-Z a-z 0-9 _ - .`, is an
     unexpected token format. No request is sent.
 31. A failure keeps the previous history only while it belongs to the signed-in login, the rule

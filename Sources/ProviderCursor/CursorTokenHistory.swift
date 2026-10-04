@@ -50,7 +50,8 @@ public final class CursorTokenHistory: TokenHistoryProvider {
         keychain: any Keychain, http: any HTTPClient, home: URL,
         calendar: @escaping @Sendable () -> Calendar
     ) {
-        self.store = CursorCredentialStore(home: home, keychain: keychain)
+        self.store = CursorCredentialStore(
+            home: home, keychain: keychain, readTimeout: CursorCredentialStore.historyReadTimeout)
         self.http = http
         self.calendar = calendar
     }

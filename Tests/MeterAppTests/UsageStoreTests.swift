@@ -243,6 +243,118 @@ import Testing
         #expect(history.callCount == 1)
     }
 
+    // MARK: - Archive
+
+    /// Observed accounts with an identity owner, so the archive may save them.
+    private nonisolated func homes(_ ids: AccountID..., used: Double = 40) -> ProviderUsage {
+        ProviderUsage(
+            provider: .codex,
+            accounts: ids.map { id in
+                AccountUsage(
+                    id: id, name: id.rawValue,
+                    windows: [Fixture.window(.session, used: used)],
+                    observedAt: .reference(), owner: .identity("owner-\(id.rawValue)"))
+            })
+    }
+
+    private func saved(_ archive: ReadingArchive) async -> [ProviderID: ProviderUsage] {
+        archive.flush()
+        return await ReadingArchive(file: archive.file).load()
+    }
+
+    private func keepOnly(_ id: AccountID) -> FakeUsageProvider.Reconcile {
+        { previous in
+            previous.map {
+                ProviderUsage(provider: $0.provider, accounts: $0.accounts.filter { $0.id == id })
+            }
+        }
+    }
+
+    @Test func publishSavesToTheArchive() async throws {
+        let directory = try TemporaryDirectory()
+        defer { directory.remove() }
+        let archive = ReadingArchive(file: directory.path("readings.json"))
+        let provider = FakeUsageProvider(.codex)
+        provider.enqueue(homes("/a"))
+        let store = makeStore([provider], archive: archive)
+        await store.refresh([.codex])
+        #expect(await saved(archive)[.codex] == homes("/a"))
+    }
+
+    @Test func failureWithoutRetentionForgetsTheArchive() async throws {
+        let directory = try TemporaryDirectory()
+        defer { directory.remove() }
+        let archive = ReadingArchive(file: directory.path("readings.json"))
+        let provider = FakeUsageProvider(.codex)
+        provider.enqueue(homes("/a"))
+        provider.enqueue(failure: ProviderError("Signed out", keepsLastReading: false))
+        let store = makeStore([provider], archive: archive)
+        await store.refresh([.codex])
+        await store.refresh([.codex])
+        #expect(await saved(archive).isEmpty)
+    }
+
+    @Test func disablingForgetsTheArchive() async throws {
+        let directory = try TemporaryDirectory()
+        defer { directory.remove() }
+        let archive = ReadingArchive(file: directory.path("readings.json"))
+        let provider = FakeUsageProvider(.codex)
+        provider.enqueue(homes("/a"))
+        let store = makeStore([provider], archive: archive)
+        await store.refresh([.codex])
+        store.setEnabled([])
+        #expect(await saved(archive).isEmpty)
+    }
+
+    @Test func reconciledRemovalIsArchived() async throws {
+        let directory = try TemporaryDirectory()
+        defer { directory.remove() }
+        let archive = ReadingArchive(file: directory.path("readings.json"))
+        let provider = FakeUsageProvider(.codex)
+        provider.enqueue(homes("/a", "/b"))
+        let store = makeStore([provider], archive: archive)
+        await store.refresh([.codex])
+
+        provider.setReconcile(keepOnly("/a"))
+        let gate = Gate()
+        provider.enqueue { _ in
+            await gate.wait()
+            try Task.checkCancellation()
+            return self.homes("/a", "/b")
+        }
+        let refresh = Task { await store.refresh([.codex]) }
+        #expect(await gate.waitForArrivals())
+        refresh.cancel()
+        gate.open()
+        await refresh.value
+        #expect(store.readings[.codex]?.value?.accounts.map(\.id) == ["/a"])
+        #expect(await saved(archive)[.codex]?.accounts.map(\.id) == ["/a"])
+    }
+
+    @Test func reconcileKeepsTheStaleState() async {
+        let provider = FakeUsageProvider(.codex)
+        provider.enqueue(homes("/a", "/b"))
+        provider.enqueue(failure: ProviderError("Offline"))
+        let store = makeStore([provider])
+        await store.refresh([.codex])
+        await store.refresh([.codex])
+
+        provider.setReconcile(keepOnly("/a"))
+        let gate = Gate()
+        provider.enqueue { _ in
+            await gate.wait()
+            return self.homes("/a")
+        }
+        let refresh = Task { await store.refresh([.codex]) }
+        #expect(await gate.waitForArrivals())
+        #expect(
+            store.readings[.codex]
+                == .stale(homes("/a"), observedAt: .reference(), issue: UsageIssue("Offline")))
+        gate.open()
+        await refresh.value
+        #expect(store.readings[.codex] == .current(homes("/a"), observedAt: .reference()))
+    }
+
     @Test func restoredReadingsShowUntilTheFirstRefresh() async {
         let provider = FakeUsageProvider(.claude)
         let store = makeStore([provider])

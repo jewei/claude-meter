@@ -61,7 +61,9 @@ selection, severity, or the menu bar.
 Each provider has at most one refresh in flight, identified by a token.
 
 1. A new refresh cancels the previous one for the same provider only.
-2. `reconcile(previous)`. If the result differs, publish it (nil removes the reading).
+2. `reconcile(previous)`. If the result differs, publish it and save it to the reading
+   archive at once (nil removes the reading; a failed reading keeps its issue), so a removed
+   login never returns at the next launch even when the fetch is cancelled.
 3. `fetch(previous: reconciled)` under the safety deadline.
 4. If the token is still current and the provider is still enabled, publish:
    - any account has an observation → `.current(usage, observedAt: usage.observedAt)`;

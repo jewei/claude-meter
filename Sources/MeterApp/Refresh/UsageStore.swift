@@ -191,17 +191,21 @@ public final class UsageStore {
         refreshing.remove(id)
     }
 
-    /// Keeps the outer state (current or stale) and replaces only the value. A value with no
-    /// observation is removed; the fetch that follows decides what to show.
+    /// Keeps the outer state (current, stale, or failed) and replaces only the value. A value
+    /// with no observation is removed, unless the reading failed and its issue still applies.
+    /// The archive changes at once too, so a removed login never returns at the next launch,
+    /// even when the fetch that follows is cancelled.
     private func applyReconciled(_ usage: ProviderUsage?, for id: ProviderID) {
-        guard let usage, let observedAt = usage.observedAt else {
-            readings[id] = nil
-            return
-        }
-        if case .stale(_, _, let issue) = readings[id] {
+        archive?.record(usage, for: id)
+        switch (readings[id], usage, usage?.observedAt) {
+        case (.failed(let issue, _), _, _):
+            readings[id] = .failed(issue, partial: usage)
+        case (.stale(_, _, let issue), let usage?, let observedAt?):
             readings[id] = .stale(usage, observedAt: observedAt, issue: issue)
-        } else {
+        case (_, let usage?, let observedAt?):
             readings[id] = .current(usage, observedAt: observedAt)
+        default:
+            readings[id] = nil
         }
     }
 

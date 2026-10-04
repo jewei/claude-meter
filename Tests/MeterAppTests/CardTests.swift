@@ -422,7 +422,11 @@ import Testing
         #expect(try tokenRows(.claude, history: nil).sourceLabel == "This Mac")
         let reported = try tokenRows(.codex, history: history(.codex, source: .account))
         #expect(reported.sourceLabel == "Account usage")
+        #expect(reported.help == "Token records reported by Codex for this account.")
         #expect(reported.rows.first?.value == "1 token")
+        #expect(
+            try tokenRows(.cursor, history: nil).help
+                == "Token records reported by Cursor for this account.")
     }
 
     @Test func tokenRowsWhileScanningAndWhenOld() throws {

@@ -73,7 +73,7 @@ struct TokenRowsBuilder {
         return TokenRowsModel(
             sourceLabel: isAccountSource ? "Account usage" : "This Mac",
             help: isAccountSource
-                ? "Token records reported by Cursor for this account."
+                ? "Token records reported by \(provider.displayName) for this account."
                 : "Local sessions in this account's folder on this Mac, including earlier logins "
                     + "that used the folder. Other folders and devices are not included.",
             rows: rows,

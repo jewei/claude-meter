@@ -11,15 +11,18 @@ import MeterPlatform
 public final class CodexTokenHistory: TokenHistoryProvider {
     private static let folders = ["sessions", "archived_sessions"]
 
-    private let roots: @Sendable () async -> [HistoryRoot]
+    private let roots: @Sendable () async throws -> [HistoryRoot]
     private let calendar: Calendar
     private let scanner = HistoryScanner<CodexSessionLog>(match: .fileExtension("jsonl"))
 
     /// - Parameters:
-    ///   - roots: Each account's Codex home, such as `~/.codex`, read at every refresh.
+    ///   - roots: Each account's Codex home, such as `~/.codex`, read at every refresh. When
+    ///     the homes cannot be resolved, throw (see ``CodexProvider/resolveHomes(for:)``): the
+    ///     read fails and keeps its last value, and the scan state stays. An empty list would
+    ///     discard the scan state, and the next read would read every file again.
     ///   - calendar: Assigns records to local days. The default follows the system time zone.
     public init(
-        roots: @escaping @Sendable () async -> [HistoryRoot],
+        roots: @escaping @Sendable () async throws -> [HistoryRoot],
         calendar: Calendar = .autoupdatingCurrent
     ) {
         self.roots = roots
@@ -31,7 +34,7 @@ public final class CodexTokenHistory: TokenHistoryProvider {
     /// Token history for today and the previous six local days, labeled as this Mac.
     public func history(now: Date) async throws -> ProviderTokenHistory {
         let tally = try TokenDayTally(now: now, calendar: calendar)
-        let scanRoots = await roots().flatMap { root in
+        let scanRoots = try await roots().flatMap { root in
             Self.folders.map { folder in
                 HistoryRoot(
                     account: root.account,

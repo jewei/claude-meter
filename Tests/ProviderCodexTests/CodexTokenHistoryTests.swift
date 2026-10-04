@@ -226,6 +226,142 @@ import Testing
         #expect(!result.history(for: "home").isPartial)
     }
 
+    /// CDX-12: counters that restart inside one file (a resumed session) still count. A
+    /// restart seen at its first response is exact.
+    @Test func countersThatRestartInsideAFileStillCount() async throws {
+        let home = try TemporaryDirectory()
+        defer { home.remove() }
+        let log = try json(
+            metadata("session"), event(total: (100, 10), last: (100, 10), id: "a"),
+            event(total: (10, 1), last: (10, 1), id: "b"),
+            event(total: (30, 3), last: (20, 2), id: "c"))
+        try home.write(log, to: "sessions/a.jsonl")
+        let result = try await history(["home": home])
+        #expect(tokens(result) == 143)
+        #expect(!result.history(for: "home").isPartial)
+    }
+
+    @Test func aRestartFoundLateCountsTheEventAndIsPartial() async throws {
+        let home = try TemporaryDirectory()
+        defer { home.remove() }
+        let log = try json(
+            metadata("session"), event(total: (100, 10), last: (100, 10), id: "a"),
+            event(total: (30, 3), last: (20, 2), id: "b"))
+        try home.write(log, to: "sessions/a.jsonl")
+        let result = try await history(["home": home])
+        #expect(tokens(result) == 132)
+        #expect(result.history(for: "home").isPartial)
+    }
+
+    /// A subagent whose counters restart at its ordinal owns its whole total.
+    @Test func aSubagentWhoseCountersRestartAtItsOrdinalOwnsThem() async throws {
+        let home = try TemporaryDirectory()
+        defer { home.remove() }
+        let inherited = event(total: (100, 10), last: (100, 10), ordinal: 10, id: "parent")
+        try home.write(try json(metadata("parent"), inherited), to: "sessions/parent.jsonl")
+        let source = ["subagent": ["thread_spawn": ["parent_thread_id": "parent"]]]
+        try home.write(
+            try json(
+                metadata("child", ordinal: 50, extra: ["source": source]), metadata("parent"),
+                inherited, event(total: (5, 1), last: (5, 1), ordinal: 50, id: "c1"),
+                event(total: (15, 2), last: (10, 1), ordinal: 51, id: "c2")),
+            to: "sessions/child.jsonl")
+        let result = try await history(["home": home])
+        #expect(tokens(result) == Int64(110 + 6 + 11))
+        #expect(!result.history(for: "home").isPartial)
+    }
+
+    /// CDX-13: a subagent that names no parent and no ordinal (such as a review) starts its
+    /// own history, so it owns all its events.
+    @Test func aSubagentWithoutAParentOwnsItsEvents() async throws {
+        let sources: [Any] = [
+            ["subagent": "review"], "subagent", ["subagent": ["other": "memory"]],
+            ["subagent": ["thread_spawn": ["depth": 1]]],
+        ]
+        for source in sources {
+            let home = try TemporaryDirectory()
+            defer { home.remove() }
+            try home.write(
+                try json(
+                    metadata("review", extra: ["source": source]),
+                    event(total: (50, 5), last: (50, 5), id: "r")),
+                to: "sessions/review.jsonl")
+            let result = try await history(["home": home])
+            #expect(tokens(result) == 55, "\(source)")
+            #expect(!result.history(for: "home").isPartial, "\(source)")
+        }
+    }
+
+    /// CDX-10: when the homes cannot be resolved, the read fails and keeps its last value. It
+    /// never scans no roots, which would discard the scan state.
+    @Test func aFailedRootResolutionFailsTheRead() async throws {
+        let home = try TemporaryDirectory()
+        defer { home.remove() }
+        let line = event(total: (100, 10), last: (100, 10), id: "one")
+        try home.write(try json(metadata("session"), line), to: "sessions/a.jsonl")
+        let failing = Locked(false)
+        let roots = [HistoryRoot(account: "home", directory: home.url)]
+        let source = CodexTokenHistory(
+            roots: {
+                if failing.value { throw ProviderError("The homes did not answer.") }
+                return roots
+            }, calendar: calendar)
+        #expect(tokens(try await source.history(now: .reference())) == 110)
+
+        failing.withLock { $0 = true }
+        await #expect(throws: ProviderError.self) { try await source.history(now: .reference()) }
+
+        failing.withLock { $0 = false }
+        #expect(tokens(try await source.history(now: .reference())) == 110)
+    }
+
+    @Test func lastOnlyEventsCountOncePerTurnResponseAndValue() async throws {
+        let home = try TemporaryDirectory()
+        defer { home.remove() }
+        let withIDs = try json(
+            metadata("ids"), event(total: nil, last: (10, 1), id: "r1"),
+            event(total: nil, last: (10, 1), id: "r1"), event(total: nil, last: (20, 2), id: "r2"))
+        try home.write(withIDs, to: "sessions/ids.jsonl")
+        let result = try await history(["home": home])
+        #expect(tokens(result) == 33)
+        #expect(!result.history(for: "home").isPartial)
+
+        let other = try TemporaryDirectory()
+        defer { other.remove() }
+        let repeated = event(total: nil, last: (10, 1), id: nil)
+        try other.write(try json(metadata("plain"), repeated, repeated), to: "sessions/a.jsonl")
+        let plain = try await history(["home": other])
+        #expect(tokens(plain) == 11)
+        #expect(plain.history(for: "home").isPartial)
+    }
+
+    @Test func aRepeatedResponseWithOtherUsageCountsOnceAndIsPartial() async throws {
+        let home = try TemporaryDirectory()
+        defer { home.remove() }
+        let log = try json(
+            metadata("session"), event(total: (100, 10), last: (100, 10), id: "r"),
+            event(total: (150, 15), last: (50, 5), id: "r"))
+        try home.write(log, to: "sessions/a.jsonl")
+        let result = try await history(["home": home])
+        #expect(tokens(result) == 110)
+        #expect(result.history(for: "home").isPartial)
+    }
+
+    /// A fork without an ordinal needs valid parent counters to find its boundary.
+    @Test func aParentWithInvalidCountersLeavesTheForkUnresolved() async throws {
+        let home = try TemporaryDirectory()
+        defer { home.remove() }
+        let before = event(total: (100, 10), last: (100, 10), at: .reference(-60), id: "p")
+        let broken = event(total: (120, 12), last: nil, extra: ["input_tokens": true])
+        try home.write(try json(metadata("parent"), before, broken), to: "sessions/parent.jsonl")
+        let owned = event(total: (150, 15), last: (50, 5), at: .reference(-1), id: "c")
+        try home.write(
+            try json(metadata("fork", parent: "parent"), before, owned), to: "sessions/fork.jsonl")
+        let result = try await history(["home": home])
+        #expect(tokens(result) == 110)
+        #expect(result.history(for: "home").isPartial)
+    }
+
     @Test func eachHomeCountsOnlyItsOwnFolders() async throws {
         let personal = try TemporaryDirectory()
         let work = try TemporaryDirectory()

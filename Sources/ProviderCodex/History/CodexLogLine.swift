@@ -58,20 +58,17 @@ struct CodexLogLine: Decodable {
         }
     }
 
-    /// `payload.source`: the text `subagent`, or an object with a `subagent` key that can
-    /// name the parent thread.
+    /// `payload.source`: text such as `cli`, or an object such as `{"subagent":"review"}` or
+    /// `{"subagent":{"thread_spawn":{"parent_thread_id":…}}}`. Only a spawned thread names
+    /// its parent.
     struct Source: Decodable {
-        let isSubagent: Bool
         let parentID: String?
 
         init(from decoder: any Decoder) throws {
-            if let text = try? decoder.singleValueContainer().decode(String.self) {
-                isSubagent = text == "subagent"
+            guard let container = try? decoder.container(keyedBy: Keys.self) else {
                 parentID = nil
                 return
             }
-            let container = try decoder.container(keyedBy: Keys.self)
-            isSubagent = container.contains(.subagent)
             let subagent = try? container.nestedContainer(keyedBy: Keys.self, forKey: .subagent)
             let spawn = try? subagent?.nestedContainer(keyedBy: Keys.self, forKey: .threadSpawn)
             parentID = (spawn?.lenient(.parentThread) as HistoryJSON.Text?)?.value

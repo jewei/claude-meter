@@ -75,8 +75,9 @@ struct CodexSessionLog: HistoryFileParser {
                 invalidOwnership = true
             }
         }
-        if let source = payload.source, source.isSubagent {
-            needsOwnedBoundary = true
+        // A subagent that names no parent and no ordinal (such as `review`) starts its own
+        // history, so it owns all its events. One that names a parent copies its history.
+        if let source = payload.source {
             parentID = parentID ?? source.parentID
         }
         if let ordinal = payload.historyStartOrdinal {

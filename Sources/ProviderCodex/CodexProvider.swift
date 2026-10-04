@@ -73,10 +73,28 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
     public var id: ProviderID { .codex }
 
     /// The implicit home first, then the extra homes, each canonical and listed once.
-    /// Runs off-main. Empty when the file system does not answer within 5 seconds.
-    public func homes(for configuration: CodexConfiguration) async -> [CodexHome] {
-        (try? await resolve(configuration)) ?? []
+    /// Runs off-main.
+    ///
+    /// - Throws: `CancellationError`, or a ``ProviderError`` that keeps the last reading when
+    ///   the file system does not answer within 5 seconds. History roots must use this, so a
+    ///   slow disk never looks like "no homes" and never discards the scan state.
+    public func resolveHomes(for configuration: CodexConfiguration) async throws -> [CodexHome] {
+        do {
+            return try await resolve(configuration)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw Self.homesUnresolved
+        }
     }
+
+    /// Like ``resolveHomes(for:)``, for display only: empty when the homes cannot be resolved.
+    public func homes(for configuration: CodexConfiguration) async -> [CodexHome] {
+        (try? await resolveHomes(for: configuration)) ?? []
+    }
+
+    private static let homesUnresolved = ProviderError(
+        "Could not read the Codex home folders in time. Refresh again.")
 
     /// Whether `url` holds `auth.json` or `config.toml`, so it can be a Codex home.
     public static func looksLikeHome(_ url: URL) -> Bool {
@@ -143,7 +161,7 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
             throw CancellationError()
         } catch {
             Self.log.error("Codex homes could not be resolved", error)
-            throw ProviderError("Could not read the Codex home folders in time. Refresh again.")
+            throw Self.homesUnresolved
         }
         let attempts = await refreshAll(homes, until: deadline)
         try Task.checkCancellation()

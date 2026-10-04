@@ -110,7 +110,10 @@ Only the fields below are read. All other fields are skipped.
     `cache_write_input_tokens` from the Responses API `input_tokens_details`. Its test has
     input 100, cached 40, cache write 60, output 10, and total 110.
 25. Codex writes cumulative counters. An event counts only the growth over the highest
-    counters seen before it, and at most its own `last_token_usage`.
+    counters seen before it, and at most its own `last_token_usage`. Counters that fall below
+    that mark restarted (for example a session resumed in the same file): the event counts
+    its own `last_token_usage`, and the mark starts again from its total. A restart seen at
+    its first response (total equal to last) is exact; a later one makes history partial.
 26. A repeated `response_id` counts once.
 27. An event with only `last_token_usage` counts once per turn, response, and value.
 28. Copies of one session (the same session ID, for example in `sessions` and
@@ -121,7 +124,14 @@ Only the fields below are read. All other fields are skipped.
       ordinal or later.
     - Without it, the boundary is the first event after the fork time whose counters
       continue the parent's counters.
-30. The parent must be in the same account's folders.
+
+    A file has a parent when it names one (`forked_from_id`, `parent_thread_id`, or
+    `source.subagent.thread_spawn.parent_thread_id`), has an ordinal, or repeats another
+    session's metadata. A subagent without any of these (such as `{"subagent":"review"}`)
+    starts its own history and owns all its events.
+30. The parent must be in the same account's folders. The account folders come from the
+    Codex homes. When the homes cannot be resolved in time, the read fails and keeps its last
+    value. It never scans an empty root list, which would discard the scan state (rule 59).
 
 ## Counting rules: Grok Build
 

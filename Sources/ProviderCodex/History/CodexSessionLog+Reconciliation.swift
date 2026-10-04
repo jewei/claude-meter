@@ -56,8 +56,10 @@ extension CodexSessionLog {
 /// Turns cumulative counters into records.
 ///
 /// Only growth over the highest counters seen so far counts, limited by the event's own
-/// `last` usage. A repeated response ID counts once. An event with only `last` usage counts
-/// once per turn, response, and value.
+/// `last` usage. Counters that fall below that mark restarted (for example when Codex resumed
+/// the session in the same file): the event's own `last` usage counts, and the mark starts
+/// again from its total. A repeated response ID counts once. An event with only `last` usage
+/// counts once per turn, response, and value.
 private struct CounterWalk {
     private struct LastOnlyKey: Hashable {
         let turnID: String?
@@ -85,7 +87,15 @@ private struct CounterWalk {
             return
         }
         let delta: CodexTokenCounts
-        if let total = event.total {
+        if let total = event.total, let last = event.last, !total.covers(watermark),
+            !baseline.covers(total), total.covers(last)
+        {
+            // A restart seen at its first response (total equal to last) is exact. A later
+            // one missed the responses in between.
+            if total != last { isPartial = true }
+            delta = last
+            watermark = total
+        } else if let total = event.total {
             if !total.covers(watermark), !baseline.covers(total) { isPartial = true }
             let growth = total.subtracting(watermark)
             watermark = watermark.maximum(total)

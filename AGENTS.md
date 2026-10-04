@@ -12,7 +12,7 @@ that a change has broken before.
 | Command | What it does |
 | --- | --- |
 | `make check` | The gate. Format lint, all tests with warnings as errors, unsigned Debug and Release app builds. CI runs exactly this. |
-| `make test` | Build with warnings as errors, then run every test. Prints only failures, with file and line. Fast; no Xcode project involved. |
+| `make test` | Build with warnings as errors, then run every test. Prints a short summary for each test product, and each failure with file and line. Fast; no Xcode project involved. |
 | `make test VERBOSE=1` | The same, and lists every test. Use it to find the test that crashed. |
 | `make format` | Format every Swift file with `swift format` and `.swift-format`. |
 | `make app` / `make run` | Build the unsigned Debug app / build and launch it. |

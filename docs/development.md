@@ -44,7 +44,7 @@ not on that team, use `make app` and `make run`. They build without a signature.
 | --- | --- |
 | `make help` | List the commands. This is what `make` with no target does. |
 | `make check` | The gate: format lint, all tests, unsigned Debug and universal Release apps. |
-| `make test` | Build with warnings as errors, then run every test. It prints only failures, with file and line. It does not use the Xcode project. |
+| `make test` | Build with warnings as errors, then run every test. It prints a short summary for each test product, and each failure with its file and line. It does not use the Xcode project. |
 | `make test VERBOSE=1` | The same, and it lists every test. A crash names no test in the quiet output; this shows which test ran last. |
 | `make format` | Format all Swift files in place with `.swift-format`. |
 | `make lint` | Fail on a format difference. |

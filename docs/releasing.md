@@ -94,8 +94,9 @@ step prints `==> <step>`.
 1. **Check preconditions.** VERSION is 4.x. The working tree is clean, with no untracked
    files. When it publishes: the branch is `main`, `HEAD` equals the fetched `origin/main`,
    and tag `vVERSION` does not exist. BUILD is greater than every `sparkle:version` in
-   `appcast.xml`. `CHANGELOG.md` has a `## [Unreleased]` section that is not empty. The
-   signing identity, the notarization profile, and the Sparkle key are present.
+   `appcast.xml`. `CHANGELOG.md` has a `## [Unreleased]` section that is not empty.
+   `ClaudeMeterUpdateRequirement` in `App/Info.plist` compiles with `csreq`. The signing
+   identity, the notarization profile, and the Sparkle key are present.
 2. **Run `make check`.** The same gate as CI, including an unsigned Release build.
 3. **Archive and export with Developer ID.** A universal Release archive in
    `build/release`, with the version and build from the command line. The export uses

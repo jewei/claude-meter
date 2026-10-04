@@ -161,6 +161,13 @@ main() {
     NOTES="$(unreleased_notes)"
     [[ -n "${NOTES//[[:space:]]/}" ]] || die "The [Unreleased] section of CHANGELOG.md is empty."
     [[ "$NOTES" != *"]]>"* ]] || die "The release notes must not contain ']]>'."
+    # Step 7 checks the app against this requirement. Compile it now, so a bad text stops the
+    # release before the build and notarization, not after them.
+    local requirement
+    requirement="$(/usr/libexec/PlistBuddy -c "Print :ClaudeMeterUpdateRequirement" App/Info.plist)" ||
+        die "App/Info.plist has no ClaudeMeterUpdateRequirement."
+    csreq -r="$requirement" -t >/dev/null ||
+        die "ClaudeMeterUpdateRequirement in App/Info.plist is not a valid code requirement."
     identities="$(security find-identity -v -p codesigning)"
     [[ "$identities" == *"$SIGNING_IDENTITY"* ]] ||
         die "The signing identity '$SIGNING_IDENTITY' is not in the Keychain."
@@ -210,7 +217,8 @@ main() {
     local details binary_uuids symbol_uuids
     codesign --verify --deep --strict --verbose=2 "$APP"
     # The app updates itself only when it meets this requirement (App/Sources/ReleaseSignature).
-    codesign --verify --strict -R="=$(plist_value ClaudeMeterUpdateRequirement)" "$APP" ||
+    # In `-R=text` the "=" marks inline text; another "=" would be a requirement syntax error.
+    codesign --verify --strict -R="$(plist_value ClaudeMeterUpdateRequirement)" "$APP" ||
         die "The app does not meet its own update requirement, so it would never update."
     details="$(codesign -dv "$APP" 2>&1)"
     [[ "$details" == *"TeamIdentifier=$TEAM_ID"* ]] || die "The app is not signed by $TEAM_ID."

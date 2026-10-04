@@ -756,7 +756,11 @@ Startup and Appearance settings replace an invalid menu-bar mode, including the 
 `forecast` value and the removed `nearest` value, with `5h` in standard defaults.
 
 Account names and plans accept user overrides. A name override takes precedence over the
-friendly config label. A plan override takes precedence over the account OAuth plan.
+friendly config label. The account OAuth plan takes precedence over a plan override. The
+override applies only when the login reports no plan, and Settings then offers the plan
+menu. This changes the earlier decision to prefer the override: an old badge can describe
+an earlier login in the same config dir. Claude Max plans keep their 5x or 20x tier on
+the badge.
 Configured paths are canonicalized and account disabling never removes the default
 account.
 

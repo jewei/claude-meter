@@ -376,6 +376,10 @@ struct PlanBadge: View {
 
     static func style(for plan: String) -> (fg: Color, bg: Color, text: String) {
         let p = plan.lowercased()
+        // Claude's detected Max tiers keep their usage multiplier.
+        if p == "max 5x" || p == "max 20x" {
+            return (.pfPlanMaxFG, .pfPlanMaxBG, plan.uppercased())
+        }
         if p.contains("max") { return (.pfPlanMaxFG, .pfPlanMaxBG, "MAX") }
         if p.contains("enterprise") { return (.pfPlanMaxFG, .pfPlanMaxBG, "ENTERPRISE") }
         if p.contains("team") { return (.pfPlanProFG, .pfPlanProBG, "TEAM") }

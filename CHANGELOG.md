@@ -12,6 +12,11 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- A Claude account card shows the plan that its login reports, such as Max 5x. An older
+  manual badge from Settings no longer hides it.
+
 ## [3.1.2] - 2026-10-04
 
 ### Fixed

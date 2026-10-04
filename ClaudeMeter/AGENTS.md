@@ -14,7 +14,7 @@ Follow the visual rules in [DESIGN.md](../DESIGN.md).
   bar keeps system fonts for their metrics. When you change the SwiftUI-drawn bolt icon,
   regenerate all 10 AppIcon sizes.
 - Account name precedence is the `MeterSettings` override, then `friendlyName(label)`.
-  Plan precedence is the override, then the account OAuth plan.
+  Plan precedence is the account OAuth plan, then the override.
 - `mainMeterSeverity` and `mainMeterLimitSets` use the selected provider's exact account
   pin, or its nearest-limit account.
 - `PopoverView` owns disclosure state, persistence, and rendering.

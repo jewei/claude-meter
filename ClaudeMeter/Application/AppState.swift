@@ -75,7 +75,8 @@ final class AppState: ObservableObject {
             var account = $0
             account.label =
                 MeterSettings.accountName(forKey: account.id) ?? account.label.friendlyAccountLabel
-            account.plan = MeterSettings.accountPlan(forKey: account.id) ?? account.plan
+            // The login's own plan wins. An old manual badge can describe an earlier login.
+            account.plan = account.plan ?? MeterSettings.accountPlan(forKey: account.id)
             return account
         }
     }

@@ -138,7 +138,7 @@ maps roles and weights to their faces. The menu bar uses system fonts.
 | Account name   | Fredoka 600, 15                        | "Work"                                     |
 | Big number     | Fredoka 700–800, 14     | "78%"                                      |
 | Avatar letter  | Fredoka 700, 17 (ring center 19)       | "W"                                        |
-| Plan badge     | Fredoka 700, 10–11                     | "MAX 20×"                                  |
+| Plan badge     | Fredoka 700, 10–11                     | "MAX 20X"                                  |
 | Primary button | Fredoka 700, 14                        | "Open Settings"                            |
 
 | Role           | Spec (Nunito)                          | Use                                        |
@@ -377,7 +377,9 @@ components:
 
 - An account row with an avatar, a bordered display-name field, folder path chip, and
   trailing controls. The field is labeled **Display name** for accessibility. The full
-  config dir is available in the path tooltip and accessibility value.
+  config dir is available in the path tooltip and accessibility value. A Claude row
+  shows the plan that its login reports as a static badge. Only a row with no reported
+  plan shows the **Set plan** menu.
 - An **Add …** button with `folder.badge.plus` and a thick bottom border.
 - Error text in red Nunito 700 at 11pt.
 - A note in a `popover-bg` box.

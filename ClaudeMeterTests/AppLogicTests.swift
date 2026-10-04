@@ -838,6 +838,40 @@ struct AppLogicTests {
         #expect(state.normalizedSnapshots[.claude] == nil)
     }
 
+    @MainActor
+    @Test("A detected Claude plan wins over a manual badge")
+    func detectedClaudePlanWinsOverManualBadge() async {
+        let defaults = UserDefaults.standard
+        let keys = [
+            MeterSettings.disabledAccountKeysKey, MeterSettings.accountPlansKey,
+            MeterSettings.accountNamesKey,
+        ]
+        let saved = keys.map { defaults.object(forKey: $0) }
+        defer { for (key, value) in zip(keys, saved) { defaults.set(value, forKey: key) } }
+        defaults.set([], forKey: MeterSettings.disabledAccountKeysKey)
+        defaults.set([String: String](), forKey: MeterSettings.accountNamesKey)
+        // An old manual badge can describe an earlier login in the same config dir.
+        defaults.set(
+            ["claude": "Team", "claude-work": "Pro"], forKey: MeterSettings.accountPlansKey)
+        let now = Date()
+        let plans: [(String, String?)] = [("claude", nil), ("claude-work", "Max 5x")]
+        let accounts = plans.map { id, plan in
+            ProviderAccountSnapshot(id: id, label: id, plan: plan, windows: [], observedAt: now)
+        }
+        let store = UsageStore(providers: [
+            CodexDisplayProvider(
+                snapshot: ProviderSnapshot(provider: .claude, accounts: accounts, fetchedAt: now))
+        ])
+        store.setEnabled(.claude, enabled: true)
+        let state = AppState(usageStore: store)
+        await store.refresh([.claude])
+
+        #expect(state.claudeAccounts.map(\.plan) == ["Team", "Max 5x"])
+        #expect(PlanBadge.style(for: "Max 5x").text == "MAX 5X")
+        #expect(PlanBadge.style(for: "Max 20x").text == "MAX 20X")
+        #expect(PlanBadge.style(for: "Max").text == "MAX")
+    }
+
     @Test("Disabling a Claude account preserves its exact main-meter pin")
     func disablingClaudeAccountPreservesPin() {
         let suiteName = "AccountTracking-\(UUID().uuidString)"

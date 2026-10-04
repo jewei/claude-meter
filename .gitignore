@@ -1,54 +1,21 @@
-# Xcode
-*.xcodeproj/xcuserdata/
-*.xcworkspace/xcuserdata/
-*.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
-xcuserdata/
-*.pbxuser
-!default.pbxuser
-*.mode1v3
-!default.mode1v3
-*.mode2v3
-!default.mode2v3
-*.perspectivev3
-!default.perspectivev3
-*.moved-aside
-*.hmap
-*.ipa
-*.dSYM.zip
-*.dSYM
-DerivedData/
-build/
-
-# Swift Package Manager
+# Build output
 .build/
+build/
+DerivedData/
+*.xcarchive
+*.dSYM
+*.dSYM.zip
+
+# Xcode user state
+xcuserdata/
+*.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
 .swiftpm/
 
 # macOS
 .DS_Store
-.AppleDouble
-.LSOverride
 ._*
-.Spotlight-V100
-.Trashes
-Icon?
 
-# Instruments and profiling output
-*.trace
-*.profraw
-
-# Archives
-*.xcarchive
-
-# App-specific
-*.sqlite
-*.sqlite-shm
-*.sqlite-wal
-
-# Local agent settings and skills
+# Local agent state
 .agents/
 .claude/
-
-# Brag files
-brag-output/
-# Superpowers planning docs (local-only)
 docs/superpowers/

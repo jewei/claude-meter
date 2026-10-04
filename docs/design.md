@@ -128,7 +128,9 @@ inactive (`allowsToolTipsWhenApplicationIsInactive`).
 - Width 360 pt. SwiftUI draws the chrome: `popover` fill, 2 pt `popoverBorder`, radius 22.
 - Position (`PanelLayout`, pure): the top edge sits 4 pt below the menu bar (below the status
   button when the menu bar hides itself), centered under the button, at least 8 pt from the
-  sides of the visible frame.
+  sides of the visible frame. The controller reads the button and the screen when the
+  popover opens and keeps them while it is open, so a wider menu-bar label or a menu bar
+  that hides itself does not move the panel. A screen change places it again.
 - Height = header + body. Body = content height, at least 120 pt, at most
   `max(560, visibleFrame.height − 72)`, and never more than the room between the top edge
   and the bottom of the visible frame (short screens, a hidden menu bar). Content taller than

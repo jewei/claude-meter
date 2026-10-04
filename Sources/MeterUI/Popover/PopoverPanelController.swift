@@ -9,7 +9,9 @@ import SwiftUI
 /// resigns active, another window takes the keyboard, or Settings opens
 /// (``PopoverDismissal``). Its height follows the content: a change animates with the top
 /// edge fixed, using the card disclosure curve, and applies at once under Reduce Motion,
-/// while hidden, and just after opening.
+/// while hidden, and just after opening. The top edge and the horizontal place come from the
+/// status button when the panel opens and stay while it is open, so a wider menu-bar label or
+/// a menu bar that hides itself does not move it. A screen change places it again.
 @MainActor final class PopoverPanelController {
     /// Changes in the first moments after opening are the content settling, not a card
     /// opening, so they apply without animation.
@@ -28,6 +30,8 @@ import SwiftUI
     private var headerHeight: CGFloat = 56
     private var contentHeight: CGFloat = PanelLayout.minimumBodyHeight
     private var openedAt = Date.distantPast
+    /// The status button and screen at the moment the panel opened. Nil while it is hidden.
+    private var openPlacement: (anchor: CGRect, visibleFrame: CGRect)?
     /// System uptime of the last close that the user did not ask for.
     private var lastAutomaticClose: TimeInterval?
     private var monitors: [Any] = []
@@ -64,6 +68,7 @@ import SwiftUI
         guard !presentation.isVisible else { return }
         presentation.isVisible = true
         openedAt = Date()
+        openPlacement = placement()
         model.popoverDidOpen()
         // Lay out now, so the first frame uses fresh heights.
         hostingView.layoutSubtreeIfNeeded()
@@ -82,6 +87,7 @@ import SwiftUI
     private func close(automatic: Bool) {
         guard presentation.isVisible else { return }
         presentation.isVisible = false
+        openPlacement = nil
         if automatic { lastAutomaticClose = ProcessInfo.processInfo.systemUptime }
         removeMonitors()
         panel.orderOut(nil)
@@ -120,7 +126,7 @@ import SwiftUI
     }
 
     private func updateFrame(animated: Bool) {
-        let (anchorFrame, visibleFrame) = placement()
+        let (anchorFrame, visibleFrame) = openPlacement ?? placement()
         let layout = PanelLayout(
             header: headerHeight, content: contentHeight, anchor: anchorFrame,
             visibleFrame: visibleFrame)
@@ -182,8 +188,14 @@ import SwiftUI
                 forName: NSApplication.didChangeScreenParametersNotification, object: nil,
                 queue: .main
             ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.updateFrame(animated: false) }
+                MainActor.assumeIsolated { self?.screenParametersChanged() }
             })
+    }
+
+    /// The screens changed, so the open panel takes its place under the button again.
+    private func screenParametersChanged() {
+        if openPlacement != nil { openPlacement = placement() }
+        updateFrame(animated: false)
     }
 
     /// Closes the open popover when `change` names a change that closes it. The closure gets

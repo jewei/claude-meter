@@ -134,6 +134,61 @@ import Testing
         #expect(http.requests.map(\.url) == [CursorAPI.usageURL, CursorAPI.planURL])
     }
 
+    /// R3-P-04: a failed or empty plan answer is not asked for again at every refresh. The
+    /// same login is asked at most once a day.
+    @Test(arguments: [500, 200])
+    func aPlanAnswerWithoutAPlanIsAskedAgainOnlyAfterADay(status: Int) async throws {
+        try home.write(token: CursorFixture.token(expiresAt: .reference(.days(3))))
+        let http = FakeHTTPClient { request in
+            request.url == CursorAPI.planURL ? .json(status, "{}") : .json(200, CursorFixture.usage)
+        }
+        let provider = provider(http)
+
+        let first = try await provider.fetch(previous: nil)
+        #expect(try account(first).plan == nil)
+        advance(300)
+        let second = try await provider.fetch(previous: first)
+        #expect(
+            http.requests.map(\.url) == [CursorAPI.usageURL, CursorAPI.planURL, CursorAPI.usageURL])
+        advance(.days(1))
+        _ = try await provider.fetch(previous: second)
+        #expect(http.requests.map(\.url).suffix(2) == [CursorAPI.usageURL, CursorAPI.planURL])
+    }
+
+    /// R3-P-04: HTTP 429 on the plan request holds the login until its retry time, so the next
+    /// refresh sends nothing. The usage of that refresh still shows.
+    @Test func aRateLimitedPlanRequestHoldsTheLogin() async throws {
+        try home.write(token: CursorFixture.token())
+        let http = FakeHTTPClient { request in
+            request.url == CursorAPI.planURL
+                ? .json(429, "", headers: ["Retry-After": "120"])
+                : .json(200, CursorFixture.usage)
+        }
+        let provider = provider(http)
+
+        let first = try await provider.fetch(previous: nil)
+        #expect(try account(first).issue == nil)
+        #expect(try account(first).windows.first?.usedPercent == 62)
+        advance(60)
+        let held = try await provider.fetch(previous: first)
+        #expect(http.requests.count == 2)
+        #expect(try account(held).isStale)
+        #expect(try account(held).issue?.retryAt == .reference(120))
+
+        // Another login sends at once.
+        try home.write(token: CursorFixture.token(subject: "auth0|other"))
+        _ = try await provider.fetch(previous: held)
+        #expect(http.requests.map(\.url).suffix(2) == [CursorAPI.usageURL, CursorAPI.planURL])
+
+        // After the retry time the login sends again, without a new plan request that day.
+        try home.write(token: CursorFixture.token())
+        advance(60)
+        let after = try await provider.fetch(previous: held)
+        #expect(http.requests.count == 5)
+        #expect(http.requests.last?.url == CursorAPI.usageURL)
+        #expect(try account(after).issue == nil)
+    }
+
     @Test func thePlanOfAnotherLoginIsNeverReused() async throws {
         try home.write(token: CursorFixture.token())
         let http = FakeHTTPClient { request in

@@ -22,6 +22,12 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
     private let now: @Sendable () -> Date
     /// The outcome of the last usage request, for Diagnostics only.
     private let lastRequest = Locked<String?>(nil)
+    /// When each login last sent the plan request, so a failed or empty answer is not asked
+    /// for again at every refresh. Memory only; an entry older than ``planMaxAge`` goes.
+    private let planAttempts = Locked<[AccountOwner: Date]>([:])
+    /// The pause after HTTP 429 on the plan request (``RateLimitHold``). The usage request of
+    /// that refresh succeeded, so no account issue carries it. Memory only: a restart ends it.
+    private let planHold = Locked<RateLimitHold?>(nil)
 
     /// - Parameters:
     ///   - keychain: Read only, for the access token when the state database has none.
@@ -116,8 +122,10 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
         let owner = credentials.owner
         // Cursor asked this login to pause after HTTP 429. Send nothing before the retry time,
         // so the card's countdown is true. This comes first, so an expired token keeps the hold.
-        if let previous, let hold = previous.rateLimitHold(for: owner, now: now) {
-            return previous.retained(issue: hold, now: now)
+        if let retryAt = retryTime(for: owner, previous: previous, now: now) {
+            return failed(
+                .rateLimited(retryAt: retryAt), previous: previous, status: .signedIn(owner),
+                now: now)
         }
         guard !credentials.isExpired(at: now) else {
             return failed(.sessionExpired, previous: previous, status: .signedIn(owner), now: now)
@@ -147,6 +155,14 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
         }
     }
 
+    /// When `owner` may send again after HTTP 429, or nil. A 429 of the usage request is in the
+    /// account's issue; a 429 of the plan request is in ``planHold``.
+    private func retryTime(for owner: AccountOwner, previous: AccountUsage?, now: Date) -> Date? {
+        if let issue = previous?.rateLimitHold(for: owner, now: now) { return issue.retryAt }
+        if let hold = planHold.value, hold.holds(owner, now: now) { return hold.retryAt }
+        return nil
+    }
+
     /// Throws ``CursorFailure`` or `CancellationError`.
     private func requestUsage(
         _ credentials: CursorCredentials, previous: AccountUsage?, now: Date
@@ -160,29 +176,45 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
         var plan = credentials.membership
         if plan == nil {
             let known = previous?.owner == credentials.owner ? previous : nil
-            plan = try await planName(token: token, known: known, now: now)
+            plan = try await planName(
+                token: token, owner: credentials.owner, known: known, now: now)
         }
         return report.account(plan: plan, owner: credentials.owner, now: now)
     }
 
     /// The plan from `GetPlanInfo`, used only when Cursor stored no plan. A plan that the same
-    /// login showed less than ``planMaxAge`` ago is reused without a request, and a failed
-    /// request keeps it, because the plan only labels the card.
-    private func planName(token: String, known: AccountUsage?, now: Date) async throws
-        -> String?
-    {
+    /// login showed less than ``planMaxAge`` ago is reused without a request. The same login is
+    /// asked at most once in ``planMaxAge``, also after a failed or empty answer. A failure
+    /// keeps the known plan, because the plan only labels the card; HTTP 429 also holds the
+    /// login (``planHold``).
+    private func planName(
+        token: String, owner: AccountOwner, known: AccountUsage?, now: Date
+    ) async throws -> String? {
         let knownPlan = known?.plan
         if let knownPlan, let observedAt = known?.observedAt, observedAt <= now,
             now.timeIntervalSince(observedAt) < Self.planMaxAge
         {
             return knownPlan
         }
+        let askedRecently = planAttempts.withLock { attempts -> Bool in
+            // A date after now means that the clock moved back. It counts as old.
+            attempts = attempts.filter { _, date in
+                date <= now && now.timeIntervalSince(date) < Self.planMaxAge
+            }
+            guard attempts[owner] == nil else { return true }
+            attempts[owner] = now
+            return false
+        }
+        if askedRecently { return knownPlan }
         let request = CursorAPI.connectRequest(
             CursorAPI.planURL, token: token, deadline: CursorAPI.planDeadline)
         do {
             return CursorPlan.name(
                 planInfo: try await CursorAPI.send(request, http: http, now: now)) ?? knownPlan
-        } catch is CursorFailure {
+        } catch let failure as CursorFailure {
+            if case .rateLimited(let retryAt?) = failure {
+                planHold.withLock { $0 = RateLimitHold(owner: owner, retryAt: retryAt) }
+            }
             return knownPlan
         }
     }

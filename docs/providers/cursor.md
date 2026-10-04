@@ -82,8 +82,10 @@ string. Other fields are ignored.
 
 ### Plan: `GetPlanInfo`
 
-Sent only when the database has no `cursorAuth/stripeMembershipType`, at most once a day for
-one login (rule 14). Same headers and body as the usage request. Deadline: 10 s.
+Sent only when the database has no `cursorAuth/stripeMembershipType`, after a usage request
+that succeeded. Each login sends it at most once in 24 hours while the app runs, also when the
+answer failed or had no plan (rule 14). HTTP 429 holds the login (rule 19). Same headers and
+body as the usage request. Deadline: 10 s.
 
 ```text
 POST https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo
@@ -169,7 +171,10 @@ The email is never part of the reading.
 12. Spend and limit never give a percentage. `totalPercentUsed` is the usage.
 13. A body that is not a JSON object is an unexpected response.
 14. The plan request runs only when Cursor stored no plan, and not while the same login showed a
-    plan less than 24 hours ago. Its failures are silent and keep the plan of the same login.
+    plan less than 24 hours ago. The provider keeps the time of each login's last plan request
+    in memory and does not send it again for that login for 24 hours, also after a failure or
+    an answer without a plan. A restart forgets these times. Its failures are silent and keep
+    the plan of the same login.
 15. The plan keeps the capitalization that Cursor used, except for the known names.
 
 ### Retention
@@ -180,9 +185,12 @@ The email is never part of the reading.
 18. Busy database, locked Keychain, network failure, other HTTP status, or an unexpected
     response: keep the last observation as stale while the owner is unchanged. Once the
     billing period of a kept observation ends, its window is unknown and its spend is dropped.
-19. After HTTP 429 with a `Retry-After`, the shared rate-limit hold applies
-    (`docs/architecture.md`): no request for the same login before the retry time, at most
-    1 hour after the 429, so the card's countdown is true. Another login sends at once. The
+19. After HTTP 429 with a usable `Retry-After` on the usage or plan request, the shared
+    rate-limit hold applies (`docs/architecture.md`): no request for the same login before the
+    retry time, at most 1 hour after the 429, so the card's countdown is true. Another login
+    sends at once. The usage request of a refresh whose plan request got the 429 succeeded, so
+    no account issue carries that hold: the provider keeps it in memory, and a restart ends
+    it. While it holds, the card shows the last reading as stale with the countdown. The
     hold comes before the expiry check, and a login that cannot be read keeps it, so a refresh
     that sends nothing never ends it early.
 20. `"enabled": false`: drop the last observation, because it no longer describes the account.

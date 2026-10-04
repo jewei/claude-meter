@@ -33,10 +33,15 @@ struct CursorCredentials: Hashable, Sendable {
     /// The `sub` claim, such as `auth0|user_123`.
     var subject: String? { claims?.string("sub") }
 
-    /// A token whose known expiry has passed is never sent.
+    /// A token this close to its expiry counts as expired. Sent, it would come back as HTTP
+    /// 401 after a clock difference or a slow request, with a harsher message.
+    static let expiryMargin: TimeInterval = 30
+
+    /// A token whose known expiry has passed, or is less than ``expiryMargin`` away, is never
+    /// sent.
     func isExpired(at now: Date) -> Bool {
         guard let expiresAt else { return false }
-        return expiresAt <= now
+        return expiresAt <= now.addingTimeInterval(Self.expiryMargin)
     }
 
     /// The stable user ID when the token names one; otherwise the token itself, which

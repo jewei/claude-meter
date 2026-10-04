@@ -157,8 +157,11 @@ import Testing
         #expect(CursorPlan.displayName(" ") == nil)
     }
 
-    @Test func anExpiredTokenIsNeverSent() async throws {
-        try home.write(token: CursorFixture.token(expiresAt: .reference(-60)))
+    /// A token that expires in less than 30 s counts as expired, so it never comes back as a
+    /// 401 with the harsher message.
+    @Test(arguments: [-60.0, 10.0])
+    func anExpiredTokenIsNeverSent(expiresIn: TimeInterval) async throws {
+        try home.write(token: CursorFixture.token(expiresAt: .reference(expiresIn)))
         let http = FakeHTTPClient(json: CursorFixture.usage)
 
         let account = try account(try await provider(http).fetch(previous: previous()))

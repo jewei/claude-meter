@@ -14,8 +14,10 @@ Cursor's endpoints are internal to Cursor. They can change without notice.
 | Path | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
 | Open | `SQLiteReader`: read-only, `readonly_shm=1`, never `immutable`, no busy wait, 1 MiB value limit |
 | Table | `ItemTable(key TEXT, value TEXT or BLOB)` |
-| Query | `SELECT key, value FROM ItemTable WHERE key IN (?, ?, ?, ?) LIMIT 4` |
+| Query | `SELECT key, CASE WHEN key = ?2 THEN length(value) > 0 ELSE value END FROM ItemTable WHERE key IN (?1, ?2, ?3, ?4) LIMIT 4` |
 | Bindings, in order | `cursorAuth/accessToken`, `cursorAuth/refreshToken`, `cursorAuth/cachedEmail`, `cursorAuth/stripeMembershipType` |
+
+The query returns only `1` or `0` for the refresh token, so its value never leaves SQLite.
 
 Value encodings: UTF-8, ASCII UTF-16LE without a byte order mark, and UTF-16 with a byte order
 mark. One pair of surrounding double quotes and outer whitespace are removed.
@@ -140,7 +142,8 @@ The email is never part of the reading.
    token. A busy or unreadable database can still hold a token, and the Keychain item can
    belong to another login (the `cursor-agent` CLI), so the Keychain proves nothing then.
 2. Never write, renew, or cache Cursor credentials. Never send the refresh token, and never
-   read it from the Keychain. Diagnostics show only whether the database has one.
+   read it from the Keychain or load it from the database. Diagnostics show only whether the
+   database has one.
 3. A missing database is not an error. The Keychain fallback runs.
 4. A database that is not a regular file, or that SQLite cannot read, is unreadable. The
    Keychain is not read.
@@ -159,7 +162,8 @@ The email is never part of the reading.
 
 ### Quota
 
-11. A token with a known `exp` at or before now is never sent.
+11. A token with a known `exp` less than 30 s after now is never sent. It counts as expired,
+    because it would come back as HTTP 401 with a harsher message.
 12. Spend and limit never give a percentage. `totalPercentUsed` is the usage.
 13. A body that is not a JSON object is an unexpected response.
 14. The plan request runs only when Cursor stored no plan, and not while the same login showed a

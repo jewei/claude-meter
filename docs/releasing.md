@@ -44,19 +44,22 @@ Do these steps once on each Mac that makes releases.
    The output must be `Ns9aeDpiL/p7DCVX4TRw4OnqkmZs0y6+7afPO+i1vPM=`.
 
    **Back up the private key.** Without it, you cannot publish an update that installed
-   copies accept. Export it to a private folder outside this repository, store the file
-   offline (for example in a password manager), then delete it:
+   copies accept. Export it only to an encrypted location, such as an encrypted disk image.
+   `rm` does not erase file contents on macOS, so never export it to a plain folder. Store
+   the file offline (for example in a password manager), then delete the image:
 
    ```bash
-   key_dir="$(mktemp -d)"
-   build/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys -x "$key_dir/sparkle-private-key.txt"
+   hdiutil create -size 10m -fs APFS -encryption AES-256 -volname "Sparkle key" ~/sparkle-key.dmg
+   hdiutil attach ~/sparkle-key.dmg
+   build/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys -x "/Volumes/Sparkle key/sparkle-private-key.txt"
    # Store the file in your password manager, then:
-   rm -P "$key_dir/sparkle-private-key.txt" && rmdir "$key_dir"
+   hdiutil detach "/Volumes/Sparkle key" && rm ~/sparkle-key.dmg
    ```
 
    To install the key on another Mac, use `generate_keys -f <file>`. Never put the file in
-   this repository; `.gitignore` also refuses `sparkle-private-key*`, `*.p12`, and `*.p8`. Sparkle lets one update change the EdDSA key or the Developer ID
-   certificate, but not both.
+   this repository; `.gitignore` also refuses `sparkle-private-key*`, `*.p12`, and `*.p8`.
+   Sparkle lets one update change the EdDSA key or the Developer ID certificate, but not
+   both.
 
 4. **GitHub CLI.** Run `gh auth login` with access to `jewei/claude-meter`.
 
@@ -94,9 +97,9 @@ step prints `==> <step>`.
 1. **Check preconditions.** VERSION is 4.x. The working tree is clean, with no untracked
    files. When it publishes: the branch is `main`, `HEAD` equals the fetched `origin/main`,
    and tag `vVERSION` does not exist. BUILD obeys the rules in
-   [The build number](#the-build-number). `CHANGELOG.md` has a `## [Unreleased]` section that is not empty.
-   `ClaudeMeterUpdateRequirement` in `App/Info.plist` compiles with `csreq`. The signing
-   identity, the notarization profile, and the Sparkle key are present.
+   [The build number](#the-build-number). `CHANGELOG.md` has a `## [Unreleased]` section
+   that is not empty. `ClaudeMeterUpdateRequirement` in `App/Info.plist` compiles with
+   `csreq`. The signing identity, the notarization profile, and the Sparkle key are present.
 2. **Run `make check`.** The same gate as CI, including an unsigned Release build.
 3. **Archive and export with Developer ID.** A universal Release archive in
    `build/release`, with the version and build from the command line. The export uses
@@ -123,9 +126,9 @@ With `--prepare-only` the script stops here. It changes no tracked file and publ
 nothing. Without it, it continues:
 
 9. **Commit and tag the release.** It stops if `HEAD` changed during the build. It copies the
-   feed to `appcast.xml`, promotes
-   `[Unreleased]` in `CHANGELOG.md` to the version and date, writes the version and build
-   into `Config/Version.xcconfig`, commits `Release vVERSION`, and makes the tag.
+   feed to `appcast.xml`, promotes `[Unreleased]` in `CHANGELOG.md` to the version and date,
+   writes the version and build into `Config/Version.xcconfig`, commits `Release vVERSION`,
+   and makes the tag.
 10. **Publish the GitHub release.** It pushes the tag, then runs
     `gh release create --verify-tag` with the DMG and the dSYM zip.
 11. **Publish the feed.** It pushes `main`. Installed apps read the feed from `main`, so
@@ -149,8 +152,8 @@ breaks one of them:
   file's `MARKETING_VERSION` exists, that build is published, and BUILD must be greater. So
   a build is never used twice, even after its item leaves the feed.
 - Increase the number by at least one for each release, for example 4.0.1 is 401.
-- Do not use the Git commit count. The 4.x history has fewer commits than 3.x had, so
-  the count is smaller than 337, and no installed app would see the update.
+- Do not use the Git commit count as the build number. The count depends on how branches
+  merge. Choose the number; it must only grow.
 - A build number that the script used for a candidate that was not published can be
   used again.
 
@@ -185,7 +188,8 @@ skipped a 4.x build lower than it sees the item in scheduled checks again. Spark
 supports this element.
 
 Keep the 3.1.3 item in `appcast.xml` for as long as 2.x installs can exist. Do not remove
-old items, and do not delete a release asset that the feed names.
+old items, except in the maintainer's bad-release procedure (see [Recovery](#recovery)), and
+do not delete a release asset that the feed names.
 
 The script accepts only 4.x versions. Before a 5.0 release, decide the gate for 5.x, then
 change `MINIMUM_UPDATE_BUILD`, `MAJOR_START_BUILD`, and the version check in
@@ -212,8 +216,7 @@ was published. Correct the cause and run the script again. If notarization faile
 script prints Apple's log above the error.
 
 **Step 9, "Commit and tag the release".** Tracked files, the commit, and the tag exist only
-on this Mac.
-Remove them, then run the script again:
+on this Mac. Remove them, then run the script again:
 
 ```bash
 git tag -d vVERSION
@@ -260,7 +263,8 @@ item in `appcast.xml`, and push.
 
 **A bad release after publication.** Publish a corrected release with a higher build
 number. To stop more installs at once, remove the bad item from `appcast.xml` in a commit
-on `main`. Copies that already updated stay on the bad release until the next one.
+on `main`. This is the only time a person edits `appcast.xml`, and only the maintainer does
+it. Copies that already updated stay on the bad release until the next one.
 
 **Two valid Developer ID certificates.** During a certificate renewal, `codesign --sign
 "Developer ID Application: …"` stops with "ambiguous". Set `SIGNING_IDENTITY` to the SHA-1

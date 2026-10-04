@@ -1,8 +1,10 @@
 // The app version. scripts/release.sh rewrites both lines in the release commit.
 //
-// CURRENT_PROJECT_VERSION is CFBundleVersion, the number that Sparkle compares. It is the
-// build of the newest release, or 400 before the first 4.x release. The next release must
-// use a greater build; see "The build number" in docs/releasing.md. The last 3.x build is 337.
+// CURRENT_PROJECT_VERSION is CFBundleVersion, the number that Sparkle compares. While the tag
+// of MARKETING_VERSION does not exist, this build is not published, and the next release can
+// use it or a greater build. After the release commit, the tag exists, and the next release
+// must use a greater build. So 4.0.0 can use 400 until tag v4.0.0 exists. See "The build
+// number" in docs/releasing.md. The last 3.x build is 337.
 
 MARKETING_VERSION = 4.0.0
 CURRENT_PROJECT_VERSION = 400

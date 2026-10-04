@@ -1017,6 +1017,43 @@ struct AppLogicTests {
                 "cursor", to: "cursor", visibleOrder: visible, savedOrder: []) == nil)
     }
 
+    @Test("Local card dragging crosses neighbor midpoints and ignores outside movement")
+    func cardDragTargets() {
+        let order = ["claude:work", "codex:home", "cursor"]
+        let frames = [
+            "claude:work": CGRect(x: 0, y: 0, width: 300, height: 90),
+            "codex:home": CGRect(x: 0, y: 100, width: 300, height: 180),
+            "cursor": CGRect(x: 0, y: 290, width: 300, height: 60),
+        ]
+        func target(_ id: String, x: CGFloat = 150, y: CGFloat) -> String? {
+            CardReorderDrag(id: id, location: CGPoint(x: x, y: y))
+                .target(in: order, frames: frames)
+        }
+        #expect(target("claude:work", y: 180) == nil)
+        #expect(target("claude:work", y: 200) == "codex:home")
+        #expect(target("claude:work", y: 330) == "cursor")
+        #expect(target("cursor", y: 200) == nil)
+        #expect(target("cursor", y: 180) == "codex:home")
+        #expect(target("cursor", y: 20) == "claude:work")
+        #expect(target("cursor", x: -1, y: 20) == nil)
+        #expect(target("cursor", x: 301, y: 20) == nil)
+        #expect(target("cursor", y: -1) == nil)
+        #expect(target("claude:work", y: 351) == nil)
+        #expect(target("removed-account", y: 20) == nil)
+        #expect(
+            CardReorderDrag(id: "cursor", location: .zero).target(in: order, frames: [:]) == nil)
+    }
+
+    @Test("A reordered card does not move back under a stationary pointer")
+    func cardDragStaysAtNewPosition() {
+        let drag = CardReorderDrag(id: "codex:home", location: CGPoint(x: 150, y: 20))
+        let frames = [
+            "codex:home": CGRect(x: 0, y: 0, width: 300, height: 180),
+            "claude:work": CGRect(x: 0, y: 190, width: 300, height: 90),
+        ]
+        #expect(drag.target(in: ["codex:home", "claude:work"], frames: frames) == nil)
+    }
+
     @Test("Chunking preserves order and the final partial chunk")
     func chunking() {
         #expect(Array(1...7).chunked(into: 3) == [[1, 2, 3], [4, 5, 6], [7]])

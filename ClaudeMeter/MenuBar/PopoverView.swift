@@ -29,7 +29,8 @@ struct PopoverView: View {
     /// Saved card order; empty means the automatic order. Reloaded on each open,
     /// so a reset in Settings takes effect.
     @State private var cardOrder: [String] = AppSettings.popoverCardOrder
-    @State private var draggedCardID: String?
+    @GestureState private var cardDrag: CardReorderDrag?
+    @State private var cardFrames: [String: CGRect] = [:]
 
     private var usageThresholds: UsageThresholds {
         AppState.currentThresholds()
@@ -494,17 +495,19 @@ struct PopoverView: View {
                         }
                         cardView(card, models: models, readings: readings, style: style)
                     }
-                    .onDrag {
-                        draggedCardID = card.id
-                        // An empty string: a drop outside the popover gets no account key.
-                        return NSItemProvider(object: "" as NSString)
+                    .background {
+                        GeometryReader { geometry in
+                            Color.clear.preference(
+                                key: CardFramePreferenceKey.self,
+                                value: [card.id: geometry.frame(in: .named("accountCards"))])
+                        }
                     }
-                    .onDrop(
-                        of: [.plainText],
-                        delegate: CardDropDelegate(
-                            targetID: card.id,
-                            draggedID: draggedCardID,
-                            move: { moveCard($0, to: card.id, cards: cards) })
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 8, coordinateSpace: .named("accountCards"))
+                            .updating($cardDrag) { value, drag, _ in
+                                drag = CardReorderDrag(id: card.id, location: value.location)
+                            },
+                        including: isVisible ? .all : .none
                     )
                     .accessibilityAction(named: "Move up") {
                         if index > 0 {
@@ -517,6 +520,14 @@ struct PopoverView: View {
                         }
                     }
                 }
+            }
+            .coordinateSpace(name: "accountCards")
+            .onPreferenceChange(CardFramePreferenceKey.self) { cardFrames = $0 }
+            .onChange(of: cardDrag) { _, drag in
+                guard isVisible, let drag,
+                    let target = drag.target(in: ids, frames: cardFrames)
+                else { return }
+                moveCard(drag.id, to: target, cards: cards)
             }
         }
     }
@@ -1525,24 +1536,37 @@ struct PopoverView: View {
 
 }
 
-/// Moves the dragged card to this card's position when the pointer enters it, so
-/// the list reorders live. The order is saved at each move, so a drag that ends
-/// outside the popover keeps the last position.
-private struct CardDropDelegate: DropDelegate {
-    let targetID: String
-    let draggedID: String?
-    let move: (String) -> Void
+/// Exists only in GestureState during a local pointer gesture. SwiftUI resets it
+/// on completion or cancellation; external pasteboard drags never create one.
+struct CardReorderDrag: Equatable {
+    let id: String
+    let location: CGPoint
 
-    func dropEntered(info: DropInfo) {
-        guard let draggedID, draggedID != targetID else { return }
-        move(draggedID)
+    func target(in order: [String], frames: [String: CGRect]) -> String? {
+        guard let source = order.firstIndex(of: id), let sourceFrame = frames[id],
+            location.x >= sourceFrame.minX, location.x <= sourceFrame.maxX,
+            let first = order.first.flatMap({ frames[$0] }),
+            let last = order.last.flatMap({ frames[$0] }),
+            location.y >= first.minY, location.y <= last.maxY
+        else { return nil }
+        // Cross a neighbor's midpoint before moving. This keeps unequal-height
+        // cards stable after the list rearranges around the same pointer position.
+        if let before = order[..<source].first(where: {
+            frames[$0].map { location.y < $0.midY } ?? false
+        }) {
+            return before
+        }
+        return order.dropFirst(source + 1).last(where: {
+            frames[$0].map { location.y > $0.midY } ?? false
+        })
     }
+}
 
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
+private struct CardFramePreferenceKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
-
-    func performDrop(info: DropInfo) -> Bool { draggedID != nil }
 }
 
 #Preview {

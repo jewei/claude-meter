@@ -235,6 +235,9 @@ The account list has a label row and account cards:
   Codex card dragged to the top becomes the main meter. Cursor, Grok, and extra usage
   cannot go to the top. Cards read normalized `ProviderAccountSnapshot` values from
   UsageStore.
+- A local drag moves a card after the pointer crosses a neighboring card's midpoint.
+  Cards remain in the list; there is no floating pasteboard preview. External text
+  drags do not reorder cards. Ending outside the list keeps the last saved position.
 - A small neutral **Menu bar** pill identifies the selected card. It does not use an
   energy color. When several Claude or Codex
   accounts are present, a visible instruction explains that dragging one to the top

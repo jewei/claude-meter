@@ -117,6 +117,53 @@ struct HTTPRetryPolicyTests {
 
 @Suite("ProviderHTTPClient bounds")
 struct ProviderHTTPClientBoundsTests {
+    @Test func productionSessionDoesNotCacheProviderResponses() {
+        let session = ProviderHTTPClient.guardedSession(delegate: ProviderHTTPSessionDelegate())
+        defer { session.invalidateAndCancel() }
+        #expect(session.configuration.urlCache == nil)
+        #expect(session.configuration.requestCachePolicy == .reloadIgnoringLocalCacheData)
+    }
+
+    @Test func cacheableQuotaResponsesStayFreshAndAccountSpecific() async throws {
+        let requests = ProviderHTTPRequestLog()
+        func plan(_ body: String) -> ProviderHTTPTestPlan {
+            ProviderHTTPTestPlan(
+                headers: ["Cache-Control": "public, max-age=3600"],
+                chunks: [Data(body.utf8)],
+                allowsCaching: true,
+                onRequest: { requests.record($0) })
+        }
+        let fixture = makeHTTPFixture(plan: plan("first"), maximumResponseByteCount: 64)
+        defer { fixture.close() }
+        // Inject a session with a populated cache and explicitly ask for cached data.
+        // The transport must still fetch a new observation for each poll.
+        var request = URLRequest(url: fixture.url, cachePolicy: .returnCacheDataElseLoad)
+        request.setValue("Bearer test-account-a", forHTTPHeaderField: "Authorization")
+        let cached = CachedURLResponse(
+            response: HTTPURLResponse(
+                url: fixture.url, statusCode: 200, httpVersion: "HTTP/1.1",
+                headerFields: ["Cache-Control": "public, max-age=3600"])!,
+            data: Data("old cached quota".utf8), storagePolicy: .allowedInMemoryOnly)
+        let cache = try #require(fixture.session.configuration.urlCache)
+        cache.storeCachedResponse(cached, for: request)
+        #expect(cache.cachedResponse(for: request)?.data == cached.data)
+
+        let (first, _) = try await fixture.client.send(request)
+        #expect(first == Data("first".utf8))
+        ProviderHTTPTestPlanStore.shared.set(plan("updated"), for: fixture.url)
+        let (updated, _) = try await fixture.client.send(request)
+        #expect(updated == Data("updated".utf8))
+        ProviderHTTPTestPlanStore.shared.set(plan("other account"), for: fixture.url)
+        request.setValue("Bearer test-account-b", forHTTPHeaderField: "Authorization")
+        let (other, _) = try await fixture.client.send(request)
+        #expect(other == Data("other account".utf8))
+        #expect(requests.values.count == 3)
+        #expect(requests.values.allSatisfy { $0.cachePolicy == .reloadIgnoringLocalCacheData })
+        #expect(
+            requests.values.map { $0.value(forHTTPHeaderField: "Authorization") }
+                == ["Bearer test-account-a", "Bearer test-account-a", "Bearer test-account-b"])
+    }
+
     @Test func longRetryAfterReturnsOriginalResponseWithoutRetry() async throws {
         let count = HTTPAttemptCounter()
         let session = URLSession(configuration: .ephemeral)
@@ -382,6 +429,15 @@ private struct ProviderHTTPTestPlan: Sendable {
     var chunks: [Data]
     var finishes = true
     var afterChunks: (@Sendable () -> Void)?
+    var allowsCaching = false
+    var onRequest: (@Sendable (URLRequest) -> Void)?
+}
+
+private final class ProviderHTTPRequestLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requests: [URLRequest] = []
+    var values: [URLRequest] { lock.withLock { requests } }
+    func record(_ request: URLRequest) { lock.withLock { requests.append(request) } }
 }
 
 private final class ProviderHTTPTestPlanStore: @unchecked Sendable {
@@ -426,7 +482,10 @@ private final class ProviderHTTPTestURLProtocol: URLProtocol, @unchecked Sendabl
             return
         }
 
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        plan.onRequest?(request)
+        client?.urlProtocol(
+            self, didReceive: response,
+            cacheStoragePolicy: plan.allowsCaching ? .allowedInMemoryOnly : .notAllowed)
         for chunk in plan.chunks {
             client?.urlProtocol(self, didLoad: chunk)
         }
@@ -459,6 +518,7 @@ private func makeHTTPFixture(
     ProviderHTTPTestPlanStore.shared.set(plan, for: url)
 
     let configuration = URLSessionConfiguration.ephemeral
+    configuration.urlCache = URLCache(memoryCapacity: 1024 * 1024, diskCapacity: 0)
     configuration.protocolClasses = [ProviderHTTPTestURLProtocol.self]
     let session = URLSession(
         configuration: configuration,

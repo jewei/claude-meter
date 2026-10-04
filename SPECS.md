@@ -164,7 +164,14 @@ range. Normal limits are 64 MiB of log input per scan, 8 MiB per file per scan, 
 line, 2,048 files, 20,000 directory entries, 20,000 records per file, and 100,000 cached
 records per provider. Incomplete final lines are read again. Oversized or malformed
 records, unresolved counters, and reached limits make history partial. Reading resumes
-on a later refresh when the byte limit was reached. No limit produces a complete zero.
+on a later refresh when the byte limit was reached. Directory discovery also resumes
+after its entry or file budget is reached, taking entries from each configured root in
+turn. Its cursors and bounded file inventory stay in memory on the scanner's queue.
+An incomplete discovery page does not remove earlier cached files. A completed sweep
+starts again on the next refresh to find new and deleted files. Changed root paths,
+root identities, or history ranges reset discovery and the parse cache. The newest
+discovered files keep priority within the file and record caps; exceeding those caps
+still means partial history. No limit produces a complete zero.
 History fetches have a 20 s deadline and at most two outstanding timed tasks per source.
 Claude and Codex history configuration reads each have a separate two-operation limit
 and a 5 s deadline. Neither shares capacity with Codex quota configuration. Timed-out
@@ -664,8 +671,11 @@ way to choose. Saved cards keep their saved order. A card with no saved position
 in the automatic order. A hidden card keeps its saved ID for its return. VoiceOver has
 "Move up" and "Move down" actions. **Use automatic order** in **Appearance**, under
 **Account cards**, clears the saved order and both account pins, so the first card is
-again the selected provider's account nearest its limit. The drag payload is an empty
-string, so a drop outside the popover carries no account key. A **Menu bar** label
+again the selected provider's account nearest its limit. Reordering uses only a local
+pointer gesture. It creates no pasteboard payload and accepts no external drops. This
+replaces the earlier empty-string drag payload. Gesture state resets on completion or
+cancellation, and a hidden popover cannot reorder. Ending outside the list keeps the
+last saved order. A **Menu bar** label
 identifies the selected card. With several eligible accounts, a visible instruction
 explains drag-to-top selection. These cues do not change account selection or order.
 
@@ -846,7 +856,10 @@ invoke live cleanup.
 ## 7. Networking, Keychain, and diagnostics
 
 OAuth and other direct provider requests use `ProviderHTTPClient.shared` or an injected
-`HTTPTransport`. The provider session is ephemeral and cookie-less. It has a ten-second
+`HTTPTransport`. The provider session is ephemeral, cookie-less, and has no URL cache.
+Every send bypasses local HTTP caches, including sends through an injected URLSession,
+so a cached response cannot receive a new observation time. `UsageStore` owns retained
+readings. The transport has a ten-second
 idle timeout, an eight-MiB response cap, and a 30-second hard deadline for the complete
 send, including retry waits. A chunk receiver rejects an oversized declared
 `Content-Length` before body receipt and cancels a streamed response when it crosses the

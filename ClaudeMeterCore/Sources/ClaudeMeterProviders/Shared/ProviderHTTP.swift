@@ -95,7 +95,7 @@ public struct HTTPRetryPolicy: Sendable {
     }
 }
 
-/// Shared transport backed by a redirect-guarded, cookie-less ephemeral session.
+/// Shared transport backed by a redirect-guarded, cache-free, cookie-less ephemeral session.
 ///
 /// Provider requests can carry bearer credentials, so following an off-origin or
 /// downgraded redirect would leak them. The guard blocks any redirect that is not
@@ -178,6 +178,8 @@ public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
 
     static func guardedSession(delegate: ProviderHTTPSessionDelegate) -> URLSession {
         let config = URLSessionConfiguration.ephemeral
+        config.urlCache = nil
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.httpShouldSetCookies = false
         config.httpCookieAcceptPolicy = .never
         config.timeoutIntervalForRequest = requestTimeoutSeconds
@@ -193,6 +195,9 @@ public final class ProviderHTTPClient: HTTPTransport, @unchecked Sendable {
         Data, HTTPURLResponse
     ) {
         var boundedRequest = request
+        // A successful poll must observe the provider, even with an injected session
+        // or a caller that requested cached data. UsageStore owns retained readings.
+        boundedRequest.cachePolicy = .reloadIgnoringLocalCacheData
         if !request.timeoutInterval.isFinite || request.timeoutInterval <= 0
             || request.timeoutInterval > Self.requestTimeoutSeconds
         {

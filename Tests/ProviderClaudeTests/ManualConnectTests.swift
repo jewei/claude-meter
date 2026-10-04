@@ -139,21 +139,21 @@ extension ClaudeTests {
                     })
             }
             #expect(await refreshing.waitForArrivals())
-            // A fetch of the stored login joins it once it has read the stored item.
+            // A fetch of the stored login joins it. It takes the stored item as its login and
+            // joins the request in the same turn of the login actor, with no wait between.
             let fetch = Task { try await provider.fetch(previous: nil) }
             #expect(
-                await waitUntil {
-                    harness.keychain.readServices.contains(ManualCredentialVault.service)
+                await eventually {
+                    await provider.manualLogin.latest?.connectionID == "connection-1"
                 })
-            // Time to join. A fetch that has not joined yet sends its own request instead, and
-            // the owners below are the same.
-            try await Task.sleep(for: .milliseconds(50))
             refreshing.open()
             let usage = try await fetch.value
             committing.open()
             try await connect.value
 
-            // The rotation of the stored login keeps its owner, and the Connect gets a new one.
+            // One token request served both. The rotation of the stored login keeps its owner,
+            // and the Connect gets a new one.
+            #expect(http.requests(to: TokenRefresher.url).count == 1)
             #expect(usage.accounts[0].hasObservation)
             #expect(
                 usage.accounts[0].owner

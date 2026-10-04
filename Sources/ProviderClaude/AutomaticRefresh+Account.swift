@@ -4,9 +4,12 @@ import MeterPlatform
 
 extension AutomaticRefresh {
     struct AccountOutcome: Sendable {
-        let usage: AccountUsage
+        var usage: AccountUsage
         let identity: LocalIdentity?
         let failure: AccountFailure?
+        /// The usage request went out. A failure before it, such as an expired token or an
+        /// item that cannot be read, sent nothing.
+        var isRequested = false
     }
 
     /// Reads one account within `limit`. An account that runs out of time keeps its previous
@@ -14,23 +17,30 @@ extension AutomaticRefresh {
     func fetchAccount(
         _ slot: LoginSlot, prior: AccountUsage?, isActive: Bool, limit: Duration
     ) async throws -> AccountOutcome {
+        let isRequested = Locked(false)
         do {
-            return try await withDeadline(limit) { [self] in
-                try await readAccount(slot, prior: prior, isActive: isActive)
+            var outcome = try await withDeadline(limit) { [self] in
+                try await readAccount(
+                    slot, prior: prior, isActive: isActive, isRequested: isRequested)
             }
+            outcome.isRequested = isRequested.value
+            return outcome
         } catch is TimeoutError {
             try Task.checkCancellation()
             log.warning("Claude usage check for \(slot.id) timed out")
-            return failed(.timedOut, .unknown, nil, slot: slot, prior: prior, isActive: isActive)
+            var outcome = failed(
+                .timedOut, .unknown, nil, slot: slot, prior: prior, isActive: isActive)
+            outcome.isRequested = isRequested.value
+            return outcome
         }
     }
 
     /// Credential, one usage request, then the owner again. A response that arrives after the
     /// login changed is discarded. Claude Code's credentials are never refreshed; an expired
-    /// token waits for Claude Code to renew it.
-    private func readAccount(_ slot: LoginSlot, prior: AccountUsage?, isActive: Bool)
-        async throws -> AccountOutcome
-    {
+    /// token waits for Claude Code to renew it. `isRequested` is set when the request goes out.
+    private func readAccount(
+        _ slot: LoginSlot, prior: AccountUsage?, isActive: Bool, isRequested: Locked<Bool>
+    ) async throws -> AccountOutcome {
         func failed(_ failure: AccountFailure, _ status: OwnerStatus, _ identity: LocalIdentity?)
             -> AccountOutcome
         {
@@ -55,6 +65,7 @@ extension AutomaticRefresh {
 
         let response: UsageResponse
         do {
+            isRequested.withLock { $0 = true }
             response = try await api.usage(accessToken: credential.accessToken)
         } catch let failure as UsageFailure {
             return failed(AccountFailure(failure), .signedIn(owner), identity)

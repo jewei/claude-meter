@@ -151,12 +151,15 @@ little memory. The limit is 256 MiB. The result is one of three states:
    the active login off, that is `claude`; without a `claude` account, it is the first
    other account that can be read. The texts for the active login go only to the account of
    the active login (or to `claude` when there is none or it is unknown).
-4. Every other enabled account is read when it has no previous value, or when its previous
-   attempt started at least 290 s before this refresh started. `attemptedAt` is the start
-   of the refresh that last tried the account. The 10 s below the 300 s timer cover the time
-   that a refresh needs to start, which varies, so each timer tick reads every account. A
-   failed attempt counts, so an account that always fails is also requested at most once in
-   290 s. Otherwise its previous value is returned unchanged.
+4. Every other enabled account is read when it has no previous attempt, or when its
+   previous attempt started at least 290 s before this refresh started. `attemptedAt` is the
+   start of the refresh that last sent the account's usage request. The 10 s below the 300 s
+   timer cover the time that a refresh needs to start, which varies, so each timer tick reads
+   every account. A failed request counts, so an account that always fails is also requested
+   at most once in 290 s. A failure that sends no request (an expired token, a missing or
+   unreadable item, an unreadable `.claude.json`) keeps the previous `attemptedAt`, so the
+   account is read again at the next refresh after the user fixes it. Otherwise its previous
+   value is returned unchanged.
 5. Requests go out one at a time: the account of rule 3 first, so that a 429 never starves
    the login that Claude Code uses now (often, but not always, the menu-bar account), then
    the others in output order. The output order does not change.

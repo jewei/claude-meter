@@ -5,9 +5,9 @@ import MeterPlatform
 /// Automatic mode: reads the Claude Code login of every enabled config dir.
 ///
 /// One account is read on every refresh, and first: the account of Claude Code's active login
-/// (see ``Plan/alwaysReadID``). Every other account is read when it has no previous value, or
-/// when its previous attempt started at least 290 s before this refresh started; otherwise its
-/// previous value is returned unchanged. Requests go out one at a time. Each account has its
+/// (see ``Plan/alwaysReadID``). Every other account is read when it has no previous attempt,
+/// or when its previous attempt (a refresh that sent its usage request) started at least
+/// 290 s before this refresh started; otherwise its previous value is returned unchanged. Requests go out one at a time. Each account has its
 /// own deadline inside the budget of the whole refresh, so a slow account cannot discard the
 /// others. HTTP 429, or the end of the budget, stops the rest of the refresh; accounts not
 /// attempted keep their previous value and `attemptedAt`, so they are due again at the next
@@ -110,7 +110,9 @@ struct AutomaticRefresh: Sendable {
             let outcome = try await fetchAccount(
                 slot, prior: prior, isActive: isActive, limit: min(limits.account, remaining))
             var usage = outcome.usage
-            usage.attemptedAt = startedAt
+            // Only a request counts as an attempt: an account whose credential could not be
+            // used is read again at the next refresh, so a fix by the user shows at once.
+            usage.attemptedAt = outcome.isRequested ? startedAt : prior?.attemptedAt
             fetched[slot.id] = usage
             identities[slot.id] = outcome.identity
             if case .rateLimited = outcome.failure { stop = outcome.failure }
@@ -177,7 +179,8 @@ struct AutomaticRefresh: Sendable {
 
     /// An account is due when it was never attempted, or its last attempt, successful or not,
     /// started at least 290 s before `startedAt`, the start of this refresh: the 300 s
-    /// interval less ``dueMargin``. A clock that moved back makes it due.
+    /// interval less ``dueMargin``. Only a refresh that sent the usage request attempted the
+    /// account. A clock that moved back makes it due.
     private func isDue(_ prior: AccountUsage?, at startedAt: Date) -> Bool {
         guard let attemptedAt = prior?.attemptedAt else { return true }
         let age = startedAt.timeIntervalSince(attemptedAt)

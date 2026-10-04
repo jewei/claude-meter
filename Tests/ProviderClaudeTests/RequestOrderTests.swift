@@ -73,6 +73,37 @@ extension ClaudeTests {
             #expect(http.usageTokens == ["main", "work", "main", "main", "main", "work"])
         }
 
+        @Test func anAccountThatSentNoRequestIsReadAgainAtTheNextRefresh() async throws {
+            let harness = try ClaudeHarness()
+            let main = try harness.directory(".claude", account: "acc-1")
+            let work = try harness.directory(".claude-work", account: "acc-2")
+            harness.signIn(main, token: "main", legacy: true)
+            // The work token expired, so no request goes out for it.
+            harness.signIn(work, token: "work", expiresAt: .reference(30))
+            let http = usageServer(["main": "{}", "work": "{}"])
+            let provider = harness.provider(http)
+
+            let first = try await provider.fetch(previous: nil)
+            #expect(http.usageTokens == ["main"])
+            #expect(first.accounts[1].issue?.message.hasPrefix("Token expired.") == true)
+            #expect(first.accounts[1].attemptedAt == nil)
+
+            // The user renews the token: the next refresh reads the account at once.
+            harness.advance(60)
+            harness.signIn(work, token: "work", expiresAt: .reference(400))
+            let second = try await provider.fetch(previous: first)
+            #expect(http.usageTokens == ["main", "main", "work"])
+            #expect(second.accounts[1].hasObservation)
+            #expect(second.accounts[1].attemptedAt == .reference(60))
+
+            // A later failure that sends nothing keeps the time of the last request.
+            harness.advance(300)
+            let third = try await provider.fetch(previous: second)
+            #expect(http.usageTokens == ["main", "main", "work", "main"])
+            #expect(third.accounts[1].isStale)
+            #expect(third.accounts[1].attemptedAt == .reference(60))
+        }
+
         @Test func theActiveLoginIsReadEveryTimeAndOthersAtEachFiveMinuteTick() async throws {
             let harness = try ClaudeHarness.twoAccounts()
             // Each request takes 2 s of clock time, as a real one does.

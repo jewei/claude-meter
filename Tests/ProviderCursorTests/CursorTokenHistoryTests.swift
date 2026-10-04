@@ -193,6 +193,36 @@ import Testing
         #expect(await source.reconcile(held) == nil)
     }
 
+    /// A busy database proves no other login, so `reconcile` keeps the held history.
+    @Test func reconcileKeepsTheHistoryWhileTheDatabaseIsBusy() async throws {
+        try home.write(
+            ["cursorAuth/accessToken": .text(CursorFixture.token())], journalMode: "DELETE")
+        let source = source(FakeHTTPClient(json: Self.header))
+        let held = try await source.history(now: .reference(), previous: nil)
+        let lock = try home.lockExclusively()
+        defer { home.unlock(lock) }
+
+        #expect(await source.reconcile(held) == held)
+    }
+
+    /// An unreadable database or Keychain item proves no other login either.
+    @Test func reconcileKeepsTheHistoryWhileTheCredentialsAreUnreadable() async throws {
+        try home.write(token: CursorFixture.token())
+        let http = FakeHTTPClient(json: Self.header)
+        let source = source(http)
+        let held = try await source.history(now: .reference(), previous: nil)
+
+        try home.directory.write(
+            "not a database",
+            to: "Library/Application Support/Cursor/User/globalStorage/state.vscdb")
+        #expect(await source.reconcile(held) == held)
+
+        try FileManager.default.removeItem(at: home.database)
+        keychain.store("", service: "cursor-access-token")
+        #expect(await source.reconcile(held) == held)
+        #expect(http.requests.count == 1)
+    }
+
     /// Retention follows the login that is signed in after the request, as for quota.
     @Test func aLoginChangeKeepsOnlyTheHistoryOfTheLoginSignedInAfterIt() async throws {
         let first = CursorFixture.token()

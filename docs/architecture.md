@@ -90,6 +90,15 @@ A reading may outlive a failed refresh only while it belongs to the signed-in lo
 - `AccountUsage.belongs(to:)` decides: same owner or unknown → keep; signed out or a
   different owner → drop. A response that arrives after the login changed is discarded.
 
+Token history follows the same lifecycle and rule. The store runs
+`TokenHistoryProvider.reconcile` and then `history(now:previous:)` with the reconciled value,
+both inside the 20 s history limit, and publishes a changed reconcile result at once. An
+account history (Cursor's export) carries the owner of its login
+(`ProviderTokenHistory.owner`), and `ProviderTokenHistory.belongs(to:)` applies the same
+`OwnerStatus.admits(_:)` rule, so a failure keeps it, marked stale, only while its owner is
+signed in or the login cannot be read. Local history (`.thisMac`) belongs to its folders, not
+to a login, so it always belongs.
+
 ## Rate limits: one hold for Cursor and Grok
 
 After HTTP 429 with `Retry-After`, a provider sends no request for the same login before the

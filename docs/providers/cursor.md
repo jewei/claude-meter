@@ -204,12 +204,12 @@ The email is never part of the reading.
     rows after the first 100,000 are not counted, and the history is partial.
 31. A token without a `sub` user ID, or with characters outside `A-Z a-z 0-9 _ - .`, is an
     unexpected token format. No request is sent.
-32. A failure keeps the previous history only while it belongs to the signed-in login, the rule
-    of `AccountUsage.belongs(to:)`. The app does not tell the provider which history it holds,
-    so the provider keeps the set of logins whose history it returned in this run. The history
-    stays only while that set is exactly the signed-in login, or while the login cannot be read.
-    After a login change in one run, every later failure clears the history, and the next
-    success shows it again. A login change during the request rejects the result.
+32. History follows the quota lifecycle and retention rule (`docs/architecture.md`). Each
+    history carries the owner of the login that read it (`ProviderTokenHistory.owner`).
+    `reconcile` drops a held history whose login signed out or changed, and keeps it while
+    the credentials cannot be read. A failure keeps the held history, marked stale, only
+    while `ProviderTokenHistory.belongs(to:)` accepts the login status after the failure. A
+    login change during the export discards the result.
 33. After HTTP 429 with a `Retry-After`, the shared rate-limit hold applies to the export
     (`docs/architecture.md`): no export for the same login before the retry time, at most
     1 hour after the 429. Another login exports at once. The provider keeps the hold of the

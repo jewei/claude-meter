@@ -88,8 +88,10 @@ public enum HTTPError: Error, Equatable, LocalizedError, Sendable {
         }
     }
 
-    /// A lost connection or a timeout can pass on the next try. Other transport failures, such
-    /// as an untrusted certificate or a bad URL, fail again, so a retry only spends the deadline.
+    /// A lost connection or a timeout can pass on the next try. Other transport failures fail
+    /// again, so a retry only spends the deadline: TLS failures (an untrusted certificate or a
+    /// failed handshake), a malformed response (`badServerResponse`), or a bad URL. A server
+    /// in trouble answers with a status, and 408 and 5xx have their own retries.
     var isTransient: Bool {
         switch self {
         case .offline, .timedOut: true

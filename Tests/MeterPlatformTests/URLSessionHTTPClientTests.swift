@@ -212,16 +212,28 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
         #expect(StubProtocol.requestCount(host: host) == 2)
     }
 
-    @Test func neverRetriesAFailureThatCannotPass() async {
+    @Test(arguments: [
+        URLError.Code.serverCertificateUntrusted, .secureConnectionFailed,
+        .clientCertificateRejected, .badServerResponse, .cannotDecodeContentData,
+    ])
+    func neverRetriesAFailureThatCannotPass(code: URLError.Code) async {
         let host = uniqueHost()
-        StubProtocol.install(host: host, steps: [.fail(.serverCertificateUntrusted)])
+        StubProtocol.install(host: host, steps: [.fail(code)])
         let request = HTTPRequest(url: URL(string: "https://\(host)/")!, retry: .transientFailures)
-        await #expect(
-            throws: HTTPError.transport(code: URLError.serverCertificateUntrusted.rawValue)
-        ) {
+        await #expect(throws: HTTPError.transport(code: code.rawValue)) {
             try await client().send(request)
         }
         #expect(StubProtocol.requestCount(host: host) == 1)
+    }
+
+    @Test(arguments: [URLError.Code.timedOut, .cannotConnectToHost])
+    func retriesATimeoutOrARefusedConnection(code: URLError.Code) async throws {
+        let host = uniqueHost()
+        StubProtocol.install(
+            host: host, steps: [.fail(code), .respond(status: 200, headers: [:], body: Data())])
+        let request = HTTPRequest(url: URL(string: "https://\(host)/")!, retry: .transientFailures)
+        #expect(try await client().send(request).status == 200)
+        #expect(StubProtocol.requestCount(host: host) == 2)
     }
 
     @Test func aCancellationThatTheCallerDidNotAskForIsAFailure() async {

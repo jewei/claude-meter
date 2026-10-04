@@ -47,7 +47,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    the provider without a pin.
 7. Dragging a Claude or Codex card to the top of the list pins it and makes its provider
    the main meter. A drop in place of a first card that is not the main card does the same,
-   so that card can always become the main meter. While a Claude or Codex card is visible,
+   so that card can always become the main meter. Only the card dropped on top changes the
+   main meter: a move lower in the list keeps the main meter and every pin, also a missing
+   pinned account. The main card stays first. While a Claude or Codex card is visible,
    Cursor, Grok, and extra usage cannot go first (`CardOrder.move`). **Use in Menu Bar** in
    a card's context menu, also a VoiceOver action, does the same as a drag to the top
    (`CardModel.canUseInMenuBar`). **Use automatic order** in Appearance clears the order and

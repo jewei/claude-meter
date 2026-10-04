@@ -176,6 +176,21 @@ import Testing
         #expect(model.settings.settings.menuBar.pinnedAccounts[.codex] == "/h")
     }
 
+    @Test func aMoveBelowTheTopKeepsTheMenuBarAndAMissingPin() {
+        var settings = active()
+        settings.codex.isEnabled = true
+        settings.grok.isEnabled = true
+        settings.menuBar.pinnedAccounts[.claude] = "gone"
+        let model = makeModel(settings)
+        // The pinned Claude account has no card, so the Codex card is first but not main.
+        let visible: [CardID] = [
+            .account(.codex, "/h"), .account(.claude, "a"), .account(.grok, .default),
+        ]
+        #expect(model.moveCard(.account(.grok, .default), to: 1, visible: visible))
+        #expect(model.settings.settings.menuBar.provider == .claude)
+        #expect(model.settings.settings.menuBar.pinnedAccounts == [.claude: "gone"])
+    }
+
     @Test func movesThatChangeNothingAreNotRefusals() {
         let model = makeModel()
         let visible: [CardID] = [.account(.cursor, .default), .account(.claude, "a")]

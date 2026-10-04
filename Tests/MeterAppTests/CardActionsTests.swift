@@ -85,8 +85,10 @@ import Testing
 
         let full = try accounts()
         let ids = full.cards.map(\.id)
-        #expect(full.canMove(ids[0], by: 1))
+        // The main card stays first; another card takes its place by moving up.
+        #expect(!full.canMove(ids[0], by: 1))
         #expect(full.canMove(ids[1], by: -1))
+        #expect(full.canMove(ids[1], by: 1))
         #expect(!full.canMove(try #require(ids.last), by: 1))
         #expect(!full.canMove(ids[1], by: 0))
     }

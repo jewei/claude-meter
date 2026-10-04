@@ -55,6 +55,37 @@ import Testing
                         newMain: nil)))
     }
 
+    /// The main provider has no card (here a missing pinned Claude account), so a Codex card
+    /// is first without being the main card. Moves lower in the list keep the menu bar.
+    @Test func movesBelowAFirstCardThatIsNotMainKeepTheMenuBar() {
+        let visible: [CardID] = [
+            .account(.codex, "/h"), .account(.claude, "b"), .account(.cursor, .default),
+            .account(.grok, .default),
+        ]
+        #expect(
+            CardOrder.move(.account(.grok, .default), to: 2, visible: visible, saved: [], main: nil)
+                == .moved(
+                    .init(
+                        order: [
+                            .account(.codex, "/h"), .account(.claude, "b"),
+                            .account(.grok, .default), .account(.cursor, .default),
+                        ], newMain: nil)))
+        #expect(
+            CardOrder.move(.account(.codex, "/h"), to: 1, visible: visible, saved: [], main: nil)
+                == .moved(
+                    .init(
+                        order: [
+                            .account(.claude, "b"), .account(.codex, "/h"),
+                            .account(.cursor, .default), .account(.grok, .default),
+                        ], newMain: nil)))
+    }
+
+    @Test func theMainCardStaysFirst() {
+        let visible: [CardID] = [.account(.claude, "a"), .account(.codex, "b")]
+        let main = CardID.account(.claude, "a")
+        #expect(CardOrder.move(main, to: 1, visible: visible, saved: [], main: main) == .refused)
+    }
+
     @Test func refusesCardsThatCannotOwnTheMenuBar() {
         let visible: [CardID] = [.account(.claude, "a"), .account(.cursor, .default), .extraUsage]
         for card in [CardID.account(.cursor, .default), .extraUsage] {

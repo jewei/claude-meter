@@ -54,6 +54,8 @@ core.
 - Releasing a dragged card no longer opens or closes it.
 - The popover fits on short screens and with a hidden menu bar.
 - Text has enough contrast in light and dark mode, also on hover and press.
+- Moving a card lower in the popover no longer changes the menu-bar meter or its pinned
+  account.
 
 ### Removed
 

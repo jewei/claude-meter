@@ -93,10 +93,10 @@ public final class AppModel {
         }
     }
 
-    /// Moves a card. A Claude or Codex card that ends up first, also by a drop in place of the
-    /// first card, becomes the main meter and is pinned. Returns false only when the move is
-    /// refused because the new first card cannot own the menu bar; a move that changes
-    /// nothing returns true.
+    /// Moves a card. A Claude or Codex card dropped first, also in place of the first card,
+    /// becomes the main meter and is pinned; any other move keeps the main meter and the pins.
+    /// Returns false only when the move is refused (``CardOrder/move(_:to:visible:saved:main:)``);
+    /// a move that changes nothing returns true.
     @discardableResult
     public func moveCard(_ id: CardID, to index: Int, visible: [CardID]) -> Bool {
         let current = settings.settings

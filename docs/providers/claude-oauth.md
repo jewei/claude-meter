@@ -71,8 +71,8 @@ Content-Type: application/json
 
 1. `<h>` is the first 8 lowercase hex characters of the SHA-256 of the config dir's path.
    The path is absolute, has symbolic links resolved, is standardized, and has no trailing
-   slash (`ConfigDirectoryScanner.canonicalPath`). Example: `/Users/jewei/.claude-oneone-tech`
-   gives `Claude Code-credentials-48c8f98c`. For a dir reached through a symbolic link, the
+   slash (`ConfigDirectoryScanner.canonicalPath`). Example: `/Users/me/.claude-work`
+   gives `Claude Code-credentials-1e91dd84`. For a dir reached through a symbolic link, the
    hash of the path as found or configured (standardized, links kept) is tried next, because
    Claude Code may hash `CLAUDE_CONFIG_DIR` without resolving links.
 2. The default dir tries the legacy item first, then its hashed item. Other dirs use only

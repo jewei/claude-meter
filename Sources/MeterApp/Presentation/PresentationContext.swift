@@ -96,7 +96,7 @@ public struct PresentationContext: Sendable {
         return !age.isFinite || age < -Self.futureTolerance || age > Self.staleAfter
     }
 
-    /// `it-oneone` → `It Oneone`, `default` → `Default`.
+    /// `team-tools` → `Team Tools`, `default` → `Default`.
     static func friendlyName(_ label: String) -> String {
         label.replacingOccurrences(of: "-", with: " ").replacingOccurrences(of: "_", with: " ")
             .split(separator: " ")

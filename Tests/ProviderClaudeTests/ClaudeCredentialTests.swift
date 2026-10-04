@@ -17,11 +17,11 @@ extension ClaudeTests {
         @Test func hashRuleUsesTheFirstEightHexCharacters() {
             #expect(ClaudeCodeKeychain.shortHash("abc") == "ba7816bf")
             #expect(
-                ClaudeCodeKeychain.shortHash("/Users/jewei/.claude-oneone-tech") == "48c8f98c")
-            let directory = URL(fileURLWithPath: "/Users/jewei/.claude-oneone-tech")
+                ClaudeCodeKeychain.shortHash("/Users/me/.claude-work") == "1e91dd84")
+            let directory = URL(fileURLWithPath: "/Users/me/.claude-work")
             #expect(
                 ClaudeCodeKeychain.hashedService(for: directory)
-                    == "Claude Code-credentials-48c8f98c")
+                    == "Claude Code-credentials-1e91dd84")
         }
 
         @Test func theDefaultDirPrefersTheLegacyItem() {

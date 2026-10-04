@@ -9,7 +9,7 @@ extension ClaudeTests {
     @Suite struct ConfigDirectoryTests {
         @Test(arguments: [
             (".claude", "claude"),
-            (".claude-it-oneone", "claude-it-oneone"),
+            (".claude-team-tools", "claude-team-tools"),
             (".claude work!@#", "claudework"),
             ("。", "claude"),
             (".claude.bak", "claude.bak"),

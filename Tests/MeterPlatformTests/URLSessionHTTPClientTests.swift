@@ -5,7 +5,7 @@ import Testing
 @testable import MeterPlatform
 
 /// Serves scripted responses to URLSession. Each test uses its own host, so tests can run in
-/// parallel without sharing routes.
+/// parallel without sharing routes. A host without steps never answers.
 private final class StubProtocol: URLProtocol, @unchecked Sendable {
     enum Step: Sendable {
         case respond(status: Int, headers: [String: String], body: Data)
@@ -185,5 +185,115 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
         await #expect(throws: HTTPError.offline) {
             try await client().send(HTTPRequest(url: URL(string: "https://\(host)/")!))
         }
+    }
+
+    @Test func theDeadlineEndsASendThatNeverAnswers() async {
+        let host = uniqueHost()
+        StubProtocol.install(host: host, steps: [])
+        let clock = ContinuousClock()
+        let start = clock.now
+        await #expect(throws: HTTPError.timedOut) {
+            try await client().send(
+                HTTPRequest(url: URL(string: "https://\(host)/")!, deadline: .milliseconds(200)))
+        }
+        #expect(clock.now - start < .seconds(2))
+    }
+
+    @Test func retriesALostConnectionForGET() async throws {
+        let host = uniqueHost()
+        StubProtocol.install(
+            host: host,
+            steps: [
+                .fail(.networkConnectionLost),
+                .respond(status: 200, headers: [:], body: Data("ok".utf8)),
+            ])
+        let request = HTTPRequest(url: URL(string: "https://\(host)/")!, retry: .transientFailures)
+        #expect(try await client().send(request).status == 200)
+        #expect(StubProtocol.requestCount(host: host) == 2)
+    }
+
+    @Test func neverRetriesAFailureThatCannotPass() async {
+        let host = uniqueHost()
+        StubProtocol.install(host: host, steps: [.fail(.serverCertificateUntrusted)])
+        let request = HTTPRequest(url: URL(string: "https://\(host)/")!, retry: .transientFailures)
+        await #expect(
+            throws: HTTPError.transport(code: URLError.serverCertificateUntrusted.rawValue)
+        ) {
+            try await client().send(request)
+        }
+        #expect(StubProtocol.requestCount(host: host) == 1)
+    }
+
+    @Test func aCancellationThatTheCallerDidNotAskForIsAFailure() async {
+        let host = uniqueHost()
+        StubProtocol.install(host: host, steps: [.fail(.cancelled)])
+        await #expect(throws: HTTPError.transport(code: URLError.cancelled.rawValue)) {
+            try await client().send(HTTPRequest(url: URL(string: "https://\(host)/")!))
+        }
+    }
+
+    @Test func waitsForAServerDelayGivenAsADate() async throws {
+        let host = uniqueHost()
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+        let date = formatter.string(from: Date().addingTimeInterval(2))
+        StubProtocol.install(
+            host: host,
+            steps: [
+                .respond(status: 503, headers: ["Retry-After": date], body: Data()),
+                .respond(status: 200, headers: [:], body: Data()),
+            ])
+        let clock = ContinuousClock()
+        let start = clock.now
+        let request = HTTPRequest(url: URL(string: "https://\(host)/")!, retry: .transientFailures)
+        #expect(try await client().send(request).status == 200)
+        #expect(clock.now - start >= .milliseconds(900))
+        #expect(StubProtocol.requestCount(host: host) == 2)
+    }
+
+    @Test(arguments: ["http://HOST/next", "https://HOST:8443/next"])
+    func refusesRedirectsToAnotherSchemeOrPort(target: String) async {
+        let host = uniqueHost()
+        let location = target.replacingOccurrences(of: "HOST", with: host)
+        StubProtocol.install(host: host, steps: [.redirect(to: location)])
+        await #expect(throws: HTTPError.redirectRejected) {
+            try await client().send(HTTPRequest(url: URL(string: "https://\(host)/")!))
+        }
+    }
+
+    @Test func followsARedirectThatNamesTheDefaultPort() async throws {
+        let host = uniqueHost()
+        StubProtocol.install(
+            host: host,
+            steps: [
+                .redirect(to: "https://\(host):443/next"),
+                .respond(status: 200, headers: [:], body: Data("moved".utf8)),
+            ])
+        let response = try await client().send(HTTPRequest(url: URL(string: "https://\(host)/")!))
+        #expect(response.body == Data("moved".utf8))
+    }
+
+    @Test func acceptsABodyOfExactlyTheLimit() async throws {
+        for headers in [["Content-Length": "1024"], [:]] {
+            let host = uniqueHost()
+            StubProtocol.install(
+                host: host,
+                steps: [.respond(status: 200, headers: headers, body: Data(count: 1024))])
+            let response = try await client().send(
+                HTTPRequest(url: URL(string: "https://\(host)/")!))
+            #expect(response.body.count == 1024)
+        }
+    }
+
+    // A stub protocol never sees cookies, so check the session that real requests use.
+    @Test func neverStoresOrSendsCookiesOrCachedResponses() {
+        let configuration = URLSessionHTTPClient().session.configuration
+        #expect(configuration.httpCookieStorage == nil)
+        #expect(!configuration.httpShouldSetCookies)
+        #expect(configuration.urlCache == nil)
+        #expect(configuration.requestCachePolicy == .reloadIgnoringLocalAndRemoteCacheData)
+        #expect(!configuration.waitsForConnectivity)
     }
 }

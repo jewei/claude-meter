@@ -10,7 +10,7 @@ public struct HTTPRequest: Sendable {
     public enum Retry: Sendable {
         /// Send once. Use for every request with its own rate-limit rules.
         case never
-        /// Retry a GET after a dropped connection or HTTP 408, 500, 502, 503, or 504.
+        /// Retry a GET after a lost connection, a timeout, or HTTP 408, 500, 502, 503, or 504.
         /// Never after 429.
         case transientFailures
     }
@@ -88,10 +88,12 @@ public enum HTTPError: Error, Equatable, LocalizedError, Sendable {
         }
     }
 
+    /// A lost connection or a timeout can pass on the next try. Other transport failures, such
+    /// as an untrusted certificate or a bad URL, fail again, so a retry only spends the deadline.
     var isTransient: Bool {
         switch self {
-        case .offline, .timedOut, .transport: true
-        case .responseTooLarge, .redirectRejected: false
+        case .offline, .timedOut: true
+        case .transport, .responseTooLarge, .redirectRejected: false
         }
     }
 }

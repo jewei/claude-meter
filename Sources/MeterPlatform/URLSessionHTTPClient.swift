@@ -12,7 +12,8 @@ public final class URLSessionHTTPClient: HTTPClient {
     public static let shared = URLSessionHTTPClient()
 
     public let maxResponseBytes: Int
-    private let session: URLSession
+    /// Internal so tests can check the configuration.
+    let session: URLSession
     private static let maxAttempts = 3
     /// Server states that usually pass. Never 429: rate limits have their own rules.
     private static let retryableStatuses: Set<Int> = [408, 500, 502, 503, 504]
@@ -103,8 +104,16 @@ public final class URLSessionHTTPClient: HTTPClient {
         } catch {
             throw Self.translate(error)
         }
-        guard let http = response as? HTTPURLResponse else { throw HTTPError.transport(code: 0) }
-        if (300..<400).contains(http.statusCode) { throw HTTPError.redirectRejected }
+        guard let http = response as? HTTPURLResponse else {
+            bytes.task.cancel()
+            throw HTTPError.transport(code: 0)
+        }
+        // The redirect guard refused to follow, so the 3xx is the final response. Its body is
+        // not needed.
+        if (300..<400).contains(http.statusCode) {
+            bytes.task.cancel()
+            throw HTTPError.redirectRejected
+        }
         if http.expectedContentLength > Int64(maxResponseBytes) {
             bytes.task.cancel()
             throw HTTPError.responseTooLarge(limit: maxResponseBytes)
@@ -141,7 +150,10 @@ public final class URLSessionHTTPClient: HTTPClient {
         guard let urlError = error as? URLError else { return error }
         switch urlError.code {
         case .cancelled:
-            return CancellationError()
+            // Only the caller's cancellation means "change nothing". The system can cancel a
+            // task too, and that is a failure to report.
+            return Task.isCancelled
+                ? CancellationError() : HTTPError.transport(code: urlError.code.rawValue)
         case .timedOut:
             return HTTPError.timedOut
         case .notConnectedToInternet, .networkConnectionLost, .cannotFindHost,
@@ -154,7 +166,7 @@ public final class URLSessionHTTPClient: HTTPClient {
     }
 }
 
-/// Follows a redirect only to the same HTTPS scheme, host, and port.
+/// Follows a redirect only to the same HTTPS scheme, host, and port. A missing port is 443.
 private final class SameOriginRedirects: NSObject, URLSessionTaskDelegate, Sendable {
     private let origin: URL
 
@@ -170,7 +182,7 @@ private final class SameOriginRedirects: NSObject, URLSessionTaskDelegate, Senda
             target.scheme?.lowercased() == "https",
             origin.scheme?.lowercased() == "https",
             target.host?.lowercased() == origin.host?.lowercased(),
-            target.port == origin.port
+            (target.port ?? 443) == (origin.port ?? 443)
         else { return nil }
         return request
     }

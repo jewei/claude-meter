@@ -77,7 +77,7 @@ enum GrokFailure: Error, Equatable, Sendable {
     /// Maps a transport error. Callers rethrow cancellation first.
     init(transport error: any Error) {
         switch error as? HTTPError {
-        case .offline: self = .offline
+        case .offline, .connectionLost: self = .offline
         case .timedOut: self = .timedOut
         case .responseTooLarge, .redirectRejected: self = .unexpectedResponse
         case .transport, nil: self = .network

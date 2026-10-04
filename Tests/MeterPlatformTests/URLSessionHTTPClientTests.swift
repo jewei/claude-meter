@@ -199,19 +199,6 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
         #expect(clock.now - start < .seconds(2))
     }
 
-    @Test func retriesALostConnectionForGET() async throws {
-        let host = uniqueHost()
-        StubProtocol.install(
-            host: host,
-            steps: [
-                .fail(.networkConnectionLost),
-                .respond(status: 200, headers: [:], body: Data("ok".utf8)),
-            ])
-        let request = HTTPRequest(url: URL(string: "https://\(host)/")!, retry: .transientFailures)
-        #expect(try await client().send(request).status == 200)
-        #expect(StubProtocol.requestCount(host: host) == 2)
-    }
-
     @Test(arguments: [
         URLError.Code.serverCertificateUntrusted, .secureConnectionFailed,
         .clientCertificateRejected, .badServerResponse, .cannotDecodeContentData,
@@ -226,14 +213,40 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
         #expect(StubProtocol.requestCount(host: host) == 1)
     }
 
-    @Test(arguments: [URLError.Code.timedOut, .cannotConnectToHost])
-    func retriesATimeoutOrARefusedConnection(code: URLError.Code) async throws {
+    @Test(arguments: [URLError.Code.timedOut, .networkConnectionLost])
+    func retriesATimeoutOrALostConnectionForGET(code: URLError.Code) async throws {
+        let host = uniqueHost()
+        StubProtocol.install(
+            host: host,
+            steps: [.fail(code), .respond(status: 200, headers: [:], body: Data("ok".utf8))])
+        let request = HTTPRequest(url: URL(string: "https://\(host)/")!, retry: .transientFailures)
+        #expect(try await client().send(request).status == 200)
+        #expect(StubProtocol.requestCount(host: host) == 2)
+    }
+
+    @Test(arguments: [
+        URLError.Code.notConnectedToInternet, .cannotFindHost, .dnsLookupFailed,
+        .cannotConnectToHost,
+    ])
+    func failsAtOnceWhenOffline(code: URLError.Code) async {
         let host = uniqueHost()
         StubProtocol.install(
             host: host, steps: [.fail(code), .respond(status: 200, headers: [:], body: Data())])
         let request = HTTPRequest(url: URL(string: "https://\(host)/")!, retry: .transientFailures)
-        #expect(try await client().send(request).status == 200)
-        #expect(StubProtocol.requestCount(host: host) == 2)
+        let clock = ContinuousClock()
+        let start = clock.now
+        await #expect(throws: HTTPError.offline) { try await client().send(request) }
+        #expect(StubProtocol.requestCount(host: host) == 1)
+        // No backoff wait: the first retry would wait 1 s.
+        #expect(clock.now - start < .seconds(1))
+    }
+
+    @Test func aLostConnectionThatStaysLostFailsAfterThreeAttempts() async {
+        let host = uniqueHost()
+        StubProtocol.install(host: host, steps: [.fail(.networkConnectionLost)])
+        let request = HTTPRequest(url: URL(string: "https://\(host)/")!, retry: .transientFailures)
+        await #expect(throws: HTTPError.connectionLost) { try await client().send(request) }
+        #expect(StubProtocol.requestCount(host: host) == 3)
     }
 
     @Test func aCancellationThatTheCallerDidNotAskForIsAFailure() async {

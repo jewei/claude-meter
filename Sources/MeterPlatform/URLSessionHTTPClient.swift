@@ -14,10 +14,10 @@ public final class URLSessionHTTPClient: HTTPClient {
     public let maxResponseBytes: Int
     /// Internal so tests can check the configuration.
     let session: URLSession
+    /// Three attempts wait 1 s and 2 s between them, unless the server asks for longer.
     private static let maxAttempts = 3
     /// Server states that usually pass. Never 429: rate limits have their own rules.
     private static let retryableStatuses: Set<Int> = [408, 500, 502, 503, 504]
-    private static let maxBackoff: TimeInterval = 8
 
     public convenience init(maxResponseBytes: Int = 8 * 1024 * 1024) {
         self.init(configuration: .ephemeral, maxResponseBytes: maxResponseBytes)
@@ -77,7 +77,7 @@ public final class URLSessionHTTPClient: HTTPClient {
     }
 
     private static func backoff(attempt: Int) -> TimeInterval {
-        min(maxBackoff, pow(2, Double(attempt - 1)))
+        pow(2, Double(attempt - 1))
     }
 
     /// Compares in seconds, so a huge server delay never becomes a `Duration`, which traps.
@@ -156,9 +156,10 @@ public final class URLSessionHTTPClient: HTTPClient {
                 ? CancellationError() : HTTPError.transport(code: urlError.code.rawValue)
         case .timedOut:
             return HTTPError.timedOut
-        case .notConnectedToInternet, .networkConnectionLost, .cannotFindHost,
-            .dnsLookupFailed, .cannotConnectToHost, .internationalRoamingOff,
-            .dataNotAllowed:
+        case .networkConnectionLost:
+            return HTTPError.connectionLost
+        case .notConnectedToInternet, .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost,
+            .internationalRoamingOff, .dataNotAllowed:
             return HTTPError.offline
         default:
             return HTTPError.transport(code: urlError.code.rawValue)

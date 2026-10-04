@@ -36,7 +36,7 @@ struct CodexUsageAPI: Sendable {
             // The server answered, but not with a usage response.
             case .redirectRejected, .responseTooLarge:
                 throw CodexError.unexpectedResponse
-            case .offline, .timedOut, .transport:
+            case .offline, .connectionLost, .timedOut, .transport:
                 throw CodexError.network(error.localizedDescription)
             }
         } catch {

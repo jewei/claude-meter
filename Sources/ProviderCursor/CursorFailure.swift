@@ -126,7 +126,7 @@ enum CursorFailure: Error, Equatable, Sendable {
     /// Maps a transport error. Cancellation is not a failure and is rethrown by callers first.
     init(transport error: any Error) {
         switch error as? HTTPError {
-        case .offline: self = .offline
+        case .offline, .connectionLost: self = .offline
         case .timedOut: self = .timedOut
         case .responseTooLarge: self = .responseTooLarge
         case .redirectRejected: self = .unexpectedResponse

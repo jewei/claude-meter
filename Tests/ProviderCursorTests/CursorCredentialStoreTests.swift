@@ -8,7 +8,7 @@ import Testing
 @testable import ProviderCursor
 
 // Serialized: parallel reads can pass `BlockingIO.capacity`, which rejects work at once.
-@Suite(.serialized) struct CursorCredentialStoreTests {
+@Suite struct CursorCredentialStoreTests {
     private func credentials(_ lookup: CursorCredentialLookup) -> CursorCredentials? {
         if case .found(let credentials) = lookup { return credentials }
         return nil

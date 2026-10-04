@@ -7,7 +7,7 @@ import Testing
 
 /// Claude Code session logs, read from synthetic config dirs. Scans run one at a time because
 /// they share the process-wide `BlockingIO` pool with other suites.
-@Suite(.serialized) struct ClaudeTokenHistoryTests {
+@Suite struct ClaudeTokenHistoryTests {
     private let calendar = Calendar.fixed("UTC")
 
     /// One assistant line. Pass nil to leave a field out.

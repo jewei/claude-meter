@@ -33,7 +33,7 @@ typealias CountingScanner = HistoryScanner<CountingParser>
 
 /// Suites that scan real files run one test at a time. Every scan uses the process-wide
 /// `BlockingIO` pool, and parallel scans would fill it while other suites test the pool.
-@Suite(.serialized) enum HistoryScans {}
+@Suite enum HistoryScans {}
 
 /// The start of a range that every fixture file is newer than, whatever the host clock says.
 let rangeStart = Date.reference(-.days(3_650))

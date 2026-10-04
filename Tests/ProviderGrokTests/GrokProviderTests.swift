@@ -7,7 +7,7 @@ import Testing
 @testable import ProviderGrok
 
 // Serialized: parallel reads can pass `BlockingIO.capacity`, which rejects work at once.
-@Suite(.serialized) struct GrokProviderTests {
+@Suite struct GrokProviderTests {
     /// Captured 2026-07-11 from cli-chat-proxy.grok.com (grok 0.2.93).
     static let liveFixture = """
         {"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2026-07-04T05:57:34.172321+00:00","end":"2026-07-11T05:57:34.172321+00:00"},"creditUsagePercent":36.0,"onDemandCap":{"val":0},"onDemandUsed":{"val":0},"productUsage":[{"product":"GrokBuild","usagePercent":36.0}],"isUnifiedBillingUser":true,"prepaidBalance":{"val":0},"topUpMethod":"TOP_UP_METHOD_SAVED_PAYMENT_METHOD","billingPeriodStart":"2026-07-04T05:57:34.172321+00:00","billingPeriodEnd":"2026-07-11T05:57:34.172321+00:00"}}

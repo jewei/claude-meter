@@ -8,7 +8,7 @@ import Testing
 @testable import ProviderGrok
 
 // Serialized: parallel reads can pass `BlockingIO.capacity`, which rejects work at once.
-@Suite(.serialized) struct GrokAuthFileTests {
+@Suite struct GrokAuthFileTests {
     /// 2026-07-11T05:00:00Z, before the fixture's `expires_at`.
     private let now = Date(timeIntervalSince1970: 1_783_746_000)
 

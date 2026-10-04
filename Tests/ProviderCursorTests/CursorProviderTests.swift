@@ -7,7 +7,7 @@ import Testing
 @testable import ProviderCursor
 
 // Serialized: parallel reads can pass `BlockingIO.capacity`, which rejects work at once.
-@Suite(.serialized) struct CursorProviderTests {
+@Suite struct CursorProviderTests {
     private let home: CursorHome
     private let keychain = FakeKeychain()
     private let owner = CursorFixture.ownerOf(subject: "auth0|user_123")

@@ -7,7 +7,7 @@ import Testing
 @testable import ProviderCursor
 
 // Serialized: parallel reads can pass `BlockingIO.capacity`, which rejects work at once.
-@Suite(.serialized) struct CursorTokenHistoryTests {
+@Suite struct CursorTokenHistoryTests {
     private static let header =
         "Date,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Cost"
 

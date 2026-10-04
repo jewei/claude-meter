@@ -7,7 +7,7 @@ import Testing
 
 /// Grok Build session updates, read from a synthetic Grok home. Scans run one at a time
 /// because they share the process-wide `BlockingIO` pool with other suites.
-@Suite(.serialized) struct GrokTokenHistoryTests {
+@Suite struct GrokTokenHistoryTests {
     private let calendar = Calendar.fixed("UTC")
 
     private func json(_ object: [String: Any]) throws -> String {

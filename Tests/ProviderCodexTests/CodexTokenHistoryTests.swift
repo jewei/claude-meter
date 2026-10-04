@@ -7,7 +7,7 @@ import Testing
 
 /// Codex rollout files, read from synthetic Codex homes. Scans run one at a time because they
 /// share the process-wide `BlockingIO` pool with other suites.
-@Suite(.serialized) struct CodexTokenHistoryTests {
+@Suite struct CodexTokenHistoryTests {
     private let calendar = Calendar.fixed("UTC")
 
     private func json(_ objects: [String: Any]...) throws -> String {

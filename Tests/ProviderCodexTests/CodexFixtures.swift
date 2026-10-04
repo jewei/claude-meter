@@ -11,7 +11,7 @@ import Testing
 /// The provider reads files through `BlockingIO`, whose process-wide cap of 16 also counts
 /// queued work. Parallel test cases can pass that cap and get `BusyError`, so the Codex suites
 /// run one test at a time.
-@Suite(.serialized) struct CodexTests {}
+@Suite struct CodexTests {}
 
 /// Tokens, files, and responses for Codex tests.
 enum CodexFixtures {

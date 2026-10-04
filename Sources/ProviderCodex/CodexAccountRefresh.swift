@@ -18,20 +18,21 @@ struct CodexAccountRefresh: Sendable {
     }
 
     struct Outcome: Sendable {
-        enum Result: Sendable {
+        /// What the refresh ended with.
+        enum Kind: Sendable {
             case observed(CodexQuota, owner: AccountOwner)
             /// `status` is the latest owner status, for retention of the previous observation.
             case failed(CodexError, status: OwnerStatus)
         }
 
-        var result: Result
+        var kind: Kind
         var source: Source?
         /// What the auth file held before the request, for Diagnostics.
         var login: String?
 
         /// A home that did not finish by the fetch deadline. The text names no number of
         /// seconds, because a home that started late had less time.
-        static let timedOut = Outcome(result: .failed(.timedOut, status: .unknown))
+        static let timedOut = Outcome(kind: .failed(.timedOut, status: .unknown))
     }
 
     /// What Codex itself said about the login during recovery.
@@ -44,8 +45,8 @@ struct CodexAccountRefresh: Sendable {
         case noCLI
     }
 
-    /// One request or recovery, before the owner is checked again.
-    struct Attempt: Sendable {
+    /// The result of the usage request or of recovery, before the owner is read again.
+    struct RequestResult: Sendable {
         var quota: Result<CodexQuota, CodexError>
         var source: Source
         var report: CodexReport?
@@ -63,35 +64,35 @@ struct CodexAccountRefresh: Sendable {
         switch before {
         case .apiKey:
             return Outcome(
-                result: .failed(.apiKeyOnly, status: .signedOut), login: before.summary)
+                kind: .failed(.apiKeyOnly, status: .signedOut), login: before.summary)
         case .noHome:
             return Outcome(
-                result: .failed(.homeMissing, status: .signedOut), login: before.summary)
+                kind: .failed(.homeMissing, status: .signedOut), login: before.summary)
         case .chatGPT, .missing, .noTokens, .invalid, .unreadable:
             break
         }
-        let attempt = try await obtain(home, login: before)
+        let request = try await obtain(home, login: before)
         let after = try await CodexLogin.read(home, timeout: fileReadLimit)
         return Outcome(
-            result: Self.result(of: attempt, before: before, after: after),
-            source: attempt.source, login: before.summary)
+            kind: Self.kind(of: request, before: before, after: after),
+            source: request.source, login: before.summary)
     }
 
-    /// The outcome of `attempt` once the owner was read again.
-    static func result(
-        of attempt: Attempt, before: CodexLogin, after: CodexLogin
-    ) -> Outcome.Result {
-        switch attempt.quota {
+    /// The outcome of `request` once the owner was read again.
+    static func kind(
+        of request: RequestResult, before: CodexLogin, after: CodexLogin
+    ) -> Outcome.Kind {
+        switch request.quota {
         case .failure(let error):
-            return .failed(error, status: status(after: after, error: error, attempt.report))
+            return .failed(error, status: status(after: after, error: error, request.report))
         case .success(let quota):
             if let owner = verifiedOwner(
-                before: before, after: after, source: attempt.source, report: attempt.report)
+                before: before, after: after, source: request.source, report: request.report)
             {
                 return .observed(quota, owner: owner)
             }
             let error: CodexError = after == .unreadable ? .authFileUnreadable : .signInChanged
-            return .failed(error, status: status(after: after, error: error, attempt.report))
+            return .failed(error, status: status(after: after, error: error, request.report))
         }
     }
 
@@ -139,10 +140,10 @@ struct CodexAccountRefresh: Sendable {
 
     // MARK: - Work
 
-    private func obtain(_ home: CodexHome, login: CodexLogin) async throws -> Attempt {
+    private func obtain(_ home: CodexHome, login: CodexLogin) async throws -> RequestResult {
         guard case .chatGPT(let credentials) = login else {
             guard let reason = login.recoveryReason else {
-                return Attempt(quota: .failure(.apiKeyOnly), source: .direct)
+                return RequestResult(quota: .failure(.apiKeyOnly), source: .direct)
             }
             return try await recover(home, directError: reason)
         }
@@ -151,17 +152,17 @@ struct CodexAccountRefresh: Sendable {
             return try await recover(home, directError: .accessTokenExpired)
         }
         do {
-            return Attempt(
+            return RequestResult(
                 quota: .success(try await api.quota(with: credentials, now: now)),
                 source: .direct)
         } catch let error as CodexError where error.startsRecovery {
             return try await recover(home, directError: error)
         } catch let error as CodexError {
-            return Attempt(quota: .failure(error), source: .direct)
+            return RequestResult(quota: .failure(error), source: .direct)
         }
     }
 
-    private func recover(_ home: CodexHome, directError: CodexError) async throws -> Attempt {
+    private func recover(_ home: CodexHome, directError: CodexError) async throws -> RequestResult {
         let reply: CodexRecoveryReply
         do {
             reply = try await recovery.recover(
@@ -169,26 +170,29 @@ struct CodexAccountRefresh: Sendable {
         } catch is CancellationError {
             throw CancellationError()
         } catch CodexError.apiKeyOnly {
-            return Attempt(quota: .failure(.apiKeyOnly), source: .recovery, report: .signedOut)
+            return RequestResult(
+                quota: .failure(.apiKeyOnly), source: .recovery, report: .signedOut)
         } catch {
             let report: CodexReport? = error as? CodexError == .cliNotFound ? .noCLI : nil
-            return Attempt(
+            return RequestResult(
                 quota: .failure(.combining(error, direct: directError)), source: .recovery,
                 report: report)
         }
         if CodexAppServerResult.authMode(account: reply.account) == .apiKey {
-            return Attempt(quota: .failure(.apiKeyOnly), source: .recovery, report: .signedOut)
+            return RequestResult(
+                quota: .failure(.apiKeyOnly), source: .recovery, report: .signedOut)
         }
         if CodexAppServerResult.reportsNoAccount(reply.account) {
-            return Attempt(quota: .failure(.notSignedIn), source: .recovery, report: .signedOut)
+            return RequestResult(
+                quota: .failure(.notSignedIn), source: .recovery, report: .signedOut)
         }
         let report = CodexAppServerResult.owner(account: reply.account).map(CodexReport.signedIn)
         do {
             let quota = try CodexAppServerResult.quota(
                 account: reply.account, rateLimits: reply.rateLimits, now: now())
-            return Attempt(quota: .success(quota), source: .recovery, report: report)
+            return RequestResult(quota: .success(quota), source: .recovery, report: report)
         } catch {
-            return Attempt(
+            return RequestResult(
                 quota: .failure(.combining(error, direct: directError)), source: .recovery,
                 report: report)
         }

@@ -12,7 +12,7 @@ struct CodexAttempt: Sendable {
     /// A failure keeps `previous` as stale only while it belongs to the current owner status
     /// (``AccountUsage/belongs(to:)``). Otherwise the account is unavailable with the issue.
     func account(previous: AccountUsage?) -> AccountUsage {
-        switch outcome.result {
+        switch outcome.kind {
         case .observed(let quota, let owner):
             return quota.usage(for: home, observedAt: attemptedAt, owner: owner)
         case .failed(let error, let status):
@@ -42,7 +42,7 @@ struct CodexAttempt: Sendable {
     var facts: [DiagnosticFact] {
         let label = home.label
         let result: String =
-            switch outcome.result {
+            switch outcome.kind {
             case .observed: "Updated"
             case .failed(let error, _): error.localizedDescription
             }
@@ -53,7 +53,7 @@ struct CodexAttempt: Sendable {
             DiagnosticFact("\(label) last attempt", attemptedAt.formatted(.iso8601)),
             DiagnosticFact("\(label) result", result),
         ]
-        if case .failed(let error, _) = outcome.result, let reasons = error.reasons {
+        if case .failed(let error, _) = outcome.kind, let reasons = error.reasons {
             facts.append(DiagnosticFact("\(label) reasons", reasons))
         }
         return facts

@@ -260,14 +260,17 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
     the account from `account/read` decides, no Codex CLI is signed out, and otherwise the
     status is unknown. With a file, rule 26 decides.
 30. Observed homes with the same owner have `sharesLogin` set.
-31. After HTTP 429 the shared rate-limit hold applies (`docs/architecture.md`): no usage
-    request and no recovery for the same login before the retry time, at most 1 hour after
-    the 429, so the card's countdown is true. The home keeps its previous observation as
-    stale with the 429 issue, or stays unavailable with its owner, so a first 429 holds too.
-    Another login sends at once. A home that sends nothing for another reason, such as one
-    that did not finish by the fetch deadline, keeps the hold. The card says
+31. After HTTP 429 with a usable `Retry-After`, the shared rate-limit hold applies
+    (`docs/architecture.md`): no usage request and no recovery for the same login before the
+    retry time, at most 1 hour after the 429, so the card's countdown is true. The limit
+    belongs to the login, so every home with that login waits: each fetch collects the holds
+    of all homes by owner. A held home keeps its previous observation as stale with the 429
+    issue, or stays unavailable with its owner, so a first 429 holds too. Another login sends
+    at once. A home that sends nothing for another reason, such as one that did not finish by
+    the fetch deadline, keeps the hold. The card says
     `Codex limited the number of requests. Claude Meter will try again later.` Other HTTP
-    statuses show no countdown, because nothing waits for their `Retry-After`.
+    statuses, and a 429 without a usable `Retry-After`, show no countdown, because nothing
+    waits for them.
 
 ### Time and concurrency
 

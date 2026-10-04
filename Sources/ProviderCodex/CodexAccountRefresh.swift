@@ -58,15 +58,18 @@ struct CodexAccountRefresh: Sendable {
     let fileReadLimit: Duration
     let now: @Sendable () -> Date
 
-    /// Refreshes `home`. `previous` is the account that the app holds now: while it holds a
-    /// rate limit for the same login (``AccountUsage/rateLimitHold(for:now:)``), nothing is
-    /// sent, not even recovery. A login that stops (``CodexLogin/Route/stop(_:status:)``)
-    /// sends nothing either. Throws only `CancellationError`.
-    func run(_ home: CodexHome, previous: AccountUsage?) async throws -> Outcome {
+    /// Refreshes `home`. `holds` are the rate-limit holds of every home: while one holds the
+    /// login of this home (``RateLimitHold``), nothing is sent, not even recovery. A login
+    /// that stops (``CodexLogin/Route/stop(_:status:)``) sends nothing either. Throws only
+    /// `CancellationError`.
+    func run(_ home: CodexHome, holds: [RateLimitHold]) async throws -> Outcome {
         let before = try await CodexLogin.read(home, timeout: fileReadLimit)
-        if let owner = before.owner, let hold = previous?.rateLimitHold(for: owner, now: now()) {
+        let now = now()
+        if let owner = before.owner,
+            let retryAt = holds.filter({ $0.holds(owner, now: now) }).map(\.retryAt).max()
+        {
             return Outcome(
-                kind: .failed(.rateLimited(retryAt: hold.retryAt), status: .signedIn(owner)),
+                kind: .failed(.rateLimited(retryAt: retryAt), status: .signedIn(owner)),
                 login: before.summary)
         }
         let request: RequestResult

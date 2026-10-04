@@ -149,6 +149,43 @@ extension CodexTests {
             #expect(bed.recovery.calls == 0)
         }
 
+        /// R3-P-05: the limit belongs to the login, so another home with the same login waits
+        /// too. A home with another login sends.
+        @Test func aRateLimitHoldsEveryHomeOfTheSameLogin() async throws {
+            let calls = Locked(0)
+            let http = FakeHTTPClient { _ in
+                let call = calls.withLock { count -> Int in
+                    count += 1
+                    return count
+                }
+                return call == 1
+                    ? .json(429, "", headers: ["Retry-After": "120"])
+                    : .json(200, CodexFixtures.usage)
+            }
+            var limits = CodexLimits.standard
+            limits.concurrentHomes = 1
+            let bed = try CodexTestBed(extraHomes: ["work", "other"], http: http, limits: limits)
+            defer { bed.remove() }
+            try bed.writeAuth()
+            try bed.writeAuth(home: "work")
+            try bed.writeAuth(
+                CodexFixtures.authJSON(accessToken: CodexFixtures.accessToken(user: "user-2")),
+                home: "other")
+            let first = try await bed.provider.fetch(previous: nil)
+            #expect(first.accounts.map { $0.issue?.retryAt } == [.reference(120), nil, nil])
+            #expect(http.requests.count == 3)
+
+            let held = try await bed.provider(limits: limits, now: .reference(60))
+                .fetch(previous: first)
+
+            #expect(http.requests.count == 4)
+            let work = try #require(held.accounts.dropFirst().first)
+            #expect(work.isStale)
+            #expect(work.observedAt == .reference())
+            #expect(work.issue?.retryAt == .reference(120))
+            #expect(held.accounts.last?.issue == nil)
+        }
+
         @Test func anotherLoginIsNotHeld() async throws {
             let bed = try CodexTestBed(http: Self.limited())
             defer { bed.remove() }

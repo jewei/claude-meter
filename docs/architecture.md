@@ -105,12 +105,13 @@ to a login, so it always belongs.
 
 ## Rate limits: one hold for Codex, Cursor, and Grok
 
-After HTTP 429 with `Retry-After`, a provider sends no request for the same login before the
-retry time, so the card's countdown is true. One pure rule decides (`RateLimitHold`):
+After HTTP 429 with a usable `Retry-After`, a provider sends no request for the same login
+before the retry time, so the card's countdown is true. One pure rule decides
+(`RateLimitHold`):
 
 - The retry time is the server's, at most 1 hour after the 429.
-- The hold stops only the requests of the login (`AccountOwner`) that got the 429. Another
-  login sends at once.
+- The hold stops only the requests of the login (`AccountOwner`) that got the 429, in every
+  account of that login (Codex homes). Another login sends at once.
 - A retry time more than 1 hour after now holds nothing. The rule never makes one, so the
   clock moved back or an older version saved it in the reading archive. That hold ends.
 - A 429 without a usable `Retry-After` holds nothing.
@@ -122,9 +123,16 @@ that did not finish in time) keeps the hold's issue, not its own, while the logi
 the same (`AccountUsage.rateLimitHold(admittedBy:now:)`). A sign-out or another login ends the
 hold for that account.
 
-The hold survives a restart in the reading archive and still ends within 1 hour. Cursor token
-history keeps the hold of its last 429 in memory. Claude has its own gate, because one Claude
-limit covers every account and the Settings check (`docs/providers/claude-oauth.md`).
+A hold survives a restart only when the reading archive saves its account: an account with an
+observation and an identity owner (`ProviderUsage.persistable`, see Storage). A loaded hold
+still ends within 1 hour. These holds end at a restart: a 429 on an account without an
+observation (a first 429), a 429 for a login known only by its credential, and every hold that
+a provider keeps in memory because no account issue carries it. Those are the hold of Cursor
+token history, the hold after a 429 on the Cursor plan request, and the holds after a 429 on
+the Codex reset-credit details request.
+
+Claude has its own gate, because one Claude limit covers every account and the Settings check
+(`docs/providers/claude-oauth.md`).
 
 ## Scheduling (`RefreshScheduler`)
 

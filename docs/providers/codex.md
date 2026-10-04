@@ -271,7 +271,8 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
     of all homes by owner. A held home keeps its previous observation as stale with the 429
     issue, or stays unavailable with its owner, so a first 429 holds too. Another login sends
     at once. A home that sends nothing for another reason, such as one that did not finish by
-    the fetch deadline, keeps the hold. The card says
+    the fetch deadline, keeps the hold. Only the hold of a home with an observation and an
+    identity owner survives a restart (`docs/architecture.md`). The card says
     `Codex limited the number of requests. Claude Meter will try again later.` Other HTTP
     statuses, and a 429 without a usable `Retry-After`, show no countdown, because nothing
     waits for them.

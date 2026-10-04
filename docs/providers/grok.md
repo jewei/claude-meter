@@ -131,7 +131,9 @@ never reaches a reading, a log, or the disk.
     (`docs/architecture.md`): no request for the same login before the retry time, at most
     1 hour after the 429, so the card's countdown is true. Another login sends at once. The
     hold comes before the expiry check, and a file that cannot be read keeps it, so a refresh
-    that sends nothing never ends it early.
+    that sends nothing never ends it early. Only the hold of an observed account with an
+    identity owner (a `sub`, an account ID, or an email) survives a restart
+    (`docs/architecture.md`).
 13. If the owner after the response differs from the owner before it, discard the response.
 14. `reconcile` drops the reading when the owner changed or the user signed out. It reads local
     files only.

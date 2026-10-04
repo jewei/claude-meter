@@ -192,7 +192,8 @@ The email is never part of the reading.
     no account issue carries that hold: the provider keeps it in memory, and a restart ends
     it. While it holds, the card shows the last reading as stale with the countdown. The
     hold comes before the expiry check, and a login that cannot be read keeps it, so a refresh
-    that sends nothing never ends it early.
+    that sends nothing never ends it early. Only the hold of an observed account whose token
+    names a user (`sub`) survives a restart (`docs/architecture.md`).
 20. `"enabled": false`: drop the last observation, because it no longer describes the account.
 21. If the owner after the response differs from the owner before it, discard the response.
 22. `reconcile` drops the reading when the owner changed or the user signed out. It reads local

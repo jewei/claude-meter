@@ -81,6 +81,21 @@ struct LiveProviders {
 }
 
 extension SettingsStore {
+    /// What the Claude provider reads: the connection is off while the Claude switch is off.
+    var claudeConfiguration: ClaudeConfiguration {
+        let claude = settings.claude
+        let connection: ClaudeConfiguration.Connection =
+            switch claude.isEnabled ? claude.connection : .off {
+            case .off: .off
+            case .automatic: .automatic
+            case .manual: .manual
+            }
+        return ClaudeConfiguration(
+            connection: connection,
+            extraDirectories: claude.extraDirectories.map { URL(fileURLWithPath: $0) },
+            disabledAccounts: claude.disabledAccounts)
+    }
+
     var codexConfiguration: CodexConfiguration {
         CodexConfiguration(
             extraHomes: settings.codex.extraHomes.map { URL(fileURLWithPath: $0) })

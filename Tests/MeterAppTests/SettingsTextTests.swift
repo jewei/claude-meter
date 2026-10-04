@@ -34,7 +34,7 @@ import Testing
         #expect(DataSourceText.codexHome(.unknown("Codex detected.")).text == "Codex detected.")
     }
 
-    /// Manual tokens must come from a separate login (claude-oauth.md, Manual mode rule 9).
+    /// Manual tokens must come from a separate login (claude-oauth.md, Manual mode rule 11).
     @Test func manualTokensNameTheirSource() {
         let note = DataSourceText.manualTokensSource
         #expect(note.contains("separate Claude login"))

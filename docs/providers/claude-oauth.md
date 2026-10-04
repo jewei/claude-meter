@@ -202,25 +202,32 @@ little memory. The limit is 256 MiB. The result is one of three states:
    right before the save and again after it, under the write lock. Before the save it reads
    the old item. A Connect that is abandoned during the save writes the old item back, or
    deletes the new one when there was none, and says that the connection changed. When the
-   old item cannot be read, Connect fails before it writes. `ClaudeSettingsModel` calls
-   Disconnect in every mode, deletes the manual item after an automatic Connect succeeds,
-   and calls `cancelManualConnect()` when it abandons an attempt: a newer attempt, Claude
-   turned off, or `abandonConnect()`.
-7. Keychain writes of the manual item run one at a time, in order, on a private queue,
+   old item cannot be read, Connect fails before it writes.
+7. `ClaudeSettingsModel` runs one attempt at a time; a newer attempt overtakes an older one.
+   Its `isWanted` is true while the Connect is the newest attempt, the user did not abandon
+   it (Cancel, or Claude turned off), and Claude is on. A manual Connect that the provider
+   stored is applied, even when it was abandoned after the save. An automatic Connect stores
+   nothing in the provider, so the model decides after the check: it deletes the manual item
+   first, then changes the setting and asks for a refresh in one turn. The model calls
+   Disconnect in every mode and never abandons it. A Disconnect whose delete fails still
+   turns the connection off and says that the tokens could not be deleted; each reload (at
+   launch, and when Settings opens) deletes a manual item that no manual connection uses,
+   while no attempt runs.
+8. Keychain writes of the manual item run one at a time, in order, on a private queue,
    never on the shared `BlockingIO` threads. A write that times out before it starts is
    skipped, so it cannot land later: the write is marked as abandoned before its caller hears
    of the timeout. A Keychain call that already runs cannot be stopped. A save of rotated
    tokens finishes even when the refresh that got them was cancelled.
-8. A Connect whose save fails leaves the old login as it was, and a rotation of the old
+9. A Connect whose save fails leaves the old login as it was, and a rotation of the old
    login that arrives meanwhile is still saved.
-9. A refresh token rejected with `invalid_grant` is not sent again. When the server also
-   rejects the refreshed token (HTTP 401 or 403), or a 401 cannot be refreshed, the
-   connection gets no more requests. Both marks last until the next Connect or app launch,
-   and the card asks for a new Connect. After a temporary failure, refreshes wait 5
-   minutes, doubling up to 6 hours. The fetch that failed shows the reason on the card
-   ("Could not refresh the Claude tokens. <reason>"), and the log keeps it; while the
-   refresh waits, the card says "Retrying the Claude token refresh…".
-10. Manual tokens must come from a separate login, never from Claude Code's own Keychain
+10. A refresh token rejected with `invalid_grant` is not sent again. When the server also
+    rejects the refreshed token (HTTP 401 or 403), or a 401 cannot be refreshed, the
+    connection gets no more requests. Both marks last until the next Connect or app launch,
+    and the card asks for a new Connect. After a temporary failure, refreshes wait 5
+    minutes, doubling up to 6 hours. The fetch that failed shows the reason on the card
+    ("Could not refresh the Claude tokens. <reason>"), and the log keeps it; while the
+    refresh waits, the card says "Retrying the Claude token refresh…".
+11. Manual tokens must come from a separate login, never from Claude Code's own Keychain
     item. A refresh rotates the refresh token, so a copy of Claude Code's token would sign
     Claude Code out at its next renewal. Settings must say this next to the token fields.
 
@@ -359,3 +366,12 @@ Settings texts for manual Connect:
 | Gate closed or HTTP 429, network failure, other HTTP status, invalid response, out of time | The same texts as automatic Connect |
 | Disconnect or newer Connect meanwhile | The Claude connection changed while the tokens were checked. Try again. |
 | Save failed, or the old item cannot be read before the save | Could not save credentials: <reason> |
+
+Settings texts of `ClaudeSettingsModel`, for both Connects and Disconnect:
+
+| Case | Text |
+| --- | --- |
+| Connect stored | Connected. |
+| Claude turned off before the Connect was stored | Claude was turned off, so the connection was not saved. |
+| Cancel, or a newer attempt | No text |
+| Disconnect of a manual connection whose delete failed | Disconnected, but the saved Claude tokens could not be deleted. Claude Meter will try again. |

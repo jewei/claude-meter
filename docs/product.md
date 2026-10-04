@@ -127,7 +127,13 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    the page (`DataSourceText.removeConfirmation`, `.disconnectConfirmation`). The implicit
    Codex home (`$CODEX_HOME` or `~/.codex`) has no Remove and cannot be added again, also
    before the list loads. A name edit for a Codex home that is no longer listed is dropped
-   (`CodexSettingsModel`).
+   (`CodexSettingsModel`). Claude refuses a folder whose account key (its folder name) is
+   already listed, and drops a name edit for an account that is no longer listed. Cancel,
+   and turning Claude off, abandon a running Claude Connect, never a Disconnect; Settings
+   says when turning Claude off kept a Connect from being saved. A Disconnect turns the
+   connection off even when the saved tokens cannot be deleted; Settings says so, and the
+   next reload (at launch, and when Settings opens) deletes a manual login that no manual
+   connection uses (`ClaudeSettingsModel`).
 2. **Appearance**: card style, energy left or used, the menu-bar window, warning and critical
    thresholds (warning 50–90, critical 60–100, steps of 5; critical stays above warning),
    and automatic order.

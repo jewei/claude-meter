@@ -26,6 +26,13 @@ public struct ClaudeAccount: Sendable, Hashable, Identifiable {
     /// not read.
     public let issue: UsageIssue?
 
+    /// The account key of the config dir at `directory`: its folder name without one leading
+    /// dot, with only `[A-Za-z0-9._-]` kept, or `claude` when nothing is left. Two dirs with
+    /// the same key are listed as one account, so Settings refuses a second one.
+    public static func key(for directory: URL) -> AccountID {
+        ConfigDirectoryScanner.accountID(for: directory)
+    }
+
     /// Makes an account value, for example for previews and tests. Without `canonicalPath`,
     /// the standardized path of `directory` is used, with no file access.
     public init(

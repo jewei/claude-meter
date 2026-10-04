@@ -5,6 +5,12 @@ import Observation
 import ProviderClaude
 
 /// The Claude section of Settings > Data: the connection and the config dirs.
+///
+/// Connect and Disconnect are attempts; only the newest attempt applies its result. A Connect
+/// is done when its result is stored: a manual Connect stores the tokens in the provider, which
+/// asks this model right before and after the Keychain save whether the Connect is still
+/// wanted; an automatic Connect stores only the connection setting. Cancel and turning Claude
+/// off abandon a running Connect, never a Disconnect.
 @MainActor @Observable
 public final class ClaudeSettingsModel {
     public struct Account: Identifiable, Equatable, Sendable {
@@ -27,9 +33,14 @@ public final class ClaudeSettingsModel {
         public var canTurnOff: Bool { !isDefault && path != nil }
     }
 
+    static let notSavedMessage = "Claude was turned off, so the connection was not saved."
+    static let deleteFailedMessage =
+        "Disconnected, but the saved Claude tokens could not be deleted. Claude Meter will try "
+        + "again."
+
     public private(set) var automaticStatus: SignInStatus?
     public private(set) var manualStatus: SignInStatus?
-    /// A connect or disconnect is running.
+    /// A connect or disconnect is running, and the user did not abandon it.
     public private(set) var isWorking = false
     /// The result of the last connect or disconnect, for the user.
     public private(set) var message: String? {
@@ -38,22 +49,33 @@ public final class ClaudeSettingsModel {
     /// ``message`` reports a failure, so Settings shows it as an error.
     public private(set) var messageIsProblem = false
     /// Why the last config dir could not be added, for the user.
-    public private(set) var directoryMessage: String?
+    public internal(set) var directoryMessage: String?
 
     /// Config dirs from the last discovery. Settings and readings apply on each read.
-    private var discovered: [ClaudeAccount] = []
+    private(set) var discovered: [ClaudeAccount] = []
 
     /// Called after every connect or disconnect that changed the stored login, even when the
     /// connection setting kept its value. The composition root refreshes Claude.
     @ObservationIgnored var onCredentialsChange: (() -> Void)?
 
-    @ObservationIgnored private let settings: SettingsStore
-    @ObservationIgnored private let usage: UsageStore
-    @ObservationIgnored private let provider: ClaudeProvider
+    @ObservationIgnored let settings: SettingsStore
+    @ObservationIgnored let usage: UsageStore
+    @ObservationIgnored let provider: ClaudeProvider
     /// Each connect or disconnect gets a number; only the newest attempt applies its result.
     @ObservationIgnored private var attempt = 0
+    /// The attempt that runs now, until it ends. An abandoned Connect stays here until its
+    /// provider work ends, so that no leftover cleanup deletes what it may still write back.
+    @ObservationIgnored private var running: Attempt?
     /// Each reload gets a number; an older reload never writes over a newer one.
     @ObservationIgnored private var generation = 0
+
+    private struct Attempt {
+        enum Kind { case connect, disconnect }
+
+        let number: Int
+        let kind: Kind
+        var isAbandoned = false
+    }
 
     init(settings: SettingsStore, usage: UsageStore, provider: ClaudeProvider) {
         self.settings = settings
@@ -70,37 +92,13 @@ public final class ClaudeSettingsModel {
         !settings.settings.claude.hasConfirmedKeychainAccess
     }
 
-    /// The config dirs, default first, then any login in the latest reading that matches no
-    /// config dir, so the user can name it and set its plan. The switch state, the remove
-    /// button, and the reported plan come from the current settings and reading each time, so
-    /// they never lag behind.
-    public var accounts: [Account] {
-        let claude = settings.settings.claude
-        let configured = Set(claude.extraDirectories)
-        let reported = usage.readings[.claude]?.value
-        let directories = discovered.map { account in
-            Account(
-                id: account.id, defaultName: PresentationContext.friendlyName(account.name),
-                path: account.directory.path, isDefault: account.isDefault,
-                isEnabled: account.id == ClaudeAccount.defaultID
-                    || !claude.disabledAccounts.contains(account.id),
-                isRemovable: configured.contains(account.directory.path),
-                reportedPlan: reported?.account(account.id)?.plan,
-                issue: account.issue?.message)
-        }
-        let listed = Set(discovered.map(\.id))
-        let unmapped = (reported?.accounts ?? []).filter { !listed.contains($0.id) }.map { usage in
-            Account(
-                id: usage.id, defaultName: PresentationContext.friendlyName(usage.name),
-                path: nil, isDefault: usage.id == ClaudeAccount.defaultID, isEnabled: true,
-                isRemovable: false, reportedPlan: usage.plan, issue: nil)
-        }
-        return directories + unmapped
-    }
-
     /// Lists the config dirs and checks both logins without reading a secret. A reload that a
     /// newer one overtook stops without writing. When the config dirs cannot be listed in
     /// time, the last list stays.
+    ///
+    /// A manual login that no connection uses is deleted here, while no attempt runs: the
+    /// item of a Disconnect whose delete failed, or one that an automatic Connect could not
+    /// delete. This runs at launch and each time Settings reloads.
     public func reload() async {
         generation += 1
         let current = generation
@@ -110,8 +108,14 @@ public final class ClaudeSettingsModel {
         let automatic = await provider.automaticSignInStatus()
         guard current == generation else { return }
         automaticStatus = automatic
-        let manual = await provider.manualSignInStatus()
+        var manual = await provider.manualSignInStatus()
         guard current == generation else { return }
+        if manual == .signedIn, connection != .manual, running == nil,
+            (try? await provider.disconnectManual()) != nil
+        {
+            manual = await provider.manualSignInStatus()
+            guard current == generation else { return }
+        }
         manualStatus = manual
     }
 
@@ -121,7 +125,7 @@ public final class ClaudeSettingsModel {
     @discardableResult
     public func connectAutomatically() async -> Bool {
         settings.update { $0.claude.hasConfirmedKeychainAccess = true }
-        return await connect(to: .automatic) { [provider] in
+        return await connect(to: .automatic) { [provider] _ in
             try await provider.verifyAutomaticConnection()
         }
     }
@@ -132,171 +136,142 @@ public final class ClaudeSettingsModel {
     public func connectManually(accessToken: String, refreshToken: String?, expiresAt: Date?)
         async -> Bool
     {
-        await connect(to: .manual) { [provider] in
+        await connect(to: .manual) { [provider] isWanted in
             try await provider.connectManually(
-                accessToken: accessToken, refreshToken: refreshToken, expiresAt: expiresAt)
+                accessToken: accessToken, refreshToken: refreshToken, expiresAt: expiresAt,
+                isWanted: isWanted)
         }
     }
 
     /// Turns the connection off and deletes the app's own Keychain item in every mode, so no
-    /// manual login is left behind. In manual mode a failed delete keeps the connection.
+    /// manual login is left behind. When the delete fails, the connection is off anyway: the
+    /// provider forgets the tokens at once, and ``reload()`` tries the delete again.
     public func disconnect() async {
-        await startAttempt()
-        let current = attempt
-        isWorking = true
-        defer { if current == attempt { isWorking = false } }
+        let wasManual = connection == .manual
+        let current = await startAttempt(.disconnect)
+        defer { finish(current) }
+        var deleteFailed = false
         do {
             try await provider.disconnectManual()
         } catch {
-            if connection == .manual {
-                if current == attempt { fail(error) }
-                return
-            }
+            deleteFailed = true
         }
         // A newer attempt decides the connection.
         guard current == attempt else { return }
         settings.update { $0.claude.connection = .off }
-        message = nil
+        if deleteFailed, wasManual { report(Self.deleteFailedMessage, isProblem: true) }
         onCredentialsChange?()
+        finish(current)
         await reload()
     }
 
-    /// Abandons a connect that is still running, for example when the user selects Cancel or
-    /// turns Claude off. Nothing that attempt verified is stored afterwards.
+    /// Abandons the Connect that is still running, for example when the user selects Cancel
+    /// or turns Claude off: nothing that it verified is stored afterwards. A Disconnect is
+    /// never abandoned. Without a running Connect, this clears a failure message, so Cancel
+    /// dismisses an error about the tokens.
     public func abandonConnect() async {
-        attempt += 1
+        guard let running else {
+            if messageIsProblem { message = nil }
+            return
+        }
+        guard running.kind == .connect else { return }
+        self.running?.isAbandoned = true
         isWorking = false
         message = nil
         await provider.cancelManualConnect()
     }
 
-    /// Starts a new attempt. A connect that is still running stores nothing afterwards.
-    private func startAttempt() async {
-        if isWorking { await provider.cancelManualConnect() }
+    /// Starts a new attempt and returns its number. The number moves first, so a Connect that
+    /// is still running can no longer store anything, also while the provider hears of it.
+    private func startAttempt(_ kind: Attempt.Kind) async -> Int {
+        let previous = running
         attempt += 1
+        let current = attempt
+        running = Attempt(number: current, kind: kind)
+        isWorking = true
+        message = nil
+        if previous?.kind == .connect { await provider.cancelManualConnect() }
+        return current
+    }
+
+    /// Ends attempt `number`, unless a newer one runs. An attempt ends once its result is
+    /// applied, before the reload after it, so a late Cancel cannot erase that result.
+    private func finish(_ number: Int) {
+        guard running?.number == number else { return }
+        running = nil
+        isWorking = false
+    }
+
+    /// Whether attempt `number` may still store its result: it is the newest, the user did not
+    /// abandon it, and Claude is on.
+    private func wants(_ number: Int) -> Bool {
+        guard let running, running.number == number else { return false }
+        return !running.isAbandoned && settings.settings.claude.isEnabled
     }
 
     private func connect(
-        to connection: ClaudeSettings.Connection, verify: @Sendable () async throws -> Void
+        to target: ClaudeSettings.Connection,
+        verify: @Sendable (_ isWanted: @escaping @Sendable () async -> Bool) async throws -> Void
     ) async -> Bool {
-        await startAttempt()
-        let current = attempt
-        isWorking = true
-        message = nil
-        defer { if current == attempt { isWorking = false } }
-        var saved = false
+        let current = await startAttempt(.connect)
+        defer { finish(current) }
+        let isWanted: @Sendable () async -> Bool = { @MainActor [weak self] in
+            self?.wants(current) ?? false
+        }
         do {
-            try await verify()
-            // Another attempt started, so this result is stale.
-            guard current == attempt else { return false }
-            if settings.settings.claude.isEnabled {
-                settings.update { $0.claude.connection = connection }
-                message = "Connected."
-                saved = true
-                if connection == .automatic {
-                    // A manual login from an earlier connection must not stay behind.
-                    try? await provider.disconnectManual()
-                }
-                // A reconnect in the same mode keeps the setting, so refresh explicitly.
-                onCredentialsChange?()
-            } else {
-                message = "Claude was turned off, so the connection was not saved."
-            }
+            try await verify(isWanted)
         } catch is CancellationError {
             return false
         } catch {
             guard current == attempt else { return false }
-            fail(error)
+            if wants(current) {
+                report(Self.text(for: error), isProblem: true)
+            } else {
+                reportNotSaved()
+            }
+            finish(current)
+            await reload()
+            return false
         }
+        // A newer attempt decides the connection.
+        guard current == attempt else { return false }
+        if target != .manual {
+            // The provider stored nothing, so this is the moment that decides.
+            guard wants(current) else {
+                reportNotSaved()
+                finish(current)
+                await reload()
+                return false
+            }
+            // A manual login from an earlier connection must not stay behind. It goes before
+            // the settings change, so that one turn changes the setting and asks for one
+            // refresh.
+            try? await provider.disconnectManual()
+            guard current == attempt else { return false }
+        }
+        // A manual Connect stored its tokens after `isWanted` agreed, so it is done even when
+        // the user abandoned it or turned Claude off since.
+        settings.update { $0.claude.connection = target }
+        report("Connected.", isProblem: false)
+        // A reconnect in the same mode keeps the setting, so refresh explicitly.
+        onCredentialsChange?()
+        finish(current)
         await reload()
-        return saved
+        return true
     }
 
-    /// Shows a failure as an error message.
-    private func fail(_ error: any Error) {
-        message = Self.text(for: error)
-        messageIsProblem = true
+    /// The Connect was abandoned or Claude was turned off; nothing was stored.
+    private func reportNotSaved() {
+        message = settings.settings.claude.isEnabled ? nil : Self.notSavedMessage
+    }
+
+    private func report(_ text: String, isProblem: Bool) {
+        message = text
+        messageIsProblem = isProblem
     }
 
     /// Error text for the user, always redacted.
     private static func text(for error: any Error) -> String {
         ProviderError(wrapping: error).issue.message
-    }
-
-    // MARK: - Config dirs
-
-    /// Adds a folder that holds `settings.json` or `projects`. Returns false and sets
-    /// ``directoryMessage`` when the folder is not a Claude config dir (or does not answer
-    /// within 5 s), or is already listed, including the default dir before the first reload.
-    @discardableResult
-    public func addDirectory(_ url: URL) async -> Bool {
-        guard let canonical = await ClaudeProvider.configDirectory(at: url) else {
-            directoryMessage = "Choose a folder that holds settings.json or projects."
-            return false
-        }
-        // A fresh discovery, so the default dir counts even before the first reload.
-        guard let found = try? await provider.accounts(for: settings.claudeConfiguration) else {
-            directoryMessage = "Could not list the config dirs in time. Try again."
-            return false
-        }
-        let listed = found.map(\.canonicalPath) + settings.settings.claude.extraDirectories
-        guard !listed.contains(canonical.path) else {
-            directoryMessage = "That config dir is already listed."
-            return false
-        }
-        directoryMessage = nil
-        settings.update { $0.claude.extraDirectories.append(canonical.path) }
-        return true
-    }
-
-    /// Removes a folder that the user added, with its name, plan badge, switch, and pin.
-    public func removeDirectory(_ id: AccountID) {
-        guard let account = accounts.first(where: { $0.id == id }), account.isRemovable else {
-            return
-        }
-        settings.update { settings in
-            settings.claude.extraDirectories.removeAll { $0 == account.path }
-            settings.forgetAccount(id, of: .claude)
-        }
-    }
-
-    /// The default account can never be turned off.
-    public func setEnabled(_ id: AccountID, _ isEnabled: Bool) {
-        guard id != ClaudeAccount.defaultID else { return }
-        settings.update { settings in
-            if isEnabled {
-                settings.claude.disabledAccounts.remove(id)
-            } else {
-                settings.claude.disabledAccounts.insert(id)
-            }
-        }
-    }
-
-    /// Stores the trimmed name. A blank name removes it.
-    public func rename(_ id: AccountID, to name: String) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        settings.update { $0.claude.accountNames[id] = trimmed.isEmpty ? nil : trimmed }
-    }
-
-    /// A badge for a login that reports no plan. Nil or a blank plan removes it.
-    public func setPlanOverride(_ id: AccountID, _ plan: String?) {
-        let trimmed = plan?.trimmingCharacters(in: .whitespacesAndNewlines)
-        settings.update { $0.claude.planOverrides[id] = trimmed?.isEmpty == false ? trimmed : nil }
-    }
-}
-
-extension SettingsStore {
-    var claudeConfiguration: ClaudeConfiguration {
-        let claude = settings.claude
-        let connection: ClaudeConfiguration.Connection =
-            switch claude.isEnabled ? claude.connection : .off {
-            case .off: .off
-            case .automatic: .automatic
-            case .manual: .manual
-            }
-        return ClaudeConfiguration(
-            connection: connection,
-            extraDirectories: claude.extraDirectories.map { URL(fileURLWithPath: $0) },
-            disabledAccounts: claude.disabledAccounts)
     }
 }

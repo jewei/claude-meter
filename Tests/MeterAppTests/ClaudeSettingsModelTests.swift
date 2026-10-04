@@ -7,57 +7,18 @@ import Testing
 @testable import MeterApp
 @testable import ProviderClaude
 
+/// The config dirs of the Claude settings: listing, adding, removing, names, and plans.
 @MainActor
 @Suite(.timeLimit(.minutes(1))) final class ClaudeSettingsModelTests {
-    private let home: TemporaryDirectory
-    private let keychain = FakeKeychain()
-    private let gate = Gate()
-    private let status = Locked(200)
-    private let settings = SettingsStore(store: MemoryStore())
-    private let usage = UsageStore(providers: [])
-    private let model: ClaudeSettingsModel
-    private var credentialChanges = 0
-
-    private static let manualService = AppIdentity.keychainService("claude-oauth")
+    private let fixture: ClaudeSettingsFixture
 
     init() throws {
-        home = try TemporaryDirectory()
-        try home.write("{}", to: ".claude/settings.json")
-        let gate = gate
-        let status = status
-        let http = FakeHTTPClient { _ in
-            await gate.wait()
-            return .json(status.value, #"{"five_hour":{"utilization":10}}"#)
-        }
-        let settings = settings
-        let provider = ClaudeProvider(
-            configuration: { @MainActor in settings.claudeConfiguration }, keychain: keychain,
-            http: http, store: MemoryStore(), home: home.url)
-        model = ClaudeSettingsModel(settings: settings, usage: usage, provider: provider)
-        model.onCredentialsChange = { [weak self] in self?.credentialChanges += 1 }
+        fixture = try ClaudeSettingsFixture()
     }
 
-    deinit {
-        home.remove()
-    }
-
-    private func storeClaudeCodeLogin() {
-        let expiry = Int(Date().addingTimeInterval(3_600).timeIntervalSince1970 * 1000)
-        keychain.store(
-            #"{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":\#(expiry)}}"#,
-            service: "Claude Code-credentials", account: NSUserName(), modifiedAt: Date())
-    }
-
-    private func connectManually(_ token: String) async -> Bool {
-        await model.connectManually(
-            accessToken: token, refreshToken: nil, expiresAt: Date().addingTimeInterval(3_600))
-    }
-
-    private var manualItem: String? {
-        keychain.storedPassword(service: Self.manualService, account: "manual")
-    }
-
-    // MARK: - Config dirs
+    private var model: ClaudeSettingsModel { fixture.model }
+    private var settings: SettingsStore { fixture.settings }
+    private var home: TemporaryDirectory { fixture.home }
 
     @Test func listsTheDefaultConfigDir() async {
         await model.reload()
@@ -81,20 +42,44 @@ import Testing
         #expect(model.directoryMessage == "That config dir is already listed.")
     }
 
+    @Test func aFolderWithTheKeyOfAListedDirIsRefused() async throws {
+        // `~/project/.claude` has the key `claude`, which `~/.claude` owns. Saved, it would
+        // never be listed, so it could not be removed either.
+        let project = try home.write("{}", to: "project/.claude/settings.json")
+            .deletingLastPathComponent()
+
+        #expect(await !model.addDirectory(project))
+
+        #expect(
+            model.directoryMessage
+                == "A config dir with this folder name is already listed. Rename the folder, "
+                + "then add it.")
+        #expect(settings.settings.claude.extraDirectories.isEmpty)
+    }
+
+    @Test func theDefaultDirIsRefusedBeforeTheFirstReload() async {
+        let defaultDir = home.path(".claude")
+        #expect(await !model.addDirectory(defaultDir))
+        #expect(model.directoryMessage == "That config dir is already listed.")
+        #expect(settings.settings.claude.extraDirectories.isEmpty)
+    }
+
     @Test func aSlowDiskKeepsTheListedConfigDirs() async throws {
         try home.write("{}", to: ".claude-work/settings.json")
         let isStuck = Locked(false)
         let settings = settings
         let provider = ClaudeProvider(
-            configuration: { @MainActor in settings.claudeConfiguration }, keychain: keychain,
-            http: FakeHTTPClient { _ in .json(500, "{}") }, store: MemoryStore(), home: home.url,
-            now: Date.init, keychainUser: "alice", limits: ClaudeLimits(),
+            configuration: { @MainActor in settings.claudeConfiguration },
+            keychain: fixture.keychain, http: FakeHTTPClient { _ in .json(500, "{}") },
+            store: MemoryStore(), home: home.url, now: Date.init, keychainUser: "alice",
+            limits: ClaudeLimits(),
             scan: { home, configuration in
                 // A listing that fails as one that runs out of time does.
                 if isStuck.value { throw TimeoutError(limit: .seconds(5)) }
                 return ConfigDirectoryScanner.discover(home: home, configuration: configuration)
             })
-        let model = ClaudeSettingsModel(settings: settings, usage: usage, provider: provider)
+        let model = ClaudeSettingsModel(
+            settings: settings, usage: fixture.usage, provider: provider)
         await model.reload()
         #expect(model.accounts.map(\.id) == ["claude", "claude-work"])
 
@@ -123,7 +108,7 @@ import Testing
             accounts: [
                 AccountUsage(id: "claude-work", name: "work", plan: "Max 5x", observedAt: Date())
             ])
-        usage.restore([.claude: reading])
+        fixture.usage.restore([.claude: reading])
         #expect(model.accounts.last?.reportedPlan == "Max 5x")
     }
 
@@ -136,7 +121,7 @@ import Testing
                 AccountUsage(
                     id: "oauth-ab12cd34", name: "oauth-ab12cd34", plan: "Pro", observedAt: Date()),
             ])
-        usage.restore([.claude: reading])
+        fixture.usage.restore([.claude: reading])
 
         #expect(model.accounts.map(\.id) == ["claude", "oauth-ab12cd34"])
         let unmapped = model.accounts[1]
@@ -169,6 +154,30 @@ import Testing
         #expect(claude.disabledAccounts.isEmpty)
         #expect(settings.settings.menuBar.pinnedAccounts.isEmpty)
         #expect(settings.settings.cards.expanded.isEmpty)
+
+        // A name edit that ends after the removal cannot bring the account back.
+        await model.reload()
+        model.rename(id, to: "Day job")
+        #expect(settings.settings.claude.accountNames.isEmpty)
+    }
+
+    @Test func aConfiguredDirListedThroughALinkCanBeRemoved() async throws {
+        // The user added the real folder; later `~/.claude-work` became a link to it. Both
+        // are one account, listed under the link.
+        let real = try home.write("{}", to: "dotfiles/claude-work/settings.json")
+            .deletingLastPathComponent()
+        let canonical = try #require(await ClaudeProvider.configDirectory(at: real)).path
+        settings.update { $0.claude.extraDirectories = [canonical] }
+        try FileManager.default.createSymbolicLink(
+            at: home.path(".claude-work"), withDestinationURL: real)
+        await model.reload()
+        let work = try #require(model.accounts.first { $0.id == "claude-work" })
+        #expect(work.path?.hasSuffix("/.claude-work") == true)
+        #expect(work.isRemovable)
+
+        model.removeDirectory("claude-work")
+
+        #expect(settings.settings.claude.extraDirectories.isEmpty)
     }
 
     @Test func theDefaultAccountCannotBeTurnedOffOrRemoved() async {
@@ -180,162 +189,17 @@ import Testing
         #expect(model.accounts.map(\.id) == ["claude"])
     }
 
-    @Test func renameAndPlanStoreTrimmedText() {
+    @Test func renameAndPlanStoreTrimmedText() async {
+        await model.reload()
         model.rename("claude", to: "  Home  ")
         #expect(settings.settings.claude.accountNames["claude"] == "Home")
         model.rename("claude", to: "   ")
         #expect(settings.settings.claude.accountNames["claude"] == nil)
+        model.rename("claude-gone", to: "Old")
+        #expect(settings.settings.claude.accountNames.isEmpty)
         model.setPlanOverride("claude", " Pro ")
         #expect(settings.settings.claude.planOverrides["claude"] == "Pro")
         model.setPlanOverride("claude", nil)
         #expect(settings.settings.claude.planOverrides.isEmpty)
     }
-
-    // MARK: - Connection
-
-    @Test func failedConnectKeepsTheConnectionOff() async {
-        #expect(await !model.connectAutomatically())
-        #expect(settings.settings.claude.connection == .off)
-        #expect(settings.settings.claude.hasConfirmedKeychainAccess)
-        #expect(model.message != nil)
-        #expect(credentialChanges == 0)
-    }
-
-    @Test func successfulConnectSwitchesToAutomatic() async {
-        storeClaudeCodeLogin()
-        gate.open()
-        #expect(await model.connectAutomatically())
-        #expect(settings.settings.claude.connection == .automatic)
-        #expect(model.message == "Connected.")
-        #expect(credentialChanges == 1)
-        #expect(!model.isWorking)
-    }
-
-    /// Settings shows failures as errors without reading the message text (review UI-33).
-    @Test func onlyFailuresAreMarkedAsProblems() async {
-        #expect(await !model.connectAutomatically())
-        #expect(model.messageIsProblem)
-        storeClaudeCodeLogin()
-        gate.open()
-        #expect(await model.connectAutomatically())
-        #expect(model.message == "Connected.")
-        #expect(!model.messageIsProblem)
-        status.withLock { $0 = 401 }
-        #expect(await !connectManually("token"))
-        #expect(model.messageIsProblem)
-        await model.abandonConnect()
-        #expect(model.message == nil)
-        #expect(!model.messageIsProblem)
-    }
-
-    @Test func reconnectingInTheSameModeRefreshesClaude() async {
-        storeClaudeCodeLogin()
-        gate.open()
-        #expect(await model.connectAutomatically())
-        #expect(await model.connectAutomatically())
-        #expect(credentialChanges == 2)
-    }
-
-    @Test func manualReconnectRefreshesClaude() async {
-        gate.open()
-        #expect(await connectManually("first"))
-        #expect(settings.settings.claude.connection == .manual)
-        #expect(await connectManually("second"))
-        #expect(manualItem?.contains("second") == true)
-        #expect(credentialChanges == 2)
-    }
-
-    @Test func failedManualReconnectKeepsTheEarlierConnection() async {
-        gate.open()
-        #expect(await connectManually("first"))
-        status.withLock { $0 = 401 }
-        #expect(await !connectManually("second"))
-        #expect(settings.settings.claude.connection == .manual)
-        #expect(manualItem?.contains("first") == true)
-        #expect(model.message?.contains("rejected") == true)
-        #expect(credentialChanges == 1)
-    }
-
-    @Test func turningClaudeOffDiscardsALateConnect() async {
-        storeClaudeCodeLogin()
-        let connect = Task { await model.connectAutomatically() }
-        #expect(await gate.waitForArrivals())
-        settings.update { $0.claude.isEnabled = false }
-        gate.open()
-        #expect(await !connect.value)
-        #expect(settings.settings.claude.connection == .off)
-        #expect(model.message == "Claude was turned off, so the connection was not saved.")
-    }
-
-    @Test func newerAttemptWinsOverOlder() async {
-        storeClaudeCodeLogin()
-        let connect = Task { await model.connectAutomatically() }
-        #expect(await gate.waitForArrivals())
-        await model.disconnect()
-        gate.open()
-        #expect(await !connect.value)
-        #expect(settings.settings.claude.connection == .off)
-        #expect(!model.isWorking)
-    }
-
-    @Test func disconnectManualDeletesTheItem() async {
-        gate.open()
-        #expect(await connectManually("token"))
-        #expect(manualItem != nil)
-        await model.disconnect()
-        #expect(manualItem == nil)
-        #expect(settings.settings.claude.connection == .off)
-        #expect(credentialChanges == 2)
-    }
-
-    @Test func failedDisconnectKeepsTheConnection() async {
-        gate.open()
-        #expect(await connectManually("token"))
-        keychain.failure = .unavailable
-        await model.disconnect()
-        #expect(settings.settings.claude.connection == .manual)
-        #expect(model.message?.contains("Could not disconnect") == true)
-        #expect(credentialChanges == 1)
-        #expect(!model.isWorking)
-    }
-
-    // MARK: - Leftover manual logins and abandoned connects
-
-    @Test func theDefaultDirIsRefusedBeforeTheFirstReload() async {
-        let defaultDir = home.path(".claude")
-        #expect(await !model.addDirectory(defaultDir))
-        #expect(model.directoryMessage == "That config dir is already listed.")
-        #expect(settings.settings.claude.extraDirectories.isEmpty)
-    }
-
-    @Test func automaticConnectDeletesALeftoverManualLogin() async {
-        gate.open()
-        #expect(await connectManually("manual-token"))
-        #expect(manualItem != nil)
-        storeClaudeCodeLogin()
-        #expect(await model.connectAutomatically())
-        #expect(settings.settings.claude.connection == .automatic)
-        #expect(manualItem == nil)
-    }
-
-    @Test func disconnectInAutomaticModeAlsoDeletesTheManualItem() async {
-        keychain.store(
-            #"{"accessToken":"old"}"#, service: Self.manualService, account: "manual")
-        settings.update { $0.claude.connection = .automatic }
-        await model.disconnect()
-        #expect(settings.settings.claude.connection == .off)
-        #expect(manualItem == nil)
-    }
-
-    @Test func anAbandonedManualConnectStoresNothing() async {
-        let connect = Task { await connectManually("pasted") }
-        #expect(await gate.waitForArrivals())
-        await model.abandonConnect()
-        #expect(!model.isWorking)
-        gate.open()
-        #expect(await !connect.value)
-        #expect(manualItem == nil)
-        #expect(settings.settings.claude.connection == .off)
-    }
-
 }

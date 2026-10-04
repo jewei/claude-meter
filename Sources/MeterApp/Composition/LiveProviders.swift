@@ -12,12 +12,28 @@ struct LiveProviders {
     let cursor: CursorProvider
     let grok: GrokProvider
     let cursorHistory: CursorTokenHistory
+    let codexHistory: CodexTokenHistory
+    let grokHistory: GrokTokenHistory
 
     init(settings: SettingsStore) {
-        codex = CodexProvider(configuration: { @MainActor in settings.codexConfiguration })
+        let codex = CodexProvider(configuration: { @MainActor in settings.codexConfiguration })
+        self.codex = codex
         cursor = CursorProvider()
         grok = GrokProvider()
         cursorHistory = CursorTokenHistory()
+        // Each Codex home is one account's history root, the same homes that quota reads.
+        codexHistory = CodexTokenHistory(roots: {
+            let configuration = await MainActor.run { settings.codexConfiguration }
+            return await codex.homes(for: configuration).map {
+                HistoryRoot(account: $0.id, directory: $0.directory)
+            }
+        })
+        let grokHome = GrokProvider.homeDirectory(
+            environment: ProcessInfo.processInfo.environment,
+            home: FileManager.default.homeDirectoryForCurrentUser)
+        grokHistory = GrokTokenHistory(roots: {
+            [HistoryRoot(account: .default, directory: grokHome)]
+        })
     }
 
     var usageProviders: [any UsageProvider] {
@@ -25,7 +41,7 @@ struct LiveProviders {
     }
 
     var historyProviders: [any TokenHistoryProvider] {
-        [cursorHistory]
+        [codexHistory, cursorHistory, grokHistory]
     }
 
     /// Providers that describe themselves in Diagnostics, in provider order.

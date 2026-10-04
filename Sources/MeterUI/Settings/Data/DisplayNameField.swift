@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// A bordered field for an account's display name. It saves when the user presses Return or
-/// leaves the field, not on every key, and shows the default name as a placeholder.
+/// A bordered field for an account's display name. It saves when the user presses Return,
+/// leaves the field, leaves the page or the window, or quits, not on every key, and shows the
+/// default name as a placeholder.
 struct DisplayNameField: View {
     let name: String?
     let placeholder: String
@@ -36,6 +37,12 @@ struct DisplayNameField: View {
                 if !focused { commit() }
             }
             .onSubmit(commit)
+            // A tab change, Command-1…4, or closing the window removes the field without a
+            // focus change; Quit removes nothing. Keep the name in each case.
+            .onDisappear(perform: commit)
+            .onReceive(
+                NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
+            ) { _ in commit() }
     }
 
     @ViewBuilder private var field: some View {

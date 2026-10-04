@@ -11,13 +11,14 @@ struct CodexHomeRow: View {
     let remove: () -> Void
 
     var body: some View {
-        FolderRow(id: home.id.rawValue, name: name, defaultName: home.defaultName, rename: rename) {
+        FolderRow(
+            id: home.id.rawValue, name: name, defaultName: home.defaultName, rename: rename,
+            remove: home.isImplicit ? nil : remove
+        ) {
             PathChip(path: home.path)
             SignInStatusLine(status: DataSourceText.codexHome(home.status))
         } controls: {
-            if !home.isImplicit {
-                RemoveButton(name: name ?? home.defaultName, action: remove)
-            }
+            EmptyView()
         }
     }
 }

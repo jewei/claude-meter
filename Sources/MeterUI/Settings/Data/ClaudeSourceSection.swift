@@ -45,12 +45,15 @@ struct ClaudeSourceSection: View {
     }
 
     private func addDirectory() {
-        guard
-            let url = FolderPicker.chooseFolder(
-                title: "Add Config Dir",
-                message:
-                    "Choose a Claude config dir: a folder with settings.json, such as ~/.claude.")
-        else { return }
-        Task { await claude.addDirectory(url) }
+        Task {
+            guard
+                let url = await FolderPicker.chooseFolder(
+                    title: "Add Config Dir",
+                    message:
+                        "Choose a Claude config dir: a folder with settings.json, such as ~/.claude."
+                )
+            else { return }
+            await claude.addDirectory(url)
+        }
     }
 }

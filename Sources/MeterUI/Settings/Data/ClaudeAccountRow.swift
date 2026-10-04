@@ -3,7 +3,8 @@ import MeterDomain
 import SwiftUI
 
 /// One Claude login: its name, config dir, plan, and issue, with a tracking switch where the
-/// login can be turned off and Remove for folders that the user added.
+/// login can be turned off and Remove for folders that the user added. A login that is not
+/// tracked says so in a chip.
 struct ClaudeAccountRow: View {
     let account: ClaudeSettingsModel.Account
     let name: String?
@@ -15,7 +16,9 @@ struct ClaudeAccountRow: View {
 
     var body: some View {
         FolderRow(
-            id: account.id.rawValue, name: name, defaultName: account.defaultName, rename: rename
+            id: account.id.rawValue, name: name, defaultName: account.defaultName,
+            isTracked: account.isEnabled, rename: rename,
+            remove: account.isRemovable ? remove : nil
         ) {
             HStack(spacing: 6) {
                 if let path = account.path {
@@ -25,10 +28,12 @@ struct ClaudeAccountRow: View {
                         .font(MeterFont.body(11, .semibold))
                         .foregroundStyle(Palette.inkMuted)
                 }
-                if let badge = PlanBadge(plan: account.reportedPlan) {
-                    PlanBadgeView(badge: badge)
-                } else {
-                    PlanMenu(current: planOverride, choose: setPlan)
+                switch PlanChoice(reported: account.reportedPlan, override: planOverride) {
+                case .reported(let badge): PlanBadgeView(badge: badge)
+                case .pickable(let current): PlanMenu(current: current, choose: setPlan)
+                }
+                if let chip = DataSourceText.trackingChip(isEnabled: account.isEnabled) {
+                    ChipView(text: chip)
                 }
             }
             if let issue = account.issue {
@@ -38,21 +43,15 @@ struct ClaudeAccountRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         } controls: {
-            HStack(spacing: 6) {
-                if account.canTurnOff {
-                    MeterSwitch(
-                        label: "Track \(name ?? account.defaultName)",
-                        isOn: Binding {
-                            account.isEnabled
-                        } set: {
-                            setEnabled($0)
-                        })
-                }
-                if account.isRemovable {
-                    RemoveButton(name: name ?? account.defaultName, action: remove)
-                }
+            if account.canTurnOff {
+                MeterSwitch(
+                    label: "Track \(name ?? account.defaultName)",
+                    isOn: Binding {
+                        account.isEnabled
+                    } set: {
+                        setEnabled($0)
+                    })
             }
         }
-        .opacity(account.isEnabled ? 1 : 0.7)
     }
 }

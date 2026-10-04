@@ -2,16 +2,14 @@ import MeterApp
 import SwiftUI
 
 /// A badge for a login that reports no plan: "Set plan" until the user picks one, then the
-/// chosen plan with a menu to change or remove it.
+/// chosen plan with a menu to change or remove it. The plans come from ``PlanChoice``.
 struct PlanMenu: View {
-    static let plans = ["Pro", "Max 5x", "Max 20x", "Team", "Enterprise", "Free"]
-
-    let current: String?
+    let current: PlanBadge?
     let choose: (String?) -> Void
 
     var body: some View {
         Menu {
-            ForEach(Self.plans, id: \.self) { plan in
+            ForEach(PlanChoice.plans, id: \.self) { plan in
                 Button(plan) { choose(plan) }
             }
             if current != nil {
@@ -20,8 +18,8 @@ struct PlanMenu: View {
             }
         } label: {
             HStack(spacing: 4) {
-                if let badge = PlanBadge(plan: current) {
-                    PlanBadgeView(badge: badge)
+                if let current {
+                    PlanBadgeView(badge: current)
                 } else {
                     Text("Set plan")
                         .font(MeterFont.body(11, .bold))
@@ -39,7 +37,7 @@ struct PlanMenu: View {
         .buttonStyle(QuietButtonStyle(radius: 8))
         .menuIndicator(.hidden)
         .fixedSize()
-        .accessibilityLabel(current.map { "Plan \($0)" } ?? "Set plan")
+        .accessibilityLabel(current.map { "Plan \($0.text)" } ?? "Set plan")
         .help("This login reports no plan. Choose the badge to show.")
     }
 }

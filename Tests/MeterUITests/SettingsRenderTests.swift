@@ -28,6 +28,10 @@ import Testing
                 id: "claude-work", defaultName: "work", path: "/Users/me/.claude-work",
                 isDefault: false, isEnabled: true, isRemovable: true, reportedPlan: nil,
                 issue: "Sign in to Claude Code in this folder."),
+            ClaudeSettingsModel.Account(
+                id: "claude-old", defaultName: "old", path: "/Users/me/.claude-old",
+                isDefault: false, isEnabled: false, isRemovable: true, reportedPlan: "Pro",
+                issue: nil),
         ]
         let homes = [
             CodexSettingsModel.Home(
@@ -94,6 +98,21 @@ import Testing
             SettingsCard {
                 ClaudeConnectionView(
                     snapshot: manual, actions: actions, stage: .confirmingDisconnect)
+            }
+            .padding(24)
+            .frame(width: 580)
+        }
+    }
+
+    @Test func folderRemovalAsksFirst() {
+        Snapshot.render("settings-folder-remove") {
+            FolderRow(
+                id: "/Users/me/work/.codex", name: "Work", defaultName: ".codex", rename: { _ in },
+                remove: {}, confirmsRemoval: true
+            ) {
+                PathChip(path: "/Users/me/work/.codex")
+            } controls: {
+                EmptyView()
             }
             .padding(24)
             .frame(width: 580)

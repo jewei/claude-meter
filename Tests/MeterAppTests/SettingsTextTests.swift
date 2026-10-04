@@ -70,6 +70,18 @@ import Testing
         #expect(DataSourceText.trackingChip(isEnabled: true) == nil)
     }
 
+    /// A reported plan wins; otherwise the user may pick one (review UI-39).
+    @Test func planChoiceFollowsTheReportedPlan() throws {
+        let max = try #require(PlanBadge(plan: "Max 20x"))
+        #expect(PlanChoice(reported: "Max 20x", override: "Team") == .reported(max))
+        #expect(
+            PlanChoice(reported: nil, override: "Team")
+                == .pickable(current: PlanBadge(plan: "Team")))
+        #expect(PlanChoice(reported: " ", override: nil) == .pickable(current: nil))
+        #expect(PlanChoice.plans.first == "Pro")
+        #expect(PlanChoice.plans.allSatisfy { PlanBadge(plan: $0) != nil })
+    }
+
     @Test func avatarInitials() {
         #expect(DataSourceText.initial("work") == "W")
         #expect(DataSourceText.initial(".claude-2") == "C")

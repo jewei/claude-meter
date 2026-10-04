@@ -12,12 +12,15 @@ struct CodexSourceSection: View {
             homes: codex.homes, names: names, isLoading: codex.isLoading, error: codex.error,
             rename: { codex.rename($0, to: $1) }, remove: { codex.removeHome($0) },
             add: {
-                guard
-                    let url = FolderPicker.chooseFolder(
-                        title: "Add Codex Home",
-                        message: "Choose a Codex home: a folder with auth.json, such as ~/.codex.")
-                else { return }
-                Task { await codex.addHome(url) }
+                Task {
+                    guard
+                        let url = await FolderPicker.chooseFolder(
+                            title: "Add Codex Home",
+                            message:
+                                "Choose a Codex home: a folder with auth.json, such as ~/.codex.")
+                    else { return }
+                    await codex.addHome(url)
+                }
             })
     }
 }

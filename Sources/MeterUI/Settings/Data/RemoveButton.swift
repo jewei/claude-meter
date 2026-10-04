@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// A 28 pt trash button that removes one folder from a list.
+/// A 28 pt trash button that asks to remove one folder from a list. ``FolderRow`` shows the
+/// question and removes the folder only after the user confirms.
 struct RemoveButton: View {
     let name: String
     let action: () -> Void

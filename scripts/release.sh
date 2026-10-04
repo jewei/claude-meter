@@ -43,9 +43,28 @@ FAILED_COMMAND=""
 step() { STEP="$1"; printf '\n==> %s\n' "$1"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
-# Runs on every exit. After a failure it names the step and says what is already public.
+# True when $1 is a mount point: its device differs from the device of its parent.
+is_mount_point() {
+    local here parent
+    [[ -d "$1" ]] && here="$(stat -f %d "$1")" && parent="$(stat -f %d "$1/..")" || return 1
+    [[ "$here" != "$parent" ]]
+}
+
+# Detaches the DMG that check_dmg_contents mounted, if it is still mounted. Ctrl-C during the
+# check, or two failed detach commands, can leave it mounted, and a mounted volume makes the
+# next run's `rm -rf build/release` fail.
+detach_dmg() {
+    local mount="$WORK/mount"
+    is_mount_point "$mount" || return 0
+    hdiutil detach -quiet "$mount" 2>/dev/null || hdiutil detach -quiet -force "$mount" ||
+        printf 'The DMG is still mounted. Run: hdiutil detach -force "%s"\n' "$mount" >&2
+}
+
+# Runs on every exit. It detaches a DMG left mounted. After a failure it names the step and
+# says what is already public.
 finish() {
     local status=$?
+    detach_dmg
     if ((status == 0)); then return; fi
     printf '\nThe release stopped in step "%s" (exit %s).\n' "$STEP" "$status" >&2
     if [[ -n "$FAILED_COMMAND" ]]; then printf 'Failed: %s\n' "$FAILED_COMMAND" >&2; fi
@@ -91,8 +110,7 @@ promote_changelog() {
 }
 
 # Mounts the DMG read-only and checks the copy that users install. Every check runs, and the
-# DMG is detached before the script stops: a volume left mounted makes the next run's
-# `rm -rf build/release` fail.
+# DMG is detached before the script stops. If the detach fails, finish() tries again.
 check_dmg_contents() {
     local mount="$WORK/mount" app="$WORK/mount/$APP_NAME.app" failed=""
     mkdir -p "$mount"
@@ -126,6 +144,10 @@ main() {
     readonly DMG="$WORK/$APP_NAME-$1.dmg" DSYMS="$WORK/$APP_NAME-$1-$2.dSYMs.zip"
     trap 'FAILED_COMMAND="line $LINENO: $BASH_COMMAND"' ERR
     trap finish EXIT
+    # Without these, bash runs the EXIT trap with status 0 after Ctrl-C, and finish() would not
+    # say what is already public.
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
     cd "$ROOT"
 
     step "Check preconditions"

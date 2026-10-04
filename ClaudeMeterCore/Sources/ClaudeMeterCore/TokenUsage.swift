@@ -26,10 +26,14 @@ public struct TokenUsageSnapshot: Equatable, Sendable {
     public let timeZoneID: String
     public let hasRecords: Bool
     public let isPartial: Bool
+    /// Local history by account key. Records belong to the account whose folder holds them.
+    /// Empty when the whole source belongs to one account, as Cursor's export does.
+    public let accounts: [String: TokenUsageSnapshot]
 
     public init(
         provider: ProviderID, daily: [Date: Int64], periodStart: Date, observedAt: Date,
-        timeZoneID: String, hasRecords: Bool = true, isPartial: Bool = false
+        timeZoneID: String, hasRecords: Bool = true, isPartial: Bool = false,
+        accounts: [String: TokenUsageSnapshot] = [:]
     ) {
         self.provider = provider
         self.daily = daily.filter { PersistedDateBounds.contains($0.key) && $0.value >= 0 }
@@ -38,6 +42,16 @@ public struct TokenUsageSnapshot: Equatable, Sendable {
         self.timeZoneID = timeZoneID
         self.hasRecords = hasRecords
         self.isPartial = isPartial || self.daily.count != daily.count
+        self.accounts = accounts
+    }
+
+    /// The history for one account card. An account without a local folder has no records.
+    public func account(_ id: String) -> TokenUsageSnapshot {
+        guard !accounts.isEmpty else { return self }
+        return accounts[id]
+            ?? TokenUsageSnapshot(
+                provider: provider, daily: [:], periodStart: periodStart,
+                observedAt: observedAt, timeZoneID: timeZoneID, hasRecords: false)
     }
 
     public func tokens(

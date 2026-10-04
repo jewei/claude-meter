@@ -26,12 +26,14 @@ final class TokenHistoryScanner: @unchecked Sendable {
 
     private struct RootIdentity: Equatable {
         let url: URL
+        let account: String
         let device: Int32
         let inode: UInt64
         let exists: Bool
 
-        init(_ url: URL) {
+        init(_ url: URL, account: String) {
             self.url = url
+            self.account = account
             var status = stat()
             exists = url.path.withCString { Darwin.lstat($0, &status) } == 0
             device = status.st_dev
@@ -48,8 +50,9 @@ final class TokenHistoryScanner: @unchecked Sendable {
         var finished: Set<Int> = []
         var nextRoot = 0
         var files: [String: Date] = [:]
-        var hadErrors = false
+        var erroredRoots: Set<Int> = []
         var exceededFileLimit = false
+        var hadErrors: Bool { !erroredRoots.isEmpty }
         var isComplete: Bool { finished.count == roots.count }
 
         init(roots: [RootIdentity]) {
@@ -57,7 +60,7 @@ final class TokenHistoryScanner: @unchecked Sendable {
             self.cursors = Array(repeating: nil, count: roots.count)
         }
 
-        func next(cancellation: Cancellation) throws -> URL? {
+        func next(cancellation: Cancellation) throws -> (url: URL, root: Int)? {
             while !isComplete {
                 try cancellation.check()
                 let index = nextRoot
@@ -75,12 +78,12 @@ final class TokenHistoryScanner: @unchecked Sendable {
                         ],
                         options: [.skipsHiddenFiles],
                         errorHandler: { [weak self] _, _ in
-                            self?.hadErrors = true
+                            self?.erroredRoots.insert(index)
                             return false
                         })
-                    if cursors[index] == nil { hadErrors = true }
+                    if cursors[index] == nil { erroredRoots.insert(index) }
                 }
-                if let url = cursors[index]?.nextObject() as? URL { return url }
+                if let url = cursors[index]?.nextObject() as? URL { return (url, index) }
                 cursors[index] = nil
                 finished.insert(index)
             }
@@ -140,13 +143,16 @@ final class TokenHistoryScanner: @unchecked Sendable {
     private var discoveryStart: Date?
     private var discovery: Discovery?
     private var inventory: [String: Date] = [:]
+    /// The root that found each file. Enumerated paths can differ from the root path, as
+    /// `/private/var` does from `/var`, so a path prefix cannot identify the owner.
+    private var owners: [String: Int] = [:]
 
     init(provider: ProviderID, limits: Limits = Limits()) {
         self.provider = provider
         self.limits = limits
     }
 
-    func scan(roots: [URL], now: Date, calendar: Calendar = .current) async throws
+    func scan(roots: [TokenHistoryRoot], now: Date, calendar: Calendar = .current) async throws
         -> TokenUsageSnapshot
     {
         let cancellation = Cancellation()
@@ -172,27 +178,40 @@ final class TokenHistoryScanner: @unchecked Sendable {
     }
 
     private func scanOnQueue(
-        roots: [URL], now: Date, calendar: Calendar, cancellation: Cancellation
+        roots: [TokenHistoryRoot], now: Date, calendar: Calendar, cancellation: Cancellation
     ) throws -> TokenUsageSnapshot {
         try cancellation.check()
         var accumulator = try TokenDayAccumulator(now: now, calendar: calendar)
         lastWork = Work()
         var visited = Set<String>()
         let rootIdentities = roots.compactMap { root -> RootIdentity? in
-            let url = root.resolvingSymlinksInPath().standardizedFileURL
-            return visited.insert(url.path).inserted ? RootIdentity(url) : nil
+            let url = root.url.resolvingSymlinksInPath().standardizedFileURL
+            return visited.insert(url.path).inserted
+                ? RootIdentity(url, account: root.account) : nil
         }
         if rootIdentities != discoveryRoots || discoveryStart != accumulator.start {
             discoveryRoots = rootIdentities
             discoveryStart = accumulator.start
             discovery = nil
             inventory.removeAll()
+            owners.removeAll()
             cache.removeAll()
         }
         let sweep = discovery ?? Discovery(roots: rootIdentities)
         discovery = sweep
         try discoverPage(sweep, since: accumulator.start, cancellation: cancellation)
         accumulator.isPartial = !sweep.isComplete || sweep.hadErrors || sweep.exceededFileLimit
+        // An account's history is partial until discovery of its own folders succeeds.
+        var partialAccounts = Set(
+            rootIdentities.indices.filter {
+                sweep.exceededFileLimit || !sweep.finished.contains($0)
+                    || sweep.erroredRoots.contains($0)
+            }.map { rootIdentities[$0].account })
+        func owner(of path: String) -> String? { owners[path].map { rootIdentities[$0].account } }
+        func markPartial(_ path: String) {
+            accumulator.isPartial = true
+            if let account = owner(of: path) { partialAccounts.insert(account) }
+        }
         let urls = newestFiles(inventory).map { URL(fileURLWithPath: $0.key) }
         var records = 0
         var identities = Set<String>()
@@ -204,16 +223,16 @@ final class TokenHistoryScanner: @unchecked Sendable {
             } catch is CancellationError {
                 throw CancellationError()
             } catch ScanError.byteBudget {
-                accumulator.isPartial = true
+                markPartial(url.path)
             } catch {
-                accumulator.isPartial = true
+                markPartial(url.path)
                 cache.removeValue(forKey: url.path)
             }
             if let state = cache[url.path] {
                 records += state.parser.events.count + state.parser.codex.events.count
                 if records > limits.records {
                     cache.removeValue(forKey: url.path)
-                    accumulator.isPartial = true
+                    markPartial(url.path)
                 }
             }
         }
@@ -221,10 +240,31 @@ final class TokenHistoryScanner: @unchecked Sendable {
         lastWork.cachedRecords = cache.values.reduce(0) {
             $0 + $1.parser.events.count + $1.parser.codex.events.count
         }
+        let paths = cache.keys.sorted()
+        let owned = Dictionary(grouping: paths, by: owner(of:))
+        var accounts: [String: TokenUsageSnapshot] = [:]
+        for account in Set(rootIdentities.map(\.account)) {
+            var scoped = accumulator
+            scoped.isPartial = partialAccounts.contains(account)
+            accounts[account] = try history(
+                owned[account, default: []], into: scoped, cancellation: cancellation)
+        }
+        let total = try history(
+            paths, into: accumulator, accounts: accounts, cancellation: cancellation)
+        try cancellation.check()
+        return total
+    }
+
+    /// Counts the cached records of `paths`. Copies of one response or session count once.
+    private func history(
+        _ paths: [String], into base: TokenDayAccumulator,
+        accounts: [String: TokenUsageSnapshot] = [:], cancellation: Cancellation
+    ) throws -> TokenUsageSnapshot {
+        var accumulator = base
         var hasRecords = false
         var events: [String: TokenEvent] = [:]
         var sessions: [String: CodexTokenLog] = [:]
-        for path in cache.keys.sorted() {
+        for path in paths {
             try cancellation.check()
             guard let file = cache[path] else { continue }
             accumulator.isPartial =
@@ -266,8 +306,7 @@ final class TokenHistoryScanner: @unchecked Sendable {
             accumulator.isPartial = accumulator.isPartial || result.partial
             for event in result.events { accumulator.add(event) }
         }
-        try cancellation.check()
-        return accumulator.snapshot(provider: provider, hasRecords: hasRecords)
+        return accumulator.snapshot(provider: provider, hasRecords: hasRecords, accounts: accounts)
     }
 
     private func newestFiles(_ files: [String: Date]) -> [(key: String, value: Date)] {
@@ -296,12 +335,13 @@ final class TokenHistoryScanner: @unchecked Sendable {
                         inventory.merging(page, uniquingKeysWith: { _, new in new })))
             }
             cache = cache.filter { inventory[$0.key] != nil }
+            owners = owners.filter { inventory[$0.key] != nil || sweep.files[$0.key] != nil }
             if sweep.isComplete { discovery = nil }
         }
         while lastWork.directoryEntries < limits.directoryEntries,
             lastWork.discoveredFiles < limits.files
         {
-            guard let url = try sweep.next(cancellation: cancellation) else { break }
+            guard let (url, root) = try sweep.next(cancellation: cancellation) else { break }
             lastWork.directoryEntries += 1
             let matches =
                 provider == .grok
@@ -311,12 +351,14 @@ final class TokenHistoryScanner: @unchecked Sendable {
                 .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey,
             ])
             guard values?.isRegularFile == true, values?.isSymbolicLink != true else {
-                sweep.hadErrors = true
+                sweep.erroredRoots.insert(root)
                 continue
             }
             let modified = values?.contentModificationDate ?? .distantFuture
             guard modified >= start else { continue }
             page[url.path] = modified
+            // Nested roots find one file twice. The earlier configured root keeps it.
+            owners[url.path] = min(owners[url.path] ?? root, root)
             lastWork.discoveredFiles += 1
         }
     }

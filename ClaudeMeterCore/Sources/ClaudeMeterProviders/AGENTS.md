@@ -26,8 +26,11 @@ Follow these implementation rules.
 Token history sources return only normalized counters and coverage. Their memory-only
 parse caches retain record identities, offsets, and counters, never prompts or response
 content. Keep prices out of token counting. Local history does not establish an account
-key. Cursor history keeps its own accepted credential stamp and rejects late results
-from a changed login. Scan limits and missing records must stay explicit in the result.
+key. Each `TokenHistoryRoot` takes its account key from configuration, and the scanner
+counts each account's roots separately. Record the root that found each file. Do not
+match path prefixes: enumerated paths can differ from the root path. Cursor history
+keeps its own accepted credential stamp and rejects late results from a changed login.
+Scan limits and missing records must stay explicit in the result.
 
 - Use `ProviderHTTPClient.shared` or an injected `HTTPTransport`, and test clients with
   injected transports. Keep the chunk receiver, early `Content-Length` rejection,

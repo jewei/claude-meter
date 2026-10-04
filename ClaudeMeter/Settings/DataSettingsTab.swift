@@ -458,7 +458,7 @@ private func accountLetter(_ name: String) -> String {
 }
 
 private struct ConfigDirAccountsSection: View {
-    let appState: AppState
+    @ObservedObject var appState: AppState
 
     @State private var accounts: [AccountConfig] = []
     @State private var disabledKeys: Set<String> = []
@@ -529,9 +529,23 @@ private struct ConfigDirAccountsSection: View {
         )
     }
 
-    /// Plan is OAuth-only and single-slot, so the user tags each account's badge
-    /// by hand here; the popover reads it back per render.
+    /// The plan reported by the account's login wins. A manual badge applies only
+    /// when no plan is detected; the popover reads it back per render.
+    @ViewBuilder
     private func planMenu(for key: String) -> some View {
+        if let detected = appState.claudeSnapshot?.accounts.first(where: { $0.id == key })?.plan {
+            PlanBadge(plan: detected)
+                .frame(minWidth: 28, minHeight: 28)
+                .help("Plan reported by this account's login")
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Account plan")
+                .accessibilityValue(detected)
+        } else {
+            manualPlanMenu(for: key)
+        }
+    }
+
+    private func manualPlanMenu(for key: String) -> some View {
         Menu {
             Button("No badge") { setPlan(key, nil) }
             Divider()

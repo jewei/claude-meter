@@ -120,12 +120,18 @@ counts return. There are no model prices, historical cost estimates, captured co
 or changes to provider credentials. Token totals do not measure energy left and do not
 affect account selection, quota freshness, the hero, or the menu bar.
 
-Claude Code, Codex, and Grok Build history is labeled **This Mac**. These records can
-include earlier logins and API-key sessions. Config dirs and local activity do not
-establish historical account ownership. Each account card for the same local provider
-shows the same provider total, without assigning it to that account. The source tooltip
-states this scope. Other devices, deleted records, and web activity are outside this
-scope. Cursor history is labeled **Account usage**.
+Claude Code, Codex, and Grok Build history is labeled **This Mac**. Each account card
+counts only the records in its own folder: the Claude config dir or the Codex home. Grok
+has one folder. A folder's records can include earlier logins and API-key sessions that
+used it, so the folder, not the current login, sets the scope. Records never establish an
+account key. An account without a local folder, such as an unmapped OAuth login, has no
+local records. The source tooltip states this scope. Other folders, other devices,
+deleted records, and web activity are outside this scope. Cursor history is labeled
+**Account usage**.
+
+This changes the earlier decision to show one provider total on each account card. That
+total mixed the records of separate config dirs, so an account with little use showed
+the use of another account.
 
 - Claude reads assistant usage from `projects/**/*.jsonl` in enabled config dirs. A
   response contributes input, output, cache-read, and cache-write tokens. Streaming
@@ -171,7 +177,10 @@ An incomplete discovery page does not remove earlier cached files. A completed s
 starts again on the next refresh to find new and deleted files. Changed root paths,
 root identities, or history ranges reset discovery and the parse cache. The newest
 discovered files keep priority within the file and record caps; exceeding those caps
-still means partial history. No limit produces a complete zero.
+still means partial history. No limit produces a complete zero. Partial coverage belongs to the account whose folder
+caused it: unfinished or failed discovery of that folder, or a record in it that was not
+counted. The file limit makes every account partial. Discovery records the root that
+found each file, because enumerated paths can differ from the configured root path.
 History fetches have a 20 s deadline and at most two outstanding timed tasks per source.
 Claude and Codex history configuration reads each have a separate two-operation limit
 and a 5 s deadline. Neither shares capacity with Codex quota configuration. Timed-out
@@ -756,7 +765,11 @@ Startup and Appearance settings replace an invalid menu-bar mode, including the 
 `forecast` value and the removed `nearest` value, with `5h` in standard defaults.
 
 Account names and plans accept user overrides. A name override takes precedence over the
-friendly config label. A plan override takes precedence over the account OAuth plan.
+friendly config label. The account OAuth plan takes precedence over a plan override. The
+override applies only when the login reports no plan, and Settings then offers the plan
+menu. This changes the earlier decision to prefer the override: an old badge can describe
+an earlier login in the same config dir. Claude Max plans keep their 5x or 20x tier on
+the badge.
 Configured paths are canonicalized and account disabling never removes the default
 account.
 

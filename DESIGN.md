@@ -138,7 +138,7 @@ maps roles and weights to their faces. The menu bar uses system fonts.
 | Account name   | Fredoka 600, 15                        | "Work"                                     |
 | Big number     | Fredoka 700–800, 14     | "78%"                                      |
 | Avatar letter  | Fredoka 700, 17 (ring center 19)       | "W"                                        |
-| Plan badge     | Fredoka 700, 10–11                     | "MAX 20×"                                  |
+| Plan badge     | Fredoka 700, 10–11                     | "MAX 20X"                                  |
 | Primary button | Fredoka 700, 14                        | "Open Settings"                            |
 
 | Role           | Spec (Nunito)                          | Use                                        |
@@ -312,8 +312,8 @@ resize animation. Ring cards remain always expanded. There is no separate token 
 A divider separates token usage from the details above it. The **Tokens used** heading
 uses Nunito 700/11 in `ink`. The source label uses Nunito 600/10 in `ink-muted`:
 **Account usage** for Cursor and **This Mac** for Claude Code, Codex, and Grok Build.
-Each account card for the same local provider shows the same total. The source tooltip
-explains this because local records do not prove historical account ownership.
+Each local account card shows only the records in its own config dir or Codex home. The
+source tooltip states that scope, because a folder can hold records from earlier logins.
 
 Each section has **Today**, **Yesterday**, and **Last 7 Days** rows. Labels align left
 and token counts align right, in Nunito 600/11 with monospaced digits. Counts use compact
@@ -377,7 +377,9 @@ components:
 
 - An account row with an avatar, a bordered display-name field, folder path chip, and
   trailing controls. The field is labeled **Display name** for accessibility. The full
-  config dir is available in the path tooltip and accessibility value.
+  config dir is available in the path tooltip and accessibility value. A Claude row
+  shows the plan that its login reports as a static badge. Only a row with no reported
+  plan shows the **Set plan** menu.
 - An **Add …** button with `folder.badge.plus` and a thick bottom border.
 - Error text in red Nunito 700 at 11pt.
 - A note in a `popover-bg` box.

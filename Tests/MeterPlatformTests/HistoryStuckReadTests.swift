@@ -44,6 +44,58 @@ extension HistoryScans {
             #expect(recovered.total() == 11)
         }
 
+        @Test func aFolderWhoseListingTimesOutIsSkippedAndDiscoveryGoesOn() async throws {
+            let home = try TemporaryDirectory()
+            defer { home.remove() }
+            // Discovery lists folders in name order, so the slow folder comes first.
+            try home.write(line("slow", 2), to: "a-slow/two.jsonl")
+            try home.write(line("b", 1), to: "b/one.jsonl")
+            try home.write(line("c", 4), to: "c/three.jsonl")
+            let blocked = BlockedLines.make()
+            let listing: DirectoryListing.Function = {
+                path, position, cancellation throws(DirectoryListing.ListingError) in
+                if path.hasSuffix("/a-slow") { BlockedLines.wait(blocked) }
+                return try DirectoryListing.standard(path, position, cancellation)
+            }
+            let pool = BlockingIO(label: "test")
+            let scanner = CountingScanner(
+                match: jsonl, limits: HistoryLimits(), pool: pool, listing: listing)
+
+            // Only the page that waits for the slow folder may time out. The time limit is
+            // short only until the listing arrives: on a loaded machine another read can pass
+            // it too, and the scan then tries again.
+            await scanner.setBlockingTimeout(.milliseconds(100))
+            for _ in 0..<50 where !BlockedLines.hasArrived(blocked) {
+                _ = try await scanner.scan([home.root()], since: rangeStart)
+            }
+            #expect(BlockedLines.hasArrived(blocked))
+            await scanner.setBlockingTimeout(.seconds(30))
+            BlockedLines.open(blocked)
+            #expect(await waitUntil { pool.abandonedCount == 0 })
+
+            // The sweep goes on past the slow folder, which stays partial until a sweep lists
+            // it. Before the fix, every page waited for the same folder again.
+            let past = try await scanner.scan([home.root()], since: rangeStart)
+            #expect(past.total() == 5)
+            #expect(past.isPartial())
+            let listed = try await scanner.scanUntilComplete([home.root()])
+            #expect(!listed.isPartial())
+            #expect(listed.total() == 7)
+        }
+
+        @Test func aLargeFolderIsListedInChunks() async throws {
+            let home = try TemporaryDirectory()
+            defer { home.remove() }
+            for index in 0..<7 { try home.write(line("\(index)", 10), to: "\(index).jsonl") }
+            try home.write(line("deep", 100), to: "sub/deep.jsonl")
+            let scanner = CountingScanner(
+                match: jsonl, limits: HistoryLimits(directoryEntries: 3), pool: .history,
+                listing: DirectoryListing.chunks(of: 2))
+            let result = try await scanner.scanUntilComplete([home.root()])
+            #expect(!result.isPartial())
+            #expect(result.total() == 170)
+        }
+
         @Test func aFileThatGrowsWhileItIsReadKeepsTheNewOffset() async throws {
             let home = try TemporaryDirectory()
             defer { home.remove() }

@@ -31,8 +31,8 @@ struct CountingParser: HistoryFileParser {
     var recordCount: Int { records.count }
 }
 
-/// Holds file reads at test lines whose ID starts with `block-`, like a read from a stuck
-/// volume. Each test uses its own IDs.
+/// Holds file reads at test lines whose ID starts with `block-`, and test listings that call
+/// ``wait(_:)``, like a read from a stuck volume. Each test uses its own IDs.
 enum BlockedLines {
     private static let state = Locked<(open: Set<String>, arrived: Set<String>)>(([], []))
 
@@ -49,7 +49,7 @@ enum BlockedLines {
     }
 
     /// Blocks the reading thread until `id` is open, at most 10 s.
-    fileprivate static func wait(_ id: String) {
+    static func wait(_ id: String) {
         state.withLock { _ = $0.arrived.insert(id) }
         let deadline = Date().addingTimeInterval(10)
         while !state.value.open.contains(id), Date() < deadline { usleep(1_000) }

@@ -44,6 +44,9 @@ public struct HistoryLimits: Equatable, Sendable {
     static let chunkBytes = 64 * 1024
     /// Directory entries visited in one blocking call, so cancellation is seen between calls.
     static let entriesPerCall = 1_024
+    /// Directory entries read in one chunk of a folder listing, so a large folder takes several
+    /// short reads instead of one long one.
+    static let entriesPerListing = 1_024
     /// A full history pool means that ``BlockingIO/capacity`` history reads are stuck. A slow
     /// volume can still answer, so wait this often for one of them to end before the scan
     /// gives up: at most 2 s.

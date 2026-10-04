@@ -28,6 +28,13 @@ public final class BlockingIO: Sendable {
         fileprivate let flag = Locked(false)
 
         public var isCancelled: Bool { flag.value }
+
+        /// A cancellation that is already set, for tests of work that checks it.
+        static var cancelled: Cancellation {
+            let cancellation = Cancellation()
+            cancellation.flag.withLock { $0 = true }
+            return cancellation
+        }
     }
 
     /// The pool for quota reads: credentials, auth files, databases, and the reading archive.

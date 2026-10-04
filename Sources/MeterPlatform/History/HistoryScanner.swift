@@ -7,21 +7,23 @@ import MeterDomain
 /// One scanner serves one provider for the life of the app. Between scans it keeps a
 /// discovery cursor, the inventory of found files, and one cursor per file, so an unchanged
 /// file costs one `open` and `fstat`, and a grown file costs only its new lines. A scan checks
-/// for cancellation between directory pages and between files, and keeps the progress that it
-/// made before the cancellation.
+/// for cancellation between directory pages, inside a folder listing, and between files, and
+/// keeps the progress that it made before the cancellation.
 ///
 /// Blocking reads run in the ``BlockingIO/history`` pool, so stuck history folders never make
 /// quota reads fail. A blocking read that times out ends that phase of the scan, and the
 /// result is partial: a stuck root check returns the files of the last scan with every
-/// account partial, a stuck directory page ends discovery, and a stuck file ends reading. A
-/// root check, discovery, or file whose earlier read is still stuck is skipped until that read
-/// ends, so repeated scans do not abandon one more thread each.
+/// account partial, a stuck directory page ends discovery and makes the sweep skip the folder
+/// that it waited for, and a stuck file ends reading. A root check, discovery, or file whose
+/// earlier read is still stuck is skipped until that read ends, so repeated scans do not
+/// abandon one more thread each.
 public actor HistoryScanner<Parser: HistoryFileParser> {
     private typealias Cursor = FileCursor<Parser>
 
     private let match: HistoryFileMatch
-    private let limits: HistoryLimits
+    private var limits: HistoryLimits
     private let pool: BlockingIO
+    private let listing: DirectoryListing.Function
     private let queue = ScanQueue()
     /// Pool keys of this scanner's root checks and discovery pages. File reads use the path.
     private let rootsKey: String
@@ -46,14 +48,25 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
         self.init(match: match, limits: limits, pool: .history)
     }
 
-    /// Tests pass their own pool, so stuck test reads never reach the shared pools.
-    init(match: HistoryFileMatch, limits: HistoryLimits, pool: BlockingIO) {
+    /// Tests pass their own pool, so stuck test reads never reach the shared pools, and can
+    /// pass a listing that blocks.
+    init(
+        match: HistoryFileMatch, limits: HistoryLimits, pool: BlockingIO,
+        listing: @escaping DirectoryListing.Function = DirectoryListing.standard
+    ) {
         self.match = match
         self.limits = limits
         self.pool = pool
+        self.listing = listing
         let id = UUID().uuidString
         rootsKey = "history-scanner/\(id)/roots"
         discoveryKey = "history-scanner/\(id)/discovery"
+    }
+
+    /// Tests shorten the time limit only while a read that they block must time out, so no
+    /// other read can pass the limit on a loaded machine.
+    func setBlockingTimeout(_ timeout: Duration) {
+        limits.blockingTimeout = timeout
     }
 
     /// Scans `roots` for files modified at or after `start`.
@@ -165,19 +178,27 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
             let maxEntries = min(
                 HistoryLimits.entriesPerCall, limits.directoryEntries - work.directoryEntries)
             let maxFiles = limits.files - work.discoveredFiles
-            let (match, before) = (self.match, current)
+            let (match, listing, before) = (self.match, self.listing, current)
+            let activity = Locked<DiscoveryCursor.Location?>(nil)
             let result: (DiscoverySweep, DiscoverySweep.Page)
             do {
                 result = try await blocking(key: discoveryKey) { cancellation in
                     var next = before
                     let page = next.advance(
                         maxEntries: maxEntries, maxFiles: maxFiles, since: start, match: match,
-                        cancellation: cancellation)
+                        listing: listing, activity: activity, cancellation: cancellation)
                     return (next, page)
                 }
-            } catch is TimeoutError, is BlockingIO.BusyError {
-                // A stuck folder must not hide the files found so far. The sweep stays
-                // incomplete, so its roots read as partial, and the next scan tries again.
+            } catch is TimeoutError {
+                // The page is lost, but the files of earlier pages still count. The sweep skips
+                // the folder that the page waited for and marks its root failed, so the next
+                // page goes on past it instead of waiting for the same folder again.
+                if let stuck = activity.value {
+                    current.skip(stuck)
+                    sweep = current
+                }
+                break
+            } catch is BlockingIO.BusyError {
                 break
             }
             let (after, page) = result

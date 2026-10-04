@@ -205,7 +205,10 @@ Only the fields below are read. All other fields are skipped.
 
 54. Discovery takes one entry from each root in turn, so a large root cannot block the
     others.
-55. Discovery continues on the next scan after the entry or file budget of a scan.
+55. Discovery continues on the next scan after the entry or file budget of a scan. It reads
+    a folder in chunks of 1,024 entries and keeps its position, so a large folder takes
+    several short reads. When the folder changed between two chunks, its listing starts
+    again, so no entry is missed.
 56. A completed sweep replaces the file list, so deleted files disappear. The next scan
     starts a new sweep, which finds new files. Until the new sweep completes, the list of
     the last complete sweep keeps its folders complete.
@@ -215,13 +218,16 @@ Only the fields below are read. All other fields are skipped.
     of an account, or a move of the first covered day to an earlier day, discards all scan
     state. When the first covered day moves later (at local midnight), the scan state stays,
     and only the files last modified before the new first day are dropped.
-60. A discovery page that times out ends discovery for that scan. The files found so far
-    still count. A root check that times out returns the files of the last scan, with every
+60. A discovery page that times out ends discovery for that scan. The files found by
+    earlier pages still count. The sweep skips the folder that the page waited for and makes
+    its account partial, so the next page goes on past it; a later sweep lists the folder
+    again. A root check that times out returns the files of the last scan, with every
     account partial. A root check, discovery page, or file whose earlier read timed out and
     still runs is skipped until that read ends, so a stuck folder holds one thread, not one
     more for each scan.
-61. Cancellation stops a scan between directory pages and between files. Progress made
-    before the cancellation is kept. One scan runs at a time for each tool.
+61. Cancellation stops a scan between directory pages, inside a folder listing, and between
+    files. Progress made before the cancellation is kept. One scan runs at a time for each
+    tool.
 
 ## Partial and unknown history
 

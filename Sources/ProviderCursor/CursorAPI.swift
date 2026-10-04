@@ -14,10 +14,17 @@ enum CursorAPI {
     static let usageDeadline: Duration = .seconds(20)
     /// The plan name is optional, so its request gets less time.
     static let planDeadline: Duration = .seconds(10)
-    /// The app gives `reconcile` and one history read 20 s together. They read the credentials
-    /// three times, at most 2 s each (``CursorCredentialStore/historyReadTimeout``), so
-    /// 2 + 2 + 10 + 2 = 16 s leaves at least 4 s to parse the export.
+    /// The app gives `reconcile` and one history read ``appHistoryLimit`` together. They read
+    /// the credentials three times, at most 2 s each
+    /// (``CursorCredentialStore/historyReadTimeout``), so 2 + 2 + 10 + 2 = 16 s leaves at
+    /// least ``parseReserve`` to parse the export.
     static let exportDeadline: Duration = .seconds(10)
+    /// The app's limit for `reconcile` and one history read together. It is
+    /// `UsageStore.historyDeadline` in MeterApp, which a provider cannot import, so a MeterApp
+    /// test checks that both are the same.
+    static let appHistoryLimit: Duration = .seconds(20)
+    /// The time that must stay to parse the export after the credential reads and the export.
+    static let parseReserve: Duration = .seconds(4)
 
     /// A Connect RPC call with an empty JSON body. Cursor has its own rate limits, so the
     /// request is never retried.

@@ -86,19 +86,19 @@ promote_changelog() {
     mv "$WORK/CHANGELOG.md" CHANGELOG.md
 }
 
-# Mounts the DMG read-only and checks the copy that users install, then detaches it.
+# Mounts the DMG read-only and checks the copy that users install. Every check runs, and the
+# DMG is detached before the script stops: a volume left mounted makes the next run's
+# `rm -rf build/release` fail.
 check_dmg_contents() {
-    local mount="$WORK/mount" status=0
+    local mount="$WORK/mount" app="$WORK/mount/$APP_NAME.app" failed=""
     mkdir -p "$mount"
     hdiutil attach -quiet -nobrowse -readonly -mountpoint "$mount" "$DMG"
-    {
-        [[ -L "$mount/Applications" ]] || die "The DMG has no Applications link."
-        codesign --verify --deep --strict "$mount/$APP_NAME.app"
-        xcrun stapler validate "$mount/$APP_NAME.app"
-        spctl --assess --type execute "$mount/$APP_NAME.app"
-    } || status=$?
-    hdiutil detach -quiet "$mount"
-    ((status == 0)) || die "The app inside the DMG failed its checks."
+    [[ -L "$mount/Applications" ]] || failed+=" Applications-link"
+    codesign --verify --deep --strict "$app" || failed+=" codesign"
+    xcrun stapler validate "$app" || failed+=" stapler"
+    spctl --assess --type execute "$app" || failed+=" spctl"
+    hdiutil detach -quiet "$mount" || hdiutil detach -quiet -force "$mount"
+    [[ -z "$failed" ]] || die "The DMG failed these checks:$failed."
 }
 
 # Submits a file to Apple and waits. On rejection, prints Apple's log and stops.

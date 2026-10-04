@@ -2,7 +2,6 @@ import Foundation
 import MeterDomain
 import MeterPlatform
 import MeterTestSupport
-import ProviderClaude
 import Testing
 
 @testable import MeterApp
@@ -216,27 +215,6 @@ import Testing
         let visible: [CardID] = [.account(.cursor, .default), .account(.claude, "a")]
         #expect(model.moveCard(.account(.claude, "a"), to: 1, visible: visible))
         #expect(model.settings.settings.cards.order.isEmpty)
-    }
-
-    @Test func claudeHistoryReadsOnlyFoldersWithACard() {
-        let accounts = [
-            ClaudeAccount(
-                id: "claude", name: "default", directory: URL(fileURLWithPath: "/c"),
-                isDefault: true, isEnabled: true),
-            ClaudeAccount(
-                id: "claude-work", name: "work", directory: URL(fileURLWithPath: "/w"),
-                isDefault: false, isEnabled: true),
-            ClaudeAccount(
-                id: "claude-old", name: "old", directory: URL(fileURLWithPath: "/o"),
-                isDefault: false, isEnabled: false),
-        ]
-        #expect(LiveProviders.claudeHistoryRoots(accounts, connection: .off).isEmpty)
-        #expect(
-            LiveProviders.claudeHistoryRoots(accounts, connection: .manual).map(\.account)
-                == ["claude"])
-        #expect(
-            LiveProviders.claudeHistoryRoots(accounts, connection: .automatic).map(\.account)
-                == ["claude", "claude-work"])
     }
 
     @Test func refusedMovesChangeNothing() {

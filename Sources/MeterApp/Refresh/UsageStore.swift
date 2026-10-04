@@ -93,8 +93,8 @@ public final class UsageStore {
     }
 
     /// Refreshes quota for `ids`, and history for those whose history is due, or for all of
-    /// them with `forceHistory`.
-    public func refresh(_ ids: Set<ProviderID>, forceHistory: Bool = false) async {
+    /// them with `forceHistory`. For tests; the scheduler calls ``refresh(quota:history:)``.
+    func refresh(_ ids: Set<ProviderID>, forceHistory: Bool = false) async {
         await refresh(quota: ids, history: forceHistory ? ids : ids.filter(historyNeedsRefresh))
     }
 

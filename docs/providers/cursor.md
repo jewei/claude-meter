@@ -219,3 +219,6 @@ The email is never part of the reading.
 
 34. Every message says what to do, for example "Open Cursor and sign in again."
 35. A decoding failure shows "Cursor returned an unexpected response.", never a system error.
+36. Only a network that is down, or a host that cannot be found or reached, shows "Cannot reach
+    Cursor. Check your internet connection." A connection that dropped had reached Cursor, so
+    it shows "The Cursor request failed. Claude Meter will try again soon."

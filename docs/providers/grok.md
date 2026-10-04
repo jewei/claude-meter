@@ -138,3 +138,6 @@ never reaches a reading, a log, or the disk.
 
 15. Every message says what to do, for example "Open Grok Build and run `grok login`."
 16. A decoding failure shows "Grok returned an unexpected response.", never a system error.
+17. Only a network that is down, or a host that cannot be found or reached, shows "Cannot reach
+    Grok. Check your internet connection." A connection that dropped had reached Grok, so it
+    shows "The Grok usage request failed. Claude Meter will try again soon."

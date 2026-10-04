@@ -1,5 +1,6 @@
 import Foundation
 import MeterDomain
+import MeterPlatform
 import Testing
 
 @testable import ProviderGrok
@@ -26,5 +27,21 @@ import Testing
     func everyMessageEndsWithWhatToDo(failure: GrokFailure) {
         let message = failure.issue.message
         #expect(message.hasSuffix(" " + instruction(for: failure)), "\(message)")
+    }
+
+    /// Only a network that is down asks the user to check the connection. A connection that
+    /// dropped had reached Grok, so the next refresh tries again.
+    @Test func transportErrorsMapToTheirFailure() {
+        let cases: [(HTTPError, GrokFailure)] = [
+            (.offline, .offline), (.connectionLost, .network), (.timedOut, .timedOut),
+            (.transport(code: -1), .network), (.redirectRejected, .unexpectedResponse),
+            (.responseTooLarge(limit: 1), .unexpectedResponse),
+        ]
+        for (error, failure) in cases {
+            #expect(GrokFailure(transport: error) == failure, "\(error)")
+        }
+        #expect(
+            GrokFailure(transport: HTTPError.connectionLost).issue.message
+                == "The Grok usage request failed. Claude Meter will try again soon.")
     }
 }

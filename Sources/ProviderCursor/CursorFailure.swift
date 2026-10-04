@@ -124,13 +124,15 @@ enum CursorFailure: Error, Equatable, Sendable {
     }
 
     /// Maps a transport error. Cancellation is not a failure and is rethrown by callers first.
+    /// A connection that dropped had reached the server, so it is a temporary failure, not a
+    /// network that is down.
     init(transport error: any Error) {
         switch error as? HTTPError {
-        case .offline, .connectionLost: self = .offline
+        case .offline: self = .offline
         case .timedOut: self = .timedOut
         case .responseTooLarge: self = .responseTooLarge
         case .redirectRejected: self = .unexpectedResponse
-        case .transport, nil: self = .network
+        case .connectionLost, .transport, nil: self = .network
         }
     }
 

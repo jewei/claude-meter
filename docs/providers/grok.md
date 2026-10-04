@@ -1,0 +1,115 @@
+# Grok
+
+Module: `Sources/ProviderGrok`. Type: `GrokProvider` (quota). It reports one account,
+`AccountID.default`, named "Grok". Local token history is in `Sources/ProviderGrok/History`.
+
+The billing endpoint is internal to the Grok Build CLI. It can change without notice.
+
+## External contracts
+
+### Grok home
+
+`GrokProvider.homeDirectory(environment:home:)`:
+
+1. `GROK_HOME`, when it is set and not blank. A leading `~` means the user's home.
+2. Otherwise `~/.grok`.
+
+### Sign-in file
+
+| Item | Value |
+| --- | --- |
+| Path | `<Grok home>/auth.json` |
+| Read | `LocalFile.read`: regular file, symbolic links followed, at most 4 MiB, 5 s limit |
+
+```json
+{
+  "https://auth.x.ai::client-uuid": {
+    "key": "bearer-token",
+    "auth_mode": "oidc",
+    "email": "alpha@example.com",
+    "expires_at": "2026-07-11T06:43:07.251431Z",
+    "refresh_token": "r"
+  },
+  "https://accounts.x.ai/sign-in": { "key": "legacy-token" }
+}
+```
+
+| Field | Use |
+| --- | --- |
+| Top-level key | The entry scope. |
+| `key` | The bearer token, trimmed. Required. |
+| `expires_at` | ISO-8601 with any fraction length, or epoch. Optional. |
+| `user_id`, `account_id` | A stable account ID. Optional. |
+| `email`, `auth_mode`, `refresh_token` | Ignored. |
+
+### Billing
+
+```text
+GET https://cli-chat-proxy.grok.com/v1/billing?format=credits
+Authorization: Bearer <key>
+Accept: application/json
+User-Agent: ClaudeMeter
+```
+
+Retry: transient failures (dropped connection, HTTP 502, 503, 504). Deadline: 30 s. Any 2xx
+status is success.
+
+Recorded response (grok 0.2.93):
+
+```json
+{"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2026-07-04T05:57:34.172321+00:00","end":"2026-07-11T05:57:34.172321+00:00"},"creditUsagePercent":36.0,"onDemandCap":{"val":0},"onDemandUsed":{"val":0},"productUsage":[{"product":"GrokBuild","usagePercent":36.0}],"isUnifiedBillingUser":true,"prepaidBalance":{"val":0},"topUpMethod":"TOP_UP_METHOD_SAVED_PAYMENT_METHOD","billingPeriodStart":"2026-07-04T05:57:34.172321+00:00","billingPeriodEnd":"2026-07-11T05:57:34.172321+00:00"}}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `config.currentPeriod` | Required. Its absence is an unexpected response. |
+| `currentPeriod.type` | `USAGE_PERIOD_TYPE_WEEKLY` or `USAGE_PERIOD_TYPE_MONTHLY`. |
+| `currentPeriod.end` | When the period resets. |
+| `config.creditUsagePercent` | Percent used. Absent means 0. |
+| `config.onDemandUsed.val` | On-demand spend in US cents. Absent means 0. |
+| `config.onDemandCap.val` | On-demand cap in US cents. 0 means no cap. |
+| `config.prepaidBalance.val` | Prepaid balance in US cents. Absent means 0. |
+
+The response is protobuf JSON: it omits zero values and can send 64-bit integers as strings.
+Every number can be a JSON number or a numeric string. Other fields are ignored.
+
+## Domain mapping
+
+| Domain value | Source |
+| --- | --- |
+| Window `credits`, `.billing`, binding | `creditUsagePercent`, resets at `currentPeriod.end` |
+| Window title | "Weekly", "Monthly", or "Credits" for any other type |
+| `Balance(kind: .onDemand, unit: .currency("USD"))` | `onDemandUsed` / 100, limit `onDemandCap` / 100 when above 0 |
+| `Balance(kind: .prepaid, unit: .currency("USD"))` | `prepaidBalance` / 100 |
+| Owner | `.identity(sha256("grok", id))` with the token `sub`, else `user_id` or `account_id`; otherwise `.credential(sha256("grok", key))` |
+
+## Rules
+
+### Sign-in
+
+1. Order the entries: keys that start with `https://auth.x.ai`, then
+   `https://accounts.x.ai/sign-in`, then all other keys. Sort the keys inside each group.
+2. Use the first entry that has a key and has not expired.
+3. If every entry with a key has expired, the login is expired. No token is sent.
+4. An `expires_at` that does not parse means no known expiry.
+5. A missing file, a missing folder, or no entry with a key means signed out.
+6. A file that is not a regular file, is larger than 4 MiB, or is not a JSON object is
+   unreadable. This is temporary, not a sign-out.
+7. Never write, renew, or cache the sign-in. Never read `refresh_token`.
+8. `signInStatus` counts an expired login as signed in. The card asks the user to renew it.
+
+### Retention
+
+9. Signed out: drop the last observation.
+10. Expired login, HTTP 401, or HTTP 403: keep the last observation as stale, with an issue that
+    asks the user to act, while the owner is unchanged.
+11. Unreadable file, network failure, other HTTP status, or an unexpected response: keep the
+    last observation as stale while the owner is unchanged.
+12. If the owner after the response differs from the owner before it, discard the response.
+13. `reconcile` drops the reading when the owner changed or the user signed out. It reads local
+    files only.
+
+### Messages
+
+14. Every message says what to do, for example "Open Grok Build and run `grok login`."
+15. A decoding failure shows "Grok returned an unexpected response.", never a system error.

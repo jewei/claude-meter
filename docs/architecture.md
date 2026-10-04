@@ -161,7 +161,14 @@ There is one global cadence. No battery, network, or per-provider timers.
 Every JSON value above stores dates as ISO-8601 text (`JSONEncoder.meter`): a whole second
 as `2026-10-04T12:00:00Z`, and a date with a fraction with milliseconds, as
 `2026-10-04T12:00:00.750Z`. Both forms load. Token history is memory only and rebuilt after
-launch. Nothing else is written.
+launch.
+
+The app itself writes nothing else. `Log` also sends each entry to the system log
+(subsystem `com.jewei.claudemeter`). Frameworks keep their own state in the app's
+`UserDefaults`: AppKit saves the Settings window frame (key
+`NSWindow Frame ClaudeMeterSettings`, from `SettingsWindowController.frameName`), and Sparkle
+keeps its update state in keys that start with `SU`. Launch at login is registered with
+`SMAppService`, and the system keeps that record.
 
 ## Time limits
 

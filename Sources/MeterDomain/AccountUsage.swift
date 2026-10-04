@@ -98,6 +98,31 @@ public struct AccountUsage: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
+/// What a provider knows about the current login of one account, for retention checks.
+public enum OwnerStatus: Hashable, Sendable {
+    case signedIn(AccountOwner)
+    /// The credential is gone: the user signed out.
+    case signedOut
+    /// The credential could not be read right now, for example while the Keychain is locked.
+    case unknown
+}
+
+extension AccountUsage {
+    /// Whether this observation may still be shown for the current login.
+    ///
+    /// The single retention rule for every provider: an observation survives failures while
+    /// its owner is still signed in. A temporary read failure proves nothing, so it keeps the
+    /// observation. An account without an observation has nothing to protect.
+    public func belongs(to status: OwnerStatus) -> Bool {
+        guard hasObservation else { return true }
+        switch status {
+        case .unknown: return true
+        case .signedOut: return false
+        case .signedIn(let current): return owner == current
+        }
+    }
+}
+
 /// Proof that a reading belongs to the login that is signed in now.
 ///
 /// Providers compute an owner from local credentials. A reading survives a failed refresh only

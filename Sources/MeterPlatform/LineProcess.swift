@@ -1,17 +1,20 @@
 import Darwin
 import Foundation
+import MeterDomain
 
 /// A short-lived child process that exchanges newline-delimited messages on stdin and stdout.
 ///
-/// After ``start()`` succeeds, every exit path must call ``stop()``, which sends SIGTERM, waits
-/// a short grace period, sends SIGKILL if needed, and waits a bounded time for the reap.
-/// ``stop()`` returns at once for a process that never launched. A write never blocks and
-/// never raises SIGPIPE: it throws when the child does not read. Lines and the unread backlog
-/// are bounded, and a truncated line is never delivered.
+/// After ``start()`` succeeds, every exit path must call ``stop()``, which sends SIGTERM to the
+/// child's process group, waits a short grace period, sends SIGKILL, and waits a bounded time
+/// for the reap. ``stop()`` returns at once for a process that never launched. A write never
+/// blocks and never raises SIGPIPE: it throws when the child does not read. Lines and the
+/// unread backlog are bounded, and a truncated line is never delivered. The last 2 KiB of
+/// stderr are kept for ``lastErrorLine``.
 ///
 /// `@unchecked Sendable`: `state` is guarded by its lock, and `lines` is a thread-safe stream.
-/// `process`, `input`, and `output` are used only by the one task that owns this object
-/// (`start`, `send`, `stop`); Foundation's handlers touch only `state` and the stream.
+/// `process` and the pipes are used only by the one task that owns this object (`start`,
+/// `send`, `stop`); Foundation's handlers read the pipes' descriptors and touch only `state`
+/// and the stream.
 public final class LineProcess: @unchecked Sendable {
     public enum ProcessError: Error, Equatable, LocalizedError, Sendable {
         case launchFailed(String)
@@ -36,18 +39,21 @@ public final class LineProcess: @unchecked Sendable {
     /// How long ``stop()`` waits for the reap after the last signal. A child in uninterruptible
     /// I/O, such as a read from a hung network volume, can outlive SIGKILL for a long time.
     public static let reapLimit: Duration = .seconds(2)
+    /// The stderr bytes kept for ``lastErrorLine``.
+    public static let errorTailBytes = 2 * 1024
     private static let log = Log(.app)
     /// A serial queue gets a thread even when blocked work fills the global pool, so the
     /// grace period and the reap limit always end.
     private static let timers = DispatchQueue(
         label: "com.jewei.claudemeter.line-process.timers", qos: .utility)
 
-    /// Complete stdout lines, without the newline. Finishes when stdout closes.
+    /// Complete stdout lines, without the newline. Finishes when stdout closes or at ``stop()``.
     public let lines: AsyncThrowingStream<Data, any Error>
 
     private let process = Process()
     private let input = Pipe()
     private let output = Pipe()
+    private let errors = Pipe()
     private let maxLineBytes: Int
     private let maxBacklogBytes: Int
     private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
@@ -56,7 +62,10 @@ public final class LineProcess: @unchecked Sendable {
     private struct State: Sendable {
         var buffer = Data()
         var backlogBytes = 0
+        var errorTail = Data()
         var hasLaunched = false
+        /// The child leads its own process group, so signals can reach its children too.
+        var leadsGroup = false
         var isInputClosed = false
         var hasExited = false
         var exitWaiters: [ResumeOnce<Bool>] = []
@@ -74,29 +83,54 @@ public final class LineProcess: @unchecked Sendable {
         process.environment = environment
         process.standardInput = input
         process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
+        process.standardError = errors
     }
 
     public var processIdentifier: Int32 { process.processIdentifier }
 
+    /// The last non-empty line that the child wrote to stderr, redacted, or nil. Read it after
+    /// ``stop()`` for everything that the child wrote before it ended.
+    public var lastErrorLine: String? {
+        let text = String(decoding: state.value.errorTail, as: UTF8.self)
+        let line = text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .last { !$0.isEmpty }
+        return line.map(Redactor.redact)
+    }
+
     public func start() throws {
         let stdin = input.fileHandleForWriting.fileDescriptor
         _ = fcntl(stdin, F_SETNOSIGPIPE, 1)
-        // A child that stops reading must not block the caller's thread.
-        _ = fcntl(stdin, F_SETFL, fcntl(stdin, F_GETFL) | O_NONBLOCK)
-        // Install handlers before launch, so a fast exit cannot be missed.
+        // Neither a child that stops reading nor an empty pipe may block a thread.
+        let (stdout, stderr) = (
+            output.fileHandleForReading.fileDescriptor, errors.fileHandleForReading.fileDescriptor
+        )
+        for descriptor in [stdin, stdout, stderr] {
+            _ = fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL) | O_NONBLOCK)
+        }
+        // Install handlers before launch, so a fast exit cannot be missed. They read with
+        // read(2): `availableData` raises an Objective-C exception on a read error.
         process.terminationHandler = { [weak self] _ in self?.didExit() }
-        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            self?.receive(handle.availableData)
+        output.fileHandleForReading.readabilityHandler = { [weak self] _ in
+            self?.readOutput(stdout)
+        }
+        errors.fileHandleForReading.readabilityHandler = { [weak self] _ in
+            self?.readErrors(stderr)
         }
         do {
             try process.run()
         } catch {
-            output.fileHandleForReading.readabilityHandler = nil
+            removeHandlers()
             continuation.finish(throwing: ProcessError.launchFailed(error.localizedDescription))
             throw ProcessError.launchFailed(error.localizedDescription)
         }
-        state.withLock { $0.hasLaunched = true }
+        // Foundation starts the child as the leader of a new process group.
+        let pid = process.processIdentifier
+        let leadsGroup = getpgid(pid) == pid
+        state.withLock {
+            $0.hasLaunched = true
+            $0.leadsGroup = leadsGroup
+        }
     }
 
     /// Writes `line` and a newline to stdin without blocking.
@@ -131,8 +165,9 @@ public final class LineProcess: @unchecked Sendable {
         state.withLock { $0.backlogBytes = max(0, $0.backlogBytes - line.count) }
     }
 
-    /// Stops the process and waits until it is reaped, at most ``reapLimit`` after the last
-    /// signal. Returns at once when the process never launched. Safe to call more than once.
+    /// Stops the process group and waits until the child is reaped, at most ``reapLimit``
+    /// after the last signal. Then it reads the rest of stderr, stops reading, and finishes
+    /// ``lines``. Returns at once when the process never launched. Safe to call more than once.
     public func stop() async {
         let (hasLaunched, closesInput) = state.withLock { state in
             defer { state.isInputClosed = true }
@@ -142,25 +177,72 @@ public final class LineProcess: @unchecked Sendable {
         // A process that never launched has no exit to wait for.
         guard hasLaunched else { return }
         if process.isRunning {
-            process.terminate()
+            signal(SIGTERM)
             let exited = await waitForExit(timeout: Self.terminationGrace)
-            if !exited, process.isRunning {
-                kill(process.processIdentifier, SIGKILL)
-            }
+            // The group can outlive the child, so it gets SIGKILL too.
+            if !exited || state.value.leadsGroup { signal(SIGKILL) }
         }
         if await !waitForExit(timeout: Self.reapLimit) {
             Self.log.error(
                 "A child process was not reaped \(Self.reapLimit) after it was stopped. "
                     + "It is left running.")
         }
+        removeHandlers()
+        readErrors(errors.fileHandleForReading.fileDescriptor)
+        continuation.finish()
+    }
+
+    /// Signals the child's process group when the child leads one, otherwise the child.
+    private func signal(_ signal: Int32) {
+        let pid = process.processIdentifier
+        if state.value.leadsGroup {
+            killpg(pid, signal)
+        } else {
+            kill(pid, signal)
+        }
+    }
+
+    private func removeHandlers() {
+        output.fileHandleForReading.readabilityHandler = nil
+        errors.fileHandleForReading.readabilityHandler = nil
+    }
+
+    private func readOutput(_ descriptor: Int32) {
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        let count = read(descriptor, &buffer, buffer.count)
+        if count > 0 {
+            receive(Data(buffer[0..<count]))
+        } else if count == 0 || (errno != EAGAIN && errno != EINTR) {
+            // End of file, or a read error that the next call would repeat.
+            output.fileHandleForReading.readabilityHandler = nil
+            continuation.finish()
+        }
+    }
+
+    /// Reads everything that stderr holds now and keeps the last ``errorTailBytes``. Reads and
+    /// appends under the lock, so the bytes stay in order when ``stop()`` reads too.
+    private func readErrors(_ descriptor: Int32) {
+        let limit = Self.errorTailBytes
+        let isAtEnd = state.withLock { state -> Bool in
+            var buffer = [UInt8](repeating: 0, count: 4 * 1024)
+            while true {
+                let count = read(descriptor, &buffer, buffer.count)
+                if count > 0 {
+                    state.errorTail.append(contentsOf: buffer[0..<count])
+                    if state.errorTail.count > limit {
+                        state.errorTail = Data(state.errorTail.suffix(limit))
+                    }
+                } else if count < 0, errno == EINTR {
+                    continue
+                } else {
+                    return count == 0 || errno != EAGAIN
+                }
+            }
+        }
+        if isAtEnd { errors.fileHandleForReading.readabilityHandler = nil }
     }
 
     private func receive(_ chunk: Data) {
-        guard !chunk.isEmpty else {
-            output.fileHandleForReading.readabilityHandler = nil
-            continuation.finish()
-            return
-        }
         let result = state.withLock { state -> Result<[Data], ProcessError> in
             state.buffer.append(chunk)
             var lines: [Data] = []

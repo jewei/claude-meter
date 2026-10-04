@@ -4,12 +4,20 @@ import MeterPlatform
 
 extension AppModel {
     /// The model for the running app, with live providers and storage.
+    /// Starts refreshing at once; the first refresh waits for the saved readings to load.
     public static func live(updater: any Updater) -> AppModel {
         let settings = SettingsStore(store: DefaultsStore())
+        let providers = LiveProviders(settings: settings)
+        let archive = ReadingArchive(file: ReadingArchive.standardFile)
         let usage = UsageStore(
-            providers: [], archive: ReadingArchive(file: ReadingArchive.standardFile))
+            providers: providers.usageProviders, historyProviders: providers.historyProviders,
+            archive: archive)
         let scheduler = RefreshScheduler(store: usage, display: DisplaySleepMonitor())
-        return AppModel(settings: settings, usage: usage, scheduler: scheduler, updater: updater)
+        let model = AppModel(
+            settings: settings, usage: usage, scheduler: scheduler, updater: updater,
+            providers: providers)
+        Task { await model.start(archive: archive) }
+        return model
     }
 
     /// Facts for the Diagnostics sheet.
@@ -30,7 +38,13 @@ extension AppModel {
             facts: ProviderID.allCases.map { id in
                 DiagnosticFact(id.displayName, Self.describe(usage.readings[id]))
             })
-        return DiagnosticsReport(sections: [app, readings])
+        var sections = [app, readings]
+        for (id, provider) in providers?.diagnostics ?? [] {
+            sections.append(
+                DiagnosticsReport.Section(
+                    title: id.displayName, facts: await provider.diagnostics()))
+        }
+        return DiagnosticsReport(sections: sections)
     }
 
     private static func describe(_ reading: Reading<ProviderUsage>?) -> String {

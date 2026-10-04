@@ -16,16 +16,27 @@ public final class AppModel {
     /// Whether the popover is on screen. Countdowns tick only while it is.
     public private(set) var isPopoverVisible = false
 
-    @ObservationIgnored let scheduler: RefreshScheduler?
+    /// Codex homes for Settings. Nil in previews.
+    public let codexSettings: CodexSettingsModel?
 
-    public init(
+    @ObservationIgnored let scheduler: RefreshScheduler?
+    @ObservationIgnored let providers: LiveProviders?
+
+    init(
         settings: SettingsStore, usage: UsageStore, scheduler: RefreshScheduler?,
-        updater: any Updater
+        updater: any Updater, providers: LiveProviders? = nil
     ) {
         self.settings = settings
         self.usage = usage
         self.scheduler = scheduler
         self.updater = updater
+        self.providers = providers
+        self.codexSettings = providers.map {
+            CodexSettingsModel(settings: settings, provider: $0.codex)
+        }
+        settings.onChange = { [weak self] old, new in
+            self?.settingsDidChange(from: old, to: new)
+        }
     }
 
     // MARK: - Models

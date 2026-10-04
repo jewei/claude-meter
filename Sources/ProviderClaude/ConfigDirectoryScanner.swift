@@ -2,7 +2,7 @@ import Foundation
 import MeterDomain
 import MeterPlatform
 
-/// Finds Claude Code config dirs and derives their account keys and labels.
+/// Finds Claude Code config dirs and derives their account keys and default names.
 ///
 /// Claude Code reads its config from `$CLAUDE_CONFIG_DIR`, `~/.claude` by default. Users who
 /// run several logins point each shell alias at its own dir, such as `~/.claude-work`. Account
@@ -22,7 +22,7 @@ enum ConfigDirectoryScanner {
         return AccountID(kept.isEmpty ? ClaudeAccount.defaultID.rawValue : kept)
     }
 
-    /// The provider label of an account key: `default` for `claude`, the part after `claude-`
+    /// The default name of an account key: `default` for `claude`, the part after `claude-`
     /// for `claude-<name>`, otherwise the key itself.
     static func name(for id: AccountID) -> String {
         let key = id.rawValue

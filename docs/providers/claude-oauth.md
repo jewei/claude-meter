@@ -113,8 +113,9 @@ little memory. The limit is 256 MiB. The result is one of three states:
 
 1. The account key is the folder name without one leading dot, with only `[A-Za-z0-9._-]`
    kept. An empty key is `claude`. Never change this algorithm: settings store these keys.
-2. The label is `default` for `claude`, the part after `claude-` for `claude-<name>`, else
-   the key.
+2. The default name (`ClaudeAccount.name`; Settings calls it `defaultName`) is `default` for
+   `claude`, the part after `claude-` for `claude-<name>`, else the key. A display name that
+   the user sets replaces it on the card.
 3. Discovery lists `~/.claude` when it exists, other `~/.claude-*` dirs that have
    `settings.json` or `projects`, and the configured dirs.
 4. Two dirs with the same resolved path are one account. Two dirs with the same key keep
@@ -189,6 +190,9 @@ little memory. The limit is 256 MiB. The result is one of three states:
    connection gets no more requests. Both marks last until the next Connect or app launch,
    and the card asks for a new Connect. After a temporary failure, refreshes wait 5
    minutes, doubling up to 6 hours. The reason of the failure is in the log and on the card.
+9. Manual tokens must come from a separate login, never from Claude Code's own Keychain
+   item. A refresh rotates the refresh token, so a copy of Claude Code's token would sign
+   Claude Code out at its next renewal. Settings must say this next to the token fields.
 
 ### Rate-limit gate
 

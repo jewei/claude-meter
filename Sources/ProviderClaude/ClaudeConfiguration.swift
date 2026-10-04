@@ -13,6 +13,8 @@ public struct ClaudeConfiguration: Sendable, Equatable {
         case manual
     }
 
+    /// How the provider gets a login: off, Claude Code's credentials, or tokens the user
+    /// entered.
     public var connection: Connection
     /// Config dirs that the user added in Settings, in addition to the `~/.claude*` scan.
     public var extraDirectories: [URL]

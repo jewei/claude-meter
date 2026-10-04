@@ -9,7 +9,8 @@ public struct ClaudeAccount: Sendable, Hashable, Identifiable {
     /// The account key: the folder name without its leading dot, such as `claude` or
     /// `claude-work`. Settings, pins, and display names are stored under this key.
     public let id: AccountID
-    /// The provider label: `default` for `claude`, `work` for `claude-work`.
+    /// The default name, shown when the user set no display name: `default` for `claude`,
+    /// `work` for `claude-work`.
     public let name: String
     /// The config dir as found or configured. Symbolic links are not resolved.
     public let directory: URL

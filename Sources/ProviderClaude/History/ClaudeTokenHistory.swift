@@ -24,6 +24,7 @@ public final class ClaudeTokenHistory: TokenHistoryProvider {
         self.calendar = calendar
     }
 
+    /// Always ``ProviderID/claude``.
     public var id: ProviderID { .claude }
 
     /// Token history for today and the previous six local days, labeled as this Mac.

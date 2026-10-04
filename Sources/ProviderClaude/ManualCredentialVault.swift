@@ -30,6 +30,7 @@ final class ManualCredentialVault: Sendable {
 
     private let keychain: any Keychain
     private let timeout: Duration
+    private let log = Log(.claude)
     private let writes = DispatchQueue(
         label: "com.jewei.claudemeter.claude-oauth-writes", qos: .utility)
     /// The sequence of the newest write that ran or was abandoned.
@@ -99,7 +100,7 @@ final class ManualCredentialVault: Sendable {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            Log(.claude).error("Could not delete the Claude Meter 3 manual login", error)
+            log.error("Could not delete the Claude Meter 3 manual login", error)
         }
     }
 

@@ -65,6 +65,9 @@ final class ClaudeSettingsFixture {
             if old.claude.isEnabled, !new.claude.isEnabled, model.isWorking {
                 Task { await self.model.abandonConnect() }
             }
+            if !old.claude.isEnabled, new.claude.isEnabled {
+                model.claudeWasTurnedOn()
+            }
         }
     }
 

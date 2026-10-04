@@ -144,8 +144,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    also a link left at the old path of a moved folder.
    Claude refuses a folder whose account key (its folder name) is already listed, and drops a name
    edit for an account that is no longer listed. Cancel, and turning Claude off, abandon a running
-   Claude Connect, never a Disconnect; Settings says when turning Claude off kept a Connect from
-   being saved. A Disconnect turns the connection off even when the saved tokens cannot be deleted;
+   Claude Connect, never a Disconnect. When turning Claude off kept a Connect from being saved,
+   the Claude subtitle says so while Claude is off; turning Claude on clears the note
+   (`DataSourceText.claudeSubtitle`). A Disconnect turns the connection off even when the saved tokens cannot be deleted;
    Settings says so, and the next reload (at launch, and when Settings opens) deletes a manual login
    that no manual connection uses (`ClaudeSettingsModel`).
 2. **Appearance**: card style, energy left or used, the menu-bar window, warning and critical

@@ -21,6 +21,25 @@ import Testing
                 == "Connected. This source is off.")
     }
 
+    /// The connection controls are hidden while Claude is off, so the subtitle says that
+    /// turning Claude off kept a Connect from being saved, and only while Claude is off
+    /// (review R3-U-06).
+    @Test func claudeSubtitleSaysAConnectWasNotSavedWhileClaudeIsOff() {
+        #expect(
+            DataSourceText.claudeSubtitle(
+                connection: .off, isEnabled: false, connectWasNotSaved: true)
+                == "Not connected. Claude was turned off, so the connection was not saved.")
+        #expect(
+            DataSourceText.claudeSubtitle(
+                connection: .manual, isEnabled: false, connectWasNotSaved: true)
+                == "Connected as before. Claude was turned off, so the new connection was not "
+                + "saved.")
+        #expect(
+            DataSourceText.claudeSubtitle(
+                connection: .off, isEnabled: true, connectWasNotSaved: true)
+                == "Not connected. Choose a connection below.")
+    }
+
     @Test func signInStatesNameTheProblem() {
         #expect(DataSourceText.claudeCode(.signedIn).isSignedIn)
         #expect(DataSourceText.claudeCode(.signedOut).isProblem)

@@ -19,7 +19,8 @@ struct DataSettingsView: View {
             DataSourceCard(
                 symbol: "key.fill", tint: Palette.Tile.gold, title: "Claude",
                 subtitle: DataSourceText.claudeSubtitle(
-                    connection: settings.claude.connection, isEnabled: settings.claude.isEnabled),
+                    connection: settings.claude.connection, isEnabled: settings.claude.isEnabled,
+                    connectWasNotSaved: model.claudeSettings?.connectWasNotSaved ?? false),
                 isEnabled: $store.settings.claude.isEnabled,
                 showsContent: model.claudeSettings != nil
             ) {

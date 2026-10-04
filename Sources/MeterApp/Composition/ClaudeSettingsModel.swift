@@ -87,6 +87,17 @@ public final class ClaudeSettingsModel {
         settings.settings.claude.connection
     }
 
+    /// Turning Claude off kept a Connect from being saved. The connection controls are hidden
+    /// while Claude is off, so Settings says it in the Claude subtitle
+    /// (`DataSourceText.claudeSubtitle`).
+    public var connectWasNotSaved: Bool { message == Self.notSavedMessage }
+
+    /// Claude was turned on again, so the note that turning it off kept a Connect from being
+    /// saved is old.
+    func claudeWasTurnedOn() {
+        if connectWasNotSaved { message = nil }
+    }
+
     /// Automatic mode reads another app's Keychain items, so the user confirms it once.
     public var needsKeychainConsent: Bool {
         !settings.settings.claude.hasConfirmedKeychainAccess

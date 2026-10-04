@@ -67,11 +67,19 @@ public enum DataSourceText {
         Formatting.initial(name)
     }
 
-    /// The Claude card subtitle for the saved connection.
+    /// The Claude card subtitle for the saved connection. While Claude is off, it also says
+    /// when turning Claude off kept a Connect from being saved
+    /// (`ClaudeSettingsModel.connectWasNotSaved`): the connection controls are hidden then.
     public static func claudeSubtitle(
-        connection: ClaudeSettings.Connection, isEnabled: Bool
+        connection: ClaudeSettings.Connection, isEnabled: Bool, connectWasNotSaved: Bool = false
     ) -> String {
-        switch (connection, isEnabled) {
+        if !isEnabled, connectWasNotSaved {
+            return connection == .off
+                ? "Not connected. Claude was turned off, so the connection was not saved."
+                : "Connected as before. Claude was turned off, so the new connection was not "
+                    + "saved."
+        }
+        return switch (connection, isEnabled) {
         case (.off, true): "Not connected. Choose a connection below."
         case (.off, false): "Not connected. Turn on this source to set it up."
         case (.automatic, true): "Connected. Reads Claude Code's login from the Keychain."

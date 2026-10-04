@@ -121,7 +121,13 @@ import Testing
         #expect(await !connect.value)
         #expect(settings.settings.claude.connection == .off)
         #expect(model.message == "Claude was turned off, so the connection was not saved.")
+        #expect(model.connectWasNotSaved)
         #expect(!model.isWorking)
+
+        // The note is old once Claude is on again (review R3-U-06).
+        settings.update { $0.claude.isEnabled = true }
+        #expect(!model.connectWasNotSaved)
+        #expect(model.message == nil)
     }
 
     @Test func turningClaudeOffDuringAManualConnectStoresNothing() async {

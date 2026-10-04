@@ -276,7 +276,9 @@ the app is regular; "About Claude Meter" opens the About tab.
   Claude: the connection (`ClaudeConnectionView`: both logins' states, Connect automatically
   with a Keychain consent alert, Enter tokens manually, Disconnect, and the last message,
   which shows a failure in `energyEmptyInk` with a warning symbol) and, in automatic mode,
-  the config dirs (`ClaudeAccountsList`). The token form (`ManualTokenForm`) says first, in
+  the config dirs (`ClaudeAccountsList`). While Claude is off these controls are hidden, so
+  the Claude subtitle says when turning Claude off kept a Connect from being saved
+  (`DataSourceText.claudeSubtitle`). The token form (`ManualTokenForm`) says first, in
   `ink` with an amber warning symbol, that the tokens must come from a separate Claude login
   (`DataSourceText.manualTokensSource`). Return connects; Cancel discards the draft and
   abandons a running Connect, so nothing is saved after it; Escape cancels only while both

@@ -68,6 +68,28 @@ extension ClaudeTests {
             #expect(await provider.manualSignInStatus() == .signedOut)
         }
 
+        @Test func aCancelledConnectStoresNothingAndKeepsTheOldLogin() async throws {
+            let harness = try ClaudeHarness(.manual)
+            try harness.storeManual(expiresAt: .reference(7200))
+            let checking = Gate()
+            let http = FakeHTTPClient { request in
+                if bearer(request) == "pasted" { await checking.wait() }
+                return .json(200, "{}")
+            }
+            let provider = harness.provider(http)
+
+            let connect = Task {
+                try await provider.connectManually(
+                    accessToken: "pasted", refreshToken: nil, expiresAt: nil)
+            }
+            #expect(await checking.waitForArrivals())
+            await provider.cancelManualConnect()
+            checking.open()
+
+            await #expect(throws: ProviderError.self) { try await connect.value }
+            #expect(harness.manualItem()?.accessToken == "old-access")
+        }
+
         @Test func aFailedConnectSaveKeepsTheOldLoginAndItsRotation() async throws {
             let harness = try ClaudeHarness(.manual)
             try harness.storeManual(expiresAt: .reference(10))

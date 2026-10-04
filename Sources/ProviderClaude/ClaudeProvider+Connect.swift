@@ -56,6 +56,14 @@ extension ClaudeProvider {
         }
     }
 
+    /// Makes every ``connectManually(accessToken:refreshToken:expiresAt:)`` that is still
+    /// running store nothing; it then throws that the connection changed. The stored login
+    /// stays. Settings calls this when it abandons an attempt, for example when the user turns
+    /// Claude off or chooses another connection.
+    public func cancelManualConnect() async {
+        await manualLogin.cancelConnects()
+    }
+
     /// Whether a manual login is stored. Reads item attributes only.
     public func manualSignInStatus() async -> SignInStatus {
         await vault.signInStatus()

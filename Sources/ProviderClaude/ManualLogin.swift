@@ -158,6 +158,11 @@ actor ManualLogin {
         return currentTicket
     }
 
+    /// Makes every Connect that is still running store nothing. The stored login stays.
+    func cancelConnects() {
+        connectAttempts += 1
+    }
+
     /// Stores a verified login in place of the old one. Throws ``Failure/changed`` when a
     /// Disconnect or a newer Connect started after `ticket`; then nothing is stored. When the
     /// save fails, the old login and its in-flight refreshes stay as they were.

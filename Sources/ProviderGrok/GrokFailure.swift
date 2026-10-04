@@ -96,3 +96,13 @@ enum GrokFailure: Error, Equatable, Sendable {
         }
     }
 }
+
+extension GrokFailure: CaseIterable {
+    /// Every case once, with one value for each associated value. Add a new case here: the
+    /// message test switches over every case and runs over this list.
+    static let allCases: [GrokFailure] = [
+        .signedOut, .sessionExpired, .sessionRejected, .accessDenied, .rateLimited(retryAt: nil),
+        .httpStatus(500), .unexpectedResponse, .offline, .timedOut, .network,
+        .credentialsUnreadable, .credentialsBusy, .signInChanged,
+    ]
+}

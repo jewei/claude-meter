@@ -146,3 +146,15 @@ enum CursorFailure: Error, Equatable, Sendable {
         }
     }
 }
+
+extension CursorFailure: CaseIterable {
+    /// Every case once, with one value for each associated value. Add a new case here: the
+    /// message test switches over every case and runs over this list.
+    static let allCases: [CursorFailure] = [
+        .signedOut, .sessionExpired, .sessionRejected, .accessDenied, .usageDisabled,
+        .rateLimited(retryAt: nil), .httpStatus(500), .unexpectedResponse, .responseTooLarge,
+        .unexpectedToken, .offline, .timedOut, .network, .credentialsBusy, .credentialsTimedOut,
+        .credentialsUnreadable, .keychainUnavailable, .keychainDenied, .keychainFailed,
+        .signInChanged, .invalidDate,
+    ]
+}

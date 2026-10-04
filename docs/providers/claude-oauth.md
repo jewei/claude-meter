@@ -71,7 +71,9 @@ Content-Type: application/json
 1. `<h>` is the first 8 lowercase hex characters of the SHA-256 of the config dir's path.
    The path is absolute, has symbolic links resolved, is standardized, and has no trailing
    slash (`ConfigDirectoryScanner.canonicalPath`). Example: `/Users/jewei/.claude-oneone-tech`
-   gives `Claude Code-credentials-48c8f98c`.
+   gives `Claude Code-credentials-48c8f98c`. For a dir reached through a symbolic link, the
+   hash of the path as found or configured (standardized, links kept) is tried next, because
+   Claude Code may hash `CLAUDE_CONFIG_DIR` without resolving links.
 2. The default dir tries the legacy item first, then its hashed item. Other dirs use only
    their hashed item.
 3. Claude Code's item value is
@@ -115,12 +117,15 @@ little memory. The limit is 256 MiB. The result is one of three states:
 3. Discovery lists `~/.claude` when it exists, other `~/.claude-*` dirs that have
    `settings.json` or `projects`, and the configured dirs.
 4. Two dirs with the same resolved path are one account. Two dirs with the same key keep
-   one: `~/.claude` owns `claude`, then a configured dir wins, then the smaller path.
+   one: `~/.claude` owns `claude`, then a configured dir wins, then the smaller path. A dir
+   that loses on its key does not claim its path, and a dir that loses on its path does not
+   claim its key.
 5. Order: the default account first, then the others by key.
 6. The default account `claude` can never be disabled. Disabled accounts are listed but not
    read and have no card.
 7. A configured dir that is gone or no longer has `settings.json` or `projects` is listed
-   with an issue that asks the user to remove it. It is not read.
+   with an issue that asks the user to remove it. It is not read. It is listed only when no
+   working dir has its key, so an unplugged volume never hides a working dir.
 8. The active login is the legacy item when it exists, else the most recently modified
    hashed item (equal dates: the smallest service name). It belongs to the config dir whose
    services contain it. A legacy item without `~/.claude` belongs to `claude` and uses `~/.claude.json`. A hashed item

@@ -110,6 +110,71 @@ extension ClaudeTests {
             #expect(accounts[2].issue?.needsAction == true)
         }
 
+        @Test func aBrokenConfiguredFolderNeverHidesAWorkingDirWithItsKey() throws {
+            let home = try TemporaryDirectory()
+            defer { home.remove() }
+            _ = try home.makeDirectory(".claude")
+            try home.write("{}", to: ".claude-work/settings.json")
+            _ = try home.makeDirectory("empty/.claude-work")
+
+            let configuration = ClaudeConfiguration(
+                connection: .automatic,
+                extraDirectories: [home.path("usb/.claude-work"), home.path("empty/.claude-work")])
+            let accounts = ConfigDirectoryScanner.discover(
+                home: home.url, configuration: configuration)
+
+            #expect(accounts.map(\.id) == ["claude", "claude-work"])
+            let work = try #require(accounts.last)
+            #expect(
+                ConfigDirectoryScanner.canonicalPath(work.directory)
+                    == ConfigDirectoryScanner.canonicalPath(home.path(".claude-work")))
+            #expect(work.issue == nil)
+        }
+
+        @Test func aCandidateDroppedForItsKeyDoesNotClaimItsPath() throws {
+            let home = try TemporaryDirectory()
+            defer { home.remove() }
+            _ = try home.makeDirectory(".claude")
+            try home.write("{}", to: ".claude-work/settings.json")
+            try home.write("{}", to: "other/.claude-alias/settings.json")
+            // `~/.claude-alias` is the work dir under another name.
+            try FileManager.default.createSymbolicLink(
+                at: home.path(".claude-alias"), withDestinationURL: home.path(".claude-work"))
+
+            let configuration = ClaudeConfiguration(
+                connection: .automatic, extraDirectories: [home.path("other/.claude-alias")])
+            let accounts = ConfigDirectoryScanner.discover(
+                home: home.url, configuration: configuration)
+
+            // The configured dir takes the key `claude-alias`, so the link loses it; the work
+            // dir behind the link is still found under its own key.
+            #expect(accounts.map(\.id) == ["claude", "claude-alias", "claude-work"])
+            #expect(accounts[1].directory.path.hasSuffix("other/.claude-alias"))
+        }
+
+        @Test func aConfigDirBehindALinkAlsoTriesTheServiceOfItsPathAsGiven() async throws {
+            let harness = try ClaudeHarness()
+            let main = try harness.directory(".claude", account: "acc-1")
+            harness.signIn(main, token: "main", legacy: true)
+            try harness.home.write("{}", to: "dotfiles/claude-work/settings.json")
+            let linked = harness.home.path(".claude-work")
+            try FileManager.default.createSymbolicLink(
+                at: linked, withDestinationURL: harness.home.path("dotfiles/claude-work"))
+            // Claude Code hashed the path without resolving the link.
+            let asGiven =
+                "Claude Code-credentials-"
+                + ClaudeCodeKeychain.shortHash(linked.standardizedFileURL.path)
+            #expect(asGiven != ClaudeCodeKeychain.hashedService(for: linked))
+            harness.signIn(service: asGiven, token: "work", modifiedAt: .reference(-10))
+            let http = usageServer(["main": "{}", "work": "{}"])
+
+            let usage = try await harness.provider(http).fetch(previous: nil)
+
+            #expect(usage.accounts.map(\.id) == ["claude", "claude-work"])
+            #expect(usage.accounts[1].hasObservation)
+            #expect(http.usageTokens == ["main", "work"])
+        }
+
         @Test func configDirectoryCheckNeedsSettingsOrProjects() throws {
             let home = try TemporaryDirectory()
             defer { home.remove() }

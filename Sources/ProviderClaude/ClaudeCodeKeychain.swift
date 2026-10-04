@@ -37,11 +37,20 @@ struct ClaudeCodeKeychain: Sendable {
         hashedServicePrefix + shortHash(ConfigDirectoryScanner.canonicalPath(directory))
     }
 
+    /// The hashed services of a config dir: the resolved path first, then the path as found
+    /// or configured. They differ only for a dir reached through a symbolic link, and Claude
+    /// Code may hash `CLAUDE_CONFIG_DIR` without resolving links.
+    static func hashedServices(for directory: URL) -> [String] {
+        let resolved = hashedService(for: directory)
+        let asGiven = hashedServicePrefix + shortHash(directory.standardizedFileURL.path)
+        return resolved == asGiven ? [resolved] : [resolved, asGiven]
+    }
+
     /// Services to try for a config dir, preferred first. The default dir prefers the legacy
     /// item, because older Claude Code versions still write it.
     static func services(for account: ClaudeAccount) -> [String] {
-        let hashed = hashedService(for: account.directory)
-        return account.isDefault ? [legacyService, hashed] : [hashed]
+        let hashed = hashedServices(for: account.directory)
+        return account.isDefault ? [legacyService] + hashed : hashed
     }
 
     /// The service of the login that Claude Code uses now: the legacy item when it exists,

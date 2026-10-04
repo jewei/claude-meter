@@ -34,8 +34,9 @@ enum ConfigDirectoryScanner {
         return key
     }
 
-    /// The absolute path with symbolic links resolved and no trailing slash. Claude Code hashes
-    /// this form of the path into its Keychain service name.
+    /// The absolute path with symbolic links resolved and no trailing slash. Dirs with the same
+    /// canonical path are one account, and this form of the path is the first one hashed into
+    /// the Keychain service name (see ``ClaudeCodeKeychain/hashedServices(for:)``).
     static func canonicalPath(_ directory: URL) -> String {
         directory.resolvingSymlinksInPath().standardizedFileURL.path
     }
@@ -59,37 +60,36 @@ enum ConfigDirectoryScanner {
     /// `projects`, and the configured dirs. Disabled accounts are included and marked.
     ///
     /// Two dirs with the same resolved path are one account. Two dirs with the same key keep
-    /// one: `~/.claude` owns `claude`, then a configured dir wins, then the smaller path. The
-    /// result lists the default account first, then the others by key.
+    /// one: `~/.claude` owns `claude`, then a configured dir wins, then the smaller path. A
+    /// configured dir that is gone or is no longer a config dir is listed with its issue, so
+    /// the user can remove it, but only when no working dir has its key. The result lists the
+    /// default account first, then the others by key.
     static func discover(home: URL, configuration: ClaudeConfiguration) -> [ClaudeAccount] {
-        let defaultDirectory = home.appending(path: ".claude", directoryHint: .isDirectory)
-        let hasDefault = LocalFile.isDirectory(defaultDirectory)
-        var candidates = scannedDirectories(in: home).map { Candidate($0, isConfigured: false) }
-        if hasDefault {
-            candidates.append(Candidate(defaultDirectory, isConfigured: false))
-        }
-        candidates += configuration.extraDirectories.map {
-            Candidate(expandingTilde($0, home: home), isConfigured: true)
-        }
+        let defaultPath = canonicalPath(
+            home.appending(path: ".claude", directoryHint: .isDirectory))
+        let scanned = scannedDirectories(in: home).map { Candidate($0, isConfigured: false) }
+        let configured = configuration.extraDirectories.map { Candidate($0, isConfigured: true) }
+        let configuredPaths = Set(configured.filter { $0.issue == nil }.map(\.path))
 
         var seenPaths = Set<String>()
         var seenKeys = Set<AccountID>()
         var accounts: [ClaudeAccount] = []
         func consider(_ candidate: Candidate) {
-            guard seenPaths.insert(candidate.path).inserted,
-                seenKeys.insert(candidate.id).inserted
-            else { return }
+            // A candidate that loses on either count claims neither, so it never hides another.
+            guard !seenPaths.contains(candidate.path), !seenKeys.contains(candidate.id) else {
+                return
+            }
+            seenPaths.insert(candidate.path)
+            seenKeys.insert(candidate.id)
             accounts.append(
                 ClaudeAccount(
                     id: candidate.id, name: name(for: candidate.id), directory: candidate.url,
                     isDefault: candidate.id == ClaudeAccount.defaultID,
-                    isEnabled: configuration.isEnabled(candidate.id),
-                    issue: candidate.isConfigured ? folderIssue(candidate.url) : nil))
+                    isEnabled: configuration.isEnabled(candidate.id), issue: candidate.issue))
         }
 
-        if hasDefault { consider(Candidate(defaultDirectory, isConfigured: false)) }
-        let configuredPaths = Set(candidates.filter(\.isConfigured).map(\.path))
-        let ordered = candidates.sorted { lhs, rhs in
+        for candidate in scanned where candidate.path == defaultPath { consider(candidate) }
+        let working = (scanned + configured).filter { $0.issue == nil }.sorted { lhs, rhs in
             if lhs.id != rhs.id { return lhs.id < rhs.id }
             let lhsConfigured = configuredPaths.contains(lhs.path)
             let rhsConfigured = configuredPaths.contains(rhs.path)
@@ -97,8 +97,14 @@ enum ConfigDirectoryScanner {
             if lhs.path != rhs.path { return lhs.path < rhs.path }
             return !lhs.isConfigured && rhs.isConfigured
         }
-        for candidate in ordered { consider(candidate) }
-        return accounts
+        for candidate in working { consider(candidate) }
+        let broken = configured.filter { $0.issue != nil }.sorted { lhs, rhs in
+            lhs.id != rhs.id ? lhs.id < rhs.id : lhs.path < rhs.path
+        }
+        for candidate in broken { consider(candidate) }
+        return accounts.sorted { lhs, rhs in
+            lhs.isDefault != rhs.isDefault ? lhs.isDefault : lhs.id < rhs.id
+        }
     }
 
     private struct Candidate {
@@ -106,12 +112,15 @@ enum ConfigDirectoryScanner {
         let isConfigured: Bool
         let path: String
         let id: AccountID
+        /// Only a configured dir can have one; scanned dirs qualify by construction.
+        let issue: UsageIssue?
 
         init(_ url: URL, isConfigured: Bool) {
             self.url = url
             self.isConfigured = isConfigured
             self.path = ConfigDirectoryScanner.canonicalPath(url)
             self.id = ConfigDirectoryScanner.accountID(for: url)
+            self.issue = isConfigured ? ConfigDirectoryScanner.folderIssue(url) : nil
         }
     }
 
@@ -147,11 +156,5 @@ enum ConfigDirectoryScanner {
                 needsAction: true)
         }
         return nil
-    }
-
-    private static func expandingTilde(_ url: URL, home: URL) -> URL {
-        let path = url.path
-        guard path == "~" || path.hasPrefix("~/") else { return url }
-        return home.appending(path: String(path.dropFirst(2)), directoryHint: .isDirectory)
     }
 }

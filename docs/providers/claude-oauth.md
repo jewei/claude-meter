@@ -130,9 +130,9 @@ little memory. The limit is 256 MiB. The result is one of three states:
    working dir has its key, so an unplugged volume never hides a working dir.
 8. The active login is the legacy item when it exists, else the most recently modified
    hashed item (equal dates: the smallest service name). It belongs to the config dir whose
-   services contain it. A legacy item without `~/.claude` belongs to `claude` and uses `~/.claude.json`. A hashed item
-   that matches no config dir gets its own account `oauth-<first 8 hex of SHA-256 of the
-   service>`, shown first.
+   services contain it. A legacy item without `~/.claude` belongs to `claude` and uses
+   `~/.claude.json`. A hashed item that matches no config dir gets its own account
+   `oauth-<first 8 hex of SHA-256 of the service>`, shown first.
 
 ### Automatic mode
 

@@ -9,19 +9,32 @@ extension AutomaticRefresh {
         let failure: AccountFailure?
     }
 
-    /// Reads one account: credential, one usage request, then the owner again. A response that
-    /// arrives after the login changed is discarded. Claude Code's credentials are never
-    /// refreshed; an expired token waits for Claude Code to renew it.
-    func fetchAccount(_ slot: LoginSlot, prior: AccountUsage?, isActive: Bool) async throws
-        -> AccountOutcome
+    /// Reads one account within `limit`. An account that runs out of time keeps its previous
+    /// value, marked stale, and the refresh goes on with the next account.
+    func fetchAccount(
+        _ slot: LoginSlot, prior: AccountUsage?, isActive: Bool, limit: Duration
+    ) async throws -> AccountOutcome {
+        do {
+            return try await withDeadline(limit) { [self] in
+                try await readAccount(slot, prior: prior, isActive: isActive)
+            }
+        } catch is TimeoutError {
+            try Task.checkCancellation()
+            log.warning("Claude usage check for \(slot.id) timed out")
+            return failed(.timedOut, .unknown, nil, slot: slot, prior: prior, isActive: isActive)
+        }
+    }
+
+    /// Credential, one usage request, then the owner again. A response that arrives after the
+    /// login changed is discarded. Claude Code's credentials are never refreshed; an expired
+    /// token waits for Claude Code to renew it.
+    private func readAccount(_ slot: LoginSlot, prior: AccountUsage?, isActive: Bool)
+        async throws -> AccountOutcome
     {
         func failed(_ failure: AccountFailure, _ status: OwnerStatus, _ identity: LocalIdentity?)
             -> AccountOutcome
         {
-            let usage = failure.account(
-                id: slot.id, name: slot.name, prior: prior, status: status,
-                isActiveLogin: isActive, now: now())
-            return AccountOutcome(usage: usage, identity: identity, failure: failure)
+            self.failed(failure, status, identity, slot: slot, prior: prior, isActive: isActive)
         }
 
         let credential: ClaudeCredential
@@ -49,7 +62,7 @@ extension AutomaticRefresh {
 
         let after = try await logins.read(slot).status
         if after != .unknown, after != .signedIn(owner) {
-            Log(.claude).notice("Claude login changed during the usage check for \(slot.id)")
+            log.notice("Claude login changed during the usage check for \(slot.id)")
             return failed(
                 after == .signedOut ? .credentialsMissing : .loginChanged, after, identity)
         }
@@ -64,5 +77,15 @@ extension AutomaticRefresh {
             resetAllowance: UsageMapper.resetAllowance(response),
             observedAt: observedAt, attemptedAt: observedAt, owner: owner)
         return AccountOutcome(usage: usage, identity: identity, failure: nil)
+    }
+
+    private func failed(
+        _ failure: AccountFailure, _ status: OwnerStatus, _ identity: LocalIdentity?,
+        slot: LoginSlot, prior: AccountUsage?, isActive: Bool
+    ) -> AccountOutcome {
+        let usage = failure.account(
+            id: slot.id, name: slot.name, prior: prior, status: status,
+            isActiveLogin: isActive, now: now())
+        return AccountOutcome(usage: usage, identity: identity, failure: failure)
     }
 }

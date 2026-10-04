@@ -17,6 +17,8 @@ enum AccountFailure: Error, Equatable {
     case invalidResponse
     case httpStatus(Int)
     case transport(String)
+    /// The account, or the whole refresh, ran out of time.
+    case timedOut
     /// The login changed while the request was in flight, so the response was discarded.
     case loginChanged
     case refreshDeferred
@@ -86,6 +88,8 @@ enum AccountFailure: Error, Equatable {
             UsageIssue("Anthropic usage check failed (HTTP \(status)).")
         case .transport(let reason):
             UsageIssue("Could not refresh Claude usage. \(reason)")
+        case .timedOut:
+            UsageIssue("The Claude usage check timed out.")
         case .loginChanged:
             UsageIssue("Claude Code sign-in changed during the usage check.")
         case .refreshDeferred, .refreshFailed:

@@ -129,14 +129,25 @@ little memory. The limit is 256 MiB. The result is one of three states:
 
 1. Claude Meter never refreshes, writes, or deletes Claude Code's credentials.
 2. A token that expires within 60 s is expired. Expired tokens are not sent.
-3. The account of the active login is read on every refresh. With no active login, that is
-   `claude`.
-4. Every other enabled account is read when the previous value has no observation for it
-   or its `attemptedAt` is at least 300 s old. Otherwise its previous value is returned
+3. The account of the active login is read on every refresh. With no active login, or while
+   the Keychain cannot say which login is active, that is `claude`.
+4. Every other enabled account is read when it has no previous value, or its previous
+   `attemptedAt` is at least 300 s old. A failed attempt counts, so an account that always
+   fails is also requested at most every 300 s. Otherwise its previous value is returned
    unchanged.
-5. Requests go out one at a time, active login first.
+5. Requests go out one at a time: the active login first, so that a 429 never starves the
+   menu-bar account, then the others in output order. The output order does not change.
 6. After each response, the credential and identity are read again. If the owner changed,
    the response is discarded.
+7. Each account has 20 s, inside the 60 s budget of the whole refresh. An account that runs
+   out of time keeps its previous observation, marked stale. When the budget ends, the
+   accounts that did not start keep their previous value and `attemptedAt`, and the finished
+   accounts are kept.
+8. While the Keychain cannot say which login is active (locked, or the read timed out), the
+   account of that login keeps its reading, marked stale with the Keychain issue. That is an
+   unmapped `oauth-…` account, or `claude` when `~/.claude` does not exist. When no account
+   is left, the refresh throws the Keychain issue and keeps the last reading. A locked
+   Keychain never shows as "not signed in".
 
 ### Manual mode
 
@@ -178,7 +189,8 @@ little memory. The limit is 256 MiB. The result is one of three states:
    owner drops it.
 4. `reconcile` drops accounts that left the configuration and observations whose owner
    changed. It uses local reads only.
-5. Accounts whose `.claude.json` has the same `accountUuid` get `sharesLogin = true`.
+5. Accounts whose `.claude.json` has the same `accountUuid` and `organizationUuid` get
+   `sharesLogin = true`. One person in two organizations has two quotas, so two logins.
 
 ### Mapping
 
@@ -207,7 +219,8 @@ little memory. The limit is 256 MiB. The result is one of three states:
 | Config dir discovery | 5 s |
 | One Keychain or file read | 5 s (`BlockingIO`) |
 | One HTTP request | 15 s |
-| One whole refresh | 60 s |
+| One account in automatic mode | 20 s, inside the refresh budget |
+| One whole refresh | 60 s; automatic mode keeps finished accounts and has a 65 s safety net |
 
 ### User-facing text
 
@@ -222,6 +235,7 @@ little memory. The limit is 256 MiB. The result is one of three states:
 | HTTP 429 | Anthropic is rate-limiting usage checks. (with `retryAt`) | Same |
 | Other HTTP status | Anthropic usage check failed (HTTP <status>). | Same |
 | Network failure | Could not refresh Claude usage. <reason> | Same |
+| Out of time | The Claude usage check timed out. | Same |
 | Owner changed | Claude Code sign-in changed during the usage check. | Same |
 | Manual refresh waiting | Retrying the Claude Code sign-in… | — |
 | Not connected | Connect Claude in Settings to read usage. | — |

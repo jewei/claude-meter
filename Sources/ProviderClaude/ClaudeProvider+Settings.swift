@@ -125,7 +125,7 @@ extension ClaudeProvider {
 
     private func verify(accessToken: String, rejection: ProviderError) async throws {
         do {
-            _ = try await withDeadline(limits.fetch) { [api] in
+            _ = try await withDeadline(limits.refresh) { [api] in
                 try await api.usage(accessToken: accessToken)
             }
         } catch UsageFailure.unauthorized {

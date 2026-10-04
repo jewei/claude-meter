@@ -5,6 +5,9 @@ import MeterPlatform
 /// One login to read in automatic mode: a config dir, or Claude Code's active login when no
 /// config dir matches its Keychain item.
 struct LoginSlot: Sendable, Equatable {
+    /// The key prefix of an active login that matches no config dir.
+    static let unmappedPrefix = "oauth-"
+
     let id: AccountID
     let name: String
     /// Keychain services to try, preferred first.
@@ -25,7 +28,7 @@ struct LoginSlot: Sendable, Equatable {
     /// The active login of a Keychain item that matches no config dir. It keeps its own key,
     /// `oauth-<first 8 hex of SHA-256 of the service>`, and never takes the default account.
     init(unmappedService service: String) {
-        id = AccountID("oauth-" + ClaudeCodeKeychain.shortHash(service))
+        id = AccountID(Self.unmappedPrefix + ClaudeCodeKeychain.shortHash(service))
         name = id.rawValue
         services = [service]
         identityFile = nil

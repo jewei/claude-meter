@@ -67,6 +67,56 @@ extension ClaudeTests {
                     == "Could not read Claude Code's account file. Retrying at the next refresh.")
         }
 
+        @Test func aLockedKeychainKeepsTheUnmappedActiveLogin() async throws {
+            let harness = try ClaudeHarness()
+            try harness.directory(".claude")
+            harness.signIn(service: "Claude Code-credentials-1a2b3c4d", token: "elsewhere")
+            let http = usageServer(["elsewhere": ClaudeFixtures.usage(session: 3)])
+            let provider = harness.provider(http)
+            let usage = try await provider.fetch(previous: nil)
+            #expect(usage.account("oauth-ebecf05a")?.hasObservation == true)
+
+            harness.keychain.failure = .unavailable
+            #expect(await provider.reconcile(usage) == usage)
+            harness.advance(10)
+            let locked = try await provider.fetch(previous: usage)
+
+            #expect(locked.accounts.map(\.id) == ["oauth-ebecf05a", "claude"])
+            let kept = locked.accounts[0]
+            #expect(kept.isStale && kept.observedAt == .reference())
+            #expect(
+                kept.issue?.message
+                    == "Keychain is locked — unlock your Mac to refresh Claude usage")
+            #expect(http.usageTokens == ["elsewhere"])
+
+            // Once the Keychain answers, a login that is gone drops the account.
+            harness.keychain.failure = nil
+            try harness.keychain.deletePassword(
+                service: "Claude Code-credentials-1a2b3c4d", account: ClaudeHarness.user)
+            #expect(await provider.reconcile(locked)?.accounts.map(\.id) == ["claude"])
+        }
+
+        @Test func aLockedKeychainWithoutAConfigDirIsNotSignedOut() async throws {
+            let harness = try ClaudeHarness()
+            harness.signIn(service: ClaudeCodeKeychain.legacyService, token: "main")
+            let provider = harness.provider(usageServer(["main": ClaudeFixtures.usage(session: 3)]))
+            let usage = try await provider.fetch(previous: nil)
+            #expect(usage.accounts.map(\.id) == ["claude"])
+
+            harness.keychain.failure = .unavailable
+            #expect(await provider.reconcile(usage) == usage)
+            let kept = try await provider.fetch(previous: usage)
+            #expect(kept.accounts[0].isStale && kept.accounts[0].hasObservation)
+
+            let error = await #expect(throws: ProviderError.self) {
+                try await provider.fetch(previous: nil)
+            }
+            #expect(
+                error?.issue.message
+                    == "Keychain is locked — unlock your Mac to refresh Claude usage")
+            #expect(error?.keepsLastReading == true)
+        }
+
         @Test func theLegacyLoginWithoutAConfigDirUsesTheHomeIdentityFile() async throws {
             let harness = try ClaudeHarness()
             try harness.home.write(ClaudeFixtures.identity(account: "acc-1"), to: ".claude.json")

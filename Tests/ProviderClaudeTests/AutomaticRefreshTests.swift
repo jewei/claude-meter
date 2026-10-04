@@ -155,22 +155,29 @@ extension ClaudeTests {
             #expect(account.owner == .identity(Digest.sha256(parts: ["claude", "acc-9", "org-1"])))
         }
 
-        @Test func accountsWithTheSameClaudeAccountShareALogin() async throws {
+        @Test func accountsWithTheSameAccountAndOrganizationShareALogin() async throws {
             let harness = try ClaudeHarness()
             let main = try harness.directory(".claude", account: "acc-1", organization: "org-1")
+            // The same person in another organization has another quota.
             let work = try harness.directory(
                 ".claude-work", account: "acc-1", organization: "org-2")
+            let copy = try harness.directory(
+                ".claude-copy", account: "acc-1", organization: "org-1")
             let team = try harness.directory(
                 ".claude-team", account: "acc-2", organization: "org-1")
             harness.signIn(main, token: "main", legacy: true)
             harness.signIn(work, token: "work")
+            harness.signIn(copy, token: "copy")
             harness.signIn(team, token: "team")
-            let http = usageServer(["main": "{}", "work": "{}", "team": "{}"])
+            let http = usageServer(["main": "{}", "work": "{}", "copy": "{}", "team": "{}"])
 
             let usage = try await harness.provider(http).fetch(previous: nil)
 
-            #expect(usage.accounts.map(\.id) == ["claude", "claude-team", "claude-work"])
-            #expect(usage.accounts.map(\.sharesLogin) == [true, false, true])
+            #expect(
+                usage.accounts.map(\.id) == [
+                    "claude", "claude-copy", "claude-team", "claude-work",
+                ])
+            #expect(usage.accounts.map(\.sharesLogin) == [true, true, false, false])
         }
 
         @Test func anUnmappedActiveLoginKeepsItsOwnKeyAndComesFirst() async throws {

@@ -4,24 +4,20 @@ import MeterPlatform
 
 /// Automatic mode: reads the Claude Code login of every enabled config dir.
 ///
-/// The account of Claude Code's active login is read on every refresh. Every other account is
-/// read when the previous value has no observation or was attempted at least 300 s ago;
-/// otherwise its previous value is returned unchanged. Requests go out one at a time. HTTP 429
-/// stops the rest of the refresh; accounts not attempted keep their previous value and
-/// `attemptedAt`, so they are due again as soon as the gate opens.
+/// The account of Claude Code's active login is read on every refresh, and first. Every other
+/// account is read when it has no previous value, or its previous value was attempted at least
+/// 300 s ago; otherwise its previous value is returned unchanged. Requests go out one at a
+/// time. Each account has its own deadline inside the budget of the whole refresh, so a slow
+/// account cannot discard the others. HTTP 429, or the end of the budget, stops the rest of
+/// the refresh; accounts not attempted keep their previous value and `attemptedAt`, so they
+/// are due again at the next refresh.
 struct AutomaticRefresh: Sendable {
     static let otherAccountInterval: TimeInterval = 300
 
-    struct Plan: Sendable, Equatable {
-        /// Output order: an unmapped active login first, then config dirs in discovery order.
-        var slots: [LoginSlot]
-        /// The account of Claude Code's active login, or `claude` when there is none.
-        var activeID: AccountID
-    }
-
     struct Result: Sendable {
         let usage: ProviderUsage
-        let activeID: AccountID
+        /// The account of the active login. Nil when the Keychain could not say which it is.
+        let activeID: AccountID?
     }
 
     let home: URL
@@ -29,71 +25,43 @@ struct AutomaticRefresh: Sendable {
     let logins: LoginReader
     let api: UsageAPI
     let now: @Sendable () -> Date
-    let discoveryTimeout: Duration
-    private let log = Log(.claude)
+    let limits: ClaudeLimits
+    let log = Log(.claude)
 
     init(
         home: URL, keychain: ClaudeCodeKeychain, logins: LoginReader, api: UsageAPI,
-        now: @escaping @Sendable () -> Date, discoveryTimeout: Duration
+        now: @escaping @Sendable () -> Date, limits: ClaudeLimits
     ) {
         self.home = home
         self.keychain = keychain
         self.logins = logins
         self.api = api
         self.now = now
-        self.discoveryTimeout = discoveryTimeout
-    }
-
-    /// Discovers config dirs and maps Claude Code's active Keychain item to one of them.
-    func plan(_ configuration: ClaudeConfiguration) async throws -> Plan {
-        let home = home
-        let accounts: [ClaudeAccount]
-        do {
-            accounts = try await BlockingIO.run(timeout: discoveryTimeout) { _ in
-                ConfigDirectoryScanner.discover(home: home, configuration: configuration)
-            }
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            throw ProviderError(
-                "Could not read the Claude config folders. \(error.localizedDescription)")
-        }
-        let activeService: String?
-        do {
-            activeService = try await keychain.activeService()
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            activeService = nil
-        }
-
-        var slots = accounts.filter(\.isEnabled).map { LoginSlot(account: $0, home: home) }
-        var activeID = ClaudeAccount.defaultID
-        if let service = activeService {
-            // A disabled account can own the active login; it then has no slot and no card.
-            if let owner = accounts.first(where: {
-                ClaudeCodeKeychain.services(for: $0).contains(service)
-            }) {
-                activeID = owner.id
-            } else if service == ClaudeCodeKeychain.legacyService {
-                slots.insert(.legacyDefault(home: home), at: 0)
-            } else {
-                let unmapped = LoginSlot(unmappedService: service)
-                slots.insert(unmapped, at: 0)
-                activeID = unmapped.id
-            }
-        }
-        return Plan(slots: slots, activeID: activeID)
+        self.limits = limits
     }
 
     func fetch(_ configuration: ClaudeConfiguration, previous: ProviderUsage?) async throws
         -> Result
     {
+        let deadline = ContinuousClock.now + limits.refresh
         let plan = try await plan(configuration)
         if let until = api.gate.blockedUntil(now: now()) {
             throw ProviderError(AccountFailure.rateLimited(until: until).issue(isActiveLogin: true))
         }
-        guard !plan.slots.isEmpty else {
+        // While the Keychain cannot say which login is active, the account of that login has
+        // no slot. Its reading stays, marked stale.
+        let carried = (previous?.accounts ?? []).filter { account in
+            !plan.slots.contains { $0.id == account.id } && plan.mayHoldActiveLogin(account.id)
+        }.map { account in
+            AccountFailure.credentialsUnavailable.account(
+                id: account.id, name: account.name, prior: account, status: .unknown,
+                isActiveLogin: true, now: now())
+        }
+        guard !plan.slots.isEmpty || !carried.isEmpty else {
+            if plan.activeLogin == .unknown {
+                throw ProviderError(
+                    AccountFailure.credentialsUnavailable.issue(isActiveLogin: true))
+            }
             throw ProviderError(
                 AccountFailure.credentialsMissing.issue(isActiveLogin: true),
                 keepsLastReading: false)
@@ -102,28 +70,37 @@ struct AutomaticRefresh: Sendable {
         var fetched: [AccountID: AccountUsage] = [:]
         var identities: [AccountID: LocalIdentity] = [:]
         var stop: AccountFailure?
-        for slot in plan.slots {
+        for slot in plan.requestOrder {
             let prior = previous?.account(slot.id)
             if let issue = slot.issue {
                 fetched[slot.id] = .unavailable(id: slot.id, name: slot.name, issue: issue)
                 continue
             }
-            guard stop == nil, slot.id == plan.activeID || isDue(prior) else { continue }
+            let isActive = slot.id == plan.activeID
+            guard stop == nil, isActive || isDue(prior) else { continue }
+            let remaining = deadline - ContinuousClock.now
+            guard remaining > .zero else {
+                log.warning("Claude refresh ran out of time before \(slot.id)")
+                stop = .timedOut
+                continue
+            }
             try Task.checkCancellation()
             let outcome = try await fetchAccount(
-                slot, prior: prior, isActive: slot.id == plan.activeID)
+                slot, prior: prior, isActive: isActive, limit: min(limits.account, remaining))
             fetched[slot.id] = outcome.usage
             identities[slot.id] = outcome.identity
             if case .rateLimited = outcome.failure { stop = outcome.failure }
         }
         for slot in plan.slots where identities[slot.id] == nil && slot.issue == nil {
-            if case .found(let identity) = try await logins.identity(slot.identityFile) {
-                identities[slot.id] = identity
-            }
+            let remaining = deadline - ContinuousClock.now
+            guard remaining > .zero else { break }
+            let read = try await logins.identity(
+                slot.identityFile, timeout: min(limits.localRead, remaining))
+            if case .found(let identity) = read { identities[slot.id] = identity }
         }
 
         let shared = Self.sharedLogins(identities)
-        // An account without a previous value is always due, so only a 429 can skip it.
+        // An account without a previous value is always due, so only a stop can skip it.
         let skipped =
             stop?.issue(isActiveLogin: false) ?? UsageIssue("Claude usage is unavailable.")
         let accounts = plan.slots.map { slot in
@@ -135,7 +112,8 @@ struct AutomaticRefresh: Sendable {
             return account
         }
         return Result(
-            usage: ProviderUsage(provider: .claude, accounts: accounts), activeID: plan.activeID)
+            usage: ProviderUsage(provider: .claude, accounts: carried + accounts),
+            activeID: plan.activeLogin == .unknown ? nil : plan.activeID)
     }
 
     /// Drops accounts that left the configuration and observations whose login changed.
@@ -146,7 +124,10 @@ struct AutomaticRefresh: Sendable {
         guard let plan = try? await plan(configuration) else { return previous }
         var kept: [AccountUsage] = []
         for account in previous.accounts {
-            guard let slot = plan.slots.first(where: { $0.id == account.id }) else { continue }
+            guard let slot = plan.slots.first(where: { $0.id == account.id }) else {
+                if plan.mayHoldActiveLogin(account.id) { kept.append(account) }
+                continue
+            }
             if account.hasObservation, slot.issue == nil {
                 let status = (try? await logins.read(slot))?.status ?? .unknown
                 guard account.belongs(to: status) else {
@@ -159,20 +140,21 @@ struct AutomaticRefresh: Sendable {
         return kept.isEmpty ? nil : ProviderUsage(provider: .claude, accounts: kept)
     }
 
-    /// Accounts whose `.claude.json` names the same Claude account as another account.
+    /// Accounts whose `.claude.json` names the same Claude account in the same organization
+    /// as another account. One person in two organizations has two quotas, so two logins.
     static func sharedLogins(_ identities: [AccountID: LocalIdentity]) -> Set<AccountID> {
-        var accountsByLogin: [String: [AccountID]] = [:]
+        var accountsByOwner: [AccountOwner: [AccountID]] = [:]
         for (id, identity) in identities {
-            guard let uuid = identity.accountUUID, !uuid.isEmpty else { continue }
-            accountsByLogin[uuid, default: []].append(id)
+            guard let owner = identity.owner else { continue }
+            accountsByOwner[owner, default: []].append(id)
         }
-        return Set(accountsByLogin.values.filter { $0.count > 1 }.joined())
+        return Set(accountsByOwner.values.filter { $0.count > 1 }.joined())
     }
 
+    /// An account is due when it was never attempted, or its last attempt, successful or not,
+    /// is at least 300 s old. A clock that moved back makes it due.
     private func isDue(_ prior: AccountUsage?) -> Bool {
-        guard let prior, prior.hasObservation, let attemptedAt = prior.attemptedAt else {
-            return true
-        }
+        guard let attemptedAt = prior?.attemptedAt else { return true }
         let age = now().timeIntervalSince(attemptedAt)
         return age < 0 || age >= Self.otherAccountInterval
     }

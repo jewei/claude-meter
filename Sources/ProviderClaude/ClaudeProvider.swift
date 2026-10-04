@@ -2,16 +2,6 @@ import Foundation
 import MeterDomain
 import MeterPlatform
 
-/// Time limits of Claude work. Tests shorten them.
-struct ClaudeLimits: Sendable {
-    /// Listing the config dirs.
-    var discovery: Duration = .seconds(5)
-    /// One whole refresh, all accounts included. Each HTTP request also has its own 15 s limit.
-    var fetch: Duration = .seconds(60)
-    /// One Keychain or file read.
-    var localRead: Duration = .seconds(5)
-}
-
 /// Claude quota: one account per Claude Code config dir, or one manual login.
 ///
 /// The provider keeps no usage of its own. Each refresh receives the reading that the app holds
@@ -78,7 +68,7 @@ public final class ClaudeProvider: UsageProvider, DiagnosticsReporting {
         automatic = AutomaticRefresh(
             home: home, keychain: self.keychain,
             logins: LoginReader(keychain: self.keychain, fileTimeout: limits.localRead), api: api,
-            now: now, discoveryTimeout: limits.discovery)
+            now: now, limits: limits)
         manual = ManualRefresh(login: manualLogin, api: api, now: now)
     }
 
@@ -106,13 +96,15 @@ public final class ClaudeProvider: UsageProvider, DiagnosticsReporting {
                 throw ProviderError(
                     AccountFailure.notConnectedMessage, needsAction: true, keepsLastReading: false)
             case .automatic:
-                let result = try await withDeadline(limits.fetch) {
+                // Each account has its own deadline inside the refresh budget; this is only a
+                // safety net.
+                let result = try await withDeadline(limits.safetyNet) {
                     try await automatic.fetch(configuration, previous: previous)
                 }
                 lastRefresh.record(result.usage, activeID: result.activeID, at: now())
                 return result.usage
             case .manual:
-                let usage = try await withDeadline(limits.fetch) {
+                let usage = try await withDeadline(limits.refresh) {
                     try await manual.fetch(previous: previous)
                 }
                 lastRefresh.record(usage, activeID: ManualRefresh.accountID, at: now())

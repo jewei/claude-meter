@@ -33,12 +33,16 @@ final class ClaudeHarness: Sendable {
         clock.withLock { $0 = $0.addingTimeInterval(seconds) }
     }
 
-    func provider(_ http: any HTTPClient) -> ClaudeProvider {
+    func provider(
+        _ http: any HTTPClient, keychain: (any Keychain)? = nil,
+        limits: ClaudeLimits = ClaudeLimits()
+    ) -> ClaudeProvider {
         let clock = clock
         let settings = settings
         return ClaudeProvider(
-            configuration: { settings.value }, keychain: keychain, http: http, store: store,
-            home: home.url, now: { clock.value }, keychainUser: Self.user, limits: ClaudeLimits())
+            configuration: { settings.value }, keychain: keychain ?? self.keychain, http: http,
+            store: store, home: home.url, now: { clock.value }, keychainUser: Self.user,
+            limits: limits)
     }
 
     /// Creates a config dir with `settings.json` and, when `account` is set, an identity file.

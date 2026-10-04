@@ -8,6 +8,7 @@ struct GrokCredentials: Hashable, Sendable {
     enum IdentitySource: String, Sendable {
         case tokenSubject = "Token subject"
         case authFile = "Sign-in file account ID"
+        case email = "Sign-in file email"
         case tokenDigest = "Token digest"
     }
 
@@ -17,6 +18,23 @@ struct GrokCredentials: Hashable, Sendable {
     let expiresAt: Date?
     /// `user_id` or `account_id` of the entry, when the CLI wrote one.
     let accountID: String?
+    /// The SHA-256 digest of the entry's `email`, trimmed and lowercased. Only the digest is
+    /// kept, so the address never reaches a reading or the disk.
+    let emailDigest: String?
+
+    init(
+        scope: String, bearer: String, expiresAt: Date?, accountID: String?,
+        email: String? = nil
+    ) {
+        self.scope = scope
+        self.bearer = bearer
+        self.expiresAt = expiresAt
+        self.accountID = accountID
+        let normalized = email?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        self.emailDigest = normalized.flatMap {
+            $0.isEmpty ? nil : Digest.sha256(parts: ["grok", "email", $0])
+        }
+    }
 
     func isExpired(at now: Date) -> Bool {
         guard let expiresAt else { return false }
@@ -31,23 +49,26 @@ struct GrokCredentials: Hashable, Sendable {
     var identitySource: IdentitySource {
         if subject != nil { return .tokenSubject }
         if accountID != nil { return .authFile }
+        if emailDigest != nil { return .email }
         return .tokenDigest
     }
 
-    /// The stable user ID when the token or the entry names one; otherwise the token itself,
-    /// which changes when the CLI renews it.
+    /// The stable account when the token or the entry names one: the token's `sub`, then the
+    /// entry's account ID, then its email. Real Grok keys are opaque `oidc-…` tokens and the
+    /// CLI writes no account ID, so the email is what survives a renewal in practice. Only
+    /// without any of them is the owner the token itself, which changes when the CLI renews it.
     var owner: AccountOwner {
         if let identity = subject ?? accountID {
             return .identity(Digest.sha256(parts: ["grok", identity]))
         }
+        if let emailDigest { return .identity(emailDigest) }
         return .credential(Digest.sha256(parts: ["grok", bearer]))
     }
 }
 
 /// The result of one read of `auth.json`.
 enum GrokCredentialLookup: Sendable {
-    /// The first usable entry that has not expired, or, when all have expired, the first
-    /// usable entry. Check ``GrokCredentials/isExpired(at:)`` before sending it.
+    /// The entry to use. Check ``GrokCredentials/isExpired(at:)`` before sending it.
     case found(GrokCredentials)
     /// No file, or no entry with a key: the user is signed out.
     case missing

@@ -40,7 +40,8 @@ The billing endpoint is internal to the Grok Build CLI. It can change without no
 | `key` | The bearer token, trimmed. Required. |
 | `expires_at` | ISO-8601 with any fraction length, or epoch. Optional. |
 | `user_id`, `account_id` | A stable account ID. Optional. |
-| `email`, `auth_mode`, `refresh_token` | Ignored. |
+| `email` | The stable identity when the token has no `sub` and the entry has no account ID. Trimmed and lowercased; only its SHA-256 digest is kept. Optional. |
+| `auth_mode`, `refresh_token` | Ignored. |
 
 ### Billing
 
@@ -83,7 +84,11 @@ Every number can be a JSON number or a numeric string. Other fields are ignored.
 | Window title | "Weekly", "Monthly", or "Credits" for any other type |
 | `Balance(kind: .onDemand, unit: .currency("USD"))` | `onDemandUsed` / 100, limit `onDemandCap` / 100 when above 0 |
 | `Balance(kind: .prepaid, unit: .currency("USD"))` | `prepaidBalance` / 100 |
-| Owner | `.identity(sha256("grok", id))` with the token `sub`, else `user_id` or `account_id`; otherwise `.credential(sha256("grok", key))` |
+| Owner | `.identity(sha256("grok", id))` with the token `sub`, else `user_id` or `account_id`; else `.identity(sha256("grok", "email", email))`; otherwise `.credential(sha256("grok", key))` |
+
+Real keys are opaque `oidc-…` tokens, and the CLI writes no account ID, so the email is the
+identity in practice. It survives a renewal of the key and an app restart. The email itself
+never reaches a reading, a log, or the disk.
 
 ## Rules
 

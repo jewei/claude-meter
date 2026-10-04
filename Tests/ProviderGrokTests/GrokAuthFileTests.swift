@@ -159,6 +159,32 @@ import Testing
         #expect(fromFile.identitySource == .authFile)
         let withUserID = credentials(#"{"a":{"key":"opaque","user_id":"u-7"}}"#)
         #expect(withUserID?.accountID == "u-7")
+        let withAccountID = credentials(#"{"a":{"key":"opaque","account_id":"acct-9"}}"#)
+        #expect(withAccountID?.owner == .identity(Digest.sha256(parts: ["grok", "acct-9"])))
+    }
+
+    /// Real keys are opaque `oidc-…` tokens, and the CLI writes no account ID. The email is
+    /// the stable identity then, so a renewal keeps the owner. Only its digest is kept.
+    @Test func theEmailIsAStableIdentityWithoutAnAccountID() throws {
+        let first = try #require(
+            credentials(
+                #"{"https://auth.x.ai::c":{"key":"oidc-first","email":"Alpha@Example.com "}}"#))
+        let renewed = try #require(
+            credentials(
+                #"{"https://auth.x.ai::c":{"key":"oidc-renewed","email":"alpha@example.com"}}"#))
+        let other = try #require(
+            credentials(
+                #"{"https://auth.x.ai::c":{"key":"oidc-renewed","email":"beta@example.com"}}"#))
+
+        let expected = AccountOwner.identity(
+            Digest.sha256(parts: ["grok", "email", "alpha@example.com"]))
+        #expect(first.owner == expected)
+        #expect(renewed.owner == expected)
+        #expect(other.owner != expected)
+        #expect(first.identitySource == .email)
+        #expect(!String(describing: first).contains("alpha"))
+        let blank = credentials(#"{"a":{"key":"oidc-x","email":"  "}}"#)
+        #expect(blank?.owner == .credential(Digest.sha256(parts: ["grok", "oidc-x"])))
     }
 
     @Test func homeDirectoryUsesGrokHomeOnlyWhenItIsSet() {

@@ -150,6 +150,26 @@ import Testing
         #expect(await provider.reconcile(other) == nil)
     }
 
+    /// The CLI renews its opaque key, but the email stays, so the reading survives the
+    /// renewal, a failure right after it, and a restart (an identity owner is saved).
+    @Test func aRenewedOpaqueKeyKeepsTheReading() async throws {
+        let entry = { (key: String) in
+            #"{"https://auth.x.ai::c":{"key":"\#(key)","email":"alpha@example.com"}}"#
+        }
+        try directory.write(entry("oidc-first"), to: ".grok/auth.json")
+        let usage = try await provider(FakeHTTPClient(json: Self.liveFixture)).fetch(previous: nil)
+        #expect(try account(usage).owner?.isPersistable == true)
+
+        try directory.write(entry("oidc-renewed"), to: ".grok/auth.json")
+        let provider = provider(FakeHTTPClient(status: 503, json: ""))
+        #expect(await provider.reconcile(usage) == usage)
+        let kept = try account(try await provider.fetch(previous: usage))
+
+        #expect(kept.isStale)
+        #expect(kept.observedAt == .reference())
+        #expect(kept.owner == (try account(usage)).owner)
+    }
+
     @Test func anUnreadableFileKeepsTheReading() async throws {
         try directory.write("{", to: ".grok/auth.json")
         let http = FakeHTTPClient(json: Self.liveFixture)

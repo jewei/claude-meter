@@ -60,7 +60,8 @@ struct GrokAuthFile: Sendable {
         return candidates.first.map { .found($0) } ?? .missing
     }
 
-    /// An entry with a non-blank `key`. `expires_at` and the account ID are optional.
+    /// An entry with a non-blank `key`. `expires_at`, the account ID, and the email are
+    /// optional.
     private static func credentials(scope: String, entry: JSONValue) -> GrokCredentials? {
         guard
             let key = entry["key"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -71,6 +72,6 @@ struct GrokAuthFile: Sendable {
             .first { !$0.isEmpty }
         return GrokCredentials(
             scope: scope, bearer: key, expiresAt: DateParsing.date(entry["expires_at"]),
-            accountID: accountID)
+            accountID: accountID, email: entry["email"]?.stringValue)
     }
 }

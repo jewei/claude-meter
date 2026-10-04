@@ -4,16 +4,22 @@ import MeterPlatform
 
 extension ClaudeProvider {
     /// Verifies tokens that the user entered with a usage request, then stores them as the
-    /// manual login. Throws ``ProviderError`` with text for the user.
+    /// manual login. Throws ``ProviderError`` with text for the user, or `CancellationError`.
     ///
     /// Tokens that expire within 60 s are refreshed first. When the request gets HTTP 401 and
     /// no refresh happened yet, the refresh token is tried once. A refresh never goes out while
     /// the 429 gate is closed, because it spends the pasted refresh token. Tokens that a refresh
     /// got are kept for a retry of Connect until they are stored or rejected. A failure leaves
     /// an existing manual login unchanged, and a Disconnect that starts meanwhile wins.
-    public func connectManually(accessToken: String, refreshToken: String?, expiresAt: Date?)
-        async throws
-    {
+    ///
+    /// - Parameter isWanted: Asked right before the save and again after it. When it returns
+    ///   false, nothing stays stored and the Connect throws that the connection changed.
+    ///   Settings uses it so that a Connect that the user abandoned, or one that finishes after
+    ///   Claude was turned off, never stores tokens.
+    public func connectManually(
+        accessToken: String, refreshToken: String?, expiresAt: Date?,
+        isWanted: @escaping @Sendable () async -> Bool = { true }
+    ) async throws {
         let access = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
         let pasted = refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines)
             .nilIfEmpty
@@ -24,7 +30,7 @@ extension ClaudeProvider {
         let ticket = await manualLogin.beginConnect()
         var candidate = ManualCredential(
             accessToken: access, refreshToken: pasted, expiresAt: expiresAt,
-            subscriptionType: nil, connectionID: UUID().uuidString)
+            connectionID: UUID().uuidString)
         var isRefreshed = false
         // An earlier Connect may have spent the pasted refresh token already.
         if let pasted, let pending = await manualLogin.pendingRotation(for: pasted) {
@@ -47,19 +53,21 @@ extension ClaudeProvider {
             throw Self.tokensRejected
         }
         do {
-            try await manualLogin.connect(candidate, ticket: ticket)
+            try await manualLogin.connect(candidate, ticket: ticket, isWanted: isWanted)
         } catch ManualLogin.Failure.changed {
-            throw ProviderError(
-                "The Claude connection changed while the tokens were checked. Try again.")
+            throw Self.connectionChanged
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw ProviderError("Could not save credentials: \(error.localizedDescription)")
         }
     }
 
-    /// Makes every ``connectManually(accessToken:refreshToken:expiresAt:)`` that is still
-    /// running store nothing; it then throws that the connection changed. The stored login
-    /// stays. Settings calls this when it abandons an attempt, for example when the user turns
-    /// Claude off or chooses another connection.
+    /// Makes every
+    /// ``connectManually(accessToken:refreshToken:expiresAt:isWanted:)`` that is still running
+    /// store nothing; it then throws that the connection changed. The stored login stays.
+    /// Settings calls this when it abandons an attempt, for example when the user selects
+    /// Cancel or chooses another connection.
     public func cancelManualConnect() async {
         await manualLogin.cancelConnects()
     }
@@ -70,8 +78,9 @@ extension ClaudeProvider {
     }
 
     /// Deletes the manual login, the only item the app owns, and forgets its tokens. A fetch,
-    /// refresh, or Connect that is still running can never write it back. Deleting a missing
-    /// item succeeds, so Settings can call this in every mode.
+    /// refresh, or Connect that is still running can never write it back or send its tokens,
+    /// also when the delete fails. Deleting a missing item succeeds, so Settings can call this
+    /// in every mode.
     public func disconnectManual() async throws {
         do {
             try await manualLogin.disconnect()
@@ -82,6 +91,9 @@ extension ClaudeProvider {
 
     private static let tokensRejected = ProviderError(
         "Anthropic rejected these tokens. Check them and try again.", needsAction: true)
+
+    private static let connectionChanged = ProviderError(
+        "The Claude connection changed while the tokens were checked. Try again.")
 
     private func refreshedForConnect(_ candidate: ManualCredential, pasted: String?)
         async throws -> ManualCredential
@@ -101,6 +113,8 @@ extension ClaudeProvider {
                 "Anthropic rejected the refresh token. Enter new tokens.", needsAction: true)
         } catch ManualLogin.Failure.refreshFailed(let reason) {
             throw ProviderError("Could not refresh the tokens. \(reason) Try again shortly.")
+        } catch ManualLogin.Failure.changed {
+            throw Self.connectionChanged
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -117,8 +131,4 @@ extension ClaudeProvider {
             throw Self.tokensRejected
         }
     }
-}
-
-extension String {
-    fileprivate var nilIfEmpty: String? { isEmpty ? nil : self }
 }

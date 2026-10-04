@@ -75,16 +75,39 @@ final class ManualCredentialVault: Sendable {
         }
     }
 
-    func save(_ credential: ManualCredential, sequence: UInt64) async throws {
+    /// The item's value as stored, or nil when there is no item. Throws the Keychain error
+    /// when the Keychain cannot answer, and `CancellationError`.
+    func storedValue() async throws -> Data? {
+        let keychain = keychain
+        return try await BlockingIO.run(timeout: timeout) { _ in
+            try keychain.password(service: Self.service, account: Self.account)
+        }
+    }
+
+    /// Writes `credential`. `timeout` replaces the vault's limit for this write.
+    func save(_ credential: ManualCredential, sequence: UInt64, timeout: Duration? = nil)
+        async throws
+    {
         let data = try JSONEncoder.meter.encode(credential)
-        try await write(sequence: sequence) { keychain in
+        try await write(sequence: sequence, timeout: timeout ?? self.timeout) { keychain in
             try keychain.setPassword(data, service: Self.service, account: Self.account)
         }
     }
 
     func delete(sequence: UInt64) async throws {
-        try await write(sequence: sequence) { keychain in
+        try await write(sequence: sequence, timeout: timeout) { keychain in
             try keychain.deletePassword(service: Self.service, account: Self.account)
+        }
+    }
+
+    /// Writes back a value from ``storedValue()``, or deletes the item when it was nil.
+    func restore(_ value: Data?, sequence: UInt64) async throws {
+        try await write(sequence: sequence, timeout: timeout) { keychain in
+            if let value {
+                try keychain.setPassword(value, service: Self.service, account: Self.account)
+            } else {
+                try keychain.deletePassword(service: Self.service, account: Self.account)
+            }
         }
     }
 
@@ -107,11 +130,11 @@ final class ManualCredentialVault: Sendable {
     /// Runs `operation` on the write queue. The caller's cancellation does not stop it: a
     /// rotated refresh token must be stored even when the refresh that got it was cancelled.
     private func write(
-        sequence: UInt64, _ operation: @escaping @Sendable (any Keychain) throws -> Void
+        sequence: UInt64, timeout: Duration,
+        _ operation: @escaping @Sendable (any Keychain) throws -> Void
     ) async throws {
         let keychain = keychain
         let newestWrite = newestWrite
-        let timeout = timeout
         try await withCheckedThrowingContinuation { continuation in
             let outcome = WriteOutcome(continuation)
             writes.async {
@@ -126,9 +149,11 @@ final class ManualCredentialVault: Sendable {
             DispatchQueue.global(qos: .utility).asyncAfter(
                 deadline: .now() + timeout.timeInterval
             ) {
-                guard outcome.finish(.failure(TimeoutError(limit: timeout))) else { return }
-                // The write has not started, or it hangs; either way it must not land later.
+                // Claim the sequence before the caller hears of the timeout, so a write that has
+                // not started can never land after it. A write that already runs, or ended,
+                // claimed it itself.
                 newestWrite.withLock { $0 = max($0, sequence) }
+                outcome.finish(.failure(TimeoutError(limit: timeout)))
             }
         }
     }

@@ -185,7 +185,7 @@ extension ClaudeHarness {
     ) throws {
         let stored = ManualCredential(
             accessToken: accessToken, refreshToken: refreshToken, expiresAt: expiresAt,
-            subscriptionType: "pro", connectionID: connectionID)
+            connectionID: connectionID)
         keychain.store(
             String(decoding: try JSONEncoder.meter.encode(stored), as: UTF8.self),
             service: ManualCredentialVault.service, account: ManualCredentialVault.account)

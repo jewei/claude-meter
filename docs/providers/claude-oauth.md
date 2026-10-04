@@ -81,8 +81,9 @@ Content-Type: application/json
    `{"claudeAiOauth": {"accessToken", "refreshToken", "expiresAt" (epoch ms),
    "subscriptionType", "rateLimitTier"}}`. `accessToken`, `refreshToken`, and `expiresAt` are
    required.
-4. The manual item value is JSON `{accessToken, refreshToken, expiresAt, subscriptionType,
-   connectionID}` with ISO-8601 dates. `expiresAt` is the real expiry or absent.
+4. The manual item value is JSON `{accessToken, refreshToken, expiresAt, connectionID}` with
+   ISO-8601 dates. `expiresAt` is the real expiry or absent. Pasted tokens name no plan.
+   Unknown keys are ignored.
 5. Sign-in status checks read item attributes only, never a secret.
 
 ### Files read
@@ -172,29 +173,39 @@ little memory. The limit is 256 MiB. The result is one of three states:
    quitting the app forgets them.
 4. A stored token is refreshed when it expires within 60 s, and once after HTTP 401. HTTP
    403 is not refreshed: a refresh does not change the scopes. Callers with the same refresh
-   token share one token request.
+   token share one token request, and each caller keeps the connection ID of its own login.
 5. Disconnect wins. From the moment it starts there is no manual login: a fetch reports
    "not connected" without a Keychain read, and nothing that started earlier (a fetch, a
-   token refresh, or a Connect) can save or change anything. A Connect that started before
-   a Disconnect, or before a newer Connect, stores nothing and says that the connection
-   changed. `cancelManualConnect()` does the same for running Connects and keeps the stored
-   login. `ClaudeSettingsModel` calls Disconnect in every mode, deletes the manual item after
-   an automatic Connect succeeds, and calls `cancelManualConnect()` when it abandons an
-   attempt: a newer attempt, Claude turned off, or `abandonConnect()`.
-6. Keychain writes of the manual item run one at a time, in order, on a private queue,
+   token refresh, or a Connect) can send the old tokens again, save, or change anything.
+   After HTTP 401, a fetch checks that its login is still the stored one before the token
+   refresh and again before the second request, so a Disconnect or a Connect during the
+   first request stops it with "connection changed". A rotation that arrives after a
+   Disconnect is forgotten. A Connect that started before a Disconnect, or before a newer
+   Connect, stores nothing and says that the connection changed. `cancelManualConnect()`
+   does the same for running Connects and keeps the stored login.
+6. Connect checks its ticket, and asks its caller whether it is still wanted (`isWanted`),
+   right before the save and again after it, under the write lock. Before the save it reads
+   the old item. A Connect that is abandoned during the save writes the old item back, or
+   deletes the new one when there was none, and says that the connection changed. When the
+   old item cannot be read, Connect fails before it writes. `ClaudeSettingsModel` calls
+   Disconnect in every mode, deletes the manual item after an automatic Connect succeeds,
+   and calls `cancelManualConnect()` when it abandons an attempt: a newer attempt, Claude
+   turned off, or `abandonConnect()`.
+7. Keychain writes of the manual item run one at a time, in order, on a private queue,
    never on the shared `BlockingIO` threads. A write that times out before it starts is
-   skipped, so it cannot land later; a Keychain call that already runs cannot be stopped. A
-   save of rotated tokens finishes even when the refresh that got them was cancelled.
-7. A Connect whose save fails leaves the old login as it was, and a rotation of the old
+   skipped, so it cannot land later: the write is marked as abandoned before its caller hears
+   of the timeout. A Keychain call that already runs cannot be stopped. A save of rotated
+   tokens finishes even when the refresh that got them was cancelled.
+8. A Connect whose save fails leaves the old login as it was, and a rotation of the old
    login that arrives meanwhile is still saved.
-8. A refresh token rejected with `invalid_grant` is not sent again. When the server also
+9. A refresh token rejected with `invalid_grant` is not sent again. When the server also
    rejects the refreshed token (HTTP 401 or 403), or a 401 cannot be refreshed, the
    connection gets no more requests. Both marks last until the next Connect or app launch,
    and the card asks for a new Connect. After a temporary failure, refreshes wait 5
    minutes, doubling up to 6 hours. The reason of the failure is in the log and on the card.
-9. Manual tokens must come from a separate login, never from Claude Code's own Keychain
-   item. A refresh rotates the refresh token, so a copy of Claude Code's token would sign
-   Claude Code out at its next renewal. Settings must say this next to the token fields.
+10. Manual tokens must come from a separate login, never from Claude Code's own Keychain
+    item. A refresh rotates the refresh token, so a copy of Claude Code's token would sign
+    Claude Code out at its next renewal. Settings must say this next to the token fields.
 
 ### Rate-limit gate
 
@@ -249,6 +260,7 @@ little memory. The limit is 256 MiB. The result is one of three states:
    total, over all grants; grants after the limit are not read.
 7. The plan is from the credential's `subscriptionType` and `rateLimitTier`, else the
    `.claude.json` tier: "Max 20x", "Max 5x", "Max", "Pro", "Team", "Enterprise", "Free".
+   Manual tokens name no plan: the card shows the plan badge saved for `claude` in Settings.
 
 ### Limits
 

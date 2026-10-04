@@ -5,6 +5,8 @@ import MeterPlatform
 /// Manual mode: one account, `claude`, read with the app-owned login.
 struct ManualRefresh: Sendable {
     static let accountID = ClaudeAccount.defaultID
+    /// The default name of the one account, `default`.
+    static let name = ConfigDirectoryScanner.name(for: accountID)
 
     let login: ManualLogin
     let api: UsageAPI
@@ -16,7 +18,6 @@ struct ManualRefresh: Sendable {
             throw ProviderError(AccountFailure.rateLimited(until: until).issue(for: .manual))
         }
         let prior = previous?.account(Self.accountID)
-        let slotName = ConfigDirectoryScanner.name(for: Self.accountID)
         let account: AccountUsage
         do {
             let (credential, response) = try await usage()
@@ -26,10 +27,9 @@ struct ManualRefresh: Sendable {
                 account = await failed(after == .signedOut ? .notConnected : .loginChanged, prior)
             } else {
                 let observedAt = now()
+                // Pasted tokens name no plan; the card shows the user's plan badge.
                 account = AccountUsage(
-                    id: Self.accountID, name: slotName,
-                    plan: ClaudePlan.name(
-                        subscriptionType: credential.subscriptionType, rateLimitTier: nil),
+                    id: Self.accountID, name: Self.name, plan: nil,
                     windows: UsageMapper.windows(response),
                     balances: UsageMapper.balances(response),
                     resetAllowance: UsageMapper.resetAllowance(response),
@@ -55,7 +55,9 @@ struct ManualRefresh: Sendable {
     /// One usage request. After HTTP 401 the refresh token is tried once, and the request is
     /// sent again. HTTP 403 is not refreshed: a refresh does not change the scopes. When the
     /// tokens are still rejected, or a 401 cannot be refreshed, the connection gets no more
-    /// requests until the next Connect.
+    /// requests until the next Connect. A Disconnect or a newer Connect during the first
+    /// request or the refresh stops the work with ``ManualLogin/Failure/changed``: the tokens
+    /// of the old login are never sent again.
     private func usage() async throws -> (ManualCredential, UsageResponse) {
         let credential = try await login.usable()
         do {
@@ -68,6 +70,7 @@ struct ManualRefresh: Sendable {
                 await login.markRejected(credential)
                 throw failure
             }
+            try await login.ensureCurrent(refreshed)
             do {
                 return (refreshed, try await api.usage(accessToken: refreshed.accessToken))
             } catch let failure as UsageFailure where failure.isRejection {
@@ -79,7 +82,7 @@ struct ManualRefresh: Sendable {
 
     private func failed(_ failure: AccountFailure, _ prior: AccountUsage?) async -> AccountUsage {
         failure.account(
-            id: Self.accountID, name: ConfigDirectoryScanner.name(for: Self.accountID),
+            id: Self.accountID, name: Self.name,
             prior: prior, status: await login.ownerStatus(), audience: .manual, now: now())
     }
 }

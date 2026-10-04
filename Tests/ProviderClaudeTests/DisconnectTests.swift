@@ -42,6 +42,132 @@ extension ClaudeTests {
             #expect(keychain.writes == ["delete"])
         }
 
+        @Test func aDisconnectDuringTheRequestStopsTheRefreshAfterHTTP401() async throws {
+            let harness = try ClaudeHarness(.manual)
+            try harness.storeManual(expiresAt: nil)
+            let checking = Gate()
+            let http = FakeHTTPClient { request in
+                if request.url == TokenRefresher.url { return .json(200, Self.rotated) }
+                await checking.wait()
+                return bearer(request) == "new-access" ? .json(200, "{}") : .json(401, "{}")
+            }
+            let provider = harness.provider(http)
+
+            let fetch = Task { try await provider.fetch(previous: nil) }
+            #expect(await checking.waitForArrivals())
+            try await provider.disconnectManual()
+            checking.open()
+            let usage = try await fetch.value
+
+            // The deleted login's refresh token is never sent, and no second request goes out.
+            #expect(http.requests(to: TokenRefresher.url).isEmpty)
+            #expect(http.usageTokens == ["old-access"])
+            #expect(!usage.accounts[0].hasObservation)
+            #expect(
+                usage.accounts[0].issue?.message
+                    == "The Claude connection changed during the usage check.")
+        }
+
+        @Test func aDisconnectDuringTheRefreshAfterHTTP401SendsNoSecondRequest() async throws {
+            let harness = try ClaudeHarness(.manual)
+            try harness.storeManual(expiresAt: nil)
+            let refreshing = Gate()
+            let http = FakeHTTPClient { request in
+                if request.url == TokenRefresher.url {
+                    await refreshing.wait()
+                    return .json(200, Self.rotated)
+                }
+                return bearer(request) == "new-access" ? .json(200, "{}") : .json(401, "{}")
+            }
+            let provider = harness.provider(http)
+
+            let fetch = Task { try await provider.fetch(previous: nil) }
+            #expect(await refreshing.waitForArrivals())
+            try await provider.disconnectManual()
+            refreshing.open()
+            let usage = try await fetch.value
+
+            #expect(http.usageTokens == ["old-access"])
+            #expect(!usage.accounts[0].hasObservation)
+            #expect(harness.manualItem() == nil)
+        }
+
+        @Test func aNewerConnectDuringTheRequestStopsTheRefreshAfterHTTP401() async throws {
+            let harness = try ClaudeHarness(.manual)
+            try harness.storeManual(expiresAt: nil)
+            let checking = Gate()
+            let http = FakeHTTPClient { request in
+                if request.url == TokenRefresher.url { return .json(200, Self.rotated) }
+                if bearer(request) == "fresh" { return .json(200, "{}") }
+                await checking.wait()
+                return .json(401, "{}")
+            }
+            let provider = harness.provider(http)
+
+            let fetch = Task { try await provider.fetch(previous: nil) }
+            #expect(await checking.waitForArrivals())
+            try await provider.connectManually(
+                accessToken: "fresh", refreshToken: nil, expiresAt: nil)
+            checking.open()
+            let usage = try await fetch.value
+
+            #expect(http.requests(to: TokenRefresher.url).isEmpty)
+            #expect(http.usageTokens == ["old-access", "fresh"])
+            #expect(!usage.accounts[0].hasObservation)
+            #expect(harness.manualItem()?.accessToken == "fresh")
+        }
+
+        @Test(arguments: [true, false])
+        func aConnectCancelledDuringItsSaveWritesTheOldItemBack(hasOldLogin: Bool) async throws {
+            let harness = try ClaudeHarness(.manual)
+            if hasOldLogin { try harness.storeManual(expiresAt: .reference(7200)) }
+            let saving = Signal()
+            let release = Signal()
+            let keychain = ScriptedKeychain(base: harness.keychain) { password in
+                let token = password.flatMap {
+                    try? JSONDecoder.meter.decode(ManualCredential.self, from: $0)
+                }?.accessToken
+                guard token == "pasted" else { return }
+                saving.raise()
+                release.block()
+            }
+            let provider = harness.provider(
+                usageServer(["pasted": "{}", "old-access": "{}"]), keychain: keychain)
+
+            let connect = Task {
+                try await provider.connectManually(
+                    accessToken: "pasted", refreshToken: nil, expiresAt: nil)
+            }
+            #expect(await saving.wait())
+            await provider.cancelManualConnect()
+            release.raise()
+
+            let error = await #expect(throws: ProviderError.self) { try await connect.value }
+            #expect(
+                error?.issue.message
+                    == "The Claude connection changed while the tokens were checked. Try again.")
+            #expect(keychain.writes == ["pasted", hasOldLogin ? "old-access" : "delete"])
+            #expect(harness.manualItem()?.accessToken == (hasOldLogin ? "old-access" : nil))
+        }
+
+        @Test(arguments: [[false], [true, false]])
+        func aConnectThatIsNoLongerWantedLeavesTheOldItem(answers: [Bool]) async throws {
+            let harness = try ClaudeHarness(.manual)
+            try harness.storeManual(expiresAt: .reference(7200))
+            let provider = harness.provider(usageServer(["pasted": "{}"]))
+            let remaining = Locked(answers)
+
+            await #expect(throws: ProviderError.self) {
+                try await provider.connectManually(
+                    accessToken: "pasted", refreshToken: nil, expiresAt: nil,
+                    isWanted: { remaining.withLock { $0.removeFirst() } })
+            }
+
+            // Asked before the save and again after it.
+            #expect(remaining.value.isEmpty)
+            #expect(harness.manualItem()?.accessToken == "old-access")
+        }
+
         @Test func aConnectThatOutlivesADisconnectStoresNothing() async throws {
             let harness = try ClaudeHarness(.manual)
             try harness.storeManual(expiresAt: .reference(7200))
@@ -143,8 +269,7 @@ extension ClaudeTests {
             let vault = ManualCredentialVault(keychain: keychain, timeout: .milliseconds(100))
             func credential(_ token: String) -> ManualCredential {
                 ManualCredential(
-                    accessToken: token, refreshToken: nil, expiresAt: nil, subscriptionType: nil,
-                    connectionID: "c")
+                    accessToken: token, refreshToken: nil, expiresAt: nil, connectionID: "c")
             }
 
             await #expect(throws: TimeoutError.self) {

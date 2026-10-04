@@ -16,12 +16,7 @@ extension ClaudeTests {
             -> ClaudeHarness
         {
             let harness = try ClaudeHarness(.manual)
-            let stored = ManualCredential(
-                accessToken: "old-access", refreshToken: refreshToken, expiresAt: expiresAt,
-                subscriptionType: "pro", connectionID: "connection-1")
-            harness.keychain.store(
-                String(decoding: try JSONEncoder.meter.encode(stored), as: UTF8.self),
-                service: ManualCredentialVault.service, account: ManualCredentialVault.account)
+            try harness.storeManual(refreshToken: refreshToken, expiresAt: expiresAt)
             return harness
         }
 
@@ -70,10 +65,10 @@ extension ClaudeTests {
 
         @Test func concurrentCallersShareOneRefreshAndTheRealExpiryIsStored() async throws {
             let harness = try connected(expiresAt: .reference(30))
-            let latch = Latch()
+            let refreshing = Gate()
             let http = FakeHTTPClient { request in
                 if request.url == TokenRefresher.url {
-                    await latch.wait()
+                    await refreshing.wait()
                     return .json(200, Self.rotated)
                 }
                 return bearer(request) == "new-access" ? .json(200, "{}") : .json(401, "{}")
@@ -82,13 +77,10 @@ extension ClaudeTests {
 
             async let first = provider.fetch(previous: nil)
             async let second = provider.fetch(previous: nil)
-            // Both callers wait on the one token request before it answers.
-            let deadline = ContinuousClock.now + .seconds(5)
-            while await provider.manualLogin.refreshWaiters < 2, ContinuousClock.now < deadline {
-                try await Task.sleep(for: .milliseconds(1))
-            }
-            #expect(await provider.manualLogin.refreshWaiters == 2)
-            await latch.open()
+            // The second caller joins the request in flight, or uses its rotation; either way
+            // the old refresh token is sent once.
+            #expect(await refreshing.waitForArrivals())
+            refreshing.open()
             let results = try await [first, second]
 
             #expect(http.requests(to: TokenRefresher.url).count == 1)
@@ -119,7 +111,21 @@ extension ClaudeTests {
             #expect(http.usageTokens == ["old-access", "new-access"])
             #expect(http.requests(to: TokenRefresher.url).count == 1)
             #expect(usage.accounts[0].windows.first?.usedPercent == 9)
-            #expect(usage.accounts[0].plan == "Pro")
+            // Pasted tokens name no plan; the card shows the user's plan badge.
+            #expect(usage.accounts[0].plan == nil)
+        }
+
+        @Test func anItemWithUnknownKeysStillLoads() async throws {
+            let harness = try ClaudeHarness(.manual)
+            harness.keychain.store(
+                #"{"accessToken": "a", "refreshToken": "r", "subscriptionType": "pro", "#
+                    + #""connectionID": "c"}"#,
+                service: ManualCredentialVault.service, account: ManualCredentialVault.account)
+
+            let usage = try await harness.provider(usageServer(["a": "{}"])).fetch(previous: nil)
+
+            #expect(usage.accounts[0].hasObservation)
+            #expect(usage.accounts[0].plan == nil)
         }
 
         @Test func tokensRejectedAfterARefreshAreNotSentAgain() async throws {

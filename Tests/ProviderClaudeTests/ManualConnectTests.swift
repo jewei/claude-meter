@@ -87,6 +87,83 @@ extension ClaudeTests {
             #expect(http.requests(to: TokenRefresher.url).count == 2)
         }
 
+        @Test func aDisconnectForgetsARotationThatArrivesAfterIt() async throws {
+            let harness = try ClaudeHarness(.off)
+            let refreshing = Gate()
+            let http = FakeHTTPClient { request in
+                if request.url == TokenRefresher.url {
+                    await refreshing.wait()
+                    return .json(200, Self.rotated)
+                }
+                return bearer(request) == "new-access" ? .json(200, "{}") : .json(401, "{}")
+            }
+            let provider = harness.provider(http)
+
+            let connect = Task {
+                try await provider.connectManually(
+                    accessToken: "expired", refreshToken: "pasted", expiresAt: .reference(-10))
+            }
+            #expect(await refreshing.waitForArrivals())
+            try await provider.disconnectManual()
+            refreshing.open()
+
+            let error = await #expect(throws: ProviderError.self) { try await connect.value }
+            #expect(
+                error?.issue.message
+                    == "The Claude connection changed while the tokens were checked. Try again.")
+            #expect(http.usageTokens.isEmpty)
+            // A retry with the same pasted tokens cannot use the tokens that Disconnect forgot.
+            try await provider.connectManually(
+                accessToken: "expired", refreshToken: "pasted", expiresAt: .reference(-10))
+            #expect(http.requests(to: TokenRefresher.url).count == 2)
+        }
+
+        @Test func aSharedRefreshKeepsTheConnectionOfEachCaller() async throws {
+            let harness = try ClaudeHarness(.manual)
+            try harness.storeManual(refreshToken: "shared", expiresAt: .reference(10))
+            let refreshing = Gate()
+            let committing = Gate()
+            let http = FakeHTTPClient { request in
+                if request.url == TokenRefresher.url {
+                    await refreshing.wait()
+                    return .json(200, Self.rotated)
+                }
+                return bearer(request) == "new-access" ? .json(200, "{}") : .json(401, "{}")
+            }
+            let provider = harness.provider(http)
+
+            // A Connect starts the token request for the refresh token that is also stored.
+            let connect = Task {
+                try await provider.connectManually(
+                    accessToken: "expired", refreshToken: "shared", expiresAt: .reference(-10),
+                    isWanted: {
+                        await committing.wait()
+                        return true
+                    })
+            }
+            #expect(await refreshing.waitForArrivals())
+            // A fetch of the stored login joins it once it has read the stored item.
+            let fetch = Task { try await provider.fetch(previous: nil) }
+            let deadline = ContinuousClock.now + .seconds(5)
+            while !harness.keychain.readServices.contains(ManualCredentialVault.service),
+                ContinuousClock.now < deadline
+            {
+                try await Task.sleep(for: .milliseconds(1))
+            }
+            try await Task.sleep(for: .milliseconds(50))
+            refreshing.open()
+            let usage = try await fetch.value
+            committing.open()
+            try await connect.value
+
+            // The rotation of the stored login keeps its owner, and the Connect gets a new one.
+            #expect(usage.accounts[0].hasObservation)
+            #expect(
+                usage.accounts[0].owner
+                    == .identity(Digest.sha256(parts: ["claude", "manual", "connection-1"])))
+            #expect(harness.manualItem()?.connectionID != "connection-1")
+        }
+
         @Test func aStaleTokenWithoutExpiryTriesTheRefreshTokenOnce() async throws {
             let harness = try ClaudeHarness(.off)
             let http = usageServer(["new-access": "{}"], tokenResponse: .json(200, Self.rotated))

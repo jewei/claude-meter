@@ -180,8 +180,3 @@ struct UsageResponse: Sendable, Equatable {
         number(value).flatMap { Int(exactly: $0) }
     }
 }
-
-extension String {
-    /// Nil for an empty string.
-    fileprivate var nilIfEmpty: String? { isEmpty ? nil : self }
-}

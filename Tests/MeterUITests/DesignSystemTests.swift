@@ -10,7 +10,7 @@ import Testing
         MeterFont.registerBundledFonts()
         #expect(
             MeterFont.availableFaces == [
-                "Fredoka-Regular", "Fredoka-SemiBold", "Fredoka-Bold", "Nunito-SemiBold",
+                "Fredoka-SemiBold", "Fredoka-Bold", "Nunito-SemiBold",
                 "Nunito-Bold", "Nunito-ExtraBold",
             ])
     }

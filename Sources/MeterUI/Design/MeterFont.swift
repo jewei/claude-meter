@@ -10,11 +10,10 @@ import SwiftUI
 /// same weight, so the layout never depends on registration.
 @MainActor enum MeterFont {
     enum DisplayWeight: Sendable {
-        case regular, semibold, bold
+        case semibold, bold
 
         var face: String {
             switch self {
-            case .regular: "Fredoka-Regular"
             case .semibold: "Fredoka-SemiBold"
             case .bold: "Fredoka-Bold"
             }
@@ -22,7 +21,6 @@ import SwiftUI
 
         var systemWeight: Font.Weight {
             switch self {
-            case .regular: .regular
             case .semibold: .semibold
             case .bold: .bold
             }
@@ -72,7 +70,7 @@ import SwiftUI
             CTFontManagerRegisterFontURLs(urls as CFArray, .process, true, nil)
         }
         let faces =
-            [DisplayWeight.regular, .semibold, .bold].map(\.face)
+            [DisplayWeight.semibold, .bold].map(\.face)
             + [BodyWeight.semibold, .bold, .extraBold].map(\.face)
         return Set(faces.filter { NSFont(name: $0, size: 12) != nil })
     }()

@@ -19,7 +19,6 @@ import Testing
         let model = PopoverModel(Fixture.context(settings, readings: [:]))
         #expect(model.content == .status(.onboarding))
         #expect(model.updatedText == nil)
-        #expect(!model.showsQuit)
     }
 
     @Test func pausedWithoutDataExplainsPause() {

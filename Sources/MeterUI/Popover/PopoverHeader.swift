@@ -35,9 +35,9 @@ struct PopoverHeader: View {
             SquareIconButton(symbol: "gearshape.fill", label: "Settings") {
                 actions.openSettings(nil)
             }
-            if popover.showsQuit {
-                SquareIconButton(symbol: "power", label: "Quit Claude Meter", action: actions.quit)
-            }
+            // Always there, also on the welcome: the status item has no menu, so this is the
+            // only way to quit before Settings opens.
+            SquareIconButton(symbol: "power", label: "Quit Claude Meter", action: actions.quit)
         }
         .padding(.horizontal, 15)
         .padding(.top, 14)

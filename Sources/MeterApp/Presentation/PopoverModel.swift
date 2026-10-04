@@ -13,7 +13,6 @@ public struct PopoverModel: Equatable, Sendable {
 
     /// `2m ago` for the main meter's observation. Nil before onboarding.
     public let updatedText: String?
-    public let showsQuit: Bool
     public let showsUpdateNotice: Bool
     public let content: Content
 
@@ -23,7 +22,6 @@ public struct PopoverModel: Equatable, Sendable {
         let meter = MainMeter(context)
         updatedText =
             onboarded ? Formatting.age(since: meter.selected?.observedAt, now: context.now) : nil
-        showsQuit = onboarded
         showsUpdateNotice = context.isUpdateAvailable
         content = Self.content(context, meter: meter)
     }

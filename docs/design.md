@@ -160,8 +160,8 @@ its focus.
 ```
 
 Header: a 30 pt bolt tile, "Claude Meter" (never wraps), the updated time (truncates first),
-then Settings and Quit (28 pt). Settings, "Get started →" (on the Data tab), and "Open
-Settings" open Settings, which ends the welcome.
+then Settings and Quit (28 pt; Quit shows on the welcome too). Settings, "Get started →"
+(on the Data tab), and "Open Settings" open Settings, which ends the welcome.
 
 Status screens (`StatusScreenView`): a 76 pt raised disc with the mascot (hidden from
 accessibility), Fredoka SemiBold 20 title, wrapping Nunito SemiBold 12 message (inline code

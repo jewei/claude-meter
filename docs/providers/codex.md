@@ -158,14 +158,16 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
 
 6. Recovery starts only when `auth.json` is missing, has no tokens, is not valid JSON, or
    cannot be read; when the access token expires within 60 s; or when the usage request
-   returns HTTP 401 or 403.
+   returns HTTP 401 or 403. A home folder that does not exist starts no recovery: Codex has
+   no login there, and the child could create files in it.
 7. Network errors, timeouts, other HTTP statuses, unknown response formats, and API-key auth
    never start recovery. The original error shows.
 8. Each recovery starts one child process. Each JSON-RPC step has a 5 s limit. Every path
    stops the child: TERM, then KILL after 0.25 s, then a wait until it is reaped.
 9. A timeout names the step that timed out, such as `account/read`.
 10. An error reply to `account/read` is ignored: account details are optional, and the rate
-    limits are still read. An API-key account stops before `account/rateLimits/read`.
+    limits are still read. An API-key account, and `"account": null` (no login), stop before
+    `account/rateLimits/read`.
 11. Lines that are not JSON objects, notifications, and server requests (lines with a
     `method`) are skipped while the client waits for a response.
 12. A failed recovery shows both reasons: `Codex App Server failed: … Direct OAuth failed: …`.
@@ -205,18 +207,28 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
 ### Ownership and retention
 
 25. The owner is `identity(sha256("codex", member, workspace))` when the tokens name both.
-    Otherwise it is `credential(sha256(access token))`. A file without usable tokens has the
-    owner `credential(sha256(file bytes))`.
-26. A missing file or API-key auth is signed out. A file that cannot be read now is unknown.
+    Otherwise it is `credential(sha256(access token))`. Valid JSON without usable tokens has
+    the owner `credential(sha256(file bytes))`. A login without `auth.json` (Codex can keep it
+    in the keyring) has the owner `credential(sha256("codex-app-server", email))` from the
+    ChatGPT email that `account/read` reports. A file that is not JSON names no owner.
+26. The owner status from the file: tokens are signed in with their owner. API-key auth and
+    a home folder that does not exist are signed out. A missing file is unknown (only Codex
+    knows a keyring login). A file that is not JSON is unknown (Codex can be rewriting it). A
+    file that cannot be read now is unknown.
 27. After a direct request, the owner must be the same, or the response is discarded with
     `Codex sign-in changed or could not be verified. Refresh again.`
 28. After recovery, a ChatGPT identity must stay the same. Without an identity before, the
     response is accepted with the owner that the file has after recovery, because Codex can
-    rewrite the file while it renews the tokens. Without a readable file, the response is
-    accepted without an owner only when the file state did not change.
+    rewrite the file while it renews the tokens. Without a file before and after, the response
+    is accepted with the owner from `account/read`. Every other case, including a file that
+    cannot be read or parsed after recovery, names no owner, and the response is discarded.
+    An observation always has an owner.
 29. A failed home keeps its previous observation as stale while `AccountUsage.belongs(to:)`
     accepts the current owner status. An unknown status keeps it. Otherwise the home is
-    unavailable with the issue and the attempt time.
+    unavailable with the issue and the attempt time. The status after a failure: API-key auth,
+    and `"account": null` from Codex, are signed out whatever the file says. Without a file,
+    the account from `account/read` decides, no Codex CLI is signed out, and otherwise the
+    status is unknown. With a file, rule 26 decides.
 30. Observed homes with the same owner have `sharesLogin` set.
 
 ### Time and concurrency

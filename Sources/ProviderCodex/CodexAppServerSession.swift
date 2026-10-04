@@ -27,7 +27,10 @@ struct CodexAppServerSession {
             // still say whether the login works.
             account = nil
         }
-        if CodexAppServerResult.authMode(account: account) == .apiKey {
+        // API-key auth has no subscription quota, and no account has no login.
+        if CodexAppServerResult.authMode(account: account) == .apiKey
+            || CodexAppServerResult.reportsNoAccount(account)
+        {
             return CodexRecoveryReply(account: account, rateLimits: nil)
         }
         try Task.checkCancellation()

@@ -57,14 +57,15 @@ extension CodexTests {
             }
         }
 
-        @Test func missingTokensAndInvalidJSONAreUnusable() {
-            guard case .unusable(.missingTokens, _) = parse(#"{"auth_mode":"chatgpt"}"#),
-                case .unusable(.missingTokens, _) = parse(#"{"tokens":{"access_token":"  "}}"#),
-                case .unusable(.authFileInvalid, _) = parse("not json"),
-                case .unusable(.authFileInvalid, _) = parse("[]")
-            else {
-                Issue.record("Expected unusable auth files")
+        @Test func missingTokensAndInvalidJSONAreDifferent() {
+            let noTokens = #"{"auth_mode":"chatgpt"}"#
+            #expect(parse(noTokens) == .noTokens(fileDigest: Digest.sha256(Data(noTokens.utf8))))
+            guard case .noTokens = parse(#"{"tokens":{"access_token":"  "}}"#) else {
+                Issue.record("Blank tokens are no tokens")
                 return
+            }
+            for text in ["not json", "[]", "", #"{"tokens":{"access_tok"#] {
+                #expect(parse(text) == .invalid, "\(text)")
             }
         }
 
@@ -76,6 +77,12 @@ extension CodexTests {
 
             _ = try root.makeDirectory("home/auth.json")
             #expect(try await CodexLogin.read(home, timeout: .seconds(5)) == .unreadable)
+
+            // CDX-14: a home folder that does not exist, or a file in its place, has no login.
+            let gone = CodexHome(directory: root.path("gone"), isImplicit: false)
+            #expect(try await CodexLogin.read(gone, timeout: .seconds(5)) == .noHome)
+            let file = CodexHome(directory: try root.write("x", to: "file"), isImplicit: false)
+            #expect(try await CodexLogin.read(file, timeout: .seconds(5)) == .noHome)
         }
 
         @Test func aFIFOAuthFileDoesNotBlock() async throws {
@@ -150,15 +157,18 @@ extension CodexTests {
             #expect(credentials.owner == .credential(Digest.sha256("opaque")))
         }
 
+        /// CDX-02, CDX-04: only API-key auth and a missing home are signed out. A missing
+        /// file can be a keyring login, and a file that is not JSON can be half written.
         @Test func ownerStatusFollowsTheFile() {
             #expect(CodexLogin.apiKey.ownerStatus == .signedOut)
-            #expect(CodexLogin.missing.ownerStatus == .signedOut)
+            #expect(CodexLogin.noHome.ownerStatus == .signedOut)
+            #expect(CodexLogin.missing.ownerStatus == .unknown)
+            #expect(CodexLogin.invalid.ownerStatus == .unknown)
+            #expect(CodexLogin.invalid.owner == nil)
             #expect(CodexLogin.unreadable.ownerStatus == .unknown)
-            let unusable = parse(#"{"auth_mode":"chatgpt"}"#)
+            let text = #"{"auth_mode":"chatgpt"}"#
             #expect(
-                unusable.ownerStatus
-                    == .signedIn(.credential(Digest.sha256(Data(#"{"auth_mode":"chatgpt"}"#.utf8))))
-            )
+                parse(text).ownerStatus == .signedIn(.credential(Digest.sha256(Data(text.utf8)))))
         }
     }
 }

@@ -74,7 +74,13 @@ enum CodexFixtures {
            {"title":"Full reset","expiresAt":1791201600},{"title":"Full reset","expiresAt":1791288000}]}}
         """
 
-    static let chatGPTAccount = #"{"account":{"type":"chatgpt","planType":"plus"}}"#
+    /// An `account/read` result in the upstream shape.
+    static let chatGPTAccount =
+        #"{"account":{"type":"chatgpt","email":"me@example.com","planType":"plus"},"requiresOpenaiAuth":true}"#
+
+    /// The owner that recovery gives a login without an auth file, from `chatGPTAccount`.
+    static let keyringOwner = AccountOwner.credential(
+        Digest.sha256(parts: ["codex-app-server", "me@example.com"]))
 }
 
 /// A ``CodexRecovery`` that answers from a closure and records each call.

@@ -10,6 +10,7 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
     case missingTokens
     case apiKeyOnly
     case accessTokenExpired
+    case homeMissing
 
     // The usage request
     case loginRequired
@@ -25,6 +26,8 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
     case appServerFailed(String)
     case appServerStopped
     case appServerUnexpected
+    /// `account/read` reported no account: Codex has no login for the home.
+    case notSignedIn
     case allSourcesFailed(appServer: String, direct: String, needsAction: Bool)
 
     // The whole account
@@ -45,6 +48,8 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
             "Codex API-key auth has no ChatGPT subscription quota. Sign in with ChatGPT in Codex."
         case .accessTokenExpired:
             "Codex access token needs renewal by Codex. Open Codex or run `codex login`."
+        case .homeMissing:
+            "Codex home folder not found. Run `codex login`, or check the folder in Settings."
         case .loginRequired:
             "Codex login required. Run `codex login`."
         case .httpStatus(let status, _):
@@ -67,6 +72,8 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
             "Codex CLI stopped before it answered. Update Codex, then refresh."
         case .appServerUnexpected:
             "Codex CLI returned an unexpected response. Update Codex, then refresh."
+        case .notSignedIn:
+            "Codex is not signed in. Run `codex login`."
         case .allSourcesFailed(let appServer, let direct, _):
             "Codex App Server failed: \(appServer) Direct OAuth failed: \(direct)"
         case .signInChanged:
@@ -79,8 +86,8 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
     /// Only the user can fix it, for example by signing in again.
     var needsAction: Bool {
         switch self {
-        case .authFileInvalid, .missingTokens, .apiKeyOnly, .loginRequired, .cliNotFound,
-            .appServerLaunchFailed:
+        case .authFileInvalid, .missingTokens, .apiKeyOnly, .homeMissing, .loginRequired,
+            .cliNotFound, .appServerLaunchFailed, .notSignedIn:
             true
         case .allSourcesFailed(_, _, let needsAction):
             needsAction
@@ -101,6 +108,14 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
         default:
             false
         }
+    }
+
+    /// A failed recovery after `direct` sent the login to it.
+    static func combining(_ recovery: any Error, direct: CodexError) -> CodexError {
+        let recoveryNeedsAction = (recovery as? CodexError)?.needsAction ?? false
+        return .allSourcesFailed(
+            appServer: recovery.localizedDescription, direct: direct.localizedDescription,
+            needsAction: recoveryNeedsAction || direct.needsAction)
     }
 
     var issue: UsageIssue {

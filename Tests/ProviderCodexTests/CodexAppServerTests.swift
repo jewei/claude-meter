@@ -157,9 +157,13 @@ extension CodexTests {
             #expect(reply.rateLimits != nil)
         }
 
-        @Test func anAPIKeyAccountStopsBeforeRateLimits() async throws {
+        /// API-key auth has no subscription quota, and `"account": null` has no login.
+        @Test(arguments: [
+            #"{"type":"apiKey"}"#, "null",
+        ])
+        func anAccountWithoutQuotaStopsBeforeRateLimits(account: String) async throws {
             let cli = try FakeCodexCLI(
-                accountReply: #"printf '%s\n' '{"id":2,"result":{"account":{"type":"apiKey"}}}'"#)
+                accountReply: #"printf '%s\n' '{"id":2,"result":{"account":\#(account)}}'"#)
             defer { cli.root.remove() }
             let reply = try await cli.server().recover(cli.home, environment: cli.environment)
             #expect(reply.rateLimits == nil)

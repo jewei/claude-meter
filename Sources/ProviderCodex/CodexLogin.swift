@@ -13,10 +13,15 @@ enum CodexLogin: Sendable, Equatable {
     case chatGPT(CodexCredentials)
     /// The file selects API-key auth, which has no subscription quota.
     case apiKey
-    /// There is no file. Codex can keep its tokens in another store, so recovery can still work.
+    /// The home folder exists without an auth file. Codex can keep its tokens in the keyring,
+    /// so only Codex itself can say who is signed in.
     case missing
-    /// The file exists but has no usable tokens. `fileDigest` is the SHA-256 of its bytes.
-    case unusable(CodexError, fileDigest: String)
+    /// The home folder does not exist, so Codex has no login there.
+    case noHome
+    /// The file is JSON without usable tokens. `fileDigest` is the SHA-256 of its bytes.
+    case noTokens(fileDigest: String)
+    /// The file is not JSON. Codex can be in the middle of rewriting it.
+    case invalid
     /// The file could not be read now, for example because the read timed out.
     case unreadable
 
@@ -24,13 +29,15 @@ enum CodexLogin: Sendable, Equatable {
     /// Throws only `CancellationError`.
     static func read(_ home: CodexHome, timeout: Duration) async throws -> CodexLogin {
         let file = home.authFile
+        let directory = home.directory
         do {
-            let data = try await BlockingIO.run(timeout: timeout) { _ in
-                try LocalFile.read(file, maxBytes: maxFileBytes)
+            return try await BlockingIO.run(timeout: timeout) { _ in
+                do {
+                    return parse(try LocalFile.read(file, maxBytes: maxFileBytes))
+                } catch LocalFile.ReadError.notFound {
+                    return LocalFile.isDirectory(directory) ? .missing : .noHome
+                }
             }
-            return parse(data)
-        } catch LocalFile.ReadError.notFound {
-            return .missing
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -41,17 +48,14 @@ enum CodexLogin: Sendable, Equatable {
     /// The `auth_mode` rule comes first: API-key mode wins over tokens, and `chatgpt` mode
     /// wins over a stored `OPENAI_API_KEY`. Without a mode, a stored key means API-key auth.
     static func parse(_ data: Data) -> CodexLogin {
-        let digest = Digest.sha256(data)
-        guard let fields = JSONValue.parse(data)?.objectValue else {
-            return .unusable(.authFileInvalid, fileDigest: digest)
-        }
+        guard let fields = JSONValue.parse(data)?.objectValue else { return .invalid }
         let mode = CodexAuthMode(fields["auth_mode"]?.text)
         if mode == .apiKey { return .apiKey }
         if mode != .chatGPT, fields["OPENAI_API_KEY"]?.text != nil { return .apiKey }
         guard let tokens = fields["tokens"]?.objectValue,
             let accessToken = tokens["access_token"]?.text ?? tokens["accessToken"]?.text
         else {
-            return .unusable(.missingTokens, fileDigest: digest)
+            return .noTokens(fileDigest: Digest.sha256(data))
         }
         return .chatGPT(
             CodexCredentials(
@@ -60,20 +64,37 @@ enum CodexLogin: Sendable, Equatable {
                 accountID: tokens["account_id"]?.text ?? tokens["accountId"]?.text))
     }
 
-    /// Who the login belongs to, for retention. Nil when no file names an owner.
+    /// Who the login belongs to, for retention. Nil when the file names no owner.
     var owner: AccountOwner? {
         switch self {
         case .chatGPT(let credentials): credentials.owner
-        case .unusable(_, let digest): .credential(digest)
-        case .apiKey, .missing, .unreadable: nil
+        case .noTokens(let digest): .credential(digest)
+        case .apiKey, .missing, .noHome, .invalid, .unreadable: nil
         }
     }
 
+    /// The owner status that the file alone proves, for ``AccountUsage/belongs(to:)``.
+    ///
+    /// A missing file is unknown, because Codex can keep the login in the keyring. A file
+    /// that is not JSON is unknown, because Codex can be rewriting it. Only API-key auth and a
+    /// home folder that does not exist are signed out.
     var ownerStatus: OwnerStatus {
         switch self {
-        case .chatGPT, .unusable: owner.map(OwnerStatus.signedIn) ?? .unknown
-        case .apiKey, .missing: .signedOut
-        case .unreadable: .unknown
+        case .chatGPT, .noTokens: owner.map(OwnerStatus.signedIn) ?? .unknown
+        case .apiKey, .noHome: .signedOut
+        case .missing, .invalid, .unreadable: .unknown
+        }
+    }
+
+    /// The direct-path error that sends this login to recovery. Nil for ChatGPT tokens, which
+    /// send the usage request first, and for logins that recovery cannot help.
+    var recoveryReason: CodexError? {
+        switch self {
+        case .missing: .authFileMissing
+        case .noTokens: .missingTokens
+        case .invalid: .authFileInvalid
+        case .unreadable: .authFileUnreadable
+        case .chatGPT, .apiKey, .noHome: nil
         }
     }
 
@@ -83,7 +104,9 @@ enum CodexLogin: Sendable, Equatable {
         case .chatGPT: "ChatGPT tokens"
         case .apiKey: "API key"
         case .missing: "No auth file"
-        case .unusable(let error, _): error == .missingTokens ? "No tokens" : "Unreadable JSON"
+        case .noHome: "No home folder"
+        case .noTokens: "No tokens"
+        case .invalid: "Unreadable JSON"
         case .unreadable: "Could not read the auth file"
         }
     }

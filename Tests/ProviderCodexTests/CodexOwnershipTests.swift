@@ -149,24 +149,6 @@ extension CodexTests {
             #expect(account.observedAt == first.accounts.first?.observedAt)
         }
 
-        @Test func aLoginWithoutAnAuthFileIsShownButNotRetained() async throws {
-            let available = Locked(true)
-            let recovery = FakeRecovery { _, _ in
-                guard available.value else { throw FakeRecovery.Unused() }
-                return CodexRecoveryReply(
-                    account: nil, rateLimits: CodexFixtures.value(CodexFixtures.rateLimits))
-            }
-            let bed = try CodexTestBed(recovery: recovery)
-            defer { bed.remove() }
-            let first = try await bed.provider.fetch(previous: nil)
-            #expect(first.accounts.first?.hasObservation == true)
-            #expect(first.accounts.first?.owner == nil)
-
-            available.withLock { $0 = false }
-            let second = try await bed.provider.fetch(previous: first)
-            #expect(second.accounts.first?.hasObservation == false)
-        }
-
         @Test func reconcileDropsChangedOwnersAndRemovedHomes() async throws {
             let root = try TemporaryDirectory()
             defer { root.remove() }
@@ -193,7 +175,10 @@ extension CodexTests {
             try root.write(CodexFixtures.authJSON(), to: "work/auth.json")
             #expect(await provider.reconcile(usage)?.accounts.map(\.name) == ["Codex"])
 
+            // CDX-02: a missing file can be a keyring login, so only Codex can drop it.
             try FileManager.default.removeItem(at: root.path("home/auth.json"))
+            #expect(await provider.reconcile(usage)?.accounts.map(\.name) == ["Codex"])
+            try FileManager.default.removeItem(at: root.path("home"))
             #expect(await provider.reconcile(usage) == nil)
             #expect(await provider.reconcile(nil) == nil)
         }

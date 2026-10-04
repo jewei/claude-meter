@@ -14,6 +14,20 @@ enum CodexAppServerResult {
         CodexAuthMode(account?["account"]?["type"]?.text)
     }
 
+    /// True when `account/read` answered `"account": null`: Codex has no login for the home.
+    static func reportsNoAccount(_ account: JSONValue?) -> Bool {
+        account?.objectValue?["account"] == .null
+    }
+
+    /// The owner of a login without an auth file, such as one that Codex keeps in the keyring:
+    /// the ChatGPT email that `account/read` reports. It never leaves memory.
+    static func owner(account: JSONValue?) -> AccountOwner? {
+        guard authMode(account: account) == .chatGPT,
+            let email = account?["account"]?["email"]?.text
+        else { return nil }
+        return .credential(Digest.sha256(parts: ["codex-app-server", email]))
+    }
+
     static func quota(
         account: JSONValue?, rateLimits: JSONValue?, now: Date
     ) throws(CodexError) -> CodexQuota {

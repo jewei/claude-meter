@@ -53,7 +53,7 @@ extension CodexTests {
         }
 
         enum CredentialProblem: String, CaseIterable {
-            case missingFile, missingTokens, invalidJSON, directory, expiringToken
+            case missingFile, missingTokens, expiringToken
         }
 
         @Test(arguments: CredentialProblem.allCases)
@@ -64,8 +64,6 @@ extension CodexTests {
             switch problem {
             case .missingFile: break
             case .missingTokens: try bed.writeAuth(#"{"auth_mode":"chatgpt"}"#)
-            case .invalidJSON: try bed.writeAuth("{")
-            case .directory: _ = try bed.root.makeDirectory("home/auth.json")
             case .expiringToken:
                 let token = CodexFixtures.accessToken(expiresAt: .reference(60))
                 try bed.writeAuth(CodexFixtures.authJSON(accessToken: token))
@@ -80,6 +78,30 @@ extension CodexTests {
             #expect(
                 recovery.environments.first?["CODEX_HOME"]
                     == (await bed.homes()).first?.directory.path)
+        }
+
+        /// CDX-04, CDX-05: a file that cannot be read or parsed still starts recovery, but it
+        /// names no owner, so the response cannot be verified and is never shown.
+        @Test(arguments: ["invalid", "directory"])
+        func anUnverifiableFileStartsRecoveryButShowsNothing(problem: String) async throws {
+            let recovery = FakeRecovery(rateLimits: CodexFixtures.rateLimits)
+            let bed = try CodexTestBed(recovery: recovery)
+            defer { bed.remove() }
+            if problem == "invalid" {
+                try bed.writeAuth("{")
+            } else {
+                _ = try bed.root.makeDirectory("home/auth.json")
+            }
+
+            let account = try #require(try await bed.provider.fetch(previous: nil).accounts.first)
+
+            #expect(recovery.calls == 1)
+            #expect(!account.hasObservation)
+            #expect(
+                account.issue?.message
+                    == (problem == "invalid"
+                    ? CodexError.signInChanged : CodexError.authFileUnreadable)
+                    .localizedDescription)
         }
 
         @Test(arguments: [401, 403])

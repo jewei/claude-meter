@@ -84,9 +84,10 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
 
     /// Checks `home`'s auth file without a network request.
     ///
-    /// ChatGPT tokens are signed in, and API-key auth is signed out because it has no
-    /// subscription quota. Without usable tokens, an installed Codex CLI can still sign in
-    /// during refresh, so the status is unknown.
+    /// ChatGPT tokens are signed in. API-key auth is signed out because it has no
+    /// subscription quota, and so is a home folder that does not exist. Without usable tokens,
+    /// an installed Codex CLI can still find a login during refresh, for example in the
+    /// keyring, so the status is unknown.
     public func signInStatus(for home: CodexHome) async -> SignInStatus {
         guard let login = try? await CodexLogin.read(home, timeout: limits.fileRead) else {
             return .unknown("The sign-in check stopped. Open Settings again.")
@@ -94,9 +95,9 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
         switch login {
         case .chatGPT:
             return .signedIn
-        case .apiKey:
+        case .apiKey, .noHome:
             return .signedOut
-        case .missing, .unusable, .unreadable:
+        case .missing, .noTokens, .invalid, .unreadable:
             if (try? await locateCLI()) != nil {
                 return .unknown("Codex detected; checking sign-in during refresh.")
             }

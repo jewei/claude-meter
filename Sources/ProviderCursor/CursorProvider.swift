@@ -6,8 +6,9 @@ import MeterPlatform
 ///
 /// Reads Cursor's credentials without changing them and never renews them: Cursor owns its
 /// login. A token whose known expiry has passed is never sent. The provider reports one
-/// account, ``AccountID/default``. Its windows only display, because Cursor can never own the
-/// menu bar.
+/// account, ``AccountID/default``. Its billing window is binding for the card's severity, but
+/// it never selects the menu-bar account, because ``ProviderID/canOwnMenuBar`` is false for
+/// Cursor.
 public final class CursorProvider: UsageProvider, DiagnosticsReporting {
     /// The account label before the user renames it.
     static let accountName = "Cursor"
@@ -38,6 +39,7 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
         self.now = now
     }
 
+    /// Always ``ProviderID/cursor``.
     public var id: ProviderID { .cursor }
 
     /// Removes the previous reading when Cursor's login is gone or belongs to another account.

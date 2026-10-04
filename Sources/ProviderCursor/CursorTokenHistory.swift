@@ -56,6 +56,7 @@ public final class CursorTokenHistory: TokenHistoryProvider {
         self.calendar = calendar
     }
 
+    /// Always ``ProviderID/cursor``.
     public var id: ProviderID { .cursor }
 
     /// Reads token history for today and the previous six local days.

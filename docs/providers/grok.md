@@ -51,8 +51,10 @@ Accept: application/json
 User-Agent: ClaudeMeter
 ```
 
-Retry: transient failures (dropped connection, HTTP 502, 503, 504). Deadline: 30 s. Any 2xx
-status is success.
+Retry: up to 3 attempts after a transport failure (no network, a host that cannot be found or
+reached, a dropped connection, a timeout) or HTTP 408, 500, 502, 503, or 504; never after 429.
+A server `Retry-After` is never shortened. Deadline: 30 s for all attempts. Any 2xx status is
+success.
 
 Recorded response (grok 0.2.93):
 

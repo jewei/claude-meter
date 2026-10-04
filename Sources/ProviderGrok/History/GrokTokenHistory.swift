@@ -23,6 +23,7 @@ public final class GrokTokenHistory: TokenHistoryProvider {
         self.calendar = calendar
     }
 
+    /// Always ``ProviderID/grok``.
     public var id: ProviderID { .grok }
 
     /// Token history for today and the previous six local days, labeled as this Mac.

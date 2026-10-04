@@ -6,7 +6,8 @@ import MeterPlatform
 ///
 /// Reads the CLI's `auth.json` without changing it and never renews the login: the CLI owns
 /// it. A token whose `expires_at` has passed is never sent. The provider reports one account,
-/// ``AccountID/default``. Its window only displays, because Grok can never own the menu bar.
+/// ``AccountID/default``. Its credits window is binding for the card's severity, but it never
+/// selects the menu-bar account, because ``ProviderID/canOwnMenuBar`` is false for Grok.
 public final class GrokProvider: UsageProvider, DiagnosticsReporting {
     /// The account label before the user renames it.
     static let accountName = "Grok"
@@ -41,6 +42,7 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
         self.usesCustomHome = environment["GROK_HOME"].map { !Self.isBlank($0) } ?? false
     }
 
+    /// Always ``ProviderID/grok``.
     public var id: ProviderID { .grok }
 
     /// The Grok Build CLI's home: `GROK_HOME` when it is set and not blank, otherwise

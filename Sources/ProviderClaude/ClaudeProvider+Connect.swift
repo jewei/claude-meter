@@ -59,7 +59,9 @@ extension ClaudeProvider {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            throw ProviderError("Could not save credentials: \(error.localizedDescription)")
+            throw ProviderError(
+                "Could not save the tokens in the Keychain. \(error.localizedDescription) Try again."
+            )
         }
     }
 

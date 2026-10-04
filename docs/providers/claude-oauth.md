@@ -372,7 +372,7 @@ Settings texts for manual Connect:
 | HTTP 401 or 403 | Anthropic rejected these tokens. Check them and try again. |
 | Gate closed or HTTP 429, network failure, other HTTP status, invalid response, out of time | The same texts as automatic Connect |
 | Disconnect or newer Connect meanwhile | The Claude connection changed while the tokens were checked. Try again. |
-| Save failed, or the old item cannot be read before the save | Could not save credentials: <reason> |
+| Save failed, or the old item cannot be read before the save | Could not save the tokens in the Keychain. <reason> Try again. |
 
 Settings texts of `ClaudeSettingsModel`, for both Connects and Disconnect:
 

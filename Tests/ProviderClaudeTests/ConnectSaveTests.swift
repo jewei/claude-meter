@@ -145,10 +145,14 @@ extension ClaudeTests {
 
             let fetch = Task { try await provider.fetch(previous: nil) }
             #expect(await refreshing.waitForArrivals())
-            await #expect(throws: ProviderError.self) {
+            let error = await #expect(throws: ProviderError.self) {
                 try await provider.connectManually(
                     accessToken: "pasted", refreshToken: nil, expiresAt: nil)
             }
+            #expect(
+                error?.issue.message
+                    == "Could not save the tokens in the Keychain. The Keychain returned error "
+                    + "-34. Try again.")
             refreshing.open()
             let usage = try await fetch.value
 

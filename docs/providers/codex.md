@@ -162,8 +162,11 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
    no login there, and the child could create files in it.
 7. Network errors, timeouts, other HTTP statuses, unknown response formats, and API-key auth
    never start recovery. The original error shows.
-8. Each recovery starts one child process. Each JSON-RPC step has a 5 s limit. Every path
-   stops the child: TERM, then KILL after 0.25 s, then a wait until it is reaped.
+8. Each recovery starts one child process. The executable search and `initialize` have a 5 s
+   limit each. `account/read` (Codex renews the token there) and `account/rateLimits/read`
+   reach the network and have a 15 s limit each, so recovery ends within 41 s, inside the
+   fetch deadline. Every path stops the child: TERM, then KILL after 0.25 s, then a wait
+   until it is reaped.
 9. A timeout names the step that timed out, such as `account/read`.
 10. An error reply to `account/read` is ignored: account details are optional, and the rate
     limits are still read. An API-key account, and `"account": null` (no login), stop before

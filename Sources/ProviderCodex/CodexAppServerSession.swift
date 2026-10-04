@@ -6,22 +6,26 @@ import MeterPlatform
 ///
 /// The sequence is fixed: `initialize`, the `initialized` notification, `account/read` with
 /// `refreshToken: true` (Codex renews and stores its own tokens), then
-/// `account/rateLimits/read`. Each step has its own time limit. The caller stops the process.
+/// `account/rateLimits/read`. Each step has its own time limit: the two account steps reach
+/// the network, so they get a longer one. The caller stops the process.
 struct CodexAppServerSession {
     let process: LineProcess
     let stepLimit: Duration
+    let networkStepLimit: Duration
 
-    init(_ process: LineProcess, stepLimit: Duration) {
+    init(_ process: LineProcess, stepLimit: Duration, networkStepLimit: Duration) {
         self.process = process
         self.stepLimit = stepLimit
+        self.networkStepLimit = networkStepLimit
     }
 
     func run() async throws -> CodexRecoveryReply {
-        _ = try await call("initialize", id: 1, params: InitializeParams())
+        _ = try await call("initialize", id: 1, params: InitializeParams(), limit: stepLimit)
         try send(Message(id: nil, method: "initialized", params: NoParams()))
         let account: JSONValue?
         do {
-            account = try await call("account/read", id: 2, params: AccountReadParams())
+            account = try await call(
+                "account/read", id: 2, params: AccountReadParams(), limit: networkStepLimit)
         } catch CodexError.appServerFailed {
             // Codex answered with an error. Account details are optional; the rate limits
             // still say whether the login works.
@@ -34,18 +38,19 @@ struct CodexAppServerSession {
             return CodexRecoveryReply(account: account, rateLimits: nil)
         }
         try Task.checkCancellation()
-        let rateLimits = try await call("account/rateLimits/read", id: 3, params: NoParams())
+        let rateLimits = try await call(
+            "account/rateLimits/read", id: 3, params: NoParams(), limit: networkStepLimit)
         return CodexRecoveryReply(account: account, rateLimits: rateLimits)
     }
 
-    /// Sends one request and waits at most ``stepLimit`` for its response. A timeout names
-    /// this step, even when the process is still running.
+    /// Sends one request and waits at most `limit` for its response. A timeout names this
+    /// step, even when the process is still running.
     private func call(
-        _ method: String, id: Int, params: some Encodable & Sendable
+        _ method: String, id: Int, params: some Encodable & Sendable, limit: Duration
     ) async throws -> JSONValue? {
         try send(Message(id: id, method: method, params: params))
         do {
-            return try await withDeadline(stepLimit) { [process] in
+            return try await withDeadline(limit) { [process] in
                 try await Self.response(to: id, from: process)
             }
         } catch is TimeoutError {

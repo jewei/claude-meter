@@ -101,8 +101,13 @@ struct FakeCodexCLI {
     }
 
     /// The live recovery with no install folders, so a real `codex` is never found.
-    func server(stepLimit: Duration = .seconds(5)) -> CodexAppServer {
-        CodexAppServer(installFolders: [], stepLimit: stepLimit)
+    /// `networkStepLimit` defaults to `stepLimit`.
+    func server(
+        stepLimit: Duration = .seconds(5), networkStepLimit: Duration? = nil
+    ) -> CodexAppServer {
+        CodexAppServer(
+            installFolders: [], stepLimit: stepLimit,
+            networkStepLimit: networkStepLimit ?? stepLimit)
     }
 
     func requests() -> [String] {

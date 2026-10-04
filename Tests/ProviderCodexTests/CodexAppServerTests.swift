@@ -148,6 +148,17 @@ extension CodexTests {
             #expect(cli.childIsGone())
         }
 
+        /// CDX-17: `account/read` renews the token over the network, so it gets the longer
+        /// network limit, not the local step limit.
+        @Test func aSlowAccountReadGetsTheNetworkLimit() async throws {
+            let cli = try FakeCodexCLI(accountReply: "sleep 3.5; " + FakeCodexCLI.accountReply)
+            defer { cli.root.remove() }
+            let reply = try await cli.server(stepLimit: .seconds(3), networkStepLimit: .seconds(30))
+                .recover(cli.home, environment: cli.environment)
+            #expect(reply.account?["account"]?["planType"]?.text == "plus")
+            #expect(reply.rateLimits != nil)
+        }
+
         @Test func anErrorReplyToAccountReadStillReadsRateLimits() async throws {
             let cli = try FakeCodexCLI(
                 accountReply: #"printf '%s\n' '{"id":2,"error":{"code":-32600,"message":"busy"}}'"#)

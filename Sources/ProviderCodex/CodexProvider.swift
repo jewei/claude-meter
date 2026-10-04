@@ -62,7 +62,9 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
         self.refresh = CodexAccountRefresh(
             api: CodexUsageAPI(http: http, resetDetailsLimit: limits.resetDetails),
             recovery: recovery
-                ?? CodexAppServer(installFolders: installFolders, stepLimit: limits.appServerStep),
+                ?? CodexAppServer(
+                    installFolders: installFolders, stepLimit: limits.appServerStep,
+                    networkStepLimit: limits.appServerNetworkStep),
             environment: environment,
             fileReadLimit: limits.fileRead,
             now: now)

@@ -68,9 +68,10 @@ public struct PresentationContext: Sendable {
         else { return [] }
         return value.accounts.map { account in
             var account = account
-            account.name =
-                settings.displayName(for: provider, account: account.id)
-                ?? Self.friendlyName(account.name)
+            // Claude labels come from folder keys (`work`), so they read better capitalized.
+            // Codex folder names are shown as Settings lists them.
+            let label = provider == .claude ? Self.friendlyName(account.name) : account.name
+            account.name = settings.displayName(for: provider, account: account.id) ?? label
             if provider == .claude, account.plan == nil {
                 account.plan = settings.claude.planOverrides[account.id]
             }
@@ -78,7 +79,10 @@ public struct PresentationContext: Sendable {
         }
     }
 
-    /// Stale when the source says so, the last refresh failed, or the observation is old.
+    /// Whether the app shows the account as stale: the source marked it
+    /// (`AccountUsage.isStale`), the last refresh failed (`Reading.isStale`), or the observation
+    /// is more than ``staleAfter`` old or beyond ``futureTolerance`` in the future. The
+    /// accounts that ``accounts(for:)`` returns carry the result in `isStale`.
     func isStale(_ account: AccountUsage, reading: Reading<ProviderUsage>) -> Bool {
         if account.isStale || reading.isStale { return true }
         guard let observedAt = account.observedAt else { return false }

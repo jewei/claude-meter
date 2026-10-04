@@ -3,10 +3,18 @@ import MeterDomain
 
 /// Builds the "Usage limit resets" section.
 enum ResetsBuilder {
-    static func model(_ allowance: ResetAllowance?, now: Date) -> ResetsModel {
+    /// `calendar` sets the time zone and locale of the exact expiry in the tooltip; card
+    /// builders pass the context's calendar.
+    static func model(
+        _ allowance: ResetAllowance?, now: Date, calendar: Calendar = .current
+    ) -> ResetsModel {
         guard let allowance else {
             return ResetsModel(countText: "Not reported", rows: [], note: nil, summary: nil)
         }
+        let style = Date.FormatStyle(
+            date: .abbreviated, time: .shortened,
+            locale: calendar.locale ?? Formatting.numberLocale,
+            calendar: calendar, timeZone: calendar.timeZone)
         let rows =
             allowance.available == 0
             ? []
@@ -14,9 +22,8 @@ enum ResetsBuilder {
                 ResetsModel.Row(
                     title: reset.title,
                     expiryText: expiryText(reset.expiresAt, now: now),
-                    help: reset.expiresAt.map {
-                        "Expires \($0.formatted(date: .abbreviated, time: .shortened))"
-                    } ?? "Expiry date not provided")
+                    help: reset.expiresAt.map { "Expires \($0.formatted(style))" }
+                        ?? "Expiry date not provided")
             }
         let note: String? =
             if allowance.available == 0 {
@@ -49,7 +56,10 @@ struct TokenRowsBuilder {
     func model(provider: ProviderID, account: AccountID) -> TokenRowsModel? {
         guard context.isEnabled(provider) else { return nil }
         let reading = context.histories[provider]
-        let isAccountSource = provider == .cursor
+        // The history says where its counts come from; before the first one, the provider's
+        // usual source.
+        let source = reading?.value?.source ?? (provider == .cursor ? .account : .thisMac)
+        let isAccountSource = source == .account
         let history = reading?.value?.history(for: account)
         let rows = TokenPeriod.allCases.map { period in
             let count = history?.tokens(in: period, now: context.now, calendar: context.calendar)
@@ -67,11 +77,14 @@ struct TokenRowsBuilder {
                 : "Local sessions in this account's folder on this Mac, including earlier logins "
                     + "that used the folder. Other folders and devices are not included.",
             rows: rows,
-            note: note(reading: reading, history: history, provider: provider))
+            note: note(
+                reading: reading, history: history, provider: provider,
+                isAccountSource: isAccountSource))
     }
 
     private func note(
-        reading: Reading<ProviderTokenHistory>?, history: TokenHistory?, provider: ProviderID
+        reading: Reading<ProviderTokenHistory>?, history: TokenHistory?, provider: ProviderID,
+        isAccountSource: Bool
     ) -> String? {
         if let issue = reading?.issue { return issue.message }
         guard let history else {
@@ -80,7 +93,7 @@ struct TokenRowsBuilder {
         }
         if history.isPartial { return "Partial history · some records could not be counted" }
         if !history.hasRecords {
-            return provider == .cursor ? "No token records" : "No local token records"
+            return isAccountSource ? "No token records" : "No local token records"
         }
         let age = context.now.timeIntervalSince(history.observedAt)
         let isOld =

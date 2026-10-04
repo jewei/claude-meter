@@ -216,6 +216,87 @@ import Testing
         #expect(card.status == StatusLine(text: "Rate limited. Retrying in 3m.", isFailure: true))
     }
 
+    @Test func automaticOrderWithCodexMain() {
+        let claude = Fixture.usage(
+            .claude,
+            Fixture.account(
+                "claude",
+                balances: [Balance(kind: .extraUsage, amount: 1, limit: 5, unit: .currency("USD"))])
+        )
+        let codex = Fixture.usage(
+            .codex, Fixture.account("/a", session: 10), Fixture.account("/b", session: 60))
+        let cursor = Fixture.usage(.cursor, Fixture.account(.default))
+        let cards = cards(
+            [
+                .claude: Fixture.current(claude), .codex: Fixture.current(codex),
+                .cursor: Fixture.current(cursor),
+            ], enabled: [.claude, .codex, .cursor]
+        ) { $0.menuBar.provider = .codex }
+        // No extra usage card: it belongs to the Claude main meter only.
+        #expect(
+            cards.map(\.id) == [
+                .account(.codex, "/b"), .account(.codex, "/a"), .account(.claude, "claude"),
+                .account(.cursor, .default),
+            ])
+    }
+
+    @Test func codexAccountNamesStayAsSettingsShowThem() throws {
+        var account = Fixture.account("/Users/me/.codex-work")
+        account.name = ".codex-work"
+        let card = try #require(
+            cards(
+                [.codex: Fixture.current(Fixture.usage(.codex, account))], enabled: [.codex],
+                configure: { $0.menuBar.provider = .codex }
+            ).first)
+        #expect(card.title == ".codex-work")
+    }
+
+    @Test func barCardsShowSessionAndWeeklyWithCredits() throws {
+        let unlimited = Fixture.account(
+            "/h",
+            balances: [Balance(kind: .credits, amount: nil, unit: .credits, isUnlimited: true)])
+        let twelve = Fixture.account(
+            "/h", balances: [Balance(kind: .credits, amount: 12, unit: .credits)],
+            resets: ResetAllowance(available: 1))
+        let expected = [
+            (unlimited, "Unlimited credits"), (twelve, "12 credits · 1 usage reset available"),
+        ]
+        for (account, caption) in expected {
+            let card = try #require(
+                cards(
+                    [.codex: Fixture.current(Fixture.usage(.codex, account))], enabled: [.codex],
+                    configure: {
+                        $0.menuBar.provider = .codex
+                        $0.appearance.cardStyle = .bars
+                    }
+                ).first)
+            guard case .bars(let bars) = card.summary else {
+                Issue.record("Expected bars")
+                return
+            }
+            #expect(bars.bars.map(\.title) == ["Session", "Weekly"])
+            #expect(bars.caption == caption)
+        }
+    }
+
+    @Test func grokCaptionShowsOnDemandSpend() throws {
+        let grok = AccountUsage(
+            id: .default, name: "Grok",
+            windows: [Fixture.window(.weekly, used: 30, title: "Weekly credits")],
+            balances: [Balance(kind: .onDemand, amount: 5, limit: 20, unit: .currency("USD"))],
+            observedAt: .reference())
+        let card = try #require(
+            cards(
+                [.grok: Fixture.current(.init(provider: .grok, accounts: [grok]))],
+                enabled: [.grok]
+            ).first)
+        guard case .bars(let bars) = card.summary else {
+            Issue.record("Expected bars")
+            return
+        }
+        #expect(bars.caption == "Weekly credits · On-demand $5.00 of $20.00 · Resets in 2h")
+    }
+
     @Test func planBadges() {
         #expect(PlanBadge(plan: "Max 20x") == PlanBadge(plan: "MAX 20X", verbatim: true))
         #expect(PlanBadge(plan: "Max 20x")?.tier == .max)
@@ -244,6 +325,82 @@ import Testing
         #expect(
             ResetsBuilder.model(.init(available: 1), now: .reference()).note
                 == "Expiry details unavailable")
+    }
+
+    @Test func singularResetSummaryAndTooltipTimeZone() throws {
+        let allowance = ResetAllowance(
+            available: 1, resets: [.init(title: "Reset", expiresAt: .reference(.days(2)))])
+        let utc = ResetsBuilder.model(allowance, now: .reference(), calendar: .fixed())
+        let tokyo = ResetsBuilder.model(
+            allowance, now: .reference(), calendar: .fixed("Asia/Tokyo"))
+        #expect(utc.summary == "1 usage reset available")
+        // 12:00 UTC is 21:00 in Tokyo.
+        #expect(utc.rows.first?.help.contains("12:00") == true)
+        #expect(tokyo.rows.first?.help.contains("9:00") == true)
+    }
+
+    private func tokenRows(
+        _ provider: ProviderID, history: Reading<ProviderTokenHistory>?,
+        refreshing: Set<ProviderID> = [], account: AccountID = "a"
+    ) throws -> TokenRowsModel {
+        var context = Fixture.context(Fixture.settings(enabled: [provider]), readings: [:])
+        context.histories = history.map { [provider: $0] } ?? [:]
+        context.refreshingHistory = refreshing
+        return try #require(
+            TokenRowsBuilder(context: context).model(provider: provider, account: account))
+    }
+
+    private func history(
+        _ provider: ProviderID, source: ProviderTokenHistory.Source, observedAt: Date = .reference()
+    ) -> Reading<ProviderTokenHistory> {
+        let calendar = Calendar.fixed()
+        let today = calendar.startOfDay(for: .reference())
+        let account = TokenHistory(
+            dailyTokens: [today: 1], coverageStart: today.addingTimeInterval(-.days(6)),
+            observedAt: observedAt, timeZoneID: calendar.timeZone.identifier)
+        let value = ProviderTokenHistory(
+            provider: provider, source: source, accounts: ["a": account],
+            coverageStart: account.coverageStart, observedAt: observedAt,
+            timeZoneID: calendar.timeZone.identifier)
+        return .current(value, observedAt: observedAt)
+    }
+
+    @Test func tokenSourceLabelFollowsTheData() throws {
+        #expect(try tokenRows(.cursor, history: nil).sourceLabel == "Account usage")
+        #expect(try tokenRows(.claude, history: nil).sourceLabel == "This Mac")
+        let reported = try tokenRows(.codex, history: history(.codex, source: .account))
+        #expect(reported.sourceLabel == "Account usage")
+        #expect(reported.rows.first?.value == "1 token")
+    }
+
+    @Test func tokenRowsWhileScanningAndWhenOld() throws {
+        #expect(
+            try tokenRows(.claude, history: nil, refreshing: [.claude]).note
+                == "Reading token usage…")
+        #expect(try tokenRows(.claude, history: nil).note == "Token usage unavailable")
+        let old = history(.claude, source: .thisMac, observedAt: .reference(-700))
+        #expect(try tokenRows(.claude, history: old).note == "Token data may be stale")
+    }
+
+    @Test func formattingIsTheSameOnEveryMac() {
+        #expect(Formatting.tokens(35_800_000) == "35.8M tokens")
+        #expect(Formatting.tokens(1) == "1 token")
+        #expect(Formatting.money(1234.5, unit: .currency("USD")) == "$1234.50")
+        #expect(Formatting.money(12.3, unit: .currency("eur")) == "EUR 12.30")
+        #expect(Formatting.money(12, unit: .credits) == "12.00 credits")
+        #expect(Formatting.credits(1.5) == "1.5 credits")
+        #expect(Formatting.credits(1) == "1 credit")
+    }
+
+    @Test func ageShowsSecondsMinutesHoursAndDays() {
+        let now = Date.reference()
+        #expect(Formatting.age(since: nil, now: now) == "Not updated yet")
+        #expect(Formatting.age(since: now.addingTimeInterval(-3), now: now) == "Just now")
+        #expect(Formatting.age(since: now.addingTimeInterval(-42), now: now) == "42s ago")
+        #expect(Formatting.age(since: now.addingTimeInterval(-.minutes(12)), now: now) == "12m ago")
+        #expect(Formatting.age(since: now.addingTimeInterval(-.hours(3)), now: now) == "3h ago")
+        #expect(Formatting.age(since: now.addingTimeInterval(-.days(2)), now: now) == "2d ago")
+        #expect(Formatting.age(since: now.addingTimeInterval(60), now: now) == "Just now")
     }
 
     @Test func tokenRowsFormatCountsAndNotes() throws {

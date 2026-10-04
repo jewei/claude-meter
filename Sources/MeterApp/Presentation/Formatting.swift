@@ -50,16 +50,20 @@ enum Formatting {
         }
     }
 
+    /// The locale for numbers in English copy. A fixed locale keeps `35.8M tokens` and
+    /// `$12.34` consistent with the words around them, and keeps every builder pure.
+    static let numberLocale = Locale(identifier: "en_US_POSIX")
+
     /// `35.8M tokens`, `1 token`.
     static func tokens(_ count: Int64) -> String {
         let number = count.formatted(
-            .number.notation(.compactName).precision(.fractionLength(0...1)))
+            .number.notation(.compactName).precision(.fractionLength(0...1)).locale(numberLocale))
         return "\(number) \(count == 1 ? "token" : "tokens")"
     }
 
     /// `$12.34` for US dollars, otherwise the code first: `EUR 12.34`.
     static func money(_ amount: Decimal, unit: Balance.Unit) -> String {
-        let number = amount.formatted(.number.precision(.fractionLength(2)))
+        let number = amount.formatted(.number.precision(.fractionLength(2)).locale(numberLocale))
         switch unit {
         case .currency(let code) where code.uppercased() == "USD": return "$\(number)"
         case .currency(let code): return "\(code.uppercased()) \(number)"
@@ -69,7 +73,8 @@ enum Formatting {
 
     /// `12 credits`, `1.5 credits`.
     static func credits(_ amount: Decimal) -> String {
-        let number = amount.formatted(.number.precision(.fractionLength(0...1)))
+        let number = amount.formatted(
+            .number.precision(.fractionLength(0...1)).locale(numberLocale))
         return "\(number) \(amount == 1 ? "credit" : "credits")"
     }
 

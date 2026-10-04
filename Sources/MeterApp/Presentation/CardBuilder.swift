@@ -39,7 +39,8 @@ struct CardBuilder {
 
         switch provider {
         case .claude, .codex:
-            let resets = ResetsBuilder.model(account.resetAllowance, now: context.now)
+            let resets = ResetsBuilder.model(
+                account.resetAllowance, now: context.now, calendar: context.calendar)
             if context.settings.appearance.cardStyle == .rings {
                 disclosure = .alwaysOpen
                 summary = .rings(rings(account))

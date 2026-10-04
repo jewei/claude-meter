@@ -10,14 +10,16 @@ import Testing
 @MainActor
 @Suite(.timeLimit(.minutes(1))) struct AppModelTests {
     private let claude = FakeUsageProvider(.claude)
+    private let codex = FakeUsageProvider(.codex)
     private let grok = FakeUsageProvider(.grok)
 
     private func makeModel(_ settings: Settings = Settings()) -> AppModel {
         claude.enqueue(.sample(.claude, account: "claude", observedAt: Date()))
+        codex.enqueue(.sample(.codex, observedAt: Date()))
         grok.enqueue(.sample(.grok, observedAt: Date()))
         let defaults = MemoryStore()
         defaults.set(SettingsCodec.encode(settings), forKey: SettingsStore.storageKey)
-        let store = UsageStore(providers: [claude, grok])
+        let store = UsageStore(providers: [claude, codex, grok])
         let scheduler = RefreshScheduler(
             store: store, display: nil,
             sleep: { _ in
@@ -28,11 +30,12 @@ import Testing
             updater: DisabledUpdater())
     }
 
-    private func settle() async {
-        for _ in 0..<20 {
-            await Task.yield()
-            try? await Task.sleep(for: .milliseconds(2))
-        }
+    /// Settings onboarded, with Claude connected unless `connected` is false.
+    private func active(connected: Bool = true) -> Settings {
+        var settings = Settings()
+        settings.hasCompletedOnboarding = true
+        settings.claude.connection = connected ? .automatic : .off
+        return settings
     }
 
     @Test func completingOnboardingStartsRefreshing() async {
@@ -40,47 +43,81 @@ import Testing
         settings.claude.connection = .automatic
         let model = makeModel(settings)
         await model.start(archive: nil)
-        await settle()
+        await model.scheduler?.waitForWork()
         #expect(claude.fetchCount == 0)
         model.completeOnboarding()
-        #expect(await waitUntil { model.usage.readings[.claude] != nil })
+        await model.scheduler?.waitForWork()
         #expect(claude.fetchCount == 1)
+        #expect(model.usage.readings[.claude] != nil)
     }
 
     @Test func unconnectedClaudeNeitherRefreshesNorShows() async {
-        var settings = Settings()
-        settings.hasCompletedOnboarding = true
+        var settings = active(connected: false)
         settings.grok.isEnabled = true
         let model = makeModel(settings)
         await model.start(archive: nil)
-        #expect(await waitUntil { model.usage.readings[.grok] != nil })
+        await model.scheduler?.waitForWork()
+        #expect(model.usage.readings[.grok] != nil)
         #expect(claude.fetchCount == 0)
         #expect(model.usage.readings[.claude] == nil)
     }
 
     @Test func connectingClaudeRefreshesItAndDisconnectingRemovesIt() async {
-        var settings = Settings()
-        settings.hasCompletedOnboarding = true
-        let model = makeModel(settings)
+        let model = makeModel(active(connected: false))
         await model.start(archive: nil)
         model.settings.update { $0.claude.connection = .automatic }
-        #expect(await waitUntil { model.usage.readings[.claude] != nil })
+        await model.scheduler?.waitForWork()
+        #expect(model.usage.readings[.claude] != nil)
         #expect(claude.fetchCount == 1)
         model.settings.update { $0.claude.connection = .off }
         #expect(model.usage.readings[.claude] == nil)
     }
 
     @Test func enablingAProviderRefreshesItAndDisablingClearsIt() async {
-        var settings = Settings()
-        settings.hasCompletedOnboarding = true
-        let model = makeModel(settings)
+        let model = makeModel(active())
         await model.start(archive: nil)
+        await model.scheduler?.waitForWork()
         model.settings.update { $0.grok.isEnabled = true }
-        await settle()
+        await model.scheduler?.waitForWork()
         #expect(grok.fetchCount == 1)
+        #expect(claude.fetchCount == 1)
         #expect(model.usage.readings[.grok] != nil)
         model.settings.update { $0.grok.isEnabled = false }
         #expect(model.usage.readings[.grok] == nil)
+    }
+
+    @Test func codexHomesChangeRefreshesOnlyCodex() async {
+        var settings = active()
+        settings.codex.isEnabled = true
+        let model = makeModel(settings)
+        await model.start(archive: nil)
+        await model.scheduler?.waitForWork()
+        #expect(codex.fetchCount == 1)
+        model.settings.update { $0.codex.extraHomes = ["/work"] }
+        await model.scheduler?.waitForWork()
+        #expect(codex.fetchCount == 2)
+        #expect(claude.fetchCount == 1)
+    }
+
+    @Test func claudeAccountChangeWhilePausedRemovesTheOldLogin() async {
+        let model = makeModel(active())
+        await model.start(archive: nil)
+        await model.scheduler?.waitForWork()
+        #expect(model.usage.readings[.claude] != nil)
+        model.settings.update { $0.isPaused = true }
+        claude.setReconcile { _ in nil }
+        model.settings.update { $0.claude.disabledAccounts = ["claude-work"] }
+        await model.scheduler?.waitForWork()
+        #expect(model.usage.readings[.claude] == nil)
+        #expect(claude.fetchCount == 1)
+    }
+
+    @Test func diagnosticsTextJoinsSections() {
+        let report = DiagnosticsReport(sections: [
+            .init(title: "App", facts: [DiagnosticFact("Version", "4.0.0 (400)")]),
+            .init(title: "Readings", facts: [DiagnosticFact("Claude", "none")]),
+        ])
+        #expect(report.text == "App\nVersion: 4.0.0 (400)\n\nReadings\nClaude: none")
     }
 
     @Test func startWhilePausedRestoresAndReconcilesWithoutRefreshing() async throws {

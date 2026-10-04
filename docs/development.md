@@ -1,0 +1,114 @@
+# Development
+
+How to build, run, and test Claude Meter, and how the Xcode project is set up.
+
+## Requirements
+
+- A Mac with macOS 14 or later.
+- Xcode 26 or later. `Package.swift` uses Swift tools version 6.2. The maintainer uses
+  Xcode 27. CI uses the newest release Xcode on the `macos-26` runner.
+- Nothing else. `swift format` and `make` come with Xcode.
+
+## First build
+
+```bash
+git clone https://github.com/jewei/claude-meter.git
+cd claude-meter
+make check
+```
+
+`make check` lints the format, runs all tests, and builds the unsigned Debug app. The first
+run downloads Sparkle into `build/SourcePackages`. CI runs the same command. A change is
+done when `make check` passes.
+
+To build and open the app:
+
+```bash
+make run
+```
+
+> **Caution:** The development build has the same bundle identifier as the release
+> (`com.jewei.claudemeter`). It uses the same settings and Keychain items as an installed
+> Claude Meter. `make run` quits every running Claude Meter before it opens the new build.
+
+To work in Xcode, open `ClaudeMeter.xcodeproj` and run the `ClaudeMeter` scheme. Xcode
+signs Debug builds with the Apple Development certificate of team 4L4SS26L9J. If you are
+not on that team, use `make app` and `make run`. They build without a signature.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `make check` | The gate: format lint, all tests, unsigned Debug app. |
+| `make test` | `swift test` with warnings as errors. It does not use the Xcode project. |
+| `make format` | Format all Swift files in place with `.swift-format`. |
+| `make lint` | Fail on a format difference. |
+| `make app` | Build the unsigned Debug app into `build/DerivedData`. |
+| `make run` | Build the Debug app and open it. |
+| `make clean` | Remove `.build` and `build`. |
+| `make release VERSION=… BUILD=…` | Publish a signed release. See [releasing.md](releasing.md). |
+
+## How the Xcode project works
+
+All code is in the Swift package (`Package.swift`, `Sources/`, `Tests/`). The Xcode project
+is a thin shell around it. It has one target, `ClaudeMeter`, a macOS app.
+
+- **Synchronized folders.** `App/Sources` and `App/Resources` are synchronized folder
+  groups. Xcode adds every file in these folders to the target. To add, move, or delete a
+  file, change the folder. The project file does not change.
+- **Build settings in xcconfig files.** The project file sets no build settings. The target
+  uses `Config/Debug.xcconfig` and `Config/Release.xcconfig`. Both include
+  `Config/Base.xcconfig`, which includes `Config/Version.xcconfig`. Change settings in these
+  files, not in the Xcode build settings editor. If Xcode writes a setting into
+  `project.pbxproj`, move it to an xcconfig file.
+- **Files outside the synchronized folders.** `App/Info.plist` and
+  `App/ClaudeMeter.entitlements` are referenced from the build settings. They are not in
+  `App/Resources`, because Xcode must not copy them into the app as resources.
+- **Packages.** The project has a local package reference to the repository root. The app
+  links the `MeterUI` product, which brings in every module that it needs. Sparkle is
+  pinned to exactly 2.9.3. The pin is in
+  `ClaudeMeter.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`.
+  The make targets and the release script pass `-onlyUsePackageVersionsFromResolvedFile`,
+  so a build never changes the pin.
+- **No test target.** All tests are package tests. Run them with `make test`. To run them in
+  Xcode, open `Package.swift` instead of the project.
+- **Release signing.** Debug signs automatically with Apple Development. Release signs with
+  Developer ID and the hardened runtime, and keeps dSYMs. To build Release without the
+  certificate, pass `CODE_SIGNING_ALLOWED=NO`.
+- **Updates.** Debug builds and builds without the release signature use
+  `DisabledUpdater`. Only a Release build signed with the Developer ID of team 4L4SS26L9J
+  uses Sparkle (`App/Sources/ReleaseSignature.swift`). A development build never replaces
+  itself with a download.
+
+To update Sparkle, change the exact version in Xcode (project, Package Dependencies). Then
+commit `project.pbxproj` and `Package.resolved` together. Run a `--prepare-only` release to
+make sure that `sign_update` still works.
+
+## Where things live
+
+| Path | Contents |
+| --- | --- |
+| `Package.swift` | The package: all modules and test targets. |
+| `Sources/<Module>/` | Module code. See `AGENTS.md` for what each module owns. |
+| `Tests/<Module>Tests/` | Tests for each module. Shared fakes are in `Tests/MeterTestSupport/`. |
+| `App/Sources/` | The app entry point (`main.swift`), `SparkleUpdater`, and `ReleaseSignature`. |
+| `App/Resources/` | The asset catalog with the app icon. |
+| `App/Info.plist` | Bundle keys, `LSUIElement`, and the Sparkle feed URL and public key. |
+| `App/ClaudeMeter.entitlements` | Entitlements. The app is not sandboxed. |
+| `Config/` | Build settings and the version (`Version.xcconfig`). |
+| `ClaudeMeter.xcodeproj/` | The project, the shared scheme, and the package pins. |
+| `scripts/` | The release script and its export options and CHANGELOG-to-HTML filter. |
+| `.github/workflows/ci.yml` | CI. It runs `make check`. |
+| `appcast.xml` | The live Sparkle feed. Only the release script changes it. |
+| `docs/` | Architecture, development, and release documents. |
+
+## Build output
+
+All output is in folders that Git ignores. `make clean` removes them.
+
+| Folder | Made by |
+| --- | --- |
+| `.build/` | `swift test` and `swift build`. |
+| `build/DerivedData/` | `make app`. The Debug app is in `Build/Products/Debug/ClaudeMeter.app`. |
+| `build/SourcePackages/` | Package resolution. It holds Sparkle and its `sign_update` tool. |
+| `build/release/` | `scripts/release.sh`: the archive, the DMG, the dSYMs, and the candidate feed. |

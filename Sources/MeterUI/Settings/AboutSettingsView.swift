@@ -3,10 +3,27 @@ import SwiftUI
 
 /// Settings > About: the icon, name, version, project link, license, credits, and the
 /// trademark disclaimer.
+///
+/// The card is centered in the page and scrolls when the window is too short for it, like the
+/// other pages (``SettingsPage``).
 struct AboutSettingsView: View {
     static let repository = URL(string: "https://github.com/jewei/claude-meter")!
 
+    @Environment(\.rendersStatically) private var rendersStatically
+
     var body: some View {
+        if rendersStatically {
+            page.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            GeometryReader { proxy in
+                ScrollView(.vertical) {
+                    page.frame(maxWidth: .infinity, minHeight: proxy.size.height)
+                }
+            }
+        }
+    }
+
+    private var page: some View {
         VStack(spacing: 14) {
             RaisedTile(fill: Palette.energyFull, size: 104, radius: 26) {
                 Image(systemName: "bolt.fill")
@@ -70,7 +87,6 @@ struct AboutSettingsView: View {
         .frame(maxWidth: 470)
         .chunkyCard(radius: 22)
         .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder private var githubMark: some View {

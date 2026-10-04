@@ -301,7 +301,8 @@ the app is regular; "About Claude Meter" opens the About tab.
   Show in Finder (selects the file, or opens the folder before the first line) and the log
   folder of this build.
 - **About**: the bolt tile, name, version and build, the GitHub link, MIT license, font
-  credits, and the disclaimer.
+  credits, and the disclaimer, on one card. The card is centered in the page and scrolls
+  when the window is too short for it.
 
 ## Animation
 

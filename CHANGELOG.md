@@ -60,6 +60,8 @@ core.
   Codex card shows.
 - A retry after a failed refresh keeps the error in the menu bar and the popover, instead
   of a spinner.
+- Settings no longer saves the default Codex home again as an added home when you add it
+  before the list loads, and a name typed for a removed Codex home no longer comes back.
 
 ### Removed
 

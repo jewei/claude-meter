@@ -10,14 +10,16 @@ import Testing
 @MainActor
 @Suite(.timeLimit(.minutes(1))) final class CodexSettingsModelTests {
     private let home: TemporaryDirectory
+    private let implicit: URL
     private let settings = SettingsStore(store: MemoryStore())
+    private let provider: CodexProvider
     private let model: CodexSettingsModel
 
     init() throws {
         home = try TemporaryDirectory()
-        let implicit = try home.makeDirectory(".codex")
+        implicit = try home.makeDirectory(".codex")
         let settings = settings
-        let provider = CodexProvider(
+        provider = CodexProvider(
             configuration: { @MainActor in settings.codexConfiguration },
             http: FakeHTTPClient(status: 500, json: "{}"),
             environment: ["CODEX_HOME": implicit.path, "PATH": ""], home: home.url)
@@ -27,6 +29,8 @@ import Testing
     deinit {
         home.remove()
     }
+
+    private var implicitID: AccountID { AccountID(implicit.path) }
 
     private func makeHome(_ name: String) throws -> URL {
         try home.write("", to: "\(name)/config.toml").deletingLastPathComponent()
@@ -45,32 +49,71 @@ import Testing
         #expect(model.error == "That Codex home is already listed.")
     }
 
+    /// The list is empty before the first reload, so the check reads the homes again.
+    @Test func addHomeRefusesTheImplicitHomeBeforeTheListLoads() async throws {
+        try home.write("", to: ".codex/config.toml")
+        let link = home.path("link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: implicit)
+        #expect(model.homes.isEmpty)
+        #expect(await !model.addHome(implicit))
+        #expect(model.error == "That Codex home is already listed.")
+        #expect(await !model.addHome(link))
+        #expect(settings.settings.codex.extraHomes.isEmpty)
+    }
+
+    @Test func addHomeFailsWhenTheHomesDoNotAnswer() async throws {
+        let model = CodexSettingsModel(settings: settings, provider: provider) { _ in
+            throw ProviderError("Could not read the Codex home folders in time. Refresh again.")
+        }
+        #expect(await !model.addHome(try makeHome("work")))
+        #expect(model.error == "Could not check the Codex homes in time. Try again.")
+        #expect(settings.settings.codex.extraHomes.isEmpty)
+    }
+
     @Test func reloadListsTheImplicitHomeThenAddedHomes() async throws {
         let work = try makeHome("work")
         #expect(await model.addHome(work))
         await model.reload()
-        #expect(model.homes.map(\.path) == [home.path(".codex").path, work.path])
+        #expect(model.homes.map(\.path) == [implicit.path, work.path])
         #expect(model.homes.map(\.isImplicit) == [true, false])
         #expect(model.homes.map(\.defaultName) == ["Codex", "work"])
         #expect(model.homes.allSatisfy { $0.status != nil })
         #expect(!model.isLoading)
     }
 
+    /// The first reload reads the homes before a new home is saved and ends last. It must
+    /// not write its older list over the newer one.
     @Test func newerReloadWins() async throws {
-        async let first: Void = model.reload()
+        let provider = provider
+        let gate = Gate()
+        let reads = Locked(0)
+        let model = CodexSettingsModel(settings: settings, provider: provider) { configuration in
+            let read = reads.withLock { count in
+                count += 1
+                return count
+            }
+            if read == 1 { await gate.wait() }
+            return try await provider.resolveHomes(for: configuration)
+        }
+        let first = Task { await model.reload() }
+        #expect(await gate.waitForArrivals())
         let work = try makeHome("work")
-        #expect(await model.addHome(work))
-        async let second: Void = model.reload()
-        _ = await (first, second)
-        #expect(model.homes.map(\.path).last == work.path)
+        settings.update { $0.codex.extraHomes = [work.path] }
+        await model.reload()
+        #expect(model.homes.map(\.path) == [implicit.path, work.path])
+        gate.open()
+        await first.value
+        #expect(model.homes.map(\.path) == [implicit.path, work.path])
         #expect(!model.isLoading)
     }
 
     @Test func removeHomeClearsItsNamePinAndCardState() async throws {
         let work = try makeHome("work")
         #expect(await model.addHome(work))
+        await model.reload()
         let id = AccountID(work.path)
         model.rename(id, to: "Work")
+        #expect(settings.settings.codex.accountNames == [id: "Work"])
         settings.update {
             $0.menuBar.pinnedAccounts[.codex] = id
             $0.cards.order = [.account(.codex, id), .account(.claude, "claude")]
@@ -84,17 +127,36 @@ import Testing
         #expect(settings.settings.cards.expanded.isEmpty)
     }
 
-    @Test func theImplicitHomeCannotBeRemoved() {
-        let id = AccountID(home.path(".codex").path)
-        model.rename(id, to: "Main")
-        model.removeHome(id)
-        #expect(settings.settings.codex.accountNames == [id: "Main"])
+    /// Also when an earlier version saved the implicit home's path as an added home.
+    @Test func theImplicitHomeCannotBeRemoved() async {
+        settings.update { $0.codex.extraHomes = [self.implicit.path] }
+        await model.reload()
+        #expect(model.homes.map(\.isImplicit) == [true])
+        model.rename(implicitID, to: "Main")
+        settings.update { $0.menuBar.pinnedAccounts[.codex] = self.implicitID }
+        model.removeHome(implicitID)
+        #expect(settings.settings.codex.accountNames == [implicitID: "Main"])
+        #expect(settings.settings.menuBar.pinnedAccounts[.codex] == implicitID)
+        #expect(settings.settings.codex.extraHomes == [implicit.path])
     }
 
-    @Test func renameTrimsAndClears() {
-        model.rename("/h", to: "  Work  ")
-        #expect(settings.settings.codex.accountNames == ["/h": "Work"])
-        model.rename("/h", to: " ")
+    @Test func renameTrimsAndClears() async {
+        await model.reload()
+        model.rename(implicitID, to: "  Work  ")
+        #expect(settings.settings.codex.accountNames == [implicitID: "Work"])
+        model.rename(implicitID, to: " ")
+        #expect(settings.settings.codex.accountNames.isEmpty)
+    }
+
+    /// A name edit that ends after its home was removed must not bring the name back.
+    @Test func renameIgnoresHomesThatAreNotListed() async throws {
+        model.rename("/h", to: "Nowhere")
+        let work = try makeHome("work")
+        #expect(await model.addHome(work))
+        await model.reload()
+        let id = AccountID(work.path)
+        model.removeHome(id)
+        model.rename(id, to: "Late")
         #expect(settings.settings.codex.accountNames.isEmpty)
     }
 }

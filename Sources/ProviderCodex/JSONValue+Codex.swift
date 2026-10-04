@@ -1,9 +1,6 @@
 import Foundation
 import MeterPlatform
 
-/// A field that must be valid holds a value of the wrong type.
-struct MalformedValue: Error {}
-
 extension JSONValue {
     /// Decodes `data` as one JSON value, or nil when it is not JSON.
     static func parse(_ data: Data) -> JSONValue? {

@@ -4,10 +4,12 @@ import MeterPlatform
 
 /// Reads Codex subscription quota for every configured Codex home.
 ///
-/// A refresh reads each home's `auth.json` once and sends one `GET wham/usage`. When that
-/// request cannot work (no usable tokens, an access token that expires within a minute, or
-/// HTTP 401 or 403), a short-lived `codex app-server` lets Codex renew its own sign-in. The app
-/// never writes, renews, or deletes Codex credentials.
+/// For each home, `reconcile` reads `auth.json` once when the home has an observation. The
+/// fetch reads it once for the credentials and the owner, sends one `GET wham/usage`, and
+/// reads the owner once more. When that request cannot work (no usable tokens, an access token
+/// that expires within a minute, or HTTP 401 or 403), a short-lived `codex app-server` lets
+/// Codex renew or find its own sign-in. The app never writes, renews, or deletes Codex
+/// credentials.
 public final class CodexProvider: UsageProvider, DiagnosticsReporting {
     private static let log = Log(.codex)
 
@@ -27,21 +29,21 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
     ///   - http: The client for the usage requests.
     ///   - environment: The app's environment. `CODEX_HOME`, `CODEX_CLI_PATH`, and `PATH` are read.
     ///   - home: The user's home folder, for `~/.codex` and common install folders.
-    ///   - recovery: Nil runs the live `codex app-server`. Tests inject a fake.
     ///   - now: The clock for observation times and token expiry.
     public convenience init(
         configuration: @escaping @Sendable () async -> CodexConfiguration,
         http: any HTTPClient = URLSessionHTTPClient.shared,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
-        recovery: (any CodexRecovery)? = nil,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.init(
             configuration: configuration, http: http, environment: environment, home: home,
-            recovery: recovery, now: now, limits: .standard)
+            recovery: nil, now: now, limits: .standard)
     }
 
+    /// The full initializer. `recovery` nil runs the live `codex app-server`; tests inject a
+    /// fake. `installFolders` nil uses ``CodexExecutable/installFolders(userHome:)``.
     init(
         configuration: @escaping @Sendable () async -> CodexConfiguration,
         http: any HTTPClient,
@@ -70,6 +72,7 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
             now: now)
     }
 
+    /// Always ``ProviderID/codex``.
     public var id: ProviderID { .codex }
 
     /// The implicit home first, then the extra homes, each canonical and listed once.

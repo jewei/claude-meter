@@ -6,8 +6,8 @@ import MeterPlatform
 /// The provider uses recovery only when the normal request cannot work: the auth file is
 /// missing, unusable, or unreadable, the access token expires within a minute, or the usage
 /// request returned HTTP 401 or 403. The live implementation starts one short-lived child
-/// process per call. Tests inject a fake.
-public protocol CodexRecovery: Sendable {
+/// process per call. Tests inject a fake. Internal, because the reply carries wire JSON.
+protocol CodexRecovery: Sendable {
     /// Reads the account and its rate limits for `home`.
     ///
     /// - Parameters:
@@ -20,15 +20,10 @@ public protocol CodexRecovery: Sendable {
 }
 
 /// The raw results of one recovery.
-public struct CodexRecoveryReply: Sendable, Equatable {
+struct CodexRecoveryReply: Sendable, Equatable {
     /// The `result` of `account/read`, or nil when Codex answered that step with an error.
-    public var account: JSONValue?
-    /// The `result` of `account/rateLimits/read`, or nil when the account uses an API key and
-    /// the rate limits were not requested.
-    public var rateLimits: JSONValue?
-
-    public init(account: JSONValue?, rateLimits: JSONValue?) {
-        self.account = account
-        self.rateLimits = rateLimits
-    }
+    var account: JSONValue?
+    /// The `result` of `account/rateLimits/read`, or nil when the account has no subscription
+    /// quota (API-key auth, or no login) and the rate limits were not requested.
+    var rateLimits: JSONValue?
 }

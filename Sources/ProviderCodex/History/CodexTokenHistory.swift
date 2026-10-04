@@ -29,6 +29,7 @@ public final class CodexTokenHistory: TokenHistoryProvider {
         self.calendar = calendar
     }
 
+    /// Always ``ProviderID/codex``.
     public var id: ProviderID { .codex }
 
     /// Token history for today and the previous six local days, labeled as this Mac.

@@ -15,8 +15,10 @@ extension CodexTests {
             try FileManager.default.createSymbolicLink(
                 at: root.path("link-to-implicit"), withDestinationURL: implicit)
             let provider = CodexProvider(
-                configuration: { CodexConfiguration() }, environment: ["CODEX_HOME": implicit.path],
-                home: root.url, recovery: FakeRecovery())
+                configuration: { CodexConfiguration() }, http: FakeHTTPClient(json: "{}"),
+                environment: ["CODEX_HOME": implicit.path], home: root.url,
+                recovery: FakeRecovery(), now: { .reference() }, limits: .standard,
+                installFolders: [])
 
             let homes = await provider.homes(
                 for: CodexConfiguration(extraHomes: [

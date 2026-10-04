@@ -11,8 +11,15 @@ The billing endpoint is internal to the Grok Build CLI. It can change without no
 
 `GrokProvider.homeDirectory(environment:home:)`:
 
-1. `GROK_HOME`, when it is set and not blank. A leading `~` means the user's home.
+1. `GROK_HOME`, trimmed, when it is set and not blank. A leading `~` means the user's home.
+   A relative value starts at the user's home: the CLI resolves it against its own working
+   folder, which the app cannot know, and the app's working folder is `/`.
 2. Otherwise `~/.grok`.
+
+The app sees only the environment that it was started with. An app started from Finder or at
+login does not see a `GROK_HOME` that a shell profile sets, so it reads `~/.grok` while the CLI
+uses the other folder, and the card says that Grok Build is not signed in. Diagnostics show
+whether the app sees `GROK_HOME`.
 
 ### Sign-in file
 

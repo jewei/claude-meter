@@ -227,5 +227,20 @@ import Testing
         #expect(
             GrokProvider.homeDirectory(environment: ["GROK_HOME": "/opt/grok"], home: home).path
                 == "/opt/grok")
+        #expect(GrokProvider.homeDirectory(environment: ["GROK_HOME": "~"], home: home) == home)
+    }
+
+    /// The app's working folder is `/`, so a relative or padded value must not resolve there.
+    @Test func grokHomeIsTrimmedAndARelativeValueStartsAtHome() {
+        let home = URL(fileURLWithPath: "/Users/someone", isDirectory: true)
+        #expect(
+            GrokProvider.homeDirectory(environment: ["GROK_HOME": " /opt/grok \n"], home: home)
+                .path == "/opt/grok")
+        #expect(
+            GrokProvider.homeDirectory(environment: ["GROK_HOME": "grok-home"], home: home).path
+                == "/Users/someone/grok-home")
+        #expect(
+            GrokProvider.homeDirectory(environment: ["GROK_HOME": " ~/custom "], home: home).path
+                == "/Users/someone/custom")
     }
 }

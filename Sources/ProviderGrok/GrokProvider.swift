@@ -45,10 +45,15 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
     /// Always ``ProviderID/grok``.
     public var id: ProviderID { .grok }
 
-    /// The Grok Build CLI's home: `GROK_HOME` when it is set and not blank, otherwise
-    /// `~/.grok`. A leading `~` means `home`.
+    /// The Grok Build CLI's home: `GROK_HOME`, trimmed, when it is set and not blank,
+    /// otherwise `~/.grok`. A leading `~` means `home`.
+    ///
+    /// The CLI resolves a relative `GROK_HOME` against its own working folder, which the app
+    /// cannot know; the app's own working folder is `/`. A relative value is taken from `home`,
+    /// where a terminal starts. The app sees only the environment that it was started with.
     public static func homeDirectory(environment: [String: String], home: URL) -> URL {
-        guard let value = environment["GROK_HOME"], !isBlank(value) else {
+        let value = environment["GROK_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value, !value.isEmpty else {
             return home.appending(path: ".grok", directoryHint: .isDirectory)
         }
         if value == "~" { return home }
@@ -56,6 +61,9 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
             return home.appending(path: String(value.dropFirst(2)), directoryHint: .isDirectory)
         }
         let expanded = (value as NSString).expandingTildeInPath
+        guard expanded.hasPrefix("/") else {
+            return home.appending(path: expanded, directoryHint: .isDirectory)
+        }
         return URL(fileURLWithPath: expanded, isDirectory: true)
     }
 

@@ -7,7 +7,9 @@ import SQLite3
 /// under normal locking and never creates, writes, or repairs the database or its sidecar
 /// files. Immutable mode is never used, because the owner keeps writing. A database that needs
 /// a missing sidecar fails cleanly. Busy or locked databases fail at once, without waiting.
-/// Call through ``BlockingIO`` and pass its cancellation.
+/// A symbolic link to the database is resolved first, so the checks of the file and its
+/// sidecars apply to the files that SQLite opens. Call through ``BlockingIO`` and pass its
+/// cancellation.
 public enum SQLiteReader {
     public enum ReadError: Error, Equatable, LocalizedError, Sendable {
         case notFound
@@ -38,6 +40,9 @@ public enum SQLiteReader {
         bindings: [String],
         cancellation: BlockingIO.Cancellation? = nil
     ) throws(ReadError) -> [[Data?]] {
+        // SQLite opens the file that a link points to and finds the sidecars next to it, so
+        // check and open the resolved path.
+        let database = try resolved(database)
         try checkRegularFiles(database)
 
         var components = URLComponents()
@@ -46,6 +51,9 @@ public enum SQLiteReader {
         components.queryItems = [URLQueryItem(name: "readonly_shm", value: "1")]
         guard let uri = components.string else { throw .unreadable(code: SQLITE_CANTOPEN) }
 
+        // Released after the connection closes, so the progress handler never sees a freed box.
+        let box = Unmanaged.passRetained(CancellationBox(cancellation)).toOpaque()
+        defer { Unmanaged<CancellationBox>.fromOpaque(box).release() }
         var handle: OpaquePointer?
         let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_URI | SQLITE_OPEN_NOMUTEX
         let openStatus = sqlite3_open_v2(uri, &handle, flags, nil)
@@ -54,8 +62,6 @@ public enum SQLiteReader {
 
         sqlite3_limit(handle, SQLITE_LIMIT_LENGTH, maxValueBytes)
         sqlite3_busy_timeout(handle, 0)
-        let box = Unmanaged.passRetained(CancellationBox(cancellation)).toOpaque()
-        defer { Unmanaged<CancellationBox>.fromOpaque(box).release() }
         sqlite3_progress_handler(
             handle, 1000,
             { context in
@@ -86,21 +92,32 @@ public enum SQLiteReader {
         return rows
     }
 
+    /// Reads the value before its size, the order that SQLite documents: the size of a value
+    /// can change when SQLite converts it.
     private static func column(_ statement: OpaquePointer, _ index: Int32) -> Data? {
         switch sqlite3_column_type(statement, index) {
         case SQLITE_NULL:
             return nil
         case SQLITE_BLOB:
+            let bytes = sqlite3_column_blob(statement, index)
             let count = Int(sqlite3_column_bytes(statement, index))
-            guard count > 0, let bytes = sqlite3_column_blob(statement, index) else {
-                return Data()
-            }
+            guard count > 0, let bytes else { return Data() }
             return Data(bytes: bytes, count: count)
         default:
             guard let text = sqlite3_column_text(statement, index) else { return Data() }
             let count = Int(sqlite3_column_bytes(statement, index))
             return Data(bytes: text, count: count)
         }
+    }
+
+    /// The database path with every symbolic link resolved.
+    private static func resolved(_ database: URL) throws(ReadError) -> URL {
+        guard let path = realpath(database.path, nil) else {
+            throw errno == ENOENT || errno == ENOTDIR
+                ? .notFound : .unreadable(code: SQLITE_CANTOPEN)
+        }
+        defer { free(path) }
+        return URL(fileURLWithPath: String(cString: path))
     }
 
     /// Rejects devices and FIFOs at the database and at any sidecar that exists.

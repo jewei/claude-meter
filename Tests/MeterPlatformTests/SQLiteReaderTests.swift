@@ -69,6 +69,60 @@ import Testing
         }
     }
 
+    @Test func readsADatabaseThroughASymbolicLink() throws {
+        let directory = try TemporaryDirectory()
+        defer { directory.remove() }
+        let database = try makeDatabase(in: directory, rows: [("a", "1")])
+        let link = try directory.makeDirectory("links").appending(path: "state.vscdb")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: database)
+        let rows = try SQLiteReader.rows(
+            in: link, query: "SELECT value FROM ItemTable", bindings: [])
+        #expect(rows == [[Data("1".utf8)]])
+    }
+
+    @Test func refusesALinkedFIFOAndALinkedDatabaseWithASpecialSidecar() throws {
+        let directory = try TemporaryDirectory()
+        defer { directory.remove() }
+        let fifo = directory.path("fifo")
+        #expect(mkfifo(fifo.path, 0o600) == 0)
+        let fifoLink = directory.path("fifo.vscdb")
+        try FileManager.default.createSymbolicLink(at: fifoLink, withDestinationURL: fifo)
+        #expect(throws: SQLiteReader.ReadError.notRegularFile) {
+            try SQLiteReader.rows(in: fifoLink, query: "SELECT 1", bindings: [])
+        }
+
+        // The sidecar that SQLite would open is next to the target, not next to the link.
+        let database = try makeDatabase(in: directory, rows: [])
+        try? FileManager.default.removeItem(atPath: database.path + "-wal")
+        #expect(mkfifo(database.path + "-wal", 0o600) == 0)
+        let link = try directory.makeDirectory("links").appending(path: "state.vscdb")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: database)
+        #expect(throws: SQLiteReader.ReadError.notRegularFile) {
+            try SQLiteReader.rows(in: link, query: "SELECT 1", bindings: [])
+        }
+        #expect(throws: SQLiteReader.ReadError.notFound) {
+            try SQLiteReader.rows(
+                in: directory.path("none/x.vscdb"), query: "SELECT 1", bindings: [])
+        }
+    }
+
+    @Test func readsBlobAndTextValues() throws {
+        let directory = try TemporaryDirectory()
+        defer { directory.remove() }
+        let database = try makeDatabase(in: directory, rows: [("text", "hello")])
+        var handle: OpaquePointer?
+        #expect(sqlite3_open(database.path, &handle) == SQLITE_OK)
+        #expect(
+            sqlite3_exec(
+                handle,
+                "INSERT INTO ItemTable VALUES ('blob', x'00ff10'), ('empty', x''), "
+                    + "('null', NULL);", nil, nil, nil) == SQLITE_OK)
+        sqlite3_close(handle)
+        let rows = try SQLiteReader.rows(
+            in: database, query: "SELECT value FROM ItemTable ORDER BY key", bindings: [])
+        #expect(rows == [[Data([0x00, 0xFF, 0x10])], [Data()], [nil], [Data("hello".utf8)]])
+    }
+
     @Test func aLockedDatabaseIsBusyAtOnce() throws {
         let directory = try TemporaryDirectory()
         defer { directory.remove() }

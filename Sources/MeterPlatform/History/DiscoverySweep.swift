@@ -44,6 +44,11 @@ struct DiscoverySweep: Sendable {
         return page
     }
 
+    /// Forgets the files modified before `start`, after the range start moved later.
+    mutating func dropFiles(modifiedBefore start: Date) {
+        files = files.filter { $0.value.modified >= start }
+    }
+
     /// Adds the files of one page, keeping the newest `limit` files.
     mutating func record(_ page: [String: DiscoveredFile], limit: Int) {
         if DiscoveredFile.merge(page, into: &files, limit: limit) { exceededFileLimit = true }

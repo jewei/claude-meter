@@ -187,17 +187,30 @@ extension HistoryScans {
             #expect(result.work.parsedLines == 3)
         }
 
-        @Test func aChangedRangeStartResetsTheCache() async throws {
+        @Test func aLaterRangeStartKeepsTheCacheAndAnEarlierOneResetsIt() async throws {
             let home = try TemporaryDirectory()
             defer { home.remove() }
             try home.write(line("a", 5), to: "one.jsonl")
+            try home.write(line("old", 100), to: "old.jsonl")
+            try home.touch("old.jsonl", at: rangeStart.addingTimeInterval(60))
             let scanner = CountingScanner(match: .fileExtension("jsonl"))
-            _ = try await scanner.scan([home.root()], since: rangeStart)
-            let next = try await scanner.scan(
-                [home.root()], since: rangeStart.addingTimeInterval(1))
+            #expect(try await scanner.scan([home.root()], since: rangeStart).total() == 105)
+
+            // Local midnight moves the start later: the file of the new range is not read
+            // again, and the file modified before the new start no longer counts.
+            let later = rangeStart.addingTimeInterval(3_600)
+            let next = try await scanner.scan([home.root()], since: later)
             #expect(next.total() == 5)
-            #expect(next.work.cacheHits == 0)
-            #expect(next.work.parsedLines == 1)
+            #expect(next.files.count == 1)
+            #expect(next.work.cacheHits == 1)
+            #expect(next.work.parsedLines == 0)
+            #expect(!next.isPartial())
+
+            // An earlier start needs files that discovery skipped, so it reads everything.
+            let earlier = try await scanner.scan([home.root()], since: rangeStart)
+            #expect(earlier.total() == 105)
+            #expect(earlier.work.cacheHits == 0)
+            #expect(earlier.work.parsedLines == 2)
         }
     }
 }

@@ -211,8 +211,10 @@ Only the fields below are read. All other fields are skipped.
     the last complete sweep keeps its folders complete.
 57. An incomplete sweep only adds files. It never removes files that an earlier sweep found.
 58. An unreadable folder does not stop the sweep. The other folders of the root are read.
-59. A change of the roots, of a root folder on disk (path, existence, device, or inode), of
-    an account, or of the first covered day discards all scan state.
+59. A change of the roots, of a root folder on disk (path, existence, device, or inode), or
+    of an account, or a move of the first covered day to an earlier day, discards all scan
+    state. When the first covered day moves later (at local midnight), the scan state stays,
+    and only the files last modified before the new first day are dropped.
 60. A discovery page that times out ends discovery for that scan. The files found so far
     still count. A root check that times out returns the files of the last scan, with every
     account partial. A root check, discovery page, or file whose earlier read timed out and

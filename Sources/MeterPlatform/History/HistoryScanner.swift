@@ -58,8 +58,9 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
 
     /// Scans `roots` for files modified at or after `start`.
     ///
-    /// A change of the roots, of a root folder on disk, or of `start` discards all saved
-    /// state first. Scans run one at a time.
+    /// A change of the roots or of a root folder on disk, or an earlier `start`, discards all
+    /// saved state first. A later `start`, as at each local midnight, keeps the saved state and
+    /// drops only the files modified before it. Scans run one at a time.
     public func scan(_ roots: [HistoryRoot], since start: Date) async throws -> HistoryScan<Parser>
     {
         try await queue.enter()
@@ -79,7 +80,8 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
         guard let identities = try await resolve(configured) else {
             return unresolved(configured, since: start)
         }
-        if identities != roots || start != self.start {
+        if identities != roots || !(self.start.map { start >= $0 } ?? false) {
+            // An earlier start needs files that discovery skipped as too old.
             roots = identities
             self.start = start
             sweep = nil
@@ -87,6 +89,12 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
             inventoryOverflowed = false
             lastSweepFailedRoots = nil
             cursors = [:]
+        } else if let saved = self.start, start > saved {
+            // A later start only narrows the range. A file modified before it holds no record
+            // in the range, so the other files keep their cursors and are not read again.
+            self.start = start
+            inventory = inventory.filter { $0.value.modified >= start }
+            sweep?.dropFiles(modifiedBefore: start)
         }
         self.configured = configured
         var work = HistoryScan<Parser>.Work()
@@ -118,13 +126,13 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
     }
 
     /// The result of a scan whose roots could not be checked: the files of the last scan when
-    /// it had the same roots and start, and every account partial.
+    /// it had the same roots and the same or an earlier start, and every account partial.
     private func unresolved(_ configured: [HistoryRoot], since start: Date) -> HistoryScan<Parser> {
         var accounts: [AccountID] = []
         for root in configured where !accounts.contains(root.account) {
             accounts.append(root.account)
         }
-        let isSaved = configured == self.configured && start == self.start
+        let isSaved = configured == self.configured && (self.start.map { start >= $0 } ?? false)
         return HistoryScan(
             accounts: accounts, files: isSaved ? countedFiles() : [],
             partialAccounts: Set(accounts), work: HistoryScan<Parser>.Work())

@@ -42,7 +42,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    ties keep provider order (`AccountSelection.primary`).
 5. A missing pinned account, a main provider that is in use without a reading, or no
    main-capable provider in use shows as unavailable with a reason. It never falls back to
-   another account of the same provider, and a pin never falls back (`MainMeter`).
+   another account of the same provider, and a pin never falls back (`MainMeter`). Before
+   the provider's first reading, a pin is not missing: the reason is `Claude has no usage
+   reading yet.`, which is not a failure.
 6. The menu-bar dot shows the highest severity of the pinned account, or of every account of
    the provider without a pin.
 7. Dragging a Claude or Codex card to the top of the list pins it and makes its provider

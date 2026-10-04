@@ -43,6 +43,20 @@ import Testing
         #expect(meter.issue?.message == "The selected Claude account is no longer configured.")
     }
 
+    /// The first refresh after a launch without a saved reading, a source switch, or a
+    /// reconnect: the pin cannot be missing before anything was read.
+    @Test func pinWithoutAReadingIsNotAFailure() {
+        let settings = Fixture.settings { $0.menuBar.pinnedAccounts[.claude] = "home" }
+        for refreshing: Set<ProviderID> in [[], [.claude]] {
+            let meter = MainMeter(
+                Fixture.context(settings, readings: [:], refreshing: refreshing))
+            #expect(meter.selected == nil)
+            #expect(meter.issue?.message == "Claude has no usage reading yet.")
+            #expect(!meter.hasFailure)
+            #expect(meter.isLoadingFirstReading == !refreshing.isEmpty)
+        }
+    }
+
     @Test func pinnedAccountWithoutReadingExplainsItself() {
         let meter = meter([Fixture.account("home", observedAt: nil)], pin: "home")
         #expect(meter.issue?.message == "The selected Claude account has no usage reading.")
@@ -262,6 +276,15 @@ import Testing
         #expect(!model.isDimmed)
         let off = MenuBarModel(Fixture.context(Fixture.settings(enabled: [.cursor]), readings: [:]))
         #expect(off.icon == .bolt(.none))
+    }
+
+    @Test func pinWithoutAReadingShowsTheCalmBolt() {
+        let settings = Fixture.settings { $0.menuBar.pinnedAccounts[.claude] = "home" }
+        let idle = MenuBarModel(Fixture.context(settings, readings: [:]))
+        #expect(idle.icon == .bolt(.none))
+        let loading = MenuBarModel(
+            Fixture.context(settings, readings: [:], refreshing: [.claude]))
+        #expect(loading.icon == .loading)
     }
 
     @Test func missingPinShowsTheWarningBolt() {

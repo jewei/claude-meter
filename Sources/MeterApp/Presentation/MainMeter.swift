@@ -10,8 +10,8 @@ public struct MainMeter: Equatable, Sendable {
     /// Why nothing is selected, or the selected account's own issue.
     public let issue: UsageIssue?
     /// The issue is a failure: a failed refresh, an account's own issue, or a missing pinned
-    /// account. False when nothing was read yet or no main-capable provider is in use, which
-    /// are not errors.
+    /// account. False when nothing was read yet (also with a pin) or no main-capable provider
+    /// is in use, which are not errors.
     public let hasFailure: Bool
     /// The highest severity of the pinned account, or of every account without a pin.
     public let severity: Severity
@@ -56,15 +56,19 @@ public struct MainMeter: Equatable, Sendable {
 
         (issue, hasFailure) = Self.issue(
             provider: provider, accounts: accounts, pin: pin, selected: selected,
-            readingIssue: context.readings[provider]?.issue)
+            reading: context.readings[provider])
     }
 
     /// The issue to state, and whether it is a failure.
     private static func issue(
         provider: ProviderID, accounts: [AccountUsage], pin: AccountID?,
-        selected: AccountUsage?, readingIssue: UsageIssue?
+        selected: AccountUsage?, reading: Reading<ProviderUsage>?
     ) -> (UsageIssue?, Bool) {
         let name = provider.displayName
+        // Before the first reading (a launch without a saved one, a source switched on, or a
+        // reconnect), a pin cannot be missing yet: nothing was read to look for it in.
+        guard let reading else { return (UsageIssue("\(name) has no usage reading yet."), false) }
+        let readingIssue = reading.issue
         if let pin {
             guard let pinned = accounts.first(where: { $0.id == pin }) else {
                 let missing = UsageIssue("The selected \(name) account is no longer configured.")

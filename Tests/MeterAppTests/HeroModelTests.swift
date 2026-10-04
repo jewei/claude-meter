@@ -152,6 +152,15 @@ import Testing
         #expect(hero.subtitle == "Rate limited. Retrying in 3m.")
     }
 
+    @Test func pinWithoutAReadingWaitsForTheFirstReading() {
+        let settings = Fixture.settings { $0.menuBar.pinnedAccounts[.claude] = "work" }
+        let context = Fixture.context(settings, readings: [:])
+        let hero = HeroModel(MainMeter(context), context: context)
+        #expect(hero.title == "Claude meter unavailable")
+        #expect(hero.subtitle == "Claude has no usage reading yet.")
+        #expect(hero.tone == .neutral)
+    }
+
     @Test func unavailableMeterExplainsWhy() {
         let hero = hero([single(session: 10)], pin: "missing")
         #expect(hero.title == "Claude meter unavailable")

@@ -7,11 +7,22 @@ import Testing
 @testable import MeterApp
 
 @MainActor
-@Suite(.timeLimit(.minutes(1))) struct AppModelTests {
+@Suite(.timeLimit(.minutes(1))) final class AppModelTests {
     private let claude = FakeUsageProvider(.claude)
     private let codex = FakeUsageProvider(.codex)
     private let grok = FakeUsageProvider(.grok)
-    private let logFile = LogFile.temporary()
+    /// Holds the log file, and is removed after each test.
+    private let directory: TemporaryDirectory
+    private let logFile: LogFile
+
+    init() throws {
+        directory = try TemporaryDirectory()
+        logFile = LogFile(directory: directory.path("Logs"))
+    }
+
+    deinit {
+        directory.remove()
+    }
 
     private func makeModel(
         _ settings: Settings = Settings(), display: FakeDisplay? = nil

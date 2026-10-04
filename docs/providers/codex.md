@@ -12,7 +12,8 @@
   `~/.codex`. Extra homes come from `CodexConfiguration.extraHomes`.
 - The account ID is the canonical home path: standardized, with symbolic links resolved.
 - The default account name is `Codex` for the implicit home, else the folder name.
-- A folder can be a home when it holds `auth.json` or `config.toml`.
+- A folder can be a home when it holds `auth.json` or `config.toml`. A configured home whose
+  folder does not exist has no login (rule 26).
 
 ### `auth.json`
 
@@ -113,9 +114,9 @@ JSON-RPC over stdin and stdout, one compact JSON object per line, no `jsonrpc` f
 ← {"id":1,"result":{…}}
 → {"method":"initialized","params":{}}
 → {"id":2,"method":"account/read","params":{"refreshToken":true}}
-← {"id":2,"result":{"account":{"type":"chatgpt","planType":"plus"}}}
+← {"id":2,"result":{"account":{"type":"chatgpt","email":"…","planType":"plus"},…}}
 → {"id":3,"method":"account/rateLimits/read","params":{}}
-← {"id":3,"result":{"rateLimits":{…},"rateLimitResetCredits":{…}}}
+← {"id":3,"result":{"rateLimits":{…},"rateLimitsByLimitId":{…},"rateLimitResetCredits":{…}}}
 ```
 
 The shapes are the upstream protocol types in `openai/codex`

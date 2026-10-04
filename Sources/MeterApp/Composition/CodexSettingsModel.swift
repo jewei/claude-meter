@@ -43,8 +43,10 @@ public final class CodexSettingsModel {
         let current = generation
         isLoading = true
         defer { if current == generation { isLoading = false } }
-        let resolved = await provider.homes(for: settings.codexConfiguration)
-        guard current == generation else { return }
+        // A slow disk keeps the current list rather than showing no homes.
+        guard let resolved = try? await provider.resolveHomes(for: settings.codexConfiguration),
+            current == generation
+        else { return }
         let earlier = Dictionary(
             homes.map { ($0.id, $0.status) }, uniquingKeysWith: { first, _ in first })
         homes = resolved.map {

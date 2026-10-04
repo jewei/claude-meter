@@ -34,9 +34,10 @@ struct LiveProviders {
         grok = GrokProvider()
         cursorHistory = CursorTokenHistory()
         // Each Codex home is one account's history root, the same homes that quota reads.
+        // A slow disk throws instead of returning no homes, so the scan state survives.
         codexHistory = CodexTokenHistory(roots: {
             let configuration = await MainActor.run { settings.codexConfiguration }
-            return await codex.homes(for: configuration).map {
+            return try await codex.resolveHomes(for: configuration).map {
                 HistoryRoot(account: $0.id, directory: $0.directory)
             }
         })

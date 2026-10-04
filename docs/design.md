@@ -122,7 +122,8 @@ Every changing number uses `.monospacedDigit()`.
 
 `PopoverPanelController` shows `PopoverView` in a borderless, non-activating `PopoverPanel`.
 The panel can become key without activating the app, so Escape works and the user's app keeps
-its focus.
+its focus. Because the app stays inactive, the panel allows tooltips while the app is
+inactive (`allowsToolTipsWhenApplicationIsInactive`).
 
 - Width 360 pt. SwiftUI draws the chrome: `popover` fill, 2 pt `popoverBorder`, radius 22.
 - Position (`PanelLayout`, pure): the top edge sits 4 pt below the menu bar (below the status

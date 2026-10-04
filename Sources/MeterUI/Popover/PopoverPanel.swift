@@ -4,7 +4,8 @@ import AppKit
 /// clear and casts the shadow.
 ///
 /// It can become key without activating the app, so Escape reaches it and the user's app
-/// keeps its focus.
+/// keeps its focus. Because the app stays inactive, the panel allows tooltips while the app is
+/// inactive; without that, no `.help` text in the popover would show.
 final class PopoverPanel: NSPanel {
     /// Called for Escape, Command-period, and Command-W.
     var onCancel: (() -> Void)?
@@ -21,6 +22,7 @@ final class PopoverPanel: NSPanel {
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
         animationBehavior = .none
+        allowsToolTipsWhenApplicationIsInactive = true
         collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .transient, .ignoresCycle]
         setAccessibilityLabel("Claude Meter")
     }

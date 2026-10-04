@@ -20,15 +20,19 @@ A module imports only the layers above it. Providers never import each other.
 ## Data flow
 
 ```text
-RefreshScheduler ──refresh(ids)──▶ UsageStore ──reconcile/fetch──▶ UsageProvider
-                                       │                              (Claude, Codex, Cursor, Grok)
-                                       │ readings: [ProviderID: Reading<ProviderUsage>]
-                                       │ histories: [ProviderID: Reading<ProviderTokenHistory>]
-                                       ▼
-                          Presentation builders (pure, given Settings and now)
-                                       ▼
-                             MenuBarModel, PopoverModel ──▶ MeterUI views
+RefreshScheduler ──refresh(quota:history:)──▶ UsageStore ──reconcile, fetch───▶ UsageProvider
+                 ──reconcile(_:)────────────▶     │      ──reconcile, history─▶ TokenHistoryProvider
+                                                  │            (Claude, Codex, Cursor, Grok)
+                                                  │ readings: [ProviderID: Reading<ProviderUsage>]
+                                                  │ histories: [ProviderID: Reading<ProviderTokenHistory>]
+                                                  ▼
+                                     Presentation builders (pure, given Settings and now)
+                                                  ▼
+                                        MenuBarModel, PopoverModel ──▶ MeterUI views
 ```
+
+The scheduler calls `UsageStore.refresh(quota:history:)` when requests may go out, and
+`UsageStore.reconcile(_:)` (local reads only) when they may not.
 
 `UsageStore` is the only owner of readings. Presentation builders derive everything else on
 each render from the readings, the settings, and the current time. Nothing caches a derived
@@ -124,15 +128,17 @@ account and the Settings check (`docs/providers/claude-oauth.md`).
 | Start or resume | Every enabled provider |
 | Every 300 s while the display is awake | Every enabled provider not already refreshing |
 | Popover opens | Readings that are missing, failed, stale, or at least 60 s old |
-| Display wakes | Readings at least 300 s old; then the timer restarts |
+| Display wakes | Readings that are missing, failed, stale, or at least 300 s old; then the timer restarts |
 | A provider is enabled, or its accounts or credentials change | That provider only |
 | Display sleeps, pause, quit | Nothing; cancels the timer and in-flight work |
 
-Token history has its own due rule, checked at each of these events for every enabled
-provider: a history is due when it was never read, when the local day or time zone changed
-since its last attempt, or when that attempt is at least 240 s old (a failed history waits
-too). A due history never adds a quota request, and a quota request never adds a history
-that is not due. An account or credential change refreshes that provider's history at once.
+Token history has its own due rule (`UsageStore.historyNeedsRefresh`): a history is due when
+it was never read, when the local day or time zone changed since its last attempt, or when
+that attempt is at least 240 s old (a failed history waits too). The timer, an opened
+popover, and a display wake check it for every enabled provider. A start, a resume, or an
+enabled provider checks it only for the providers that start. A due history never adds a
+quota request, and a quota request never adds a history that is not due. An account or
+credential change refreshes that provider's history at once, due or not.
 
 When no request may go out (paused, before onboarding, or with the display asleep), an
 account or credential change still runs that provider's `reconcile` alone

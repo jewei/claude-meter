@@ -149,16 +149,23 @@ struct CardBuilder {
         let limit = balance.limit.flatMap {
             $0 > 0 ? Formatting.money($0, unit: balance.unit) : nil
         }
-        let fraction = account.windows.first { $0.kind == .billing }?.usedPercent.map {
-            min(1, $0 / 100)
-        }
+        // The extra-usage window: the share of the monthly limit spent.
+        let window = account.windows.first { $0.kind == .billing && $0.usedPercent != nil }
+        let gauge = gauges.gauge(window, title: "Extra usage", shortTitle: "extra")
+        let shareText = gauge.caption.map { "\(gauge.valueText) \($0)" }
+        let amount = limit.map { "\(spent) spent of \($0)" } ?? "\(spent) spent"
+        var spoken = [amount]
+        if window != nil { spoken.append(gauge.accessibilityValue) }
+        if balance.isPaused { spoken.append("paused") }
         return CardModel(
             id: .extraUsage, provider: .claude, title: "Extra usage", plan: nil, sharesLogin: false,
             isMain: false, disclosure: .alwaysOpen,
             summary: .extraUsage(
                 ExtraUsageModel(
                     amountText: limit.map { "\(spent) / \($0)" } ?? spent,
-                    isPaused: balance.isPaused, fraction: fraction)),
+                    isPaused: balance.isPaused, fraction: window.map { _ in gauge.fraction },
+                    severity: gauge.severity, shareText: shareText,
+                    accessibilityValue: spoken.joined(separator: ", "))),
             details: [], status: nil)
     }
 

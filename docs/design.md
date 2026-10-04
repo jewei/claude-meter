@@ -189,8 +189,13 @@ All cards: padding 14×13, `chunkyCard()`, full width.
   window with "Session · 60% left" and the reset, unless `BarsModel.showsBarLabels` is false
   (Cursor, Grok: the caption names the window and reset). Then the caption and status line.
   Expanded details reveal from the top with the card height; the card clips its content.
-- **Extra usage** (`ExtraUsageCardView`): 💳, title, "paused" chip, amount, and a green bar
-  when the share is known.
+- **Extra usage** (`ExtraUsageCardView`): 💳, title, "paused" chip, and the amount spent of
+  the limit (`$12.50 / $50.00`). The monthly limit is a budget, drawn as energy like every
+  other limit (`ExtraUsageModel`): the 12 pt bar fills with the share of the limit left (the
+  share spent in Usage mode), in the severity color of the share spent against the user's
+  thresholds, with the share in words below (`75% left`). So the bar drains and turns orange,
+  then red, as money is spent, and it is empty at the limit. It never fills green as money
+  goes. Without a limit share there is no bar.
 - **Details** (`DetailSectionsView`), each after a 1 pt `cardBorder` rule: limit rows
   (`LimitRow`), usage bars (`UsageBarRow`, 7 pt bars), usage-limit resets
   (`ResetsSectionView`: count, rows with the exact date in a tooltip, note), and tokens used

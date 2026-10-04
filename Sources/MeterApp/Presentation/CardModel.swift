@@ -73,12 +73,23 @@ public struct BarsModel: Equatable, Sendable {
     public let showsBarLabels: Bool
 }
 
+/// Claude extra usage: money spent of a monthly limit, drawn like every other limit. The bar
+/// is the budget as energy: it fills with the share of the limit left (or spent, in Usage
+/// mode) and takes the severity color of the share spent, so it drains and turns red as the
+/// money goes, and never reads as full energy at the limit.
 public struct ExtraUsageModel: Equatable, Sendable {
-    /// `$12.34 / $50.00`.
+    /// `$12.34 / $50.00`: spent of the limit.
     public let amountText: String
     public let isPaused: Bool
-    /// Share of the monthly limit spent, 0...1, when known.
+    /// The share of the limit to fill, 0...1, following the meter mode. Nil without a limit
+    /// share.
     public let fraction: Double?
+    /// The severity of the share spent, from the user's thresholds.
+    public let severity: Severity
+    /// `75% left` or `25% used`, when the share is known.
+    public let shareText: String?
+    /// `$12.34 spent of $50.00, 75 percent left, full energy`.
+    public let accessibilityValue: String
 }
 
 public enum DetailSection: Equatable, Sendable {

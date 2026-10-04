@@ -124,7 +124,7 @@ import Testing
             return
         }
         #expect(extra.amountText == "$12.34 / $50.00")
-        #expect(extra.fraction == 0.3)
+        #expect(extra.fraction == 0.7)
     }
 
     @Test func ringCardsShowEveryWindow() throws {

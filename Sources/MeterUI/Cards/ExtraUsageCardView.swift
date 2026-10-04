@@ -1,8 +1,9 @@
 import MeterApp
 import SwiftUI
 
-/// Claude extra usage for the selected account: the amount spent of the monthly limit, and a
-/// bar when the share is known.
+/// Claude extra usage for the selected account: the amount spent of the monthly limit, and,
+/// when the share is known, the budget as an energy bar in the severity color with its share
+/// in words (``ExtraUsageModel``).
 struct ExtraUsageCardView: View {
     let card: CardModel
     let extra: ExtraUsageModel
@@ -24,13 +25,23 @@ struct ExtraUsageCardView: View {
             }
             .frame(minHeight: 22)
             if let fraction = extra.fraction {
-                EnergyBar(fraction: fraction, color: Palette.energyFull, height: 12)
+                VStack(alignment: .leading, spacing: 4) {
+                    EnergyBar(fraction: fraction, color: extra.severity.fill, height: 12)
+                    if let share = extra.shareText {
+                        Text(share)
+                            .font(MeterFont.body(11, .semibold))
+                            .foregroundStyle(Palette.inkMuted)
+                            .monospacedDigit()
+                    }
+                }
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
         .frame(maxWidth: .infinity, alignment: .leading)
         .chunkyCard()
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(card.title)
+        .accessibilityValue(extra.accessibilityValue)
     }
 }

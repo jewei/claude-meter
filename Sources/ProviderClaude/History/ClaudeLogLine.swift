@@ -83,8 +83,9 @@ struct ClaudeLogLine: Decodable {
 
     let isAssistant: Bool
     let timestamp: HistoryJSON.Timestamp?
-    /// The request that produced the message: `requestId`, then `request_id`, then
-    /// `sessionId`. Copies of a response share it.
+    /// The request that produced the message: `requestId`, then `request_id`. Copies of a
+    /// response share it. The session ID is never used: a resumed session copies a response
+    /// under a new session ID, and API message IDs are unique on their own.
     let requestID: String?
     let message: Message?
 
@@ -94,7 +95,6 @@ struct ClaudeLogLine: Decodable {
         timestamp = container.lenient(.timestamp)
         let requestIDs: [HistoryJSON.Text?] = [
             container.lenient(.requestID), container.lenient(.requestIDSnakeCase),
-            container.lenient(.sessionID),
         ]
         requestID = requestIDs.lazy.compactMap { $0?.value }.first
         message = container.lenient(.message)
@@ -104,6 +104,5 @@ struct ClaudeLogLine: Decodable {
         case type, timestamp, message
         case requestID = "requestId"
         case requestIDSnakeCase = "request_id"
-        case sessionID = "sessionId"
     }
 }

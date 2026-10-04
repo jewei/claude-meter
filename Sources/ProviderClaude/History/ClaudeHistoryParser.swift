@@ -4,8 +4,9 @@ import MeterPlatform
 /// Keeps one record per Claude response from the assistant lines of one session file.
 ///
 /// Claude Code writes a line per content block, and each line repeats the cumulative usage
-/// of its response. Request and message IDs identify the response, so later lines replace
-/// earlier ones by ``TokenRecord/replaces(_:)``, and copies in other files count once.
+/// of its response. Request and message IDs identify the response, so one record is kept per
+/// response: the one with the larger count, then the earlier date
+/// (``TokenRecord/replaces(_:)``). Copies in other files count once by the same rule.
 struct ClaudeHistoryParser: HistoryFileParser {
     private(set) var records = TokenRecordSet()
     private(set) var isPartial = false

@@ -95,8 +95,9 @@ Only the fields below are read. All other fields are skipped.
 19. If `cache_creation` holds `ephemeral_5m_input_tokens` or `ephemeral_1h_input_tokens`
     (even as null), cache write is the sum of those two. Else cache write is
     `cache_creation_input_tokens`.
-20. The key of a record is the request ID (`requestId`, then `request_id`, then `sessionId`)
-    and `message.id`.
+20. The key of a record is the request ID (`requestId`, then `request_id`) and `message.id`.
+    Without a request ID, `message.id` alone is the key. The session ID is never part of it:
+    a resumed session copies a response under a new session ID.
 21. Records with the same key count once. Claude Code writes one line per content block,
     and each line repeats the cumulative usage of the response.
 

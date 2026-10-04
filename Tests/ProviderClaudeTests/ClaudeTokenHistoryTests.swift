@@ -5,14 +5,14 @@ import MeterTestSupport
 import ProviderClaude
 import Testing
 
-/// Claude Code session logs, read from synthetic config dirs. Scans run one at a time because
-/// they share the process-wide `BlockingIO` pool with other suites.
+/// Claude Code session logs, read from synthetic config dirs.
 @Suite struct ClaudeTokenHistoryTests {
     private let calendar = Calendar.fixed("UTC")
 
     /// One assistant line. Pass nil to leave a field out.
     private func assistant(
-        _ id: String?, request: String? = "r", input: Any = 10, output: Any = 3,
+        _ id: String?, request: String? = "r", session: String? = nil, input: Any = 10,
+        output: Any = 3,
         read: Any? = 7, write: Any? = 2, split: [String: Any]? = nil,
         date: Any = Date.reference().ISO8601Format(), type: String = "assistant"
     ) throws -> String {
@@ -27,6 +27,7 @@ import Testing
         message["id"] = id
         var object: [String: Any] = ["type": type, "timestamp": date, "message": message]
         object["requestId"] = request
+        object["sessionId"] = session
         let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self) + "\n"
     }
@@ -61,6 +62,19 @@ import Testing
         #expect(tokens(result) == 32)
         #expect(tokens(result, "claude", .yesterday) == 42)
         #expect(tokens(result, "claude", .lastSevenDays) == 74)
+        #expect(!result.history(for: "claude").isPartial)
+    }
+
+    @Test func aCopyWithoutARequestIDCountsOnceAcrossSessions() async throws {
+        let home = try TemporaryDirectory()
+        defer { home.remove() }
+        // Older Claude Code wrote no request ID, and a resumed session copies the response.
+        try home.write(
+            try assistant("msg_1", request: nil, session: "s1"), to: "projects/a/s1.jsonl")
+        try home.write(
+            try assistant("msg_1", request: nil, session: "s2"), to: "projects/a/s2.jsonl")
+        let result = try await history([HistoryRoot(account: "claude", directory: home.url)])
+        #expect(tokens(result) == 22)
         #expect(!result.history(for: "claude").isPartial)
     }
 

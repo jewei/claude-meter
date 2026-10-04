@@ -95,7 +95,8 @@ changes a decision.
 add a test, then render the new field in `Sources/MeterUI`.
 
 **Change a provider request.** Update the provider module, its tests with a recorded
-fixture, and `docs/providers/<provider>.md` in the same commit.
+fixture, and its doc in `docs/providers/` in the same commit. (Claude's is
+`claude-oauth.md`: a file named `claude.md` would load as a `CLAUDE.md` memory file.)
 
 **Add a provider.** Add a `ProviderID` case, a `Provider<Name>` module that implements
 `UsageProvider` (and `TokenHistoryProvider` if it has history), register it in

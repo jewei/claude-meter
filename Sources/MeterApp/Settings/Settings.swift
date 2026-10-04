@@ -50,7 +50,7 @@ public struct ClaudeSettings: Codable, Equatable, Sendable {
     public enum Connection: String, Codable, Sendable, CaseIterable {
         /// Not connected. Claude shows a prompt to connect in Settings.
         case off
-        /// Read Claude Code's own Keychain credentials.
+        /// Read Claude Code's own Keychain credentials, one login per config dir.
         case automatic
         /// Use OAuth tokens that the user pasted, stored in this app's Keychain item.
         case manual

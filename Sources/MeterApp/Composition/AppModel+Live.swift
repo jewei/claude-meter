@@ -6,8 +6,9 @@ extension AppModel {
     /// The model for the running app, with live providers and storage.
     /// Starts refreshing at once; the first refresh waits for the saved readings to load.
     public static func live(updater: any Updater) -> AppModel {
-        let settings = SettingsStore(store: DefaultsStore())
-        let providers = LiveProviders(settings: settings)
+        let defaults = DefaultsStore()
+        let settings = SettingsStore(store: defaults)
+        let providers = LiveProviders(settings: settings, store: defaults)
         let archive = ReadingArchive(file: ReadingArchive.standardFile)
         let usage = UsageStore(
             providers: providers.usageProviders, historyProviders: providers.historyProviders,

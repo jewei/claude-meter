@@ -12,6 +12,7 @@ extension AppModel {
         }
         LogFile.shared.setEnabled(current.writesLogFile)
         scheduler?.update(Self.refreshConfiguration(current))
+        await claudeSettings?.reload()
         await codexSettings?.reload()
     }
 

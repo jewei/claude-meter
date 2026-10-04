@@ -15,7 +15,7 @@ struct ClaudeLimits: Sendable {
 /// Claude quota: one account per Claude Code config dir, or one manual login.
 ///
 /// The provider keeps no usage of its own. Each refresh receives the reading that the app holds
-/// and returns every configured account. See `docs/providers/claude.md` for the external
+/// and returns every configured account. See `docs/providers/claude-oauth.md` for the external
 /// contracts and rules.
 public final class ClaudeProvider: UsageProvider, DiagnosticsReporting {
     /// Always ``ProviderID/claude``.

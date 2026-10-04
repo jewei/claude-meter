@@ -1,6 +1,7 @@
 import Foundation
 import MeterDomain
 import MeterPlatform
+import ProviderClaude
 import ProviderCodex
 import ProviderCursor
 import ProviderGrok
@@ -8,14 +9,26 @@ import ProviderGrok
 /// Every live provider, built once. This is the only file that names concrete provider types.
 @MainActor
 struct LiveProviders {
+    let claude: ClaudeProvider
     let codex: CodexProvider
     let cursor: CursorProvider
     let grok: GrokProvider
+    let claudeHistory: ClaudeTokenHistory
     let cursorHistory: CursorTokenHistory
     let codexHistory: CodexTokenHistory
     let grokHistory: GrokTokenHistory
 
-    init(settings: SettingsStore) {
+    init(settings: SettingsStore, store: any KeyValueStore) {
+        let claude = ClaudeProvider(
+            configuration: { @MainActor in settings.claudeConfiguration }, store: store)
+        self.claude = claude
+        // Each enabled config dir is one account's history root.
+        claudeHistory = ClaudeTokenHistory(roots: {
+            let configuration = await MainActor.run { settings.claudeConfiguration }
+            return await claude.accounts(for: configuration).filter(\.isEnabled).map {
+                HistoryRoot(account: $0.id, directory: $0.directory)
+            }
+        })
         let codex = CodexProvider(configuration: { @MainActor in settings.codexConfiguration })
         self.codex = codex
         cursor = CursorProvider()
@@ -37,16 +50,16 @@ struct LiveProviders {
     }
 
     var usageProviders: [any UsageProvider] {
-        [codex, cursor, grok]
+        [claude, codex, cursor, grok]
     }
 
     var historyProviders: [any TokenHistoryProvider] {
-        [codexHistory, cursorHistory, grokHistory]
+        [claudeHistory, codexHistory, cursorHistory, grokHistory]
     }
 
     /// Providers that describe themselves in Diagnostics, in provider order.
     var diagnostics: [(ProviderID, any DiagnosticsReporting)] {
-        [(.codex, codex), (.cursor, cursor), (.grok, grok)]
+        [(.claude, claude), (.codex, codex), (.cursor, cursor), (.grok, grok)]
     }
 }
 

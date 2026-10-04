@@ -14,6 +14,8 @@ public final class AppModel {
     /// Whether the popover is on screen. Countdowns tick only while it is.
     public private(set) var isPopoverVisible = false
 
+    /// The Claude connection and config dirs for Settings. Nil in previews.
+    public let claudeSettings: ClaudeSettingsModel?
     /// Codex homes for Settings. Nil in previews.
     public let codexSettings: CodexSettingsModel?
 
@@ -29,6 +31,9 @@ public final class AppModel {
         self.scheduler = scheduler
         self.updater = updater
         self.providers = providers
+        self.claudeSettings = providers.map {
+            ClaudeSettingsModel(settings: settings, usage: usage, provider: $0.claude)
+        }
         self.codexSettings = providers.map {
             CodexSettingsModel(settings: settings, provider: $0.codex)
         }

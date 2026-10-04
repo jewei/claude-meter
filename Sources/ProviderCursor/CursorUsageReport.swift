@@ -53,9 +53,9 @@ struct CursorUsageReport: Hashable, Sendable {
         let spent = usage?["totalSpend"]
         let amount =
             spent == nil || spent == .null
-            ? (hasUsage ? 0 : nil) : Self.dollars(cents: spent)
+            ? (hasUsage ? 0 : nil) : spent?.dollarsFromCents
         // Zero or a negative limit means that the plan has no fixed limit.
-        let limit = Self.dollars(cents: usage?["limit"]).flatMap { $0 > 0 ? $0 : nil }
+        let limit = usage?["limit"]?.dollarsFromCents.flatMap { $0 > 0 ? $0 : nil }
         spend =
             amount == nil && limit == nil
             ? nil : Balance(kind: .spend, amount: amount, limit: limit, unit: .currency("USD"))
@@ -67,19 +67,5 @@ struct CursorUsageReport: Hashable, Sendable {
             id: .default, name: CursorProvider.accountName, plan: CursorPlan.displayName(plan),
             windows: windows, balances: spend.map { [$0] } ?? [], observedAt: now,
             attemptedAt: now, owner: owner)
-    }
-
-    /// Whole US cents, as a number or a numeric string, converted exactly to dollars.
-    static func dollars(cents value: JSONValue?) -> Decimal? {
-        let text: String
-        switch value {
-        case .number(let number) where number.isFinite:
-            text = String(number)
-        case .string(let string) where NumericText.double(string) != nil:
-            text = string
-        default:
-            return nil
-        }
-        return Decimal(string: text, locale: Locale(identifier: "en_US_POSIX")).map { $0 / 100 }
     }
 }

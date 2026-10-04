@@ -53,17 +53,7 @@ struct GrokBillingReport: Hashable, Sendable {
     static func dollars(_ money: JSONValue?) -> Decimal? {
         guard let money, money != .null else { return 0 }
         guard case .object = money else { return nil }
-        let text: String
-        switch money["val"] {
-        case nil, .null?:
-            return 0
-        case .number(let number)? where number.isFinite:
-            text = String(number)
-        case .string(let string)? where NumericText.double(string) != nil:
-            text = string
-        default:
-            return nil
-        }
-        return Decimal(string: text, locale: Locale(identifier: "en_US_POSIX")).map { $0 / 100 }
+        guard let cents = money["val"], cents != .null else { return 0 }
+        return cents.dollarsFromCents
     }
 }

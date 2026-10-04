@@ -114,6 +114,29 @@ import Testing
         #expect(JSONValue.bool(true).doubleValue == nil)
         #expect(JSONValue.null.doubleValue == nil)
     }
+
+    @Test func readsShapesTextAndWholeNumbers() {
+        #expect(JSONValue.parse(Data("[1]".utf8))?.arrayValue == [.number(1)])
+        #expect(JSONValue.parse(Data("not json".utf8)) == nil)
+        #expect(JSONValue.object([:]).objectValue == [:])
+        #expect(JSONValue.array([]).objectValue == nil)
+        #expect(JSONValue.string("  plus \n").text == "plus")
+        #expect(JSONValue.string("   ").text == nil)
+        #expect(JSONValue.string("42").integerValue == 42)
+        #expect(JSONValue.number(4.5).integerValue == nil)
+    }
+
+    /// Amounts stay exact: `112.4` is not `112.40000000000001`.
+    @Test func readsExactAmountsAndCents() {
+        #expect(JSONValue.number(112.4).decimalValue == Decimal(string: "112.4"))
+        #expect(JSONValue.string("7.5").decimalValue == Decimal(string: "7.5"))
+        #expect(JSONValue.string("1e2").decimalValue == 100)
+        #expect(JSONValue.string("12 USD").decimalValue == nil)
+        #expect(JSONValue.number(.infinity).decimalValue == nil)
+        #expect(JSONValue.number(1240).dollarsFromCents == Decimal(string: "12.4"))
+        #expect(JSONValue.string("1999").dollarsFromCents == Decimal(string: "19.99"))
+        #expect(JSONValue.bool(true).dollarsFromCents == nil)
+    }
 }
 
 @Suite struct Base64URLTests {

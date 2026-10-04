@@ -16,16 +16,28 @@ extension AutomaticRefresh {
         /// Output order: an unmapped active login first, then config dirs in discovery order.
         var slots: [LoginSlot]
         /// The account of Claude Code's active login, or `claude` when there is none or it is
-        /// unknown.
+        /// unknown. It gets the advice for the active login. It has no slot when the user
+        /// turned it off.
         var activeID: AccountID
         var activeLogin: ActiveLogin
         /// The key of every discovered config dir, enabled or not.
         var directoryIDs: Set<AccountID>
 
-        /// The active login first, so that a 429 never starves the menu-bar account, then the
-        /// others in output order.
+        /// The account read on every refresh: the account of the active login, or `claude`
+        /// when that account is turned off (or has no slot for another reason), or else the
+        /// first account that can be read. Nil when no account can be read.
+        var alwaysReadID: AccountID? {
+            let readable = slots.filter { $0.issue == nil }.map(\.id)
+            return [activeID, ClaudeAccount.defaultID].first(where: readable.contains)
+                ?? readable.first
+        }
+
+        /// The account read on every refresh first, so that a 429 never starves the login that
+        /// Claude Code uses now, then the others in output order. That login is often, but
+        /// not always, the account that the menu bar shows.
         var requestOrder: [LoginSlot] {
-            slots.filter { $0.id == activeID } + slots.filter { $0.id != activeID }
+            let first = alwaysReadID
+            return slots.filter { $0.id == first } + slots.filter { $0.id != first }
         }
 
         /// Whether an account without a slot can still belong to the active login. Only the

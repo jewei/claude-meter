@@ -20,6 +20,16 @@ extension ClaudeTests {
             return harness
         }
 
+        /// `~/.claude` signed in with the legacy item and `~/.claude-work` with its hashed item.
+        private func twoAccounts() throws -> ClaudeHarness {
+            let harness = try ClaudeHarness()
+            let main = try harness.directory(".claude", account: "acc-1")
+            let work = try harness.directory(".claude-work", account: "acc-2")
+            harness.signIn(main, token: "main", legacy: true)
+            harness.signIn(work, token: "work")
+            return harness
+        }
+
         @Test func theActiveLoginIsRequestedFirst() async throws {
             let harness = try activeWork()
             let http = usageServer(["main": "{}", "work": "{}"])
@@ -73,6 +83,95 @@ extension ClaudeTests {
             #expect(http.usageTokens == ["main", "work", "main", "main", "main", "work"])
         }
 
+        @Test func theActiveLoginIsReadEveryTimeAndOthersAtEachFiveMinuteTick() async throws {
+            let harness = try twoAccounts()
+            // Each request takes 2 s of clock time, as a real one does.
+            let http = FakeHTTPClient { request in
+                harness.advance(2)
+                let session = bearer(request) == "main" ? 1.0 : 2.0
+                return .json(200, ClaudeFixtures.usage(session: session))
+            }
+            let provider = harness.provider(http)
+
+            let first = try await provider.fetch(previous: nil)
+            #expect(first.accounts[1].attemptedAt == .reference())
+            #expect(first.accounts[1].observedAt == .reference(4))
+            harness.advance(56)
+            let second = try await provider.fetch(previous: first)
+            #expect(http.usageTokens == ["main", "work", "main"])
+            #expect(second.accounts[0].observedAt == .reference(62))
+            #expect(second.accounts[1] == first.accounts[1])
+
+            // The next timer tick, 300 s after the first one. The work account was answered at
+            // 4 s, less than 300 s ago, but its attempt started a whole interval ago.
+            harness.advance(238)
+            let third = try await provider.fetch(previous: second)
+            #expect(http.usageTokens == ["main", "work", "main", "main", "work"])
+            #expect(third.accounts[1].attemptedAt == .reference(300))
+            #expect(third.accounts[1].observedAt == .reference(304))
+        }
+
+        @Test(arguments: [(289.0, false), (290, true), (296, true)])
+        func aRefreshThatStartsALittleEarlyStillReadsOtherAccounts(
+            start: TimeInterval, readsWork: Bool
+        ) async throws {
+            let harness = try twoAccounts()
+            let http = usageServer(["main": "{}", "work": "{}"])
+            let provider = harness.provider(http)
+            let first = try await provider.fetch(previous: nil)
+
+            harness.advance(start)
+            _ = try await provider.fetch(previous: first)
+
+            #expect(http.usageTokens == ["main", "work", "main"] + (readsWork ? ["work"] : []))
+        }
+
+        @Test func aTurnedOffActiveLoginLeavesTheDefaultAccountReadEveryTime() async throws {
+            let harness = try ClaudeHarness()
+            let main = try harness.directory(".claude", account: "acc-1")
+            let work = try harness.directory(".claude-work", account: "acc-2")
+            harness.signIn(main, token: "main", modifiedAt: .reference())
+            // Claude Code uses the work login now, but the user turned that account off.
+            harness.signIn(work, token: "work", modifiedAt: .reference(10))
+            harness.configuration = ClaudeConfiguration(
+                connection: .automatic, disabledAccounts: ["claude-work"])
+            let http = usageServer(["main": "{}", "work": "{}"])
+            let provider = harness.provider(http)
+
+            let first = try await provider.fetch(previous: nil)
+            harness.advance(60)
+            let second = try await provider.fetch(previous: first)
+
+            #expect(http.usageTokens == ["main", "main"])
+            #expect(second.accounts.map(\.id) == ["claude"])
+            #expect(second.accounts[0].observedAt == .reference(60))
+            let facts = Dictionary(
+                await provider.diagnostics().map { ($0.label, $0.value) },
+                uniquingKeysWith: { first, _ in first })
+            #expect(facts["Active login account"] == "claude-work")
+        }
+
+        @Test func everyConfigDirTurnedOffAsksToTurnOneOn() async throws {
+            let harness = try ClaudeHarness()
+            let work = try harness.directory(".claude-work", account: "acc-2")
+            harness.signIn(work, token: "work")
+            harness.configuration = ClaudeConfiguration(
+                connection: .automatic, disabledAccounts: ["claude-work"])
+            let http = usageServer(["work": "{}"])
+
+            let error = await #expect(throws: ProviderError.self) {
+                try await harness.provider(http).fetch(previous: nil)
+            }
+
+            #expect(
+                error?.issue
+                    == UsageIssue(
+                        "Every Claude config dir is turned off. Turn one on in Settings.",
+                        needsAction: true))
+            #expect(error?.keepsLastReading == false)
+            #expect(http.requests.isEmpty)
+        }
+
         @Test func oneSlowAccountKeepsTheResultsOfTheOthers() async throws {
             let harness = try ClaudeHarness()
             let main = try harness.directory(".claude", account: "acc-1")
@@ -82,11 +181,13 @@ extension ClaudeTests {
             harness.signIn(team, token: "team")
             harness.signIn(work, token: "work")
             let http = FakeHTTPClient { request in
-                if bearer(request) == "team" { try await Task.sleep(for: .seconds(30)) }
+                // The team account never answers; its deadline cancels the wait.
+                if bearer(request) == "team" { try await Task.sleep(for: .seconds(3_600)) }
                 return .json(200, ClaudeFixtures.usage(session: 3))
             }
+            // Ample time for the accounts that answer, even on a busy machine.
             var limits = ClaudeLimits()
-            limits.account = .milliseconds(200)
+            limits.account = .seconds(2)
             let provider = harness.provider(http, limits: limits)
 
             let usage = try await provider.fetch(previous: nil)
@@ -109,13 +210,15 @@ extension ClaudeTests {
             harness.signIn(work, token: "work")
             let slow = Locked(false)
             let http = FakeHTTPClient { request in
+                // Once slow, the team account never answers; the budget cancels the wait.
                 if slow.value, bearer(request) == "team" {
-                    try await Task.sleep(for: .seconds(30))
+                    try await Task.sleep(for: .seconds(3_600))
                 }
                 return .json(200, ClaudeFixtures.usage(session: 3))
             }
+            // Ample time for a refresh in which every account answers, even on a busy machine.
             var limits = ClaudeLimits()
-            limits.refresh = .milliseconds(500)
+            limits.refresh = .seconds(3)
             let provider = harness.provider(http, limits: limits)
             let first = try await provider.fetch(previous: nil)
 

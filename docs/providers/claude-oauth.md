@@ -139,14 +139,20 @@ little memory. The limit is 256 MiB. The result is one of three states:
 
 1. Claude Meter never refreshes, writes, or deletes Claude Code's credentials.
 2. A token that expires within 60 s is expired. Expired tokens are not sent.
-3. The account of the active login is read on every refresh. With no active login, or while
-   the Keychain cannot say which login is active, that is `claude`.
-4. Every other enabled account is read when it has no previous value, or its previous
-   `attemptedAt` is at least 300 s old. A failed attempt counts, so an account that always
-   fails is also requested at most every 300 s. Otherwise its previous value is returned
-   unchanged.
-5. Requests go out one at a time: the active login first, so that a 429 never starves the
-   menu-bar account, then the others in output order. The output order does not change.
+3. The account of the active login is read on every refresh. With no active login, while
+   the Keychain cannot say which login is active, or when the user turned the account of
+   the active login off, that is `claude`; without a `claude` account, it is the first
+   other account that can be read. The texts for the active login go only to the account of
+   the active login (or to `claude` when there is none or it is unknown).
+4. Every other enabled account is read when it has no previous value, or when its previous
+   attempt started at least 290 s before this refresh started. `attemptedAt` is the start
+   of the refresh that last tried the account. The 10 s below the 300 s timer cover the time
+   that a refresh needs to start, which varies, so each timer tick reads every account. A
+   failed attempt counts, so an account that always fails is also requested at most once in
+   290 s. Otherwise its previous value is returned unchanged.
+5. Requests go out one at a time: the account of rule 3 first, so that a 429 never starves
+   the login that Claude Code uses now (often, but not always, the menu-bar account), then
+   the others in output order. The output order does not change.
 6. After each response, the credential and identity are read again. If the owner changed,
    the response is discarded.
 7. Each account has 20 s, inside the 60 s budget of the whole refresh. An account that runs
@@ -158,6 +164,9 @@ little memory. The limit is 256 MiB. The result is one of three states:
    unmapped `oauth-…` account, or `claude` when `~/.claude` does not exist. When no account
    is left, the refresh throws the Keychain issue and keeps the last reading. A locked
    Keychain never shows as "not signed in".
+9. When config dirs exist but the user turned every one off, the refresh throws "Every
+   Claude config dir is turned off. Turn one on in Settings." and keeps no reading. With no
+   config dir and no login, it throws the "isn't signed in" text of the active login.
 
 ### Manual mode
 

@@ -45,26 +45,6 @@ extension ClaudeTests {
             #expect(usage.accounts[1].windows.first?.usedPercent == 20)
         }
 
-        @Test func theActiveLoginIsReadEveryTimeAndOthersEveryFiveMinutes() async throws {
-            let harness = try twoAccounts()
-            let http = usageServer([
-                "main": ClaudeFixtures.usage(session: 1), "work": ClaudeFixtures.usage(session: 2),
-            ])
-            let provider = harness.provider(http)
-
-            let first = try await provider.fetch(previous: nil)
-            harness.advance(60)
-            let second = try await provider.fetch(previous: first)
-            #expect(http.usageTokens == ["main", "work", "main"])
-            #expect(second.accounts[0].observedAt == .reference(60))
-            #expect(second.accounts[1] == first.accounts[1])
-
-            harness.advance(240)
-            let third = try await provider.fetch(previous: second)
-            #expect(http.usageTokens == ["main", "work", "main", "main", "work"])
-            #expect(third.accounts[1].observedAt == .reference(300))
-        }
-
         @Test func http429StopsTheRefreshAndUnattemptedAccountsKeepTheirAttemptTime() async throws {
             let harness = try twoAccounts()
             let limited = Locked(false)

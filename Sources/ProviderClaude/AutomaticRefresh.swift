@@ -4,15 +4,21 @@ import MeterPlatform
 
 /// Automatic mode: reads the Claude Code login of every enabled config dir.
 ///
-/// The account of Claude Code's active login is read on every refresh, and first. Every other
-/// account is read when it has no previous value, or its previous value was attempted at least
-/// 300 s ago; otherwise its previous value is returned unchanged. Requests go out one at a
-/// time. Each account has its own deadline inside the budget of the whole refresh, so a slow
-/// account cannot discard the others. HTTP 429, or the end of the budget, stops the rest of
-/// the refresh; accounts not attempted keep their previous value and `attemptedAt`, so they
-/// are due again at the next refresh.
+/// One account is read on every refresh, and first: the account of Claude Code's active login
+/// (see ``Plan/alwaysReadID``). Every other account is read when it has no previous value, or
+/// when its previous attempt started at least 290 s before this refresh started; otherwise its
+/// previous value is returned unchanged. Requests go out one at a time. Each account has its
+/// own deadline inside the budget of the whole refresh, so a slow account cannot discard the
+/// others. HTTP 429, or the end of the budget, stops the rest of the refresh; accounts not
+/// attempted keep their previous value and `attemptedAt`, so they are due again at the next
+/// refresh.
 struct AutomaticRefresh: Sendable {
     static let otherAccountInterval: TimeInterval = 300
+    /// Refreshes start a little later than the 300 s timer ticks, by a varying amount (local
+    /// reads first). Without this margin an account would be read only at every second tick.
+    static let dueMargin: TimeInterval = 10
+    static let allTurnedOffMessage =
+        "Every Claude config dir is turned off. Turn one on in Settings."
 
     struct Result: Sendable {
         let usage: ProviderUsage
@@ -43,6 +49,9 @@ struct AutomaticRefresh: Sendable {
     func fetch(_ configuration: ClaudeConfiguration, previous: ProviderUsage?) async throws
         -> Result
     {
+        // Each attempted account records this time, so the due check of the next refresh
+        // compares the starts of two refreshes, not the end of a slow request.
+        let startedAt = now()
         let deadline = ContinuousClock.now + limits.refresh
         let plan = try await plan(configuration)
         if let until = api.gate.blockedUntil(now: now()) {
@@ -62,6 +71,11 @@ struct AutomaticRefresh: Sendable {
                 throw ProviderError(
                     AccountFailure.credentialsUnavailable.issue(for: .activeLogin))
             }
+            if !plan.directoryIDs.isEmpty {
+                // Config dirs exist, but the user turned every one off.
+                throw ProviderError(
+                    Self.allTurnedOffMessage, needsAction: true, keepsLastReading: false)
+            }
             throw ProviderError(
                 AccountFailure.credentialsMissing.issue(for: .activeLogin),
                 keepsLastReading: false)
@@ -77,7 +91,8 @@ struct AutomaticRefresh: Sendable {
                 continue
             }
             let isActive = slot.id == plan.activeID
-            guard stop == nil, isActive || isDue(prior) else { continue }
+            guard stop == nil, slot.id == plan.alwaysReadID || isDue(prior, at: startedAt)
+            else { continue }
             let remaining = deadline - ContinuousClock.now
             guard remaining > .zero else {
                 log.warning("Claude refresh ran out of time before \(slot.id)")
@@ -87,7 +102,9 @@ struct AutomaticRefresh: Sendable {
             try Task.checkCancellation()
             let outcome = try await fetchAccount(
                 slot, prior: prior, isActive: isActive, limit: min(limits.account, remaining))
-            fetched[slot.id] = outcome.usage
+            var usage = outcome.usage
+            usage.attemptedAt = startedAt
+            fetched[slot.id] = usage
             identities[slot.id] = outcome.identity
             if case .rateLimited = outcome.failure { stop = outcome.failure }
         }
@@ -152,10 +169,11 @@ struct AutomaticRefresh: Sendable {
     }
 
     /// An account is due when it was never attempted, or its last attempt, successful or not,
-    /// is at least 300 s old. A clock that moved back makes it due.
-    private func isDue(_ prior: AccountUsage?) -> Bool {
+    /// started at least 290 s before `startedAt`, the start of this refresh: the 300 s
+    /// interval less ``dueMargin``. A clock that moved back makes it due.
+    private func isDue(_ prior: AccountUsage?, at startedAt: Date) -> Bool {
         guard let attemptedAt = prior?.attemptedAt else { return true }
-        let age = now().timeIntervalSince(attemptedAt)
-        return age < 0 || age >= Self.otherAccountInterval
+        let age = startedAt.timeIntervalSince(attemptedAt)
+        return age < 0 || age >= Self.otherAccountInterval - Self.dueMargin
     }
 }

@@ -272,8 +272,9 @@ extension ClaudeTests {
                     accessToken: token, refreshToken: nil, expiresAt: nil, connectionID: "c")
             }
 
-            await #expect(throws: TimeoutError.self) {
-                try await vault.save(credential("first"), sequence: 1)
+            // The first write hangs in the Keychain. Only the second uses the short limit.
+            let first = Task {
+                try await vault.save(credential("first"), sequence: 1, timeout: .seconds(10))
             }
             #expect(await hung.wait())
             // Queued behind the hung write, this one times out before it starts.
@@ -281,10 +282,17 @@ extension ClaudeTests {
                 try await vault.save(credential("second"), sequence: 2)
             }
             release.raise()
-            try await vault.save(credential("third"), sequence: 3)
+            try await first.value
+            // Queued behind both, so it proves that the second never ran.
+            try await vault.save(credential("third"), sequence: 3, timeout: .seconds(10))
 
             #expect(keychain.writes == ["first", "third"])
-            #expect(try await vault.load() == .found(credential("third")))
+            let stored = try #require(
+                base.storedPassword(
+                    service: ManualCredentialVault.service, account: ManualCredentialVault.account))
+            #expect(
+                try JSONDecoder.meter.decode(ManualCredential.self, from: Data(stored.utf8))
+                    == credential("third"))
         }
     }
 }

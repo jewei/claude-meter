@@ -119,7 +119,9 @@ never reaches a reading, a log, or the disk.
 
 9. Signed out: drop the last observation.
 10. Expired login, HTTP 401, or HTTP 403: keep the last observation as stale, with an issue that
-    asks the user to act, while the owner is unchanged.
+    asks the user to act, while the owner is unchanged. HTTP 401 asks for `grok login`. HTTP
+    403 means that the login works but has no access to usage data, so it asks the user to
+    check the Grok plan.
 11. Unreadable file, network failure, other HTTP status, or an unexpected response: keep the
     last observation as stale while the owner is unchanged. After HTTP 429 with a
     `Retry-After`, no request is sent before the retry time, so the card's countdown is true.

@@ -109,16 +109,20 @@ import Testing
                 == "Grok returned an unexpected response. Claude Meter will try again soon.")
     }
 
-    @Test(arguments: [401, 403])
-    func aRejectedSignInKeepsTheReadingWhileTheOwnerIsSignedIn(status: Int) async throws {
+    /// HTTP 403 means that the login works but has no access, so a new login is not the fix.
+    @Test(arguments: [
+        (401, "Grok did not accept the sign-in. Open Grok Build and run `grok login`."),
+        (403, "Grok denied access to usage data. Check your Grok plan."),
+    ])
+    func aRejectedSignInKeepsTheReadingWhileTheOwnerIsSignedIn(status: Int, message: String)
+        async throws
+    {
         try signIn()
         let account = try account(
             try await provider(FakeHTTPClient(status: status, json: "")).fetch(previous: previous())
         )
         #expect(account.isStale)
-        #expect(
-            account.issue?.message
-                == "Grok did not accept the sign-in. Open Grok Build and run `grok login`.")
+        #expect(account.issue?.message == message)
         #expect(account.issue?.needsAction == true)
     }
 

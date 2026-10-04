@@ -7,7 +7,8 @@ import Testing
 @Suite struct GrokFailureTests {
     @Test func everyMessageTellsTheUserWhatToDo() {
         let failures: [GrokFailure] = [
-            .signedOut, .sessionExpired, .sessionRejected, .rateLimited(retryAt: nil),
+            .signedOut, .sessionExpired, .sessionRejected, .accessDenied,
+            .rateLimited(retryAt: nil),
             .httpStatus(500), .unexpectedResponse, .offline, .timedOut, .network,
             .credentialsUnreadable, .credentialsBusy, .signInChanged,
         ]

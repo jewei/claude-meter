@@ -8,8 +8,11 @@ enum GrokFailure: Error, Equatable, Sendable {
     case signedOut
     /// Every usable entry has an `expires_at` in the past. No token is sent.
     case sessionExpired
-    /// The billing endpoint answered HTTP 401 or 403.
+    /// The billing endpoint answered HTTP 401.
     case sessionRejected
+    /// The billing endpoint answered HTTP 403: the login is valid but has no access, for
+    /// example without a plan. A new login does not help.
+    case accessDenied
     /// The billing endpoint answered HTTP 429.
     case rateLimited(retryAt: Date?)
     /// Any other HTTP status.
@@ -38,6 +41,9 @@ enum GrokFailure: Error, Equatable, Sendable {
             UsageIssue(
                 "Grok did not accept the sign-in. Open Grok Build and run `grok login`.",
                 needsAction: true)
+        case .accessDenied:
+            UsageIssue(
+                "Grok denied access to usage data. Check your Grok plan.", needsAction: true)
         case .rateLimited(let retryAt):
             UsageIssue(
                 "Grok limited the number of requests. Claude Meter will try again later.",
@@ -81,7 +87,8 @@ enum GrokFailure: Error, Equatable, Sendable {
     /// Maps a non-success HTTP status.
     init(status: Int, retryAfter: String?, now: Date) {
         switch status {
-        case 401, 403: self = .sessionRejected
+        case 401: self = .sessionRejected
+        case 403: self = .accessDenied
         case 429:
             self = .rateLimited(
                 retryAt: RetryAfter.delay(retryAfter, now: now).map { now.addingTimeInterval($0) })

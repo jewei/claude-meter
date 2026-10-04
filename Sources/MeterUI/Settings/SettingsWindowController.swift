@@ -7,7 +7,7 @@ import SwiftUI
 /// While it is open the app uses the regular activation policy, so it has a Dock icon, a
 /// menu bar, and Command-Tab, and it comes to the front like any app. The app goes back to an
 /// accessory with no Dock icon when the last titled window closes, so Sparkle's update window
-/// or the About panel keeps the Dock icon after Settings closes.
+/// keeps the Dock icon after Settings closes (``DockIconPolicy``).
 ///
 /// The window is resizable in height and never taller than the screen; pages scroll. It
 /// remembers its place. While it is closed, its SwiftUI content is gone, so nothing renders.
@@ -28,7 +28,7 @@ import SwiftUI
                 forName: NSWindow.willCloseNotification, object: nil, queue: .main
             ) { note in
                 let closing = note.object.map { ObjectIdentifier($0 as AnyObject) }
-                MainActor.assumeIsolated { Self.windowWillClose(closing) }
+                MainActor.assumeIsolated { Self.restoreAccessoryPolicy(closing: closing) }
             })
     }
 
@@ -60,8 +60,8 @@ import SwiftUI
         return window
     }
 
-    /// Drops the SwiftUI content, so a closed window does not keep rendering on every
-    /// settings change. The selected tab stays in ``navigation``.
+    /// The Settings window is closing: drop its SwiftUI content, so a closed window does not
+    /// keep rendering on every settings change. The selected tab stays in ``navigation``.
     func windowWillClose(_ notification: Notification) {
         window?.contentView = nil
     }
@@ -101,16 +101,17 @@ import SwiftUI
         if frame != window.frame { window.setFrame(frame, display: false) }
     }
 
-    /// Returns the app to an accessory when the last titled window closes.
-    private static func windowWillClose(_ closing: ObjectIdentifier?) {
+    /// Any window of the app is closing: return the app to an accessory when it was the last
+    /// titled window.
+    private static func restoreAccessoryPolicy(closing: ObjectIdentifier?) {
         let windows = NSApp.windows.map { window in
-            SettingsWindowPlacement.Window(
+            DockIconPolicy.Window(
                 isTitled: window.styleMask.contains(.titled),
                 isOpen: window.isVisible || window.isMiniaturized,
                 isClosing: ObjectIdentifier(window) == closing)
         }
         guard NSApp.activationPolicy() == .regular,
-            !SettingsWindowPlacement.keepsDockIcon(windows)
+            !DockIconPolicy.keepsDockIcon(windows)
         else { return }
         NSApp.setActivationPolicy(.accessory)
     }

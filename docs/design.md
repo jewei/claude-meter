@@ -260,7 +260,8 @@ It remembers its place and its tab (`SettingsNavigation`); while it is closed it
 content is gone, so nothing renders. To open, the app switches to the regular activation
 policy (Dock icon, menu bar, Command-Tab), activates, and then orders the window to the
 front, asking once more on the next turn because activation is cooperative. It returns to
-accessory when the last titled window closes, so Sparkle's window keeps the Dock icon. Every
+accessory when the last titled window closes, so Sparkle's window keeps the Dock icon
+(`DockIconPolicy`, pure). Every
 path into Settings (the popover, Command-comma, reopening the app, About) calls
 `completeOnboarding()`. `MainMenu` (app, Edit, Window) is installed at launch and shows while
 the app is regular; "About Claude Meter" opens the About tab.

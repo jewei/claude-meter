@@ -111,7 +111,13 @@ public final class ClaudeProvider: UsageProvider, DiagnosticsReporting {
                 return usage
             }
         } catch let error as TimeoutError {
-            throw ProviderError("Could not refresh Claude usage. \(error.localizedDescription)")
+            let failure = ProviderError(
+                "Could not refresh Claude usage. \(error.localizedDescription)")
+            lastRefresh.record(failure: failure, at: now())
+            throw failure
+        } catch let failure as ProviderError {
+            lastRefresh.record(failure: failure, at: now())
+            throw failure
         }
     }
 

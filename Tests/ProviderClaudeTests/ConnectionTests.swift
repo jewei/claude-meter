@@ -115,7 +115,29 @@ extension ClaudeTests {
             #expect(values["Claude Code login"] == "Signed in")
             #expect(values["Rate limited until"] == "Not limited")
             #expect(values["Active login account"] == "claude")
+            #expect(values["Last refresh result"] == "Usage returned")
             #expect(values["Account claude"]?.contains("observed") == true)
+        }
+
+        @Test func diagnosticsShowAFailedRefreshAsTheLastOne() async throws {
+            let harness = try ClaudeHarness()
+            let main = try harness.directory(".claude", account: "acc-1")
+            harness.signIn(main, token: "main", legacy: true)
+            let http = FakeHTTPClient { _ in .json(429, "{}", headers: ["Retry-After": "60"]) }
+            let provider = harness.provider(http)
+            _ = try await provider.fetch(previous: nil)
+            harness.advance(5)
+
+            await #expect(throws: ProviderError.self) { try await provider.fetch(previous: nil) }
+
+            let facts = await provider.diagnostics()
+            let values = Dictionary(
+                facts.map { ($0.label, $0.value) }, uniquingKeysWith: { first, _ in first })
+            #expect(values["Last refresh"] == Date.reference(5).formatted(.iso8601))
+            #expect(
+                values["Last refresh result"]
+                    == "Failed: Anthropic is rate-limiting usage checks.")
+            #expect(values["Account claude"] == nil)
         }
 
         @Test func accountsListEnabledAndDisabledConfigDirs() async throws {

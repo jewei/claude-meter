@@ -213,6 +213,16 @@ extension ClaudeHarness {
     }
 }
 
+/// Waits until `condition`, which can read an actor, is true. Returns false after `limit`.
+func eventually(limit: Duration = .seconds(5), _ condition: () async -> Bool) async -> Bool {
+    let deadline = ContinuousClock.now + limit
+    while await !condition() {
+        guard ContinuousClock.now < deadline else { return false }
+        try? await Task.sleep(for: .milliseconds(1))
+    }
+    return true
+}
+
 /// Answers usage requests by bearer token and token requests with `tokenResponse`.
 func usageServer(
     _ bodies: [String: String], tokenResponse: HTTPResponse = .json(500, "{}")

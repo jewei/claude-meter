@@ -195,9 +195,11 @@ little memory. The limit is 256 MiB. The result is one of three states:
    After HTTP 401, a fetch checks that its login is still the stored one before the token
    refresh and again before the second request, so a Disconnect or a Connect during the
    first request stops it with "connection changed". A rotation that arrives after a
-   Disconnect is forgotten. A Connect that started before a Disconnect, or before a newer
-   Connect, stores nothing and says that the connection changed. `cancelManualConnect()`
-   does the same for running Connects and keeps the stored login.
+   Disconnect is forgotten, and a fetch checks its login again after the save of a
+   rotation, so a Disconnect during that save also sends nothing. A Connect that started
+   before a Disconnect, or before a newer Connect, stores nothing and says that the
+   connection changed. `cancelManualConnect()` does the same for running Connects and keeps
+   the stored login.
 6. Connect asks its caller whether it is still wanted (`isWanted`) twice: before it takes
    the write lock, and again after the save, under the lock. It checks its ticket each time,
    and again when it has the lock. Under the lock, before the save, it reads the old item. A

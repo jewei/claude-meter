@@ -162,6 +162,38 @@ extension ClaudeTests {
             #expect(harness.manualItem()?.accessToken == "old-access")
         }
 
+        @Test func aDisconnectDuringTheSaveOfARefreshSendsNoRequest() async throws {
+            let harness = try ClaudeHarness.manual(expiresAt: .reference(10))
+            let saving = Signal()
+            let release = Signal()
+            let keychain = ScriptedKeychain(base: harness.keychain) { password in
+                // Holds the save of the rotation; the delete goes through.
+                guard password != nil else { return }
+                saving.raise()
+                release.block()
+            }
+            let http = FakeHTTPClient { request in
+                request.url == TokenRefresher.url
+                    ? .json(200, ClaudeFixtures.rotated) : .json(200, "{}")
+            }
+            let provider = harness.provider(http, keychain: keychain)
+
+            let fetch = Task { try await provider.fetch(previous: nil) }
+            #expect(await saving.wait())
+            // The Disconnect forgets the login at once, then waits for the save to end.
+            let disconnect = Task { try await provider.disconnectManual() }
+            #expect(await eventually { await provider.manualLogin.isDisconnected })
+            release.raise()
+            let usage = try await fetch.value
+            try await disconnect.value
+
+            #expect(http.requests(to: TokenRefresher.url).count == 1)
+            #expect(http.usageTokens.isEmpty)
+            #expect(!usage.accounts[0].hasObservation)
+            #expect(keychain.writes == ["new-access", "delete"])
+            #expect(harness.manualItem() == nil)
+        }
+
         @Test func disconnectWinsOverARefreshInFlight() async throws {
             let harness = try ClaudeHarness.manual(expiresAt: .reference(10))
             let started = Latch()

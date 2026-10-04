@@ -18,7 +18,8 @@ extension ManualLogin {
     }
 
     /// A credential that does not expire within 60 s, refreshed first when needed. Throws
-    /// ``Failure/rejected`` without a request for a connection that the server rejected.
+    /// ``Failure/rejected`` without a request for a connection that the server rejected, and
+    /// ``Failure/changed`` when a Disconnect or a Connect came during the refresh or its save.
     func usable() async throws -> ManualCredential {
         let credential = try await current()
         guard !refreshState.policy.isRejected(connectionID: credential.connectionID) else {
@@ -97,6 +98,8 @@ extension ManualLogin {
             fresh.connectionID = used.connectionID
             refreshState.policy.recordSuccess()
             await adopt(fresh, generation: startGeneration)
+            // A Disconnect or a stored Connect during the save: the tokens must not go out.
+            guard generation == startGeneration, !isDisconnected else { throw Failure.changed }
             return fresh
         case .failure(Failure.rejected):
             refreshState.policy.rejectRefreshToken(refreshToken)

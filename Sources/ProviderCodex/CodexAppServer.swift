@@ -4,8 +4,9 @@ import MeterPlatform
 
 /// The live ``CodexRecovery``: one `codex app-server` child per call, with no reuse.
 ///
-/// Every path out of ``recover(_:environment:)`` stops the child and waits until it is reaped,
-/// including timeouts, failures, and cancellation.
+/// Every path out of ``recover(_:environment:)`` stops the child, including timeouts,
+/// failures, and cancellation: TERM, then KILL after the grace period, then a wait of at most
+/// ``LineProcess/reapLimit`` for the reap (``LineProcess/stop()``).
 struct CodexAppServer: CodexRecovery {
     /// A read-only sandbox, and an approval policy that never asks, keep the child
     /// non-interactive.

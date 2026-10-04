@@ -62,7 +62,8 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
         self.limits = limits
         self.now = now
         self.refresh = CodexAccountRefresh(
-            api: CodexUsageAPI(http: http, resetDetailsLimit: limits.resetDetails),
+            api: CodexUsageAPI(
+                http: http, usageLimit: limits.usageRequest, resetDetailsLimit: limits.resetDetails),
             recovery: recovery
                 ?? CodexAppServer(
                     installFolders: installFolders, stepLimit: limits.appServerStep,
@@ -157,7 +158,7 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
     }
 
     /// Refreshes every configured home, at most three at once, within one 60-second deadline
-    /// that includes home resolution. A home that fails keeps its previous observation as stale
+    /// that includes home resolution (``CodexLimits/worstCaseFetch`` fits it). A home that fails keeps its previous observation as stale
     /// while that observation still belongs to the login, and is unavailable otherwise.
     public func fetch(previous: ProviderUsage?) async throws -> ProviderUsage {
         let deadline = ContinuousClock.now + limits.fetch

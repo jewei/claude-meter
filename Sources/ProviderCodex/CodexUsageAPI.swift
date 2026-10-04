@@ -9,6 +9,8 @@ struct CodexUsageAPI: Sendable {
         string: "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits")!
 
     let http: any HTTPClient
+    /// The limit for the usage request.
+    let usageLimit: Duration
     /// The limit for the optional reset-credit details request.
     let resetDetailsLimit: Duration
 
@@ -18,7 +20,8 @@ struct CodexUsageAPI: Sendable {
     /// Throws ``CodexError``, or `CancellationError` only when this refresh was cancelled.
     func quota(with credentials: CodexCredentials, now: Date) async throws -> CodexQuota {
         let request = HTTPRequest(
-            .get, url: Self.usageURL, headers: Self.headers(for: credentials), retry: .never)
+            .get, url: Self.usageURL, headers: Self.headers(for: credentials), retry: .never,
+            deadline: usageLimit)
         let response: HTTPResponse
         do {
             response = try await http.send(request)

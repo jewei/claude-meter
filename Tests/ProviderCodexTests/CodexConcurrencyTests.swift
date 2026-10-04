@@ -50,6 +50,24 @@ extension CodexTests {
             #expect(running.value.peak == 3)
         }
 
+        /// One home that starts at once ends inside the fetch deadline on every path, so a slow
+        /// step shows its own message. The number is the one in `codex.md`.
+        @Test func theWorstCaseOfOneHomeFitsTheFetchDeadline() {
+            let limits = CodexLimits.standard
+            #expect(limits.worstCaseFetch <= limits.fetch)
+            #expect(limits.worstCaseFetch == .milliseconds(58_250))
+            // The store's 90 s safety net covers reconcile (home resolution and one read) too.
+            #expect(limits.homeResolution + limits.fileRead + limits.fetch < .seconds(90))
+        }
+
+        @Test func theUsageRequestHasItsOwnDeadline() async throws {
+            let bed = try CodexTestBed()
+            defer { bed.remove() }
+            try bed.writeAuth()
+            _ = try await bed.provider.fetch(previous: nil)
+            #expect(bed.http.requests.first?.deadline == .seconds(15))
+        }
+
         @Test func aStalledHomeDoesNotBlockTheOthers() async throws {
             var limits = CodexLimits.standard
             limits.fetch = .seconds(3)

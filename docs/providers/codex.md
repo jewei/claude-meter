@@ -51,8 +51,8 @@ User-Agent: ClaudeMeter
 ChatGPT-Account-Id: <account ID>      (only when not empty)
 ```
 
-No retries. HTTP 401 and 403 start recovery (rule 6). HTTP 429 holds the next requests
-(rule 31). Response fields:
+No retries. Limit 15 s. HTTP 401 and 403 start recovery (rule 6). HTTP 429 holds the next
+requests (rule 31). Response fields:
 
 | Path | Type | Strict |
 | --- | --- | --- |
@@ -167,9 +167,9 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
    over the size limit are unknown response formats, not network errors: the server answered.
 8. Each recovery starts one child process. The executable search and `initialize` have a 5 s
    limit each. `account/read` (Codex renews the token there) and `account/rateLimits/read`
-   reach the network and have a 15 s limit each, so recovery ends within 41 s, inside the
-   fetch deadline. Every path stops the child: TERM, then KILL after 0.25 s, then a wait
-   until it is reaped.
+   reach the network and have a 10 s limit each. Every path stops the child: TERM, then KILL
+   after 0.25 s, then a wait of at most 2 s for the reap. A child that is not reaped by then
+   is logged and left running, so recovery ends within 32.25 s (rule 32).
 9. A timeout names the step that timed out, such as `account/read`. A child that stops
    before it answers `initialize` asks the user to update Codex, because a Codex without
    `app-server`, or one that cannot run, ends at once. A child that stops later asks the
@@ -260,13 +260,16 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
 
 ### Time and concurrency
 
-32. One 60 s deadline covers a whole fetch, including home resolution.
+32. One 60 s deadline covers a whole fetch, including home resolution. The slowest path of a
+    home that starts at once fits inside it (`CodexLimits.worstCaseFetch`): home resolution
+    (5 s), the `auth.json` read before the request (3 s), a usage request that ends in HTTP 401
+    or 403 (15 s), recovery (32.25 s), and the read after it (3 s), 58.25 s in total.
 33. At most three homes refresh at once. A free slot starts the next home.
 34. A home that does not finish by the deadline shows
     `Codex did not answer in time. Refresh again later.` The text names no number, because a
     home that started late had less time.
-35. Home resolution and each `auth.json` read have a 5 s limit and run off the cooperative
-    threads.
+35. Home resolution has a 5 s limit and each `auth.json` read a 3 s limit. Both run off the
+    cooperative threads.
 36. When the homes cannot be resolved, the fetch throws a provider error that keeps the last
     reading.
 

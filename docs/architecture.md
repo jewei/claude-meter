@@ -164,5 +164,5 @@ else is written.
 | One HTTP send, including retries | 30 s (provider requests may set less) |
 | One provider refresh (safety net) | 90 s |
 | One history refresh | 20 s |
-| Blocking file, SQLite, or Keychain read | 5 s. A read past its limit is abandoned and keeps its thread until it ends; while 16 abandoned reads still run, new reads fail at once. History scans have a separate pool with the same limits. |
-| Child process (Codex recovery) | 5 s for the search and `initialize`, 15 s each for `account/read` and `account/rateLimits/read`; TERM, then KILL after 0.25 s |
+| Blocking file, SQLite, or Keychain read | 5 s; 3 s for a Codex `auth.json`, 2 s for the Cursor credentials of a history read. A read past its limit is abandoned and keeps its thread until it ends; while 16 abandoned reads still run, new reads fail at once. History scans have a separate pool with the same limits. |
+| Child process (Codex recovery) | 5 s for the search and `initialize`, 10 s each for `account/read` and `account/rateLimits/read`; TERM, then KILL after 0.25 s, then at most 2 s for the reap |

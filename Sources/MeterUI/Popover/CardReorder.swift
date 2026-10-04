@@ -10,7 +10,8 @@ enum CardReorder {
     ///
     /// - Parameters:
     ///   - card: the dragged card.
-    ///   - location: the pointer, in the coordinate space of `frames`.
+    ///   - location: the pointer, in the coordinate space of `frames`. It must be within the
+    ///     card's width; above or below the list it counts as the first or last place.
     ///   - order: the visible cards, top to bottom.
     ///   - frames: each card's frame. A card without a frame cannot be a target.
     static func targetIndex<ID: Hashable>(
@@ -19,9 +20,11 @@ enum CardReorder {
         guard let source = order.firstIndex(of: card), let sourceFrame = frames[card],
             location.x >= sourceFrame.minX, location.x <= sourceFrame.maxX,
             let top = order.first.flatMap({ frames[$0] }),
-            let bottom = order.last.flatMap({ frames[$0] }),
-            location.y >= top.minY, location.y <= bottom.maxY
+            let bottom = order.last.flatMap({ frames[$0] })
         else { return nil }
+        // Above the first card or below the last counts as the end of the list, so a quick
+        // flick onto the hero still moves the card to the top.
+        let location = CGPoint(x: location.x, y: min(max(location.y, top.minY), bottom.maxY))
         // Upward: the highest card above the source whose midpoint is below the pointer.
         if let above = order[..<source].firstIndex(where: { id in
             frames[id].map { location.y < $0.midY } ?? false

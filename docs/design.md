@@ -171,10 +171,19 @@ padding 14×13. VoiceOver reads it as one element: "title. subtitle".
 `CardList` renders `AccountsModel.cards`. A local `DragGesture` (minimum 8 pt, named
 coordinate space) tracks the pointer in `@GestureState`, so it resets on end and cancel.
 `CardReorder.targetIndex` (pure) moves the card only after the pointer crosses a
-neighbor's midpoint. The view calls `AppModel.moveCard(_:to:visible:)`, which refuses a
-move that puts Cursor, Grok, or extra usage first. No pasteboard, no drops from outside, and
-a hidden popover does not reorder. Each card has "Move up" and "Move down" accessibility
-actions.
+neighbor's midpoint; a pointer above or below the list counts as its first or last place.
+The dragged card lifts (102%, a soft shadow; no scale under Reduce Motion). The view calls
+`AppModel.moveCard(_:to:visible:)`, which refuses a move that puts Cursor, Grok, or extra
+usage first. No pasteboard, no drops from outside, and a hidden popover does not reorder.
+The release that ends a drag does not toggle the bar card under the pointer, and the header
+does not show as pressed during the drag.
+
+Dragging is not the only way to choose the menu-bar meter: a Claude or Codex card that is
+not the main card has "Use in Menu Bar" in its context menu and as a VoiceOver action
+(`CardModel.canUseInMenuBar`); it moves the card to the top. VoiceOver also gets "Move up"
+and "Move down", only where the move works (`AccountsModel.canMove`), and an announcement of
+where the card went. Cards speak the provider once (`CardModel.spokenTitle`), and a bar
+header's value is its headline and whether it is expanded.
 
 ## Cards (`Cards/`)
 

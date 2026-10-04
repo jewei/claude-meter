@@ -4,14 +4,17 @@ import SwiftUI
 /// border, and 45% opacity when disabled. Nothing moves.
 struct QuietButtonStyle: ButtonStyle {
     var radius: CGFloat = 8
+    /// False while the button is being dragged with its card, so it does not look pressed.
+    var showsPress = true
 
     func makeBody(configuration: Configuration) -> some View {
-        StyledLabel(configuration: configuration, radius: radius)
+        StyledLabel(configuration: configuration, radius: radius, showsPress: showsPress)
     }
 
     private struct StyledLabel: View {
         let configuration: Configuration
         let radius: CGFloat
+        let showsPress: Bool
 
         @Environment(\.isEnabled) private var isEnabled
         @Environment(\.isFocused) private var isFocused
@@ -31,7 +34,7 @@ struct QuietButtonStyle: ButtonStyle {
 
         private var surfaceOpacity: Double {
             guard isEnabled else { return 0 }
-            if configuration.isPressed { return 0.12 }
+            if configuration.isPressed, showsPress { return 0.12 }
             return isHovered ? 0.06 : 0
         }
     }

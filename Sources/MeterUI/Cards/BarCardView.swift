@@ -12,6 +12,8 @@ struct BarCardView: View {
     let bars: BarsModel
     let toggle: () -> Void
 
+    @Environment(\.isReorderingCards) private var isReordering
+
     private var isExpanded: Bool { card.disclosure.showsDetails }
 
     var body: some View {
@@ -41,7 +43,11 @@ struct BarCardView: View {
     }
 
     private var header: some View {
-        Button(action: toggle) {
+        Button {
+            // The mouse-up that ends a drag lands on this button; it must not toggle.
+            guard !isReordering else { return }
+            toggle()
+        } label: {
             HStack(spacing: 7) {
                 ProviderMark(provider: card.provider)
                 CardIdentity(card: card)
@@ -56,9 +62,9 @@ struct BarCardView: View {
             .frame(minHeight: 28)
             .contentShape(Rectangle())
         }
-        .buttonStyle(QuietButtonStyle())
-        .accessibilityLabel("\(card.provider.displayName) \(card.title)")
-        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+        .buttonStyle(QuietButtonStyle(showsPress: !isReordering))
+        .accessibilityLabel(card.spokenTitle)
+        .accessibilityValue(bars.headerAccessibilityValue(isExpanded: isExpanded))
         .accessibilityHint(isExpanded ? "Hides the details" : "Shows the details")
         .help(isExpanded ? "Hide \(card.title) details" : "Show \(card.title) details")
     }

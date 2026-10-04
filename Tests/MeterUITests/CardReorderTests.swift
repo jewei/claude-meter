@@ -36,11 +36,20 @@ import Testing
         #expect(target("a", y: 151) == 1)
     }
 
-    @Test func ignoresThePointerOutsideTheList() {
+    @Test func ignoresThePointerBesideTheList() {
         #expect(target("b", y: 30, x: 400) == nil)
         #expect(target("b", y: 30, x: -1) == nil)
-        #expect(target("b", y: -5) == nil)
-        #expect(target("b", y: 395) == nil)
+    }
+
+    /// A fast flick above the list or below it still moves the card to the end (review
+    /// UI-28).
+    @Test func aboveOrBelowTheListCountsAsItsEnds() {
+        #expect(target("b", y: -5) == 0)
+        #expect(target("b", y: -500) == 0)
+        #expect(target("b", y: 395) == 3)
+        #expect(target("a", y: 900) == 3)
+        #expect(target("a", y: -5) == nil)
+        #expect(target("d", y: 900) == nil)
     }
 
     @Test func ignoresUnknownCardsAndMissingFrames() {

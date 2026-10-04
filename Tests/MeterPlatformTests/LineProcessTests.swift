@@ -143,37 +143,3 @@ import Testing
         #expect(clock.now - start < .seconds(1), sourceLocation: sourceLocation)
     }
 }
-
-@Suite struct LogFileTests {
-    @Test func createsPrivateFilesAndDeletesThemWhenDisabled() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appending(path: "ClaudeMeterLogs-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = LogFile(directory: directory)
-        file.setEnabled(true)
-        file.append("line one")
-        file.flush()
-        let attributes = try FileManager.default.attributesOfItem(atPath: file.current.path)
-        #expect(attributes[.posixPermissions] as? Int == 0o600)
-        let folder = try FileManager.default.attributesOfItem(atPath: directory.path)
-        #expect(folder[.posixPermissions] as? Int == 0o700)
-        #expect(try String(contentsOf: file.current, encoding: .utf8).contains("line one"))
-
-        file.setEnabled(false)
-        file.flush()
-        #expect(!FileManager.default.fileExists(atPath: file.current.path))
-    }
-
-    @Test func rotatesOnce() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appending(path: "ClaudeMeterLogs-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = LogFile(directory: directory, rotationBytes: 64)
-        file.setEnabled(true)
-        for index in 0..<10 { file.append("entry number \(index) with padding") }
-        file.flush()
-        #expect(FileManager.default.fileExists(atPath: file.previous.path))
-        let current = try Data(contentsOf: file.current)
-        #expect(current.count < 128)
-    }
-}

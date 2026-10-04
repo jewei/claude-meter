@@ -15,10 +15,14 @@ public struct Log: Sendable {
 
     private let category: Category
     private let logger: Logger
+    private let file: LogFile
 
-    public init(_ category: Category) {
+    /// Logs to the unified log and to `file`, which writes only while it is enabled. Tests
+    /// pass their own file.
+    public init(_ category: Category, file: LogFile = .shared) {
         self.category = category
         self.logger = Logger(subsystem: Self.subsystem, category: category.rawValue)
+        self.file = file
     }
 
     public func info(_ message: String) { write(message, level: .info) }
@@ -43,7 +47,7 @@ public struct Log: Sendable {
         case .warning: logger.warning("\(text, privacy: .public)")
         case .error: logger.error("\(text, privacy: .public)")
         }
-        LogFile.shared.append(
+        file.append(
             "\(Date().formatted(.iso8601)) [\(level.rawValue)] \(category.rawValue): \(text)")
     }
 }
@@ -52,7 +56,8 @@ public struct Log: Sendable {
 /// (`ClaudeMeter Debug` for a development build).
 ///
 /// Off by default. The directory is private to the user (0700) and the file is 0600. At 4 MiB
-/// the file rotates once to `ClaudeMeter.previous.log`. Turning it off deletes both files.
+/// the file rotates once to `ClaudeMeter.previous.log`. Turning it off deletes both files, also
+/// when it was already off, so files from an earlier run or version do not stay.
 public final class LogFile: Sendable {
     public static let shared = LogFile(
         directory: FileManager.default.homeDirectoryForCurrentUser
@@ -83,11 +88,12 @@ public final class LogFile: Sendable {
 
     public func setEnabled(_ enabled: Bool) {
         queue.async { [self] in
-            guard enabled != state.isEnabled else { return }
-            state.isEnabled = enabled
             if enabled {
+                guard !state.isEnabled else { return }
+                state.isEnabled = true
                 state.handle = openFile()
             } else {
+                state.isEnabled = false
                 try? state.handle?.close()
                 state.handle = nil
                 try? FileManager.default.removeItem(at: current)

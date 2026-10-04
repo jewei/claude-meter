@@ -11,8 +11,6 @@ public final class AppModel {
     public let settings: SettingsStore
     public let usage: UsageStore
     public let updater: any Updater
-    /// True while the app checks whether a first-launch welcome is needed.
-    public internal(set) var isCheckingSetup = false
     /// Whether the popover is on screen. Countdowns tick only while it is.
     public private(set) var isPopoverVisible = false
 
@@ -45,7 +43,7 @@ public final class AppModel {
         PresentationContext(
             settings: settings.settings, readings: usage.readings, histories: usage.histories,
             refreshing: usage.refreshing, refreshingHistory: usage.refreshingHistory, now: now,
-            calendar: .current, isCheckingSetup: isCheckingSetup,
+            calendar: .current,
             isUpdateAvailable: updater.isUpdateAvailable)
     }
 

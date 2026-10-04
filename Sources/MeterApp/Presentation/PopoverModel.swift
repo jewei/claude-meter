@@ -30,7 +30,6 @@ public struct PopoverModel: Equatable, Sendable {
 
     private static func content(_ context: PresentationContext, meter: MainMeter) -> Content {
         let settings = context.settings
-        if context.isCheckingSetup { return .loading("Checking your setup…") }
         guard settings.hasCompletedOnboarding else { return .status(.onboarding) }
 
         let automatic = CardBuilder(context: context, meter: meter).cards()

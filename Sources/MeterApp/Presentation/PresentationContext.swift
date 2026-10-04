@@ -19,8 +19,6 @@ public struct PresentationContext: Sendable {
     public var refreshingHistory: Set<ProviderID>
     public var now: Date
     public var calendar: Calendar
-    /// The app is still checking whether this is a first launch.
-    public var isCheckingSetup: Bool
     public var isUpdateAvailable: Bool
 
     public init(
@@ -31,7 +29,6 @@ public struct PresentationContext: Sendable {
         refreshingHistory: Set<ProviderID> = [],
         now: Date,
         calendar: Calendar = .current,
-        isCheckingSetup: Bool = false,
         isUpdateAvailable: Bool = false
     ) {
         self.settings = settings
@@ -41,7 +38,6 @@ public struct PresentationContext: Sendable {
         self.refreshingHistory = refreshingHistory
         self.now = now
         self.calendar = calendar
-        self.isCheckingSetup = isCheckingSetup
         self.isUpdateAvailable = isUpdateAvailable
     }
 

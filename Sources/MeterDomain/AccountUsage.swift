@@ -17,6 +17,8 @@ public struct AccountUsage: Codable, Hashable, Sendable, Identifiable {
     /// Consumers also treat an old `observedAt` as stale.
     public var isStale: Bool
     public var issue: UsageIssue?
+    /// When the provider last tried to refresh this account, successful or not.
+    public var attemptedAt: Date?
     /// Who the observation belongs to. Nil when the provider cannot tell.
     public var owner: AccountOwner?
     /// Another configured account uses the same login.
@@ -32,6 +34,7 @@ public struct AccountUsage: Codable, Hashable, Sendable, Identifiable {
         observedAt: Date?,
         isStale: Bool = false,
         issue: UsageIssue? = nil,
+        attemptedAt: Date? = nil,
         owner: AccountOwner? = nil,
         sharesLogin: Bool = false
     ) {
@@ -44,23 +47,28 @@ public struct AccountUsage: Codable, Hashable, Sendable, Identifiable {
         self.observedAt = DateBounds.validated(observedAt)
         self.isStale = isStale
         self.issue = issue
+        self.attemptedAt = DateBounds.validated(attemptedAt)
         self.owner = owner
         self.sharesLogin = sharesLogin
     }
 
     /// A configured account with no usable observation.
     public static func unavailable(
-        id: AccountID, name: String, issue: UsageIssue, owner: AccountOwner? = nil
+        id: AccountID, name: String, issue: UsageIssue, attemptedAt: Date? = nil,
+        owner: AccountOwner? = nil
     ) -> AccountUsage {
-        AccountUsage(id: id, name: name, observedAt: nil, issue: issue, owner: owner)
+        AccountUsage(
+            id: id, name: name, observedAt: nil, issue: issue, attemptedAt: attemptedAt,
+            owner: owner)
     }
 
     public var hasObservation: Bool { observedAt != nil }
 
-    /// This observation, kept after a failed refresh. Expired windows become unknown.
+    /// This observation, kept after a failed refresh at `now`. Expired windows become unknown.
     public func retained(issue: UsageIssue, now: Date) -> AccountUsage {
         var copy = resolved(at: now, isStale: true)
         copy.issue = issue
+        copy.attemptedAt = now
         return copy
     }
 

@@ -4,19 +4,21 @@ import MeterDomain
 /// Parses provider timestamps into dates inside ``DateBounds``.
 public enum DateParsing {
     /// ISO-8601 with or without fractional seconds of any length, and with `Z` or an offset.
+    /// A time without a zone is rejected: it could be local time, and a guess would move
+    /// records to another day.
     public static func iso8601(_ text: String) -> Date? {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return nil }
         if let date = try? Date(trimmed, strategy: .iso8601) {
             return DateBounds.validated(date)
         }
-        // The standard strategy accepts only a fixed fraction length. Normalize to
+        // Some Foundation versions accept only a fixed fraction length. Normalize to
         // milliseconds and try again.
-        guard let match = trimmed.wholeMatch(of: /(.+T[0-9:]+)\.([0-9]+)(Z|[+-][0-9:]+)?/) else {
+        guard let match = trimmed.wholeMatch(of: /(.+T[0-9:]+)\.([0-9]+)(Z|[+-][0-9:]+)/) else {
             return nil
         }
         let fraction = String(match.2.prefix(3)).padding(toLength: 3, withPad: "0", startingAt: 0)
-        let normalized = "\(match.1).\(fraction)\(match.3 ?? "Z")"
+        let normalized = "\(match.1).\(fraction)\(match.3)"
         let strategy = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
         return DateBounds.validated(try? Date(normalized, strategy: strategy))
     }

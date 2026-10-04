@@ -82,6 +82,13 @@ import Testing
     @Test func rejectsDatesOutsideTheBounds() {
         #expect(DateParsing.iso8601("3001-01-01T00:00:00Z") == nil)
     }
+
+    @Test func rejectsTimesWithoutAZone() {
+        #expect(DateParsing.iso8601("2026-10-04T12:00:00") == nil)
+        #expect(DateParsing.iso8601("2026-10-04T12:00:00.5") == nil)
+        #expect(DateParsing.iso8601("2026-10-04T12:00:00.123456") == nil)
+        #expect(DateParsing.iso8601("2026-10-04T14:00:00.5+02:00") == .reference(0.5))
+    }
 }
 
 @Suite struct NumericTextTests {

@@ -80,8 +80,9 @@ Only the fields below are read. All other fields are skipped.
 
 13. A count is a non-negative integer, as a number or as a string of digits. A boolean, a
     fraction, a negative number, or a number larger than `Int64` is not a count.
-14. A date is an ISO-8601 string, or Unix time in seconds or in milliseconds, as a number or
-    as a string. A number larger than 100,000,000,000 is milliseconds.
+14. A date is an ISO-8601 string with a zone (`Z` or an offset), or Unix time in seconds or
+    in milliseconds, as a number or as a string. A number larger than 100,000,000,000 is
+    milliseconds. A time without a zone is not a date.
 15. An ID is a non-empty string of at most 512 bytes.
 
 ## Counting rules: Claude Code

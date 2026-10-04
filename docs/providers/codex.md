@@ -236,7 +236,11 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
     will try again soon.` Any other read failure (not a regular file, over 4 MiB, or refused)
     says `Could not read Codex auth file. Check that your user can read it.`
 27. After a direct request, the owner must be the same, or the response is discarded with
-    `Codex sign-in changed or could not be verified. Refresh again.`
+    `Codex sign-in changed or could not be verified. Refresh again.` A failure belongs to the
+    login that sent the request: when the status after it (rule 29) names another signed-in
+    login, the failure shows the same text and that login is its owner, so a 429 of the old
+    login never holds the new one. A login that cannot be read after it proves nothing, and the
+    failure stays.
 28. After recovery, a ChatGPT identity must stay the same. Without an identity before, the
     response is accepted with the owner that the file has after recovery, because Codex can
     rewrite the file while it renews the tokens. Without a file before and after, the response

@@ -94,6 +94,40 @@ extension CodexTests {
             #expect(signedOut.owner == nil)
         }
 
+        /// A 429 belongs to the login that sent the request. A `codex login` as another user
+        /// during the request is a sign-in change, and the new login sends at once.
+        @Test func aLoginChangeDuringALimitedRequestDoesNotHoldTheNewLogin() async throws {
+            let holder = Locked<TemporaryDirectory?>(nil)
+            let calls = Locked(0)
+            let other = CodexFixtures.authJSON(
+                accessToken: CodexFixtures.accessToken(user: "user-2"))
+            let http = FakeHTTPClient { _ in
+                let call = calls.withLock { count -> Int in
+                    count += 1
+                    return count
+                }
+                guard call == 1 else { return .json(200, CodexFixtures.usage) }
+                try holder.value?.write(other, to: "home/auth.json")
+                return .json(429, "", headers: ["Retry-After": "120"])
+            }
+            let bed = try CodexTestBed(http: http)
+            defer { bed.remove() }
+            holder.withLock { $0 = bed.root }
+            try bed.writeAuth()
+
+            let changed = try await bed.provider.fetch(previous: nil)
+            let account = try #require(changed.accounts.first)
+            #expect(account.issue?.message == CodexError.signInChanged.localizedDescription)
+            #expect(account.issue?.retryAt == nil)
+            #expect(
+                account.owner
+                    == .identity(Digest.sha256(parts: ["codex", "user-2", "workspace-1"])))
+
+            let next = try await bed.provider(now: .reference(60)).fetch(previous: changed)
+            #expect(http.requests.count == 2)
+            #expect(next.accounts.first?.hasObservation == true)
+        }
+
         @Test func anotherLoginIsNotHeld() async throws {
             let bed = try CodexTestBed(http: Self.limited())
             defer { bed.remove() }

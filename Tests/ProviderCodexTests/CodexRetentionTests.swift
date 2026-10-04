@@ -241,6 +241,41 @@ extension CodexTests {
             }
         }
 
+        /// R3-P-01: a failure belongs to the login that sent the request.
+        @Test func failureAfterTheRequestTable() {
+            let limited = CodexError.rateLimited(retryAt: .reference(120))
+            let http = CodexError.httpStatus(500)
+            let signedIn = OwnerStatus.signedIn
+            let cases: [(CodexLogin, CodexLogin, CodexError, CodexError, OwnerStatus)] = [
+                // Another login after the request: a sign-in change, owned by the new login.
+                (
+                    Self.identity, Self.otherIdentity, limited, .signInChanged,
+                    signedIn(Self.otherIdentity.owner!)
+                ),
+                (Self.opaque1, Self.opaque2, http, .signInChanged, signedIn(Self.opaque2.owner!)),
+                // The same login, renewed: the failure stays.
+                (Self.identity, Self.renewed, limited, limited, signedIn(Self.identity.owner!)),
+                // A file that cannot be read after it proves nothing: the failure stays.
+                (Self.identity, .notReadInTime, limited, limited, .unknown),
+                (Self.identity, .invalid, limited, limited, .unknown),
+                // A sign-out after it: the failure stays, and the reading goes.
+                (Self.identity, .apiKey, http, http, .signedOut),
+            ]
+            for (index, (before, after, error, expected, status)) in cases.enumerated() {
+                let request = CodexAccountRefresh.RequestResult(
+                    quota: .failure(error), source: .direct)
+                guard
+                    case .failed(let shown, let shownStatus) = CodexAccountRefresh.kind(
+                        of: request, before: before, after: after)
+                else {
+                    Issue.record("case \(index) must fail")
+                    continue
+                }
+                #expect(shown == expected, "case \(index)")
+                #expect(shownStatus == status, "case \(index)")
+            }
+        }
+
         @Test func statusAfterAFailureTable() {
             typealias Report = CodexAccountRefresh.CodexReport
             let http = CodexError.httpStatus(500)

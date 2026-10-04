@@ -86,12 +86,20 @@ struct CodexAccountRefresh: Sendable {
     }
 
     /// The outcome of `request` once the owner was read again.
+    ///
+    /// A failure belongs to the login that sent the request. When another login is signed in
+    /// after it, the failure is a sign-in change, so a 429 of the old login never holds the new
+    /// one. A login that cannot be read after the request proves nothing: the failure stays.
     static func kind(
         of request: RequestResult, before: CodexLogin, after: CodexLogin
     ) -> Outcome.Kind {
         switch request.quota {
         case .failure(let error):
-            return .failed(error, status: status(after: after, error: error, request.report))
+            let status = status(after: after, error: error, request.report)
+            if let owner = before.owner, case .signedIn(let current) = status, current != owner {
+                return .failed(.signInChanged, status: status)
+            }
+            return .failed(error, status: status)
         case .success(let quota):
             if let owner = verifiedOwner(
                 before: before, after: after, source: request.source, report: request.report)

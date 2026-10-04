@@ -26,7 +26,29 @@ import Testing
         ("sent Basic dXNlcjpwYXNz to the proxy", "sent Basic [redacted] to the proxy"),
         ("jwt eyJhbGciOi.eyJzdWIiOi.c2lnbmF0dXJl end", "jwt [redacted] end"),
         ("Authorization: Bearer abc.DEF-123", "Authorization: Bearer [redacted]"),
-        ("Cookie: sessionKey=abc123; other=1", "Cookie: sessionKey=[redacted]; other=1"),
+        ("Cookie: sessionKey=abc123; other=1", "Cookie: [redacted]"),
+        ("sessionKey=abc123; other=1", "sessionKey=[redacted]; other=1"),
+        ("Cookie: sso=abc123; sso-rw=def456\nnext line", "Cookie: [redacted]\nnext line"),
+        ("sent sso=abc123 to the API", "sent sso=[redacted] to the API"),
+        (
+            #"body: {\"token\":\"opaqueSecret123\",\"name\":\"ok\"}"#,
+            #"body: {\"token\":\"[redacted]\",\"name\":\"ok\"}"#
+        ),
+        (#"{"token": "a\"b", "name": "ok"}"#, #"{"token": "[redacted]", "name": "ok"}"#),
+        (#"{"secret_key": "abc123"}"#, #"{"secret_key": "[redacted]"}"#),
+        (#"{\"private_key\":\"abc123\"}"#, #"{\"private_key\":\"[redacted]\"}"#),
+        ("aws_secret_access_key=abc123", "aws_secret_access_key=[redacted]"),
+        (
+            #"{"private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQ+/x\n-----END PRIVATE KEY-----\n"}"#,
+            #"{"private_key": "[redacted]\n"}"#
+        ),
+        ("-----BEGIN RSA PRIVATE KEY-----\nMIIEvQ cut", "[redacted]"),
+        (
+            "refresh failed: token=opaqueSecret123 expired",
+            "refresh failed: token=[redacted] expired"
+        ),
+        ("Missing bearer abc.DEF-123", "Missing bearer [redacted]"),
+        ("/Users/Sharedfoo/x", "/Users/[redacted]/x"),
         ("WorkosCursorSessionToken=user%3A%3Atoken", "WorkosCursorSessionToken=[redacted]"),
         (
             #"{"access_token": "abc", "refreshToken":"def"}"#,
@@ -51,6 +73,11 @@ import Testing
         "Basic authentication is not supported.",
         "The Basic plan has no API access.",
         "Use the session token from Settings, or sign in with an OAuth token.",
+        "Missing bearer token",
+        "The Bearer token expired. Sign in again.",
+        "CLAUDE_CONFIG_DIR='/Users/Shared/claude' claude /login",
+        "/Users/Shared",
+        "tokens=5 and max tokens: 10",
         "Your password must change.",
         "https://example.com/usage?state=1&page=2#key",
         "The task-runner-configuration-file changed.",

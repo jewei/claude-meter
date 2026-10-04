@@ -125,8 +125,8 @@ actor ManualLogin {
     /// taken. A Connect abandoned during the save writes the old item back (or deletes the new
     /// one when there was none). Until the Connect is stored, ``current()`` never uses its
     /// tokens. When the save fails, the old login and its in-flight refreshes stay as they
-    /// were. Throws the Keychain error when the old item cannot be read, before anything is
-    /// written.
+    /// were; a save that timed out may still land, so the old item is queued to follow it.
+    /// Throws the Keychain error when the old item cannot be read, before anything is written.
     func connect(
         _ credential: ManualCredential, ticket: Ticket, isWanted: @Sendable () async -> Bool
     ) async throws {
@@ -141,7 +141,14 @@ actor ManualLogin {
         // From the save on, the item can hold these tokens before the Connect is decided.
         unsettledConnections.insert(credential.connectionID)
         writeSequence += 1
-        try await vault.save(credential, sequence: writeSequence)
+        do {
+            try await vault.save(credential, sequence: writeSequence)
+        } catch let timeout as TimeoutError {
+            // The Keychain call may still run and land later; the old item follows it.
+            writeSequence += 1
+            vault.queueRestore(previous, sequence: writeSequence)
+            throw timeout
+        }
         guard await mayStore(ticket, isWanted) else {
             // After a Disconnect, its delete runs after this save anyway. The connection stays
             // unsettled, so a read that returns these tokens, also one that started before the

@@ -163,7 +163,44 @@ extension ClaudeTests {
             #expect(item.refreshToken == "new-refresh")
         }
 
-        @Test func writesLandInOrderAndAnAbandonedWriteNeverLands() async throws {
+        @Test func aSaveThatTimesOutWhileItRunsIsFollowedByTheOldItem() async throws {
+            let harness = try ClaudeHarness.manual(expiresAt: .reference(7200))
+            let saving = Signal()
+            let release = Signal()
+            let keychain = ScriptedKeychain(base: harness.keychain) { password in
+                let token = password.flatMap {
+                    try? JSONDecoder.meter.decode(ManualCredential.self, from: $0)
+                }?.accessToken
+                guard token == "pasted" else { return }
+                saving.raise()
+                release.block()
+            }
+            // The save hangs in the Keychain past its limit, so Connect reports a failure.
+            var limits = ClaudeLimits()
+            limits.localRead = .milliseconds(250)
+            let http = usageServer(["pasted": "{}", "old-access": "{}"])
+            let provider = harness.provider(http, keychain: keychain, limits: limits)
+
+            let error = await #expect(throws: ProviderError.self) {
+                try await provider.connectManually(
+                    accessToken: "pasted", refreshToken: nil, expiresAt: nil)
+            }
+            #expect(saving.isRaised)
+            #expect(
+                error?.issue.message.hasPrefix(
+                    "Could not save the tokens in the Keychain. Timed out after") == true)
+            #expect(harness.manualItem()?.accessToken == "old-access")
+
+            // The save lands late, and the old item is written back after it.
+            release.raise()
+            #expect(await waitUntil { keychain.writes == ["pasted", "old-access"] })
+            #expect(harness.manualItem()?.accessToken == "old-access")
+            let usage = try await provider.fetch(previous: nil)
+            #expect(usage.accounts[0].hasObservation)
+            #expect(http.usageTokens == ["pasted", "old-access"])
+        }
+
+        @Test func keychainCallsRunInOrderAndAnAbandonedWriteNeverLands() async throws {
             let base = FakeKeychain()
             let hung = Signal()
             let release = Signal()
@@ -192,12 +229,18 @@ extension ClaudeTests {
             await #expect(throws: TimeoutError.self) {
                 try await vault.save(credential("second"), sequence: 2)
             }
+            // The old item of a Connect is read after the writes before it, not around them.
+            await #expect(throws: TimeoutError.self) { try await vault.storedValue() }
             release.raise()
             try await first.value
             // Queued behind both, so it proves that the second never ran.
             try await vault.save(credential("third"), sequence: 3, timeout: .seconds(10))
 
             #expect(keychain.writes == ["first", "third"])
+            let read = try #require(try await vault.storedValue())
+            #expect(
+                try JSONDecoder.meter.decode(ManualCredential.self, from: read).accessToken
+                    == "third")
             let stored = try #require(
                 base.storedPassword(
                     service: ManualCredentialVault.service, account: ManualCredentialVault.account))

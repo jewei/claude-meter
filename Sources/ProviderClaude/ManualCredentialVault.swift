@@ -10,7 +10,8 @@ import MeterPlatform
 /// the later writes, but it cannot fill the pool that every provider uses. Each write carries a
 /// sequence number from ``ManualLogin`` and runs only when it is newer than every write before
 /// it. A write that times out before it starts is skipped, so it cannot land later. A Keychain
-/// call that already runs cannot be stopped.
+/// call that already runs cannot be stopped; ``queueRestore(_:sequence:)`` undoes one that may
+/// still land.
 final class ManualCredentialVault: Sendable {
     enum Read: Sendable, Equatable {
         case found(ManualCredential)
@@ -75,12 +76,16 @@ final class ManualCredentialVault: Sendable {
         }
     }
 
-    /// The item's value as stored, or nil when there is no item. Throws the Keychain error
-    /// when the Keychain cannot answer, and `CancellationError`.
+    /// The item's value as stored, or nil when there is no item. It is read on the write
+    /// queue, after every write sent before it, so a write-back of it undoes exactly the writes
+    /// sent after it. Throws the Keychain error, or `TimeoutError` when the read does not end
+    /// within the limit, for example behind a write that hangs.
     func storedValue() async throws -> Data? {
         let keychain = keychain
-        return try await BlockingIO.run(timeout: timeout) { _ in
-            try keychain.password(service: Self.service, account: Self.account)
+        return try await queued(timeout: timeout) {
+            Result<Data?, any Error> {
+                try keychain.password(service: Self.service, account: Self.account)
+            }
         }
     }
 
@@ -103,11 +108,35 @@ final class ManualCredentialVault: Sendable {
     /// Writes back a value from ``storedValue()``, or deletes the item when it was nil.
     func restore(_ value: Data?, sequence: UInt64) async throws {
         try await write(sequence: sequence, timeout: timeout) { keychain in
-            if let value {
-                try keychain.setPassword(value, service: Self.service, account: Self.account)
-            } else {
-                try keychain.deletePassword(service: Self.service, account: Self.account)
+            try Self.restore(value, in: keychain)
+        }
+    }
+
+    /// Writes back a value from ``storedValue()`` after every write sent before it, and returns
+    /// at once. It has no deadline, so it is never skipped: when a save timed out while its
+    /// Keychain call ran, that call may still land, and this write follows it. Only a failure
+    /// of the Keychain is logged.
+    func queueRestore(_ value: Data?, sequence: UInt64) {
+        let keychain = keychain
+        let newestWrite = newestWrite
+        let log = log
+        writes.async {
+            // The queue keeps the order of the sequence numbers, so no newer write has run.
+            // A newer write that timed out claimed its number, and is still skipped.
+            newestWrite.withLock { $0 = max($0, sequence) }
+            do {
+                try Self.restore(value, in: keychain)
+            } catch {
+                log.error("Could not restore the manual Claude login after a failed save", error)
             }
+        }
+    }
+
+    private static func restore(_ value: Data?, in keychain: any Keychain) throws {
+        if let value {
+            try keychain.setPassword(value, service: service, account: account)
+        } else {
+            try keychain.deletePassword(service: service, account: account)
         }
     }
 
@@ -135,40 +164,53 @@ final class ManualCredentialVault: Sendable {
     ) async throws {
         let keychain = keychain
         let newestWrite = newestWrite
-        try await withCheckedThrowingContinuation { continuation in
-            let outcome = WriteOutcome(continuation)
-            writes.async {
-                // Claim the sequence; an older write, or one that was abandoned, is skipped.
-                let isNewest = newestWrite.withLock { newest in
-                    guard sequence > newest else { return false }
-                    newest = sequence
-                    return true
-                }
-                outcome.finish(isNewest ? Result { try operation(keychain) } : .success(()))
+        try await queued(timeout: timeout) {
+            // Claim the sequence; an older write, or one that was abandoned, is skipped.
+            let isNewest = newestWrite.withLock { newest in
+                guard sequence > newest else { return false }
+                newest = sequence
+                return true
             }
+            return isNewest ? Result { try operation(keychain) } : .success(())
+        } onTimeout: {
+            // Claim the sequence before the caller hears of the timeout, so a write that has
+            // not started can never land after it. A write that already runs, or ended,
+            // claimed it itself.
+            newestWrite.withLock { $0 = max($0, sequence) }
+        }
+    }
+
+    /// Runs `work` on the write queue and returns its result, or throws `TimeoutError` after
+    /// `timeout`, whichever comes first. `onTimeout` runs before the caller hears of the
+    /// timeout. Work that has not ended by then still runs; its result is dropped.
+    private func queued<Value: Sendable>(
+        timeout: Duration,
+        _ work: @escaping @Sendable () -> Result<Value, any Error>,
+        onTimeout: @escaping @Sendable () -> Void = {}
+    ) async throws -> Value {
+        try await withCheckedThrowingContinuation { continuation in
+            let outcome = Outcome(continuation)
+            writes.async { outcome.finish(work()) }
             DispatchQueue.global(qos: .utility).asyncAfter(
                 deadline: .now() + timeout.timeInterval
             ) {
-                // Claim the sequence before the caller hears of the timeout, so a write that has
-                // not started can never land after it. A write that already runs, or ended,
-                // claimed it itself.
-                newestWrite.withLock { $0 = max($0, sequence) }
+                onTimeout()
                 outcome.finish(.failure(TimeoutError(limit: timeout)))
             }
         }
     }
 
-    /// Resumes a write's caller once, with the result or the timeout, whichever comes first.
-    private final class WriteOutcome: Sendable {
-        private let continuation: Locked<CheckedContinuation<Void, any Error>?>
+    /// Resumes a caller once, with the result or the timeout, whichever comes first.
+    private final class Outcome<Value: Sendable>: Sendable {
+        private let continuation: Locked<CheckedContinuation<Value, any Error>?>
 
-        init(_ continuation: CheckedContinuation<Void, any Error>) {
+        init(_ continuation: CheckedContinuation<Value, any Error>) {
             self.continuation = Locked(continuation)
         }
 
         /// Returns true when this call decided the outcome.
         @discardableResult
-        func finish(_ result: Result<Void, any Error>) -> Bool {
+        func finish(_ result: Result<Value, any Error>) -> Bool {
             let waiting = continuation.withLock { continuation in
                 defer { continuation = nil }
                 return continuation

@@ -221,12 +221,15 @@ little memory. The limit is 256 MiB. The result is one of three states:
    launch, and when Settings opens) deletes a manual item that no manual connection uses,
    while no attempt runs.
 8. Keychain writes of the manual item run one at a time, in order, on a private queue,
-   never on the shared `BlockingIO` threads. A write that times out before it starts is
-   skipped, so it cannot land later: the write is marked as abandoned before its caller hears
-   of the timeout. A Keychain call that already runs cannot be stopped. A save of rotated
-   tokens finishes even when the refresh that got them was cancelled.
+   never on the shared `BlockingIO` threads. Connect reads the old item on the same queue,
+   after the writes before it. A write that times out before it starts is skipped, so it
+   cannot land later: the write is marked as abandoned before its caller hears of the
+   timeout. A Keychain call that already runs cannot be stopped. A save of rotated tokens
+   finishes even when the refresh that got them was cancelled.
 9. A Connect whose save fails leaves the old login as it was, and a rotation of the old
-   login that arrives meanwhile is still saved.
+   login that arrives meanwhile is still saved. When the save times out while its Keychain
+   call runs, the call can still land, so Connect queues a write-back of the old item behind
+   it. The write-back has no deadline and is never skipped.
 10. A refresh token rejected with `invalid_grant` is not sent again. When the server also
     rejects the refreshed token (HTTP 401 or 403), or a 401 cannot be refreshed, the
     connection gets no more requests. Both marks last until the next Connect or app launch,
@@ -300,6 +303,7 @@ little memory. The limit is 256 MiB. The result is one of three states:
 | --- | --- |
 | Config dir discovery | 5 s |
 | One Keychain or file read | 5 s (`BlockingIO`) |
+| One write of the manual item, or the read of the old item before a Connect saves | 5 s, on the vault's write queue; the write-back after a save that timed out has none |
 | One HTTP request | 15 s |
 | One account in automatic mode | 20 s, inside the refresh budget |
 | One whole refresh | 60 s; automatic mode keeps finished accounts and has a 65 s safety net |

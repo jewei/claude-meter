@@ -9,18 +9,37 @@ import ProviderCodex
 public final class CodexSettingsModel {
     public struct Home: Identifiable, Equatable, Sendable {
         public let id: AccountID
+        /// The canonical folder, with links resolved.
         public let path: String
         /// The default name: "Codex" for the implicit home, else the folder name.
         public let defaultName: String
         /// The implicit home cannot be removed.
         public let isImplicit: Bool
         public var status: SignInStatus?
+        /// The saved path texts that resolve to this home. Usually the canonical path that Add
+        /// saved, but a folder that moved and left a link at its old path is saved by the link.
+        /// Remove and rename use these, so they still find the saved home. Empty when no saved
+        /// path names the home, as for the implicit home.
+        public let savedPaths: [String]
+
+        init(
+            id: AccountID, path: String, defaultName: String, isImplicit: Bool,
+            status: SignInStatus?, savedPaths: [String] = []
+        ) {
+            self.id = id
+            self.path = path
+            self.defaultName = defaultName
+            self.isImplicit = isImplicit
+            self.status = status
+            self.savedPaths = savedPaths
+        }
     }
 
     /// Reads the Codex homes of a configuration: the implicit home first, then the added ones.
     typealias HomeReader = @Sendable (CodexConfiguration) async throws -> [CodexHome]
 
-    /// The longest wait for a folder check when the user adds a home.
+    /// The longest wait for a folder check: a home that the user adds, or the saved homes that
+    /// a reload matches with the list.
     static let folderCheckLimit: Duration = .seconds(5)
 
     public private(set) var homes: [Home] = []
@@ -50,16 +69,20 @@ public final class CodexSettingsModel {
         let current = generation
         isLoading = true
         defer { if current == generation { isLoading = false } }
+        let configuration = settings.codexConfiguration
+        let saved = settings.settings.codex.extraHomes
         // A slow disk keeps the current list rather than showing no homes.
-        guard let resolved = try? await readHomes(settings.codexConfiguration),
+        guard let resolved = try? await readHomes(configuration),
+            let canonical = try? await Self.canonicalPaths(of: saved),
             current == generation
         else { return }
         let earlier = Dictionary(
             homes.map { ($0.id, $0.status) }, uniquingKeysWith: { first, _ in first })
-        homes = resolved.map {
+        homes = resolved.map { home in
             Home(
-                id: $0.id, path: $0.directory.path, defaultName: $0.name,
-                isImplicit: $0.isImplicit, status: earlier[$0.id] ?? nil)
+                id: home.id, path: home.directory.path, defaultName: home.name,
+                isImplicit: home.isImplicit, status: earlier[home.id] ?? nil,
+                savedPaths: saved.filter { canonical[$0] == home.directory.path })
         }
         for (index, home) in resolved.enumerated() {
             let status = await provider.signInStatus(for: home)
@@ -116,7 +139,7 @@ public final class CodexSettingsModel {
     public func removeHome(_ id: AccountID) {
         guard let home = listedHome(id), !home.isImplicit else { return }
         settings.update { settings in
-            settings.codex.extraHomes.removeAll { $0 == id.rawValue }
+            settings.codex.extraHomes.removeAll { home.savedPaths.contains($0) }
             settings.forgetAccount(id, of: .codex)
         }
     }
@@ -134,7 +157,23 @@ public final class CodexSettingsModel {
     /// added it.
     private func listedHome(_ id: AccountID) -> Home? {
         guard let home = homes.first(where: { $0.id == id }) else { return nil }
-        let isSaved = home.isImplicit || settings.settings.codex.extraHomes.contains(id.rawValue)
+        let saved = settings.settings.codex.extraHomes
+        let isSaved = home.isImplicit || home.savedPaths.contains(where: saved.contains)
         return isSaved ? home : nil
+    }
+
+    /// The canonical path of each saved home text, made the same way as the provider makes a
+    /// home's ID. Resolving links can block on a stuck volume, so the wait has a limit.
+    private static func canonicalPaths(of saved: [String]) async throws -> [String: String] {
+        guard !saved.isEmpty else { return [:] }
+        return try await BlockingIO.run(timeout: folderCheckLimit) { _ in
+            Dictionary(
+                saved.map {
+                    (
+                        $0,
+                        URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath().path
+                    )
+                }, uniquingKeysWith: { first, _ in first })
+        }
     }
 }

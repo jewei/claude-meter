@@ -130,6 +130,8 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    page (`DataSourceText.removeConfirmation`, `.disconnectConfirmation`). The implicit Codex home
    (`$CODEX_HOME` or `~/.codex`) has no Remove and cannot be added again, also before the list
    loads. A name edit for a Codex home that is no longer listed is dropped (`CodexSettingsModel`).
+   A Codex home is listed once by its canonical path. Remove deletes every saved path of it,
+   also a link left at the old path of a moved folder.
    Claude refuses a folder whose account key (its folder name) is already listed, and drops a name
    edit for an account that is no longer listed. Cancel, and turning Claude off, abandon a running
    Claude Connect, never a Disconnect; Settings says when turning Claude off kept a Connect from

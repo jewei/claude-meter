@@ -127,6 +127,37 @@ import Testing
         #expect(settings.settings.cards.expanded.isEmpty)
     }
 
+    /// A home whose folder moved and left a link at its old path is listed by the folder, but
+    /// saved by the link. Rename and Remove must still find it, and Remove must remove every
+    /// saved path of the home, so that it does not come back.
+    @Test func renameAndRemoveFollowASavedPathThatBecameALink() async throws {
+        let moved = try makeHome("moved")
+        let link = home.path("work")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: moved)
+        let id = AccountID(moved.path)
+
+        settings.update { $0.codex.extraHomes = [link.path] }
+        await model.reload()
+        #expect(model.homes.map(\.id) == [implicitID, id])
+        #expect(model.homes.map(\.savedPaths) == [[], [link.path]])
+        model.rename(id, to: "Work")
+        #expect(settings.settings.codex.accountNames == [id: "Work"])
+        settings.update { $0.menuBar.pinnedAccounts[.codex] = id }
+        model.removeHome(id)
+        #expect(settings.settings.codex.extraHomes.isEmpty)
+        #expect(settings.settings.codex.accountNames.isEmpty)
+        #expect(settings.settings.menuBar.pinnedAccounts.isEmpty)
+
+        // The link and the folder both saved: one home, and Remove removes both paths.
+        settings.update { $0.codex.extraHomes = [link.path, moved.path] }
+        await model.reload()
+        #expect(model.homes.map(\.savedPaths) == [[], [link.path, moved.path]])
+        model.removeHome(id)
+        #expect(settings.settings.codex.extraHomes.isEmpty)
+        await model.reload()
+        #expect(model.homes.map(\.id) == [implicitID])
+    }
+
     /// Also when an earlier version saved the implicit home's path as an added home.
     @Test func theImplicitHomeCannotBeRemoved() async {
         settings.update { $0.codex.extraHomes = [self.implicit.path] }

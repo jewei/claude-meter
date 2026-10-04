@@ -29,8 +29,7 @@ public enum Redactor {
         }
     }
 
-    // NSRegularExpression is immutable after creation and safe to share across threads.
-    private nonisolated(unsafe) static let rules: [Rule] = [
+    private static let rules: [Rule] = [
         // Anthropic API and OAuth tokens.
         Rule(#"sk-ant-[A-Za-z0-9_-]+"#),
         // Grok OIDC tokens.

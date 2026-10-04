@@ -1,7 +1,7 @@
 import Foundation
 
 /// A fixed instant for tests: 2026-10-04T12:00:00Z.
-public let referenceDate = Date(timeIntervalSince1970: 1_791_201_600)
+public let referenceDate = Date(timeIntervalSince1970: 1_791_115_200)
 
 extension Date {
     /// `referenceDate` moved by `seconds`.

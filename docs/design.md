@@ -332,13 +332,3 @@ with `ImageRenderer` in light and dark. Set `CLAUDE_METER_RENDER_DIR` to a folde
 the PNGs; a normal `swift test` writes nothing. `rendersStatically` draws native switches and
 spinners as shapes and lays out scroll views at full height, because `ImageRenderer` cannot
 draw AppKit controls.
-
-## Changes from v3
-
-- One integer percent format everywhere, and the bar-card chevron is always last.
-- The popover is an app-owned panel with the 22 pt chrome that v3 described but did not draw.
-- Cursor and Grok bars have no label row, because their caption already states the window
-  and the reset.
-- Unknown values use `inkMuted` at 45%, as v3 drew them, not `track`, which is too faint for
-  a dot.
-- Grok's mark is ink like the others; v3 tinted it with the severity.

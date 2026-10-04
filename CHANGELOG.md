@@ -37,6 +37,11 @@ core.
 - The menu bar updates countdowns and staleness every 30 seconds, not only after a refresh.
 - Cursor and Grok keep showing the last reading, marked stale, when the sign-in expires,
   until you sign in again. Signing out removes it.
+- The popover has rounded corners and a border.
+- Cursor and Grok bars have no label above the bar. The caption below already names the
+  window and the reset.
+- The expand arrow is always last in the header of a bar card.
+- The Grok mark has the same color as the other marks, not the color of its energy level.
 
 ### Fixed
 

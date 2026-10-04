@@ -13,13 +13,83 @@ import Testing
     @Test func cancelsSlowWork() async {
         let clock = ContinuousClock()
         let start = clock.now
+        let cancelled = Locked(false)
         await #expect(throws: TimeoutError(limit: .milliseconds(50))) {
             try await withDeadline(.milliseconds(50)) {
-                try await Task.sleep(for: .seconds(30))
+                do {
+                    try await Task.sleep(for: .seconds(30))
+                } catch {
+                    cancelled.withLock { $0 = true }
+                    throw error
+                }
             }
         }
         #expect(clock.now - start < .seconds(5))
+        #expect(await waitUntil { cancelled.value })
     }
+
+    @Test func returnsAtTheLimitWhenTheOperationIgnoresCancellation() async {
+        let gate = Gate()
+        let clock = ContinuousClock()
+        let start = clock.now
+        await #expect(throws: TimeoutError(limit: .milliseconds(50))) {
+            try await withDeadline(.milliseconds(50)) {
+                await gate.wait()
+                return 1
+            }
+        }
+        #expect(clock.now - start < .seconds(2))
+        gate.open()
+    }
+
+    @Test func callerCancellationReturnsAtOnceWhenTheOperationIgnoresIt() async {
+        let gate = Gate()
+        let task = Task {
+            try await withDeadline(.seconds(30)) {
+                await gate.wait()
+                return 1
+            }
+        }
+        await gate.waitForArrivals()
+        let clock = ContinuousClock()
+        let start = clock.now
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(clock.now - start < .seconds(1))
+        gate.open()
+    }
+
+    @Test func passesOperationErrorsThrough() async {
+        struct Failure: Error {}
+        await #expect(throws: Failure.self) {
+            try await withDeadline(.seconds(5)) { () async throws -> Int in throw Failure() }
+        }
+    }
+
+    @Test func aCancelledCallerStartsNothing() async {
+        let started = Locked(false)
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await withDeadline(.seconds(5)) {
+                started.withLock { $0 = true }
+                return 1
+            }
+        }
+        await #expect(throws: CancellationError.self) { try await task.value }
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(!started.value)
+    }
+
+    @Test func keepsTaskLocalValues() async throws {
+        let value = try await DeadlineProbe.$name.withValue("caller") {
+            try await withDeadline(.seconds(5)) { DeadlineProbe.name }
+        }
+        #expect(value == "caller")
+    }
+}
+
+private enum DeadlineProbe {
+    @TaskLocal static var name = "none"
 }
 
 /// Every test that leaves blocked or abandoned work uses its own pool, so the shared pools

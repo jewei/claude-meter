@@ -13,22 +13,95 @@ public struct TimeoutError: Error, LocalizedError, Equatable, Sendable {
     }
 }
 
-/// Runs `operation` and cancels it when `limit` passes.
+/// Runs `operation` and returns its result, or throws ``TimeoutError`` when `limit` passes,
+/// or `CancellationError` when the caller is cancelled. Errors of `operation` pass through.
 ///
-/// The operation must respond to cancellation, as URLSession and `Task.sleep` do. Wrap
-/// blocking calls, such as file or Keychain reads, in ``BlockingIO/run(timeout:_:)`` instead.
+/// The caller never waits past the limit, also when `operation` ignores cancellation: the
+/// operation runs in its own task, which is cancelled at the limit and left to end by itself.
+/// It inherits the caller's priority and task-local values. Wrap blocking calls, such as file
+/// or Keychain reads, in ``BlockingIO/run(timeout:_:)`` instead, because they hold a thread.
 public func withDeadline<Value: Sendable>(
     _ limit: Duration,
     _ operation: @escaping @Sendable () async throws -> Value
 ) async throws -> Value {
-    try await withThrowingTaskGroup(of: Value.self) { group in
-        group.addTask { try await operation() }
-        group.addTask {
-            try await Task.sleep(for: limit)
-            throw TimeoutError(limit: limit)
+    try Task.checkCancellation()
+    let race = DeadlineRace<Value>()
+    return try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+            // A caller cancelled before this point already has its error. Nothing starts.
+            guard race.install(continuation) else { return }
+            race.attach(
+                Task {
+                    do {
+                        race.finish(.success(try await operation()))
+                    } catch {
+                        race.finish(.failure(error))
+                    }
+                })
+            race.attach(
+                Task {
+                    do {
+                        try await Task.sleep(for: limit)
+                    } catch {
+                        return  // Cancelled: the race finished first.
+                    }
+                    race.finish(.failure(TimeoutError(limit: limit)))
+                })
         }
-        defer { group.cancelAll() }
-        guard let first = try await group.next() else { throw CancellationError() }
-        return first
+    } onCancel: {
+        race.finish(.failure(CancellationError()))
+    }
+}
+
+/// Resumes the caller once, with whichever of the operation, the timer, or the caller's
+/// cancellation comes first, and then cancels the tasks that lost.
+private final class DeadlineRace<Value: Sendable>: Sendable {
+    private struct State: Sendable {
+        var continuation: CheckedContinuation<Value, any Error>?
+        var early: Result<Value, any Error>?
+        var isFinished = false
+        var tasks: [Task<Void, Never>] = []
+    }
+
+    private let state = Locked(State())
+
+    /// Returns false when the race finished before the caller started to wait. The
+    /// continuation is then resumed at once, and no task must start.
+    func install(_ continuation: CheckedContinuation<Value, any Error>) -> Bool {
+        let early = state.withLock { state -> Result<Value, any Error>? in
+            guard let early = state.early else {
+                state.continuation = continuation
+                return nil
+            }
+            return early
+        }
+        guard let early else { return true }
+        continuation.resume(with: early)
+        return false
+    }
+
+    /// Keeps `task` to cancel when the race finishes, or cancels it now if it already has.
+    func attach(_ task: Task<Void, Never>) {
+        let isFinished = state.withLock { state in
+            if !state.isFinished { state.tasks.append(task) }
+            return state.isFinished
+        }
+        if isFinished { task.cancel() }
+    }
+
+    func finish(_ result: Result<Value, any Error>) {
+        let (continuation, tasks) = state.withLock {
+            state -> (CheckedContinuation<Value, any Error>?, [Task<Void, Never>]) in
+            guard !state.isFinished else { return (nil, []) }
+            state.isFinished = true
+            defer {
+                state.tasks = []
+                state.continuation = nil
+            }
+            if state.continuation == nil { state.early = result }
+            return (state.continuation, state.tasks)
+        }
+        for task in tasks { task.cancel() }
+        continuation?.resume(with: result)
     }
 }

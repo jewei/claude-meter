@@ -35,8 +35,7 @@ import SwiftUI
     /// Shows Settings in front, on `tab` when given, else on the tab that the user left.
     func show(tab: SettingsTab? = nil) {
         if let tab { navigation.tab = tab }
-        let window = self.window ?? makeWindow()
-        if window.contentView == nil { window.contentView = makeContent() }
+        let window = preparedWindow()
         // The policy changes first: an accessory app cannot come to the front.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
@@ -49,6 +48,16 @@ import SwiftUI
             NSApp.activate()
             window.makeKeyAndOrderFront(nil)
         }
+    }
+
+    /// The window with its Settings content, made on first use. A new window already has a
+    /// plain content view, so the check is for the hosting view, not for nil.
+    func preparedWindow() -> NSWindow {
+        let window = self.window ?? makeWindow()
+        if !(window.contentView is NSHostingView<SettingsView>) {
+            window.contentView = makeContent()
+        }
+        return window
     }
 
     /// Drops the SwiftUI content, so a closed window does not keep rendering on every

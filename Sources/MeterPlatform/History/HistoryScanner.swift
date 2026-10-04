@@ -51,9 +51,7 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
     private func scanInTurn(
         _ configured: [HistoryRoot], since start: Date
     ) async throws -> HistoryScan<Parser> {
-        let identities = try await BlockingIO.run(timeout: HistoryLimits.blockingTimeout) { _ in
-            RootIdentity.resolve(configured)
-        }
+        let identities = try await blocking { _ in RootIdentity.resolve(configured) }
         if identities != roots || start != self.start {
             roots = identities
             self.start = start
@@ -97,8 +95,7 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
                 HistoryLimits.entriesPerCall, limits.directoryEntries - work.directoryEntries)
             let maxFiles = limits.files - work.discoveredFiles
             let (match, before) = (self.match, current)
-            let (after, page) = try await BlockingIO.run(timeout: HistoryLimits.blockingTimeout) {
-                cancellation in
+            let (after, page) = try await blocking { cancellation in
                 var next = before
                 let page = next.advance(
                     maxEntries: maxEntries, maxFiles: maxFiles, since: start, match: match,
@@ -180,8 +177,7 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
         let available = limits.scanBytes - work.bytesRead
         let progress: Cursor.Progress
         do {
-            progress = try await BlockingIO.run(timeout: HistoryLimits.blockingTimeout) {
-                cancellation in
+            progress = try await blocking { cancellation in
                 try Cursor.read(
                     path, after: previous, available: available, limits: limits,
                     cancellation: cancellation)
@@ -205,6 +201,22 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
         case .failed:
             cursors[path] = nil
             return .notRead
+        }
+    }
+
+    /// Runs blocking work with the scan time limit. A full pool is tried again after a short
+    /// wait; cancellation ends the wait.
+    private func blocking<Value: Sendable>(
+        _ work: @escaping @Sendable (BlockingIO.Cancellation) throws -> Value
+    ) async throws -> Value {
+        var attempts = 0
+        while true {
+            do {
+                return try await BlockingIO.run(timeout: HistoryLimits.blockingTimeout, work)
+            } catch is BlockingIO.BusyError where attempts < HistoryLimits.busyRetries {
+                attempts += 1
+                try await Task.sleep(for: HistoryLimits.busyRetryDelay)
+            }
         }
     }
 

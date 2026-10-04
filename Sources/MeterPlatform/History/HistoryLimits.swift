@@ -43,4 +43,8 @@ public struct HistoryLimits: Equatable, Sendable {
     static let entriesPerCall = 1_024
     /// The time limit of one blocking call: a directory page, a root check, or one file.
     static let blockingTimeout: Duration = .seconds(5)
+    /// Other refreshes free a full blocking pool within milliseconds, so wait for it this
+    /// often before the scan gives up.
+    static let busyRetries = 40
+    static let busyRetryDelay: Duration = .milliseconds(50)
 }

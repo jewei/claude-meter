@@ -41,13 +41,18 @@ import Testing
         return GrokProvider(http: http, environment: [:], home: directory.url, now: { clock.value })
     }
 
-    private func previous(owner: AccountOwner? = nil) -> ProviderUsage {
+    private func previous(
+        owner: AccountOwner? = nil, periodEnd: Date = .reference(.days(3))
+    ) -> ProviderUsage {
         let window = QuotaWindow(
-            id: "credits", title: "Weekly", kind: .billing, usedPercent: 20,
-            resetsAt: .reference(.days(3)))
+            id: "credits", title: "Weekly", kind: .billing, usedPercent: 20, resetsAt: periodEnd)
+        let balances = [
+            Balance(kind: .onDemand, amount: 3, unit: .currency("USD")),
+            Balance(kind: .prepaid, amount: 5, unit: .currency("USD")),
+        ]
         let account = AccountUsage(
-            id: .default, name: "Grok", windows: [window], observedAt: .reference(-.minutes(10)),
-            owner: owner ?? self.owner)
+            id: .default, name: "Grok", windows: [window], balances: balances,
+            observedAt: .reference(-.minutes(10)), owner: owner ?? self.owner)
         return ProviderUsage(provider: .grok, accounts: [account])
     }
 
@@ -177,6 +182,23 @@ import Testing
         advance(61)
         _ = try await provider.fetch(previous: held)
         #expect(http.requests.count == 2)
+    }
+
+    /// After the period ends, a stale card must not show the old period's on-demand spend
+    /// beside an unknown percentage. The prepaid balance is not tied to a period.
+    @Test func aStaleReadingDropsItsOnDemandSpendAfterThePeriodEnds() async throws {
+        try signIn()
+        let http = FakeHTTPClient(status: 503, json: "")
+
+        let inPeriod = try account(try await provider(http).fetch(previous: previous()))
+        let after = try account(
+            try await provider(http).fetch(previous: previous(periodEnd: .reference(-60))))
+
+        #expect(inPeriod.balance(.onDemand)?.amount == 3)
+        #expect(after.isStale)
+        #expect(after.windows.first?.usedPercent == nil)
+        #expect(after.balance(.onDemand) == nil)
+        #expect(after.balance(.prepaid)?.amount == 5)
     }
 
     @Test func serverErrorsKeepTheReading() async throws {

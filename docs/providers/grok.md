@@ -106,6 +106,8 @@ Every number can be a JSON number or a numeric string. Other fields are ignored.
 11. Unreadable file, network failure, other HTTP status, or an unexpected response: keep the
     last observation as stale while the owner is unchanged. After HTTP 429 with a
     `Retry-After`, no request is sent before the retry time, so the card's countdown is true.
+    Once the period of a kept observation ends, its window is unknown and its on-demand spend
+    is dropped. The prepaid balance stays.
 12. If the owner after the response differs from the owner before it, discard the response.
 13. `reconcile` drops the reading when the owner changed or the user signed out. It reads local
     files only.

@@ -137,7 +137,7 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
         if let previous, previous.owner == owner, let issue = previous.issue,
             let retryAt = issue.retryAt, retryAt > now
         {
-            return previous.retained(issue: issue, now: now)
+            return Self.kept(previous, issue: issue, now: now)
         }
         let result: Result<AccountUsage, GrokFailure>
         do {
@@ -204,13 +204,28 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
             Self.log.warning("Grok refresh failed: \(failure.issue.message)")
         }
         if let previous, previous.hasObservation, previous.belongs(to: status) {
-            return previous.retained(issue: failure.issue, now: now)
+            return Self.kept(previous, issue: failure.issue, now: now)
         }
         var owner: AccountOwner?
         if case .signedIn(let current) = status { owner = current }
         return .unavailable(
             id: .default, name: Self.accountName, issue: failure.issue, attemptedAt: now,
             owner: owner)
+    }
+
+    /// `previous` kept as stale with `issue`. ``AccountUsage/retained(issue:now:)`` makes a
+    /// window past its reset unknown; on-demand spend belongs to that period, so it goes too.
+    /// The prepaid balance does not belong to a period and stays.
+    private static func kept(_ previous: AccountUsage, issue: UsageIssue, now: Date)
+        -> AccountUsage
+    {
+        var kept = previous.retained(issue: issue, now: now)
+        if let periodEnd = previous.windows.first(where: { $0.kind == .billing })?.resetsAt,
+            periodEnd <= now
+        {
+            kept.balances.removeAll { $0.kind == .onDemand }
+        }
+        return kept
     }
 
     private static func isBlank(_ value: String) -> Bool {

@@ -29,12 +29,24 @@ public struct TokenDayTally: Sendable {
         self.start = interval.start
     }
 
-    /// Adds `record` to its local day. A record dated after `now` is not counted and makes the
-    /// tally partial, because a clock or parse error produced it.
+    /// How long after `now` a record can be dated and still be a line that a tool wrote while
+    /// the read ran.
+    ///
+    /// `now` is taken before the scan, and an active session appends lines during it. One
+    /// history read lasts at most 20 s (the app's limit), and it can first wait for an earlier
+    /// scan to end, so 60 s keeps a margin over that. A later date comes from a wrong clock or a
+    /// parse error.
+    public static let writeTolerance: TimeInterval = 60
+
+    /// Adds `record` to its local day.
+    ///
+    /// A record dated after `now`, by at most ``writeTolerance``, is not counted yet and does
+    /// not make the tally partial: the next read counts it. A record dated later than that is
+    /// not counted and makes the tally partial.
     public mutating func add(_ record: TokenRecord) {
         guard record.date >= start else { return }
         guard record.date <= now else {
-            isPartial = true
+            if record.date > now.addingTimeInterval(Self.writeTolerance) { isPartial = true }
             return
         }
         let day = calendar.startOfDay(for: record.date)

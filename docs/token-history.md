@@ -235,7 +235,9 @@ Only the fields below are read. All other fields are skipped.
     - a file in it was not read completely (byte budget, incomplete final line, long line,
       per-file record limit, provider record limit, read error, or timeout);
     - a line in it could not be counted (invalid JSON, a missing or invalid count or date,
-      a missing ID, or a date after now);
+      a missing ID, or a date more than 60 s after the start of the read). A date up to 60 s
+      after the start of the read belongs to a line written during the read: it is not
+      counted yet and does not make history partial, and the next read counts it;
     - Codex: an unresolved fork, invalid ownership fields, a file without session metadata,
       counters that do not agree, or copies that disagree.
 65. The file limit makes every account partial.

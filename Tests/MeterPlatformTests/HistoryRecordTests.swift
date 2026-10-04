@@ -70,9 +70,27 @@ import Testing
         tally.add(TokenRecord(date: tally.start.addingTimeInterval(-1), count: 1_000))
         tally.add(TokenRecord(date: tally.start, count: 1))
         #expect(!tally.isPartial)
-        tally.add(TokenRecord(date: .reference(1), count: 50))
+        tally.add(TokenRecord(date: .reference(TokenDayTally.writeTolerance + 1), count: 50))
         #expect(tally.isPartial)
         #expect(tally.dailyTokens == [tally.start: 1])
+    }
+
+    @Test func aLineWrittenDuringTheReadWaitsForTheNextRead() throws {
+        let calendar = Calendar.fixed("UTC")
+        let written = TokenRecord(date: .reference(TokenDayTally.writeTolerance), count: 7)
+        var tally = try TokenDayTally(now: .reference(), calendar: calendar)
+        tally.add(TokenRecord(date: .reference(1), count: 3))
+        tally.add(written)
+        #expect(!tally.isPartial)
+        #expect(tally.dailyTokens.isEmpty)
+
+        // The next read starts after the lines were written, so it counts them.
+        var next = try TokenDayTally(
+            now: .reference(TokenDayTally.writeTolerance), calendar: calendar)
+        next.add(TokenRecord(date: .reference(1), count: 3))
+        next.add(written)
+        #expect(!next.isPartial)
+        #expect(next.dailyTokens.values.reduce(0, +) == 10)
     }
 
     @Test func anOverflowingDayMakesTheTallyPartial() throws {

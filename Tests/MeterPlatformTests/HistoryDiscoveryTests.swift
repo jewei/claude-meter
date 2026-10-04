@@ -27,11 +27,41 @@ extension HistoryScans {
             #expect(!result.isPartial())
             #expect(result.total() == 70)
 
-            // The next sweep starts again. Its first page must not drop the other files.
+            // The next sweep starts again. Its first page must not drop the other files, and
+            // the inventory of the complete sweep keeps history complete meanwhile.
+            for _ in 0..<5 {
+                let next = try await scanner.scan([home.root()], since: rangeStart)
+                #expect(!next.isPartial())
+                #expect(next.total() == 70)
+                #expect(next.work.bytesRead == 0)
+            }
+        }
+
+        @Test func aFolderThatFailedInTheLastSweepStaysPartialUntilItIsListed() async throws {
+            let home = try TemporaryDirectory()
+            defer {
+                chmod(home.path("b").path, 0o755)
+                home.remove()
+            }
+            for index in 0..<5 { try home.write(line("a\(index)", 1), to: "a/\(index).jsonl") }
+            try home.write(line("b", 10), to: "b/one.jsonl")
+            #expect(chmod(home.path("b").path, 0) == 0)
+            let scanner = CountingScanner(match: jsonl, limits: HistoryLimits(directoryEntries: 2))
+            // The scan that finds the last file of `a` completes the first sweep.
+            var result = try await scanner.scan([home.root()], since: rangeStart)
+            for _ in 0..<10 where result.total() < 5 {
+                result = try await scanner.scan([home.root()], since: rangeStart)
+            }
+            #expect(result.isPartial())
+            #expect(result.total() == 5)
+
+            // The new sweep has not listed `b` again yet.
+            #expect(chmod(home.path("b").path, 0o755) == 0)
             let next = try await scanner.scan([home.root()], since: rangeStart)
             #expect(next.isPartial())
-            #expect(next.total() == 70)
-            #expect(next.work.bytesRead == 0)
+            let listed = try await scanner.scanUntilComplete([home.root()])
+            #expect(!listed.isPartial())
+            #expect(listed.total() == 15)
         }
 
         @Test func discoveryTakesOneEntryFromEachRootInTurn() async throws {

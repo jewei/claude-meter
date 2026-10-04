@@ -5,6 +5,7 @@ import MeterTestSupport
 import Testing
 
 /// Parses test lines such as `{"id":"a","count":3}`. A line without an ID counts by offset.
+/// A line whose ID starts with `block-` holds the read until ``BlockedLines/open(_:)``.
 struct CountingParser: HistoryFileParser {
     private struct Line: Decodable {
         let id: HistoryJSON.Text?
@@ -23,16 +24,42 @@ struct CountingParser: HistoryFileParser {
             isPartial = true
             return
         }
+        if let id = value.id?.value, id.hasPrefix("block-") { BlockedLines.wait(id) }
         records.insert(TokenRecord(date: .reference(), count: count), key: value.id?.value)
     }
 
     var recordCount: Int { records.count }
 }
 
+/// Holds file reads at test lines whose ID starts with `block-`, like a read from a stuck
+/// volume. Each test uses its own IDs.
+enum BlockedLines {
+    private static let state = Locked<(open: Set<String>, arrived: Set<String>)>(([], []))
+
+    /// A new ID that blocks until it is opened.
+    static func make() -> String { "block-\(UUID().uuidString)" }
+
+    static func open(_ id: String) {
+        state.withLock { _ = $0.open.insert(id) }
+    }
+
+    /// Whether a read reached the line with `id`.
+    static func hasArrived(_ id: String) -> Bool {
+        state.value.arrived.contains(id)
+    }
+
+    /// Blocks the reading thread until `id` is open, at most 10 s.
+    fileprivate static func wait(_ id: String) {
+        state.withLock { _ = $0.arrived.insert(id) }
+        let deadline = Date().addingTimeInterval(10)
+        while !state.value.open.contains(id), Date() < deadline { usleep(1_000) }
+    }
+}
+
 typealias CountingScanner = HistoryScanner<CountingParser>
 
-/// Suites that scan real files run one test at a time. Every scan uses the process-wide
-/// `BlockingIO` pool, and parallel scans would fill it while other suites test the pool.
+/// Groups the suites that scan real files. Scans use the shared history pool unless a test
+/// passes its own, which every test that leaves stuck reads must do.
 @Suite enum HistoryScans {}
 
 /// The start of a range that every fixture file is newer than, whatever the host clock says.

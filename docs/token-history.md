@@ -184,7 +184,9 @@ Only the fields below are read. All other fields are skipped.
 43. At the per-file record limit, the scanner stops reading that file.
 44. At the provider record limit, the newest files are kept. Older files are not read.
 45. At the file limit, the newest files are kept.
-46. When the blocking-read pool is full, the scanner waits up to 2 s for a free thread.
+46. History reads use their own pool of blocking threads, so stuck history folders never
+    make quota reads fail. When 16 history reads are stuck, the scanner waits up to 2 s for
+    one of them to end.
 
 ## Incremental reads
 
@@ -207,13 +209,17 @@ Only the fields below are read. All other fields are skipped.
     others.
 55. Discovery continues on the next scan after the entry or file budget of a scan.
 56. A completed sweep replaces the file list, so deleted files disappear. The next scan
-    starts a new sweep, which finds new files.
+    starts a new sweep, which finds new files. Until the new sweep completes, the list of
+    the last complete sweep keeps its folders complete.
 57. An incomplete sweep only adds files. It never removes files that an earlier sweep found.
 58. An unreadable folder does not stop the sweep. The other folders of the root are read.
 59. A change of the roots, of a root folder on disk (path, existence, device, or inode), of
     an account, or of the first covered day discards all scan state.
 60. A discovery page that times out ends discovery for that scan. The files found so far
-    still count.
+    still count. A root check that times out returns the files of the last scan, with every
+    account partial. A root check, discovery page, or file whose earlier read timed out and
+    still runs is skipped until that read ends, so a stuck folder holds one thread, not one
+    more for each scan.
 61. Cancellation stops a scan between directory pages and between files. Progress made
     before the cancellation is kept. One scan runs at a time for each tool.
 
@@ -225,7 +231,9 @@ Only the fields below are read. All other fields are skipped.
 63. Partial coverage belongs to the account whose folder caused it. Other accounts stay
     complete.
 64. These conditions make an account partial:
-    - discovery of its folders is not complete, or a folder in it could not be read;
+    - a folder in it could not be read, or neither the current sweep nor a complete earlier
+      sweep walked its folders to the end;
+    - its root check timed out;
     - a file in it was not read completely (byte budget, incomplete final line, long line,
       per-file record limit, provider record limit, read error, or timeout);
     - a line in it could not be counted (invalid JSON, a missing or invalid count or date,

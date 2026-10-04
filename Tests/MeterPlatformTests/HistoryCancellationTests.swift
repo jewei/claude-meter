@@ -10,20 +10,35 @@ extension HistoryScans {
     @Suite struct Cancellation {
         private let jsonl = HistoryFileMatch.fileExtension("jsonl")
 
-        @Test func cancellationKeepsDiscoveryProgress() async throws {
+        @Test func cancellationDuringAScanKeepsItsProgress() async throws {
             let home = try TemporaryDirectory()
             defer { home.remove() }
-            for index in 0..<5 { try home.write(line("\(index)", 10), to: "\(index).jsonl") }
-            let scanner = CountingScanner(match: jsonl, limits: HistoryLimits(directoryEntries: 1))
-            _ = try await scanner.scan([home.root()], since: rangeStart)
-            let cancelled = Task {
-                withUnsafeCurrentTask { $0?.cancel() }
-                return try await scanner.scan([home.root()], since: rangeStart)
+            let blocked = BlockedLines.make()
+            // Discovery visits names in order, three per scan: `0`, `1`, and `2` first.
+            try home.write(line(blocked, 1), to: "0.jsonl")
+            try home.touch("0.jsonl", at: .reference(-.days(1)))
+            for index in 1..<6 {
+                try home.write(line("\(index)", 10), to: "\(index).jsonl")
+                try home.touch("\(index).jsonl", at: .reference())
             }
-            await #expect(throws: CancellationError.self) { _ = try await cancelled.value }
-            let result = try await scanner.scanUntilComplete([home.root()])
-            #expect(!result.isPartial())
-            #expect(result.total() == 50)
+            let pool = BlockingIO(label: "test")
+            let scanner = CountingScanner(
+                match: jsonl, limits: HistoryLimits(directoryEntries: 3), pool: pool)
+
+            // The oldest file is read last, after `1` and `2`. Cancel while it blocks.
+            let task = Task { try await scanner.scan([home.root()], since: rangeStart) }
+            #expect(await waitUntil { BlockedLines.hasArrived(blocked) })
+            task.cancel()
+            await #expect(throws: CancellationError.self) { _ = try await task.value }
+            BlockedLines.open(blocked)
+            #expect(await waitUntil { pool.abandonedCount == 0 })
+
+            // Discovery continues after the first three entries, and the files read before
+            // the cancellation are not read again.
+            let next = try await scanner.scan([home.root()], since: rangeStart)
+            #expect(next.work.directoryEntries == 3)
+            #expect(next.work.cacheHits == 2)
+            #expect(next.total() == 51)
         }
 
         @Test func aScanCancelledBetweenFilesLeavesConsistentState() async throws {

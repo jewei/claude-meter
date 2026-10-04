@@ -18,11 +18,13 @@ public struct HistoryLimits: Equatable, Sendable {
     public var fileRecords: Int
     /// Records kept from all files of one provider.
     public var records: Int
+    /// The time limit of one blocking call: a directory page, a root check, or one file.
+    public var blockingTimeout: Duration
 
     public init(
         scanBytes: Int = 64 * 1024 * 1024, fileBytes: Int = 8 * 1024 * 1024,
         lineBytes: Int = 1024 * 1024, files: Int = 2_048, directoryEntries: Int = 20_000,
-        fileRecords: Int = 20_000, records: Int = 100_000
+        fileRecords: Int = 20_000, records: Int = 100_000, blockingTimeout: Duration = .seconds(5)
     ) {
         self.scanBytes = scanBytes
         self.fileBytes = fileBytes
@@ -31,6 +33,7 @@ public struct HistoryLimits: Equatable, Sendable {
         self.directoryEntries = directoryEntries
         self.fileRecords = fileRecords
         self.records = records
+        self.blockingTimeout = blockingTimeout
     }
 
     /// Bytes saved from the start of a file and before its saved offset, to detect a rewrite.
@@ -41,10 +44,9 @@ public struct HistoryLimits: Equatable, Sendable {
     static let chunkBytes = 64 * 1024
     /// Directory entries visited in one blocking call, so cancellation is seen between calls.
     static let entriesPerCall = 1_024
-    /// The time limit of one blocking call: a directory page, a root check, or one file.
-    static let blockingTimeout: Duration = .seconds(5)
-    /// Other refreshes free a full blocking pool within milliseconds, so wait for it this
-    /// often before the scan gives up.
+    /// A full history pool means that ``BlockingIO/capacity`` history reads are stuck. A slow
+    /// volume can still answer, so wait this often for one of them to end before the scan
+    /// gives up: at most 2 s.
     static let busyRetries = 40
     static let busyRetryDelay: Duration = .milliseconds(50)
 }

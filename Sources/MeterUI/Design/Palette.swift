@@ -82,7 +82,8 @@ enum Palette {
 
     // MARK: Tiles
 
-    /// Bright fills for the icon tiles in Settings. White glyphs sit on them.
+    /// Bright fills for the icon tiles in Settings and the account avatars, the same in both
+    /// appearances. White glyphs sit on them.
     enum Tile {
         static let sky = Color(nsColor: NSColor(hex: 0x25B6F0))
         static let violet = Color(nsColor: NSColor(hex: 0xC77DFF))
@@ -94,6 +95,10 @@ enum Palette {
         static let slate = Color(nsColor: NSColor(hex: 0x8D99AE))
         static let lagoon = Color(nsColor: NSColor(hex: 0x49A3B0))
         static let graphite = Color(nsColor: NSColor(hex: 0x1C1C1E))
+        static let pink = Color(nsColor: NSColor(hex: 0xFF7AA8))
+        static let indigo = Color(nsColor: NSColor(hex: 0x7C83FF))
+        /// The light top of the bolt's gradient on the About tile.
+        static let boltLight = Color(nsColor: NSColor(hex: 0xFFE38A))
     }
 }
 

@@ -25,6 +25,7 @@ struct StatusScreenView: View {
                     .accessibilityAddTraits(.isHeader)
                 Text(Self.message(screen.message))
                     .font(MeterFont.body(12, .semibold))
+                    .monospacedDigit()
                     .foregroundStyle(Palette.inkMuted)
                     .lineSpacing(2)
             }

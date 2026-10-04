@@ -68,8 +68,8 @@ public struct BarsModel: Equatable, Sendable {
     public let bars: [GaugeModel]
     /// `12 credits · 1 usage reset available`.
     public let caption: String?
-    /// Each bar has its own label row: `Session · 60% left` and its reset. False when the
-    /// caption already states the window and its reset (Cursor, Grok).
+    /// Each bar has its own label row: `Session · 60% left` and its reset. False for Cursor
+    /// and Grok, whose caption states the spend and the reset (Grok's also the window).
     public let showsBarLabels: Bool
 }
 

@@ -49,7 +49,7 @@ struct AppearanceSettingsView: View {
             }
             SettingsCard(spacing: 12) {
                 SettingsRow(
-                    symbol: "exclamationmark.circle", tint: Palette.energyLow,
+                    symbol: "exclamationmark.circle", tint: Palette.Tile.orange,
                     title: "Severity thresholds",
                     subtitle: "Usage levels that change the menu bar and card colors.")
                 ThresholdRow(

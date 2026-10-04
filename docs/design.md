@@ -66,8 +66,10 @@ stay `ink` while energy is full (`headlineInk`).
 | pro | `#287B12` / `#7FD65A` | `#E7F8DC` / `#23381A` |
 | free | `#6F6A5B` / `#B8B3A2` | `#EFECE0` / `#33312A` |
 
-Values are light / dark. Settings tiles use fixed bright fills (`Palette.Tile`) with white
-glyphs. Account avatars pick one of eight tile colors from a djb2 hash of the account ID.
+Values are light / dark. Settings row tiles and account avatars use fixed bright fills
+(`Palette.Tile`, the same in both appearances) with white glyphs. Account avatars pick one of
+eight tile colors from a djb2 hash of the account ID. The bolt tiles in the popover header
+and on About use `energyFull`.
 
 ## Type
 
@@ -96,7 +98,8 @@ bar uses the system rounded font.
 | Note | Nunito SemiBold | 10 | "Token usage unavailable" |
 | Pill | Nunito ExtraBold | 10 | "Menu bar" |
 
-Every changing number uses `.monospacedDigit()`.
+Every changing number uses `.monospacedDigit()`, also in text that can hold one: the hero
+subtitle, notices, status lines and screens, and the last update check.
 
 ## Components (`Design/`)
 
@@ -107,7 +110,7 @@ Every changing number uses `.monospacedDigit()`.
 | `RaisedButtonStyle` | `action` fill, white Fredoka Bold 14, padding 20×12, radius 14, plate at y 4. Pressed: label down 2 pt, plate at y 2, spring 0.2/0.85. Hover: white 6%. Focus: 2 pt `accent` ring. Disabled: 45%. Reduce Motion: no movement, darker tint. |
 | `QuietButtonStyle` | `ink` surface at 6% hover and 10% press (muted text keeps 4.5:1 on both), 2 pt focus border, 45% when disabled. Nothing moves. The style also draws the button's own fill (`Surface`: clear, chunky, or a flat fill) below the ink surface, so a label never hides the feedback; labels draw no opaque fill. `.buttonStyle(.chunky)` is the small chunky button for `ChunkyButtonLabel`. |
 | `EnergyDot` | 9 pt rounded square, radius 3. |
-| `EnergyBar` | Capsule on `track`. Fill width = share × width; the track's capsule clips the fill, so a tiny fill follows the rounded end. A white 45% highlight, 2 pt high, inset 3 pt, runs along the top of the fill only when the fill is wider than 6 pt. |
+| `EnergyBar` | Capsule on `track`. Fill width = share × width; the track's capsule clips the fill, so a tiny fill follows the rounded end. A white 45% highlight, `min(2, height / 4)` pt high, 2 pt below the top and 3 pt in from each end, runs along the top of the fill only when the fill is wider than 6 pt. |
 | `ActivityRings` | 88 pt. Outer weekly ring radius 34, inner session ring radius 24, 8 pt strokes, round caps, start at the top, `track` behind, a white highlight along each arc that grows from clear at the start to 30% at the tip (angular gradient). Center disc 30 pt in `popover` with the letter. Hidden from accessibility. |
 | `PlanBadgeView` | Capsule, padding 8×3, tier colors, one line. |
 | `ChipView` | Neutral capsule for "same login", "paused", and "Not tracked"; a tooltip only when it has help text. |
@@ -207,15 +210,17 @@ All cards: padding 14×13, `chunkyCard()`, full width.
 - **Bar card** (`BarCardView`): a header button (provider mark, name, badges, headline
   value, chevron; 28 pt minimum height) that calls `toggleCard`. One 12 pt `BarRow` per
   window with "Session · 60% left" and the reset, unless `BarsModel.showsBarLabels` is false
-  (Cursor, Grok: the caption names the window and reset). Then the caption and status line.
+  (Cursor and Grok: the caption states the spend and the reset; Grok's also names the
+  window). Then the caption and status line.
   Expanded details reveal from the top with the card height; the card clips its content.
 - **Extra usage** (`ExtraUsageCardView`): 💳, title, "paused" chip, and the amount spent of
   the limit (`$12.50 / $50.00`). The monthly limit is a budget, drawn as energy like every
   other limit (`ExtraUsageModel`): the 12 pt bar fills with the share of the limit left (the
   share spent in Usage mode), in the severity color of the share spent against the user's
-  thresholds, with the share in words below (`75% left`). So the bar drains and turns orange,
-  then red, as money is spent, and it is empty at the limit. It never fills green as money
-  goes. Without a limit share there is no bar.
+  thresholds, with the share in words below (`75% left`). In Energy left mode the bar drains
+  and turns orange, then red, as money is spent, and it is empty at the limit. In Usage mode
+  it fills as money is spent, in the same colors, so it is green only while little is spent
+  and red and full at the limit. Without a limit share there is no bar.
 - **Details** (`DetailSectionsView`), each after a 1 pt `cardBorder` rule: limit rows
   (`LimitRow`), usage bars (`UsageBarRow`, 7 pt bars, the value with "left" or "used"), usage-limit resets
   (`ResetsSectionView`: count, rows with the exact date in a tooltip, note), and tokens used
@@ -274,29 +279,38 @@ the app is regular; "About Claude Meter" opens the About tab.
   control.
 - **Data** (`Data/DataSettingsView`): one `DataSourceCard` per source with its switch.
   Controls for a source go in its card content, below a divider, while the source is on.
-  Claude: the connection (`ClaudeConnectionView`: both logins' states, Connect automatically
-  with a Keychain consent alert, Enter tokens manually or Update tokens, and Disconnect, as
-  `DataSourceText.connectionButtons` says for the connection, and the last message, which
-  shows a failure in `energyEmptyInk` with a warning symbol) and, in automatic mode,
-  the config dirs (`ClaudeAccountsList`). While Claude is off these controls are hidden, so
-  the Claude subtitle says when turning Claude off kept a Connect from being saved
-  (`DataSourceText.claudeSubtitle`). The token form (`ManualTokenForm`) says first, in
-  `ink` with an amber warning symbol, that the tokens must come from a separate Claude login
-  (`DataSourceText.manualTokensSource`). Return in a token field connects; Connect is not
-  the window's default button, so Return in a folder name never connects. Cancel discards
-  the draft and abandons a running Connect, so nothing is saved after it; Escape cancels only
-  while both token fields are empty. Only the newest inline question or token form answers
-  Escape (`CancelShortcuts`), so one key never cancels two things. The draft rules (trimming, when Connect is enabled, Escape) are in
-  `ManualTokenDraft`. Disconnect asks first in the page (`InlineConfirmation`) when it
-  would delete tokens that the user entered (`DataSourceText.disconnectConfirmation`). Codex:
-  the homes (`CodexHomesList`). Rows (`FolderRow`) show an avatar, a display-name field that
-  saves on Return, focus loss, leaving the page or the window, and Quit (while it is empty it
-  shows the default name in `inkMuted`; the system placeholder color is below 4.5:1, so
-  the name and token fields draw their own, `fieldPlaceholder`), a path chip with the
-  full path in its tooltip, the plan (`PlanChoice`: the reported badge, or a menu), and 28 pt
-  controls. A login that is not tracked dims only its avatar and shows a "Not tracked" chip,
-  so its text keeps full contrast. Remove asks in the row first (`InlineConfirmation`).
-  Folders are added with the open panel as a sheet on Settings (hidden folders shown).
+  - Claude: the connection (`ClaudeConnectionView`): both logins' states; Connect
+    automatically (with a Keychain consent alert), Enter tokens manually or Update tokens,
+    and Disconnect, as `DataSourceText.connectionButtons` says for the connection; and the
+    last message, which shows a failure in `energyEmptyInk` with a warning symbol. Below a
+    divider: the config dirs (`ClaudeAccountsList`) in automatic mode, or a "Plan" row with
+    the manual login's badge or plan menu (`ClaudeSettingsModel.manualPlan`) in manual
+    mode. While Claude is off these controls are hidden, so the Claude subtitle says when
+    turning Claude off kept a Connect from being saved (`DataSourceText.claudeSubtitle`).
+  - The token form (`ManualTokenForm`): a muted line that says that Claude Meter keeps the
+    tokens in its own Keychain item; then, in `ink` with an amber warning symbol, that the
+    tokens must come from a separate Claude login (`DataSourceText.manualTokensSource`);
+    the access and refresh token fields; "Set an expiry" with a date picker; and Show
+    tokens, Cancel, and Connect. Return in a token field connects; Connect is not the
+    window's default button, so Return in a folder name never connects. Cancel discards the
+    draft and abandons a running Connect, so nothing is saved after it; Escape cancels only
+    while both token fields are empty. The draft rules (trimming, when Connect is enabled,
+    Escape) are in `ManualTokenDraft`. Only the newest inline question or token form answers
+    Escape (`CancelShortcuts`), so one key never cancels two things.
+  - Disconnect asks first in the page (`InlineConfirmation`) when it would delete tokens
+    that the user entered (`DataSourceText.disconnectConfirmation`).
+  - Codex: the homes (`CodexHomesList`).
+  - Rows (`FolderRow`) show an avatar, a display-name field, the row's details, and 28 pt
+    controls. The name saves on Return, focus loss, leaving the page or the window, and
+    Quit. While the field is empty it shows the default name in `inkMuted`; the system
+    placeholder color is below 4.5:1, so the name and token fields draw their own
+    (`fieldPlaceholder`). A Claude row (`ClaudeAccountRow`) adds a path chip with the full
+    path in its tooltip, the plan (`PlanChoice`: the reported badge, or a menu), a "Not
+    tracked" chip, and a tracking switch where the login can be turned off; a login that
+    is not tracked dims only its avatar, so its text keeps full contrast. A Codex row
+    (`CodexHomeRow`) adds a path chip and the sign-in state, and no plan. Remove asks in
+    the row first (`InlineConfirmation`). Folders are added with the open panel as a sheet
+    on Settings (hidden folders shown).
 - **Appearance**: card style as two visual options with a checkmark; Energy left / Usage;
   menu bar 5h / 7d / Both; warning and critical sliders (`ThresholdSlider`: step 5, arrow
   keys, VoiceOver adjustable, focus border) written through `Thresholds`; "Use automatic

@@ -8,6 +8,7 @@ struct StatusLineView: View {
     var body: some View {
         Text(status.text)
             .font(MeterFont.body(11, .semibold))
+            .monospacedDigit()
             .foregroundStyle(status.isFailure ? Palette.energyLowInk : Palette.inkMuted)
             .fixedSize(horizontal: false, vertical: true)
     }

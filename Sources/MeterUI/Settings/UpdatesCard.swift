@@ -53,6 +53,7 @@ struct UpdatesCard: View {
                 TimelineView(.periodic(from: .now, by: 60)) { context in
                     Text(UpdateCheckText.lastChecked(updater.lastCheckDate, now: context.date))
                         .font(MeterFont.body(12, .semibold))
+                        .monospacedDigit()
                         .foregroundStyle(Palette.inkMuted)
                 }
                 Spacer(minLength: 0)

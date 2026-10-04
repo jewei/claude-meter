@@ -19,6 +19,7 @@ struct NoticeBanner: View {
                 .accessibilityHidden(true)
             Text(text)
                 .font(MeterFont.body(11, .semibold))
+                .monospacedDigit()
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)

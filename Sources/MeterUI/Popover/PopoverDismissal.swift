@@ -19,7 +19,7 @@ enum PopoverDismissal {
     enum Window: Equatable {
         case panel
         case statusButton
-        /// A titled window: Settings, Sparkle's update window, the About panel.
+        /// A titled window: Settings or Sparkle's update window.
         case titled
         /// A window that does not take the user away, such as a menu or a tooltip.
         case other

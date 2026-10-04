@@ -24,6 +24,7 @@ struct HeroView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Text(hero.subtitle)
                     .font(MeterFont.body(12, .bold))
+                    .monospacedDigit()
                     .foregroundStyle(colors.subink)
                     .fixedSize(horizontal: false, vertical: true)
             }

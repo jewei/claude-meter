@@ -6,8 +6,7 @@ import SwiftUI
 struct AccountAvatar: View {
     static let palette: [Color] = [
         Palette.Tile.sky, Palette.Tile.violet, Palette.Tile.orange, Palette.Tile.green,
-        Color(nsColor: NSColor(hex: 0xFF7AA8)), Palette.Tile.teal,
-        Color(nsColor: NSColor(hex: 0x7C83FF)), Palette.Tile.gold,
+        Palette.Tile.pink, Palette.Tile.teal, Palette.Tile.indigo, Palette.Tile.gold,
     ]
 
     let id: String

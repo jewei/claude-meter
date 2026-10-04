@@ -181,6 +181,45 @@ import Testing
         #expect(failure(lookup) == .credentialsUnreadable)
     }
 
+    /// SQLite opens the sidecars of a linked database's target, so a FIFO there must be
+    /// rejected before SQLite blocks on it.
+    @Test func aLinkedDatabaseIsCheckedAtItsTarget() async throws {
+        let home = try CursorHome()
+        defer { home.remove() }
+        try home.write(["cursorAuth/accessToken": .text("linked-token")], journalMode: "DELETE")
+        let target = try home.directory.makeDirectory("other").appending(path: "real.vscdb")
+        try FileManager.default.moveItem(at: home.database, to: target)
+        try FileManager.default.createSymbolicLink(at: home.database, withDestinationURL: target)
+        let store = CursorCredentialStore(home: home.url, keychain: FakeKeychain())
+        #expect(credentials(try await store.read())?.accessToken == "linked-token")
+
+        // SQLite opens an existing `-journal` to check whether it is hot.
+        #expect(mkfifo(target.path + "-journal", 0o600) == 0)
+        let started = ContinuousClock.now
+        let lookup = try await store.read()
+        #expect(failure(lookup) == .credentialsUnreadable)
+        #expect(ContinuousClock.now - started < .seconds(2))
+    }
+
+    /// `readonly_shm=1` cannot create a missing `-shm`, so the read fails and writes nothing.
+    @Test func aWALDatabaseWithoutItsSharedMemoryFileFailsWithoutCreatingFiles() async throws {
+        let home = try CursorHome()
+        defer { home.remove() }
+        try home.write(token: "wal-token")
+        try? FileManager.default.removeItem(atPath: home.database.path + "-shm")
+        try? FileManager.default.removeItem(atPath: home.database.path + "-wal")
+        let folder = home.database.deletingLastPathComponent()
+        let filesBefore = try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
+
+        let lookup = try await CursorCredentialStore(home: home.url, keychain: FakeKeychain())
+            .read()
+
+        #expect(failure(lookup) == .credentialsUnreadable)
+        #expect(
+            try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted() == filesBefore
+        )
+    }
+
     @Test(arguments: [
         (KeychainError.unavailable, CursorFailure.keychainUnavailable),
         (.denied, .keychainDenied),

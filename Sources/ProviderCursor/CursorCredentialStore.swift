@@ -99,10 +99,13 @@ struct CursorCredentialStore: Sendable {
     private static func databaseValues(
         _ database: URL, cancellation: BlockingIO.Cancellation
     ) -> ([String: String], DatabaseState) {
+        // SQLite opens the sidecars of the link's target, so the sidecar check must see the
+        // target too. Otherwise a FIFO next to the target blocks the open.
+        let target = database.resolvingSymlinksInPath()
         let rows: [[Data?]]
         do {
             rows = try SQLiteReader.rows(
-                in: database, query: query, bindings: keys, cancellation: cancellation)
+                in: target, query: query, bindings: keys, cancellation: cancellation)
         } catch .notFound {
             return ([:], .missing)
         } catch .busy {

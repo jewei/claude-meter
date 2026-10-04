@@ -12,6 +12,9 @@
 #   NOTARY_PROFILE    notarytool Keychain profile (default: notarytool)
 #   NOTARY_KEYCHAIN   Keychain that holds the profile (default: the Keychain search list)
 #   SIGNING_IDENTITY  Developer ID identity or its SHA-1, for the DMG (default: the release one)
+#   IGNORE_SKIPPED_UPGRADES_BELOW
+#                     Optional build. A 3.x user who skipped a 4.x build lower than this sees
+#                     this release again in scheduled checks. See docs/releasing.md.
 
 set -Eeuo pipefail
 # Use the macOS tools first. GNU coreutils in PATH change the options of stat, sed, and date.
@@ -130,6 +133,14 @@ main() {
         die "VERSION must be 4.x, such as 4.0.0. Decide the minimumUpdateVersion for a new major."
     [[ "$BUILD" =~ ^[1-9][0-9]*$ ]] || die "BUILD must be a positive integer."
     ((BUILD >= MAJOR_START_BUILD)) || die "BUILD must be $MAJOR_START_BUILD or greater for 4.x."
+    # Every skipped 4.x build is MAJOR_START_BUILD or greater, so a lower value changes nothing.
+    local ignore_below="${IGNORE_SKIPPED_UPGRADES_BELOW:-}"
+    if [[ -n "$ignore_below" ]]; then
+        [[ "$ignore_below" =~ ^[1-9][0-9]*$ ]] &&
+            ((ignore_below > MAJOR_START_BUILD && ignore_below <= BUILD)) ||
+            die "IGNORE_SKIPPED_UPGRADES_BELOW must be a build from $((MAJOR_START_BUILD + 1))" \
+                "to $BUILD."
+    fi
     require_clean_tree
     if [[ -z "$PREPARE_ONLY" ]]; then
         [[ "$(git branch --show-current)" == "main" ]] || die "Publish from the main branch."
@@ -255,9 +266,13 @@ main() {
     ditto -c -k --keepParent "$ARCHIVE/dSYMs" "$DSYMS"
 
     step "Write the candidate feed"
-    local description minimum_system
+    local description minimum_system ignore_skipped=""
     description="$(awk -f scripts/changelog-to-html.awk <<<"$NOTES")"
     minimum_system="$(plist_value LSMinimumSystemVersion)"
+    if [[ -n "$ignore_below" ]]; then
+        printf -v ignore_skipped '\n            %s%s%s' "<sparkle:ignoreSkippedUpgradesBelowVersion>" \
+            "$ignore_below" "</sparkle:ignoreSkippedUpgradesBelowVersion>"
+    fi
     cat >"$WORK/item.xml" <<EOF
         <item>
             <title>Version $VERSION</title>
@@ -266,7 +281,7 @@ main() {
             <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>$minimum_system</sparkle:minimumSystemVersion>
             <sparkle:minimumUpdateVersion>$MINIMUM_UPDATE_BUILD</sparkle:minimumUpdateVersion>
-            <sparkle:minimumAutoupdateVersion>$MAJOR_START_BUILD</sparkle:minimumAutoupdateVersion>
+            <sparkle:minimumAutoupdateVersion>$MAJOR_START_BUILD</sparkle:minimumAutoupdateVersion>$ignore_skipped
             <description><![CDATA[
 $description
             ]]></description>

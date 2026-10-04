@@ -115,8 +115,9 @@ step prints `==> <step>`.
 8. **Write the candidate feed** to `build/release/appcast.xml`. It adds one item above the
    newest item and keeps all existing items. The item has the version, the build, the
    minimum macOS version from the app, `minimumUpdateVersion` 295,
-   `minimumAutoupdateVersion` 400, the HTML release notes, the DMG URL, the length, and the
-   EdDSA signature.
+   `minimumAutoupdateVersion` 400, `ignoreSkippedUpgradesBelowVersion` if
+   `IGNORE_SKIPPED_UPGRADES_BELOW` is set, the HTML release notes, the DMG URL, the length,
+   and the EdDSA signature.
 
 With `--prepare-only` the script stops here. It changes no tracked file and publishes
 nothing. Without it, it continues:
@@ -168,6 +169,20 @@ Every 4.x item also has `<sparkle:minimumAutoupdateVersion>400</sparkle:minimumA
 4.0 starts with fresh settings, so a 3.x install always shows the update window with the
 release notes, even when the user chose automatic installs. 4.x installs keep updating
 silently.
+
+All 4.x items share this `minimumAutoupdateVersion`, so for a 3.x install each one is the
+same major upgrade. When a 3.x user selects **Skip This Version** on a 4.x item, Sparkle
+records 400 and the build of that item. After that, scheduled checks skip every 4.x item,
+also the later ones. Only **Check for Updates** still shows them. To show a release to these
+users again, set `IGNORE_SKIPPED_UPGRADES_BELOW` to a build from 401 to BUILD:
+
+```bash
+make release VERSION=4.1.0 BUILD=410 IGNORE_SKIPPED_UPGRADES_BELOW=410
+```
+
+The item then has `<sparkle:ignoreSkippedUpgradesBelowVersion>` with that build. A user who
+skipped a 4.x build lower than it sees the item in scheduled checks again. Sparkle 2.9.3
+supports this element.
 
 Keep the 3.1.3 item in `appcast.xml` for as long as 2.x installs can exist. Do not remove
 old items, and do not delete a release asset that the feed names.

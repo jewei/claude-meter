@@ -97,7 +97,7 @@ extension CodexTests {
             let cli = try FakeCodexCLI(
                 rateLimitsReply: #"printf '%s\n' '{"id":3,"error":{"code":-32603}}'"#)
             defer { cli.root.remove() }
-            await #expect(throws: CodexError.appServerFailed("no details.")) {
+            await #expect(throws: CodexError.appServerFailed("no details")) {
                 try await cli.server().recover(cli.home, environment: cli.environment)
             }
             #expect(cli.childIsGone())

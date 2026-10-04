@@ -163,7 +163,8 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
    returns HTTP 401 or 403. A home folder that does not exist starts no recovery: Codex has
    no login there, and the child could create files in it.
 7. Network errors, timeouts, other HTTP statuses, unknown response formats, and API-key auth
-   never start recovery. The original error shows.
+   never start recovery. The original error shows. A redirect to another site and a response
+   over the size limit are unknown response formats, not network errors: the server answered.
 8. Each recovery starts one child process. The executable search and `initialize` have a 5 s
    limit each. `account/read` (Codex renews the token there) and `account/rateLimits/read`
    reach the network and have a 15 s limit each, so recovery ends within 41 s, inside the
@@ -172,7 +173,8 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
 9. A timeout names the step that timed out, such as `account/read`.
 10. An error reply to `account/read` is ignored: account details are optional, and the rate
     limits are still read. An API-key account, and `"account": null` (no login), stop before
-    `account/rateLimits/read`.
+    `account/rateLimits/read`. An error reply to `account/rateLimits/read` reads
+    `Codex CLI request failed: <text>. Refresh again later.`
 11. Lines that are not JSON objects, notifications, and server requests (lines with a
     `method`) are skipped while the client waits for a response.
 12. A failed recovery shows one sentence with one action. It is the recovery reason when the

@@ -28,6 +28,14 @@ struct CodexUsageAPI: Sendable {
             // The transport cancelled the request on its own, for example after a
             // `URLError.cancelled` that this refresh did not cause.
             throw CodexError.network("The request was cancelled.")
+        } catch let error as HTTPError {
+            switch error {
+            // The server answered, but not with a usage response.
+            case .redirectRejected, .responseTooLarge:
+                throw CodexError.unexpectedResponse
+            case .offline, .timedOut, .transport:
+                throw CodexError.network(error.localizedDescription)
+            }
         } catch {
             throw CodexError.network(error.localizedDescription)
         }

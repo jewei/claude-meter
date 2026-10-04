@@ -78,7 +78,7 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
         case .appServerTimedOut(let step):
             "Codex CLI timed out during \(step). Refresh again."
         case .appServerFailed(let reason):
-            "Codex CLI request failed: \(reason)"
+            "Codex CLI request failed: \(Self.sentence(reason)). Refresh again later."
         case .appServerStopped:
             "Codex CLI stopped before it answered. Check that `codex` runs in Terminal, then refresh."
         case .appServerUnexpected:
@@ -92,6 +92,13 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
         case .timedOut:
             "Codex did not answer in time. Refresh again later."
         }
+    }
+
+    /// Server text without its final period and spaces, to put inside a sentence.
+    private static func sentence(_ text: String) -> String {
+        var text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        while text.hasSuffix(".") { text.removeLast() }
+        return text.isEmpty ? "no details" : text
     }
 
     /// Only the user can fix it, for example by signing in again.

@@ -82,7 +82,7 @@ struct CodexAppServerSession {
                     message["id"]?.doubleValue == Double(id)
                 else { continue }
                 if let error = message["error"]?.objectValue {
-                    throw CodexError.appServerFailed(error["message"]?.text ?? "no details.")
+                    throw CodexError.appServerFailed(error["message"]?.text ?? "no details")
                 }
                 return message["result"]
             }

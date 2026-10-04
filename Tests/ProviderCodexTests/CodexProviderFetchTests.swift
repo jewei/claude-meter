@@ -151,6 +151,30 @@ extension CodexTests {
             #expect(format.recovery.calls == 0)
         }
 
+        /// A redirect or a body over the size limit came from a server that answered, so the
+        /// card does not say that Codex could not be reached.
+        @Test(arguments: [HTTPError.redirectRejected, .responseTooLarge(limit: 8 * 1024 * 1024)])
+        func anAnswerThatIsNotUsageIsUnexpected(error: HTTPError) async throws {
+            let bed = try CodexTestBed(http: FakeHTTPClient { _ in throw error })
+            defer { bed.remove() }
+            try bed.writeAuth()
+            let account = try #require(try await bed.provider.fetch(previous: nil).accounts.first)
+            #expect(account.issue?.message == CodexError.unexpectedResponse.localizedDescription)
+            #expect(bed.recovery.calls == 0)
+        }
+
+        /// Server text ends with one period and an action.
+        @Test func aCodexErrorReplySaysWhatToDo() {
+            for reason in ["quota unavailable", "quota unavailable.", " quota unavailable.. "] {
+                #expect(
+                    CodexError.appServerFailed(reason).localizedDescription
+                        == "Codex CLI request failed: quota unavailable. Refresh again later.")
+            }
+            #expect(
+                CodexError.appServerFailed(" . ").localizedDescription
+                    == "Codex CLI request failed: no details. Refresh again later.")
+        }
+
         /// CDX-07: the card shows one sentence with one action. Diagnostics keep both reasons.
         /// CDX-26: a cancel that the refresh did not cause is a network failure, not a
         /// time-out and not a cancelled refresh.

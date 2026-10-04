@@ -121,24 +121,38 @@ extension ClaudeTests {
                 {"cedar_ember": {"eligible": true, "grants": [
                   {"label": " Launch reset ", "resets_left": 2, "starts_at": "2026-09-22T16:00:00Z",
                    "ends_at": "2026-10-22T16:00:00Z"},
-                  {"label": "", "resets_left": 500},
                   {"label": "Bad date", "resets_left": 1, "ends_at": "not a date"},
                   {"label": "Future", "resets_left": 1, "starts_at": "2026-10-05T00:00:00Z"},
                   {"label": "Expired", "resets_left": 1, "ends_at": "2026-10-04T11:00:00Z"},
                   {"label": "Empty", "resets_left": 0},
-                  {"label": "Word", "resets_left": "one"}
+                  {"label": "Word", "resets_left": "one"},
+                  {"label": "", "resets_left": 500},
+                  {"label": "After the limit", "resets_left": 5}
                 ]}}
                 """)
             let grants = try #require(response.resetGrants)
-            #expect(grants.map(\.title) == ["Launch reset", "Usage reset", "Bad date"])
-            #expect(grants.map(\.resetsLeft) == [2, 99, 1])
+            #expect(grants.map(\.title) == ["Launch reset", "Bad date", "Usage reset"])
+            // At most 99 resets in total: the large grant fills the rest, and later grants
+            // are not read.
+            #expect(grants.map(\.resetsLeft) == [2, 1, 96])
             #expect(grants[0].expiresAt == DateParsing.iso8601("2026-10-22T16:00:00Z"))
-            #expect(grants[2].expiresAt == nil)
+            #expect(grants[1].expiresAt == nil)
 
             let allowance = try #require(UsageMapper.resetAllowance(response))
-            #expect(allowance.available == 102)
-            #expect(allowance.resets.count == 102)
+            #expect(allowance.available == 99)
+            #expect(allowance.resets.count == 99)
             #expect(allowance.resets.first?.title == "Launch reset")
+        }
+
+        @Test func anEmptyCurrencyIsUSDAndAKeyWithoutAScopeIsDropped() throws {
+            let response = try decode(
+                """
+                {"extra_usage": {"is_enabled": true, "used_credits": 1, "currency": " "},
+                 "seven_day_": {"utilization": 5}, "seven_day__": {"utilization": 6}}
+                """)
+            #expect(UsageMapper.balances(response).first?.unit == .currency("USD"))
+            #expect(response.scoped.isEmpty)
+            #expect(UsageMapper.scopeTitle("seven_day_") == "Other Weekly")
         }
 
         @Test(

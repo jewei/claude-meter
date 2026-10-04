@@ -51,12 +51,13 @@ enum UsageMapper {
     }
 
     /// "Sonnet Weekly" from `seven_day_sonnet`, "Oauth Apps Weekly" from
-    /// `seven_day_oauth_apps`. A key without a scope keeps its raw name.
+    /// `seven_day_oauth_apps`. The response keeps only keys with a scope; a key without one
+    /// is "Other Weekly".
     static func scopeTitle(_ key: String) -> String {
         let prefix = "seven_day_"
         let scope = key.hasPrefix(prefix) ? String(key.dropFirst(prefix.count)) : key
-        guard !scope.isEmpty else { return "\(key) Weekly" }
         let words = scope.split(separator: "_").map { $0.prefix(1).uppercased() + $0.dropFirst() }
+        guard !words.isEmpty else { return "Other Weekly" }
         return words.joined(separator: " ") + " Weekly"
     }
 

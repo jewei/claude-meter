@@ -35,6 +35,8 @@ struct UsageResponse: Sendable, Equatable {
 
     struct ResetGrant: Sendable, Equatable {
         static let defaultTitle = "Usage reset"
+        /// The most resets counted in total, over all grants. The mapper makes one entry per
+        /// reset, so a huge response must not make millions of them.
         static let maxResets = 99
 
         let title: String
@@ -78,7 +80,7 @@ struct UsageResponse: Sendable, Equatable {
         // generic `limits` array, and the flat fields can turn null during the move. A flat
         // field with a value wins; `limits` fills the gaps.
         var windows = Self.scopedWindowsFromLimits(root["limits"])
-        for (key, value) in root where key.hasPrefix("seven_day_") {
+        for (key, value) in root where Self.isScopedKey(key) {
             if let window = Self.window(value), window.utilization != nil {
                 windows[key] = window
             }
@@ -86,6 +88,13 @@ struct UsageResponse: Sendable, Equatable {
         sevenDayOpus = windows.removeValue(forKey: "seven_day_opus")
         scoped = windows.map { ScopedWindow(key: $0.key, window: $0.value) }
             .sorted { $0.key < $1.key }
+    }
+
+    /// `seven_day_<scope>` with a scope that has a letter or digit.
+    private static func isScopedKey(_ key: String) -> Bool {
+        let prefix = "seven_day_"
+        return key.hasPrefix(prefix)
+            && key.dropFirst(prefix.count).contains { $0.isLetter || $0.isNumber }
     }
 
     private static func window(_ value: JSONValue?) -> Window? {
@@ -127,7 +136,9 @@ struct UsageResponse: Sendable, Equatable {
             decimalPlaces: integer(entry["decimal_places"]).map { min(18, max(0, $0)) }
                 ?? ExtraUsage.defaultDecimalPlaces,
             utilization: number(entry["utilization"]),
-            currency: entry["currency"]?.stringValue)
+            currency: entry["currency"]?.stringValue?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .nilIfEmpty)
     }
 
     /// The `cedar_ember` allowance. `eligible: false` with reason `surface` means the server did
@@ -140,17 +151,22 @@ struct UsageResponse: Sendable, Equatable {
         }
         guard case .array(let items)? = allowance["grants"] else { return nil }
         var grants: [ResetGrant] = []
+        var total = 0
         for item in items {
             guard case .object(let grant) = item else { return nil }
+            // Grants after the limit change nothing, so they are not read.
+            guard total < ResetGrant.maxResets else { break }
             guard let left = integer(grant["resets_left"]), left > 0 else { continue }
             if let startsAt = DateParsing.date(grant["starts_at"]), startsAt > now { continue }
             let expiresAt = DateParsing.date(grant["ends_at"])
             if let expiresAt, expiresAt <= now { continue }
             let label = grant["label"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let counted = min(left, ResetGrant.maxResets - total)
+            total += counted
             grants.append(
                 ResetGrant(
-                    title: label.flatMap { $0.isEmpty ? nil : $0 } ?? ResetGrant.defaultTitle,
-                    resetsLeft: min(left, ResetGrant.maxResets), expiresAt: expiresAt))
+                    title: label?.nilIfEmpty ?? ResetGrant.defaultTitle, resetsLeft: counted,
+                    expiresAt: expiresAt))
         }
         return grants
     }
@@ -163,4 +179,9 @@ struct UsageResponse: Sendable, Equatable {
     private static func integer(_ value: JSONValue?) -> Int? {
         number(value).flatMap { Int(exactly: $0) }
     }
+}
+
+extension String {
+    /// Nil for an empty string.
+    fileprivate var nilIfEmpty: String? { isEmpty ? nil : self }
 }

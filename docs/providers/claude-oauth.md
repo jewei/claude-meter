@@ -229,15 +229,17 @@ little memory. The limit is 256 MiB. The result is one of three states:
 2. Session, weekly, and Opus windows are binding. Other scoped windows and extra usage are
    not.
 3. Session and weekly windows are always present; unknown values stay unknown, never 0.
-4. A flat `seven_day_<scope>` field with a value wins over `limits[]`. A `limits[]` key is
+4. A flat `seven_day_<scope>` field with a value wins over `limits[]`. A key whose scope has
+   no letter or digit, such as `seven_day_`, is ignored. A `limits[]` key is
    `seven_day_` plus the first word of the model name that is not "Claude", lowercased. The
    first entry per key wins.
 5. Extra usage: amount and limit are minor units divided by `10^decimal_places` (default 2,
    0 through 18) as exact decimals. The percent is `utilization`, else used over limit. The
-   currency is upper case, `USD` when missing. `is_enabled: false` is paused.
+   currency is upper case, `USD` when missing or empty. `is_enabled: false` is paused.
 6. Usage-limit resets: `eligible: false` with `ineligible_reason: "surface"` is unknown (nil).
    Any other `eligible: false` is zero resets. Keep grants with `resets_left > 0` that have
-   started and not ended. An empty label is "Usage reset". Each grant counts at most 99.
+   started and not ended. An empty label is "Usage reset". At most 99 resets count in
+   total, over all grants; grants after the limit are not read.
 7. The plan is from the credential's `subscriptionType` and `rateLimitTier`, else the
    `.claude.json` tier: "Max 20x", "Max 5x", "Max", "Pro", "Team", "Enterprise", "Free".
 

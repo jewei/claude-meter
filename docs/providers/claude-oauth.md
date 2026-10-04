@@ -116,9 +116,10 @@ little memory. The limit is 256 MiB. The result is one of three states:
 
 1. The account key is the folder name without one leading dot, with only `[A-Za-z0-9._-]`
    kept. An empty key is `claude`. Never change this algorithm: settings store these keys.
-2. The default name (`ClaudeAccount.name`; Settings calls it `defaultName`) is `default` for
-   `claude`, the part after `claude-` for `claude-<name>`, else the key. A display name that
-   the user sets replaces it on the card.
+2. The default name (`ClaudeAccount.name`) is `default` for `claude`, the part after
+   `claude-` for `claude-<name>`, else the key. Settings (as `defaultName`) and the card show
+   it capitalized, with `-` and `_` as spaces (`PresentationContext.friendlyName`): "Default",
+   "Team Tools". A display name that the user sets replaces it on the card.
 3. Discovery lists `~/.claude` when it exists, other `~/.claude-*` dirs that have
    `settings.json` or `projects` (sorted by name), and the configured dirs. When the home
    folder cannot be listed, or the folders cannot be listed in 5 s, discovery fails: a refresh

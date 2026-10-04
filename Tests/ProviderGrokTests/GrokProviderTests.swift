@@ -16,6 +16,7 @@ import Testing
     private let directory: TemporaryDirectory
     private let token = JWTFixture.token(["sub": "user-1"])
     private let owner = AccountOwner.identity(Digest.sha256(parts: ["grok", "user-1"]))
+    private let clock = Locked(Date.reference())
 
     init() throws {
         directory = try TemporaryDirectory()
@@ -25,6 +26,10 @@ import Testing
         directory.remove()
     }
 
+    private func advance(_ seconds: TimeInterval) {
+        clock.withLock { $0 = $0.addingTimeInterval(seconds) }
+    }
+
     private func signIn(_ key: String? = nil, expiresAt: String = "2099-01-01T00:00:00Z") throws {
         try directory.write(
             #"{"https://auth.x.ai::client":{"key":"\#(key ?? token)","expires_at":"\#(expiresAt)"}}"#,
@@ -32,7 +37,8 @@ import Testing
     }
 
     private func provider(_ http: FakeHTTPClient) -> GrokProvider {
-        GrokProvider(http: http, environment: [:], home: directory.url, now: { .reference() })
+        let clock = clock
+        return GrokProvider(http: http, environment: [:], home: directory.url, now: { clock.value })
     }
 
     private func previous(owner: AccountOwner? = nil) -> ProviderUsage {
@@ -149,6 +155,28 @@ import Testing
 
         #expect(account.isStale)
         #expect(http.requests.isEmpty)
+    }
+
+    /// Nothing is sent before the server's retry time, so the countdown on the card is true.
+    @Test func aRateLimitHoldsEveryRequestUntilItsRetryTime() async throws {
+        try signIn()
+        let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "120"])
+        let provider = provider(http)
+
+        let limited = try await provider.fetch(previous: previous())
+        #expect(try account(limited).issue?.retryAt == .reference(120))
+        advance(60)
+        let held = try await provider.fetch(previous: limited)
+
+        #expect(http.requests.count == 1)
+        let account = try account(held)
+        #expect(account.isStale)
+        #expect(account.windows.first?.usedPercent == 20)
+        #expect(account.issue?.retryAt == .reference(120))
+
+        advance(61)
+        _ = try await provider.fetch(previous: held)
+        #expect(http.requests.count == 2)
     }
 
     @Test func serverErrorsKeepTheReading() async throws {

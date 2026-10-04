@@ -104,7 +104,8 @@ Every number can be a JSON number or a numeric string. Other fields are ignored.
 10. Expired login, HTTP 401, or HTTP 403: keep the last observation as stale, with an issue that
     asks the user to act, while the owner is unchanged.
 11. Unreadable file, network failure, other HTTP status, or an unexpected response: keep the
-    last observation as stale while the owner is unchanged.
+    last observation as stale while the owner is unchanged. After HTTP 429 with a
+    `Retry-After`, no request is sent before the retry time, so the card's countdown is true.
 12. If the owner after the response differs from the owner before it, discard the response.
 13. `reconcile` drops the reading when the owner changed or the user signed out. It reads local
     files only.

@@ -132,6 +132,13 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
         guard !credentials.isExpired(at: now) else {
             return failed(.sessionExpired, previous: previous, status: .signedIn(owner), now: now)
         }
+        // Grok asked for a pause after HTTP 429. Send nothing before its retry time, so the
+        // card's countdown is true.
+        if let previous, previous.owner == owner, let issue = previous.issue,
+            let retryAt = issue.retryAt, retryAt > now
+        {
+            return previous.retained(issue: issue, now: now)
+        }
         let result: Result<AccountUsage, GrokFailure>
         do {
             let report = try await requestBilling(bearer: credentials.bearer, now: now)

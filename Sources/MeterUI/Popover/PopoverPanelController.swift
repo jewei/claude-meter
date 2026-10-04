@@ -111,12 +111,11 @@ import SwiftUI
 
     private func updateFrame(animated: Bool) {
         let (anchorFrame, visibleFrame) = placement()
-        let frame = PanelLayout.frame(
+        let layout = PanelLayout(
             header: headerHeight, content: contentHeight, anchor: anchorFrame,
             visibleFrame: visibleFrame)
-        let scrolls = PanelLayout.scrolls(
-            content: contentHeight, visibleHeight: visibleFrame.height)
-        if presentation.scrolls != scrolls { presentation.scrolls = scrolls }
+        if presentation.scrolls != layout.scrolls { presentation.scrolls = layout.scrolls }
+        let frame = layout.frame
         guard !Self.isClose(frame, panel.frame) else { return }
 
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion

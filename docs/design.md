@@ -122,8 +122,9 @@ its focus.
   button when the menu bar hides itself), centered under the button, at least 8 pt from the
   sides of the visible frame.
 - Height = header + body. Body = content height, at least 120 pt, at most
-  `max(560, visibleFrame.height − 72)`. Taller content scrolls. The panel never leaves the
-  visible frame.
+  `max(560, visibleFrame.height − 72)`, and never more than the room between the top edge
+  and the bottom of the visible frame (short screens, a hidden menu bar). Content taller than
+  the body scrolls, so every card can be reached. The panel never leaves the visible frame.
 - When the content height changes, the frame animates 0.18 s ease-in-out with the top edge
   fixed. It changes at once under Reduce Motion, while hidden, and in the first 0.25 s after
   opening.

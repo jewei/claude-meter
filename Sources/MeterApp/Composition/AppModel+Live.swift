@@ -16,7 +16,7 @@ extension AppModel {
         let scheduler = RefreshScheduler(store: usage, display: DisplaySleepMonitor())
         let model = AppModel(
             settings: settings, usage: usage, scheduler: scheduler, updater: updater,
-            providers: providers)
+            logFile: .shared, providers: providers)
         Task { await model.start(archive: archive) }
         return model
     }

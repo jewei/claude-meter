@@ -15,7 +15,7 @@ extension AppModel {
             restored = Set(kept.keys)
         }
         let current = settings.settings
-        LogFile.shared.setEnabled(current.writesLogFile)
+        logFile.setEnabled(current.writesLogFile)
         let configuration = Self.refreshConfiguration(current)
         scheduler?.update(configuration)
         // A refresh reconciles first. Without one, still drop saved accounts whose login or
@@ -37,7 +37,7 @@ extension AppModel {
     /// Applies a saved settings change to the services that depend on it.
     func settingsDidChange(from old: Settings, to new: Settings) {
         if old.writesLogFile != new.writesLogFile {
-            LogFile.shared.setEnabled(new.writesLogFile)
+            logFile.setEnabled(new.writesLogFile)
         }
         if old.claude.isEnabled, !new.claude.isEnabled, claudeSettings?.isWorking == true {
             // A connect that finishes after Claude was turned off must store nothing.

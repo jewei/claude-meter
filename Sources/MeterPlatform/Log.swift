@@ -59,9 +59,22 @@ public struct Log: Sendable {
 /// the file rotates once to `ClaudeMeter.previous.log`. Turning it off deletes both files, also
 /// when it was already off, so files from an earlier run or version do not stay.
 public final class LogFile: Sendable {
-    public static let shared = LogFile(
-        directory: FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: "Library/Logs/\(AppIdentity.folderName)", directoryHint: .isDirectory))
+    /// The app's log file. In a test process it is a temporary file, so a test can never write
+    /// or delete the log of an installed copy.
+    public static let shared =
+        TestProcess.isRunning
+        ? temporary()
+        : LogFile(
+            directory: FileManager.default.homeDirectoryForCurrentUser
+                .appending(
+                    path: "Library/Logs/\(AppIdentity.folderName)", directoryHint: .isDirectory))
+
+    /// A log file in a new temporary folder, for previews and tests.
+    public static func temporary() -> LogFile {
+        LogFile(
+            directory: FileManager.default.temporaryDirectory.appending(
+                path: "ClaudeMeterLogs-\(UUID().uuidString)", directoryHint: .isDirectory))
+    }
 
     public let directory: URL
     public let rotationBytes: UInt64

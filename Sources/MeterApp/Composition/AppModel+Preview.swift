@@ -14,7 +14,7 @@ extension AppModel {
             Dictionary(readings.map { ($0.provider, $0) }, uniquingKeysWith: { a, _ in a }))
         return AppModel(
             settings: SettingsStore(store: store), usage: usage, scheduler: nil,
-            updater: DisabledUpdater())
+            updater: DisabledUpdater(), logFile: .temporary())
     }
 }
 

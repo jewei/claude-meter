@@ -1,5 +1,6 @@
 import Foundation
 import MeterDomain
+import MeterPlatform
 import Observation
 
 /// The façade that views use: presentation models to render and actions to call.
@@ -11,6 +12,8 @@ public final class AppModel {
     public let settings: SettingsStore
     public let usage: UsageStore
     public let updater: any Updater
+    /// The optional log file that the "Write a log file" setting turns on and off.
+    public let logFile: LogFile
     /// Whether the popover is on screen. Countdowns tick only while it is.
     public private(set) var isPopoverVisible = false
 
@@ -24,12 +27,13 @@ public final class AppModel {
 
     init(
         settings: SettingsStore, usage: UsageStore, scheduler: RefreshScheduler?,
-        updater: any Updater, providers: LiveProviders? = nil
+        updater: any Updater, logFile: LogFile, providers: LiveProviders? = nil
     ) {
         self.settings = settings
         self.usage = usage
         self.scheduler = scheduler
         self.updater = updater
+        self.logFile = logFile
         self.providers = providers
         self.claudeSettings = providers.map {
             ClaudeSettingsModel(settings: settings, usage: usage, provider: $0.claude)

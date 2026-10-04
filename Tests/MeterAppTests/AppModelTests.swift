@@ -12,6 +12,7 @@ import Testing
     private let claude = FakeUsageProvider(.claude)
     private let codex = FakeUsageProvider(.codex)
     private let grok = FakeUsageProvider(.grok)
+    private let logFile = LogFile.temporary()
 
     private func makeModel(_ settings: Settings = Settings()) -> AppModel {
         claude.enqueue(.sample(.claude, account: "claude", observedAt: Date()))
@@ -27,7 +28,7 @@ import Testing
             })
         return AppModel(
             settings: SettingsStore(store: defaults), usage: store, scheduler: scheduler,
-            updater: DisabledUpdater())
+            updater: DisabledUpdater(), logFile: logFile)
     }
 
     /// Settings onboarded, with Claude connected unless `connected` is false.
@@ -36,6 +37,16 @@ import Testing
         settings.hasCompletedOnboarding = true
         settings.claude.connection = connected ? .automatic : .off
         return settings
+    }
+
+    @Test func theLogSettingDrivesTheInjectedLogFile() async {
+        var settings = active()
+        settings.writesLogFile = true
+        let model = makeModel(settings)
+        await model.start(archive: nil)
+        #expect(logFile.isEnabled)
+        model.settings.update { $0.writesLogFile = false }
+        #expect(!logFile.isEnabled)
     }
 
     @Test func completingOnboardingStartsRefreshing() async {

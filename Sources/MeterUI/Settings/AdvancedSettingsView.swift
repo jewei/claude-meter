@@ -59,12 +59,12 @@ struct AdvancedSettingsView: View {
                 if store.settings.writesLogFile {
                     HStack(spacing: 12) {
                         Button {
-                            NSWorkspace.shared.activateFileViewerSelecting([LogFile.shared.current])
+                            NSWorkspace.shared.activateFileViewerSelecting([model.logFile.current])
                         } label: {
                             ChunkyButtonLabel(title: "Show in Finder", symbol: "folder")
                         }
                         .buttonStyle(QuietButtonStyle(radius: 12))
-                        Text("Library/Logs/ClaudeMeter")
+                        Text("Library/Logs/\(model.logFile.directory.lastPathComponent)")
                             .font(MeterFont.body(12, .semibold))
                             .foregroundStyle(Palette.inkMuted)
                     }

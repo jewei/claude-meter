@@ -123,7 +123,7 @@ There is one global cadence. No battery, network, or per-provider timers.
 | Last readings | `~/Library/Application Support/ClaudeMeter/readings.json` | JSON of `[ProviderID: ProviderUsage]`, identity owners only |
 | Claude rate-limit deadline | `UserDefaults` key `claude.rateLimitedUntil` | JSON `{recordedAt, until}` |
 | Manual Claude OAuth | Keychain, service `com.jewei.claudemeter.claude-oauth`, account `manual` | JSON `{accessToken, refreshToken, expiresAt, subscriptionType, connectionID}` |
-| Log file (opt-in) | `~/Library/Logs/ClaudeMeter/ClaudeMeter.log` | text, 0600, rotates once at 4 MiB |
+| Log file (opt-in) | `~/Library/Logs/ClaudeMeter/ClaudeMeter.log`; a temporary folder in a test process | text, 0600, rotates once at 4 MiB |
 
 Every JSON value above stores dates as ISO-8601 text (`JSONEncoder.meter`): a whole second
 as `2026-10-04T12:00:00Z`, and a date with a fraction with milliseconds, as

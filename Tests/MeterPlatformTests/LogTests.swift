@@ -5,6 +5,12 @@ import Testing
 @testable import MeterPlatform
 
 @Suite struct LogFileTests {
+    @Test func theSharedFileOfATestProcessIsNeverTheRealLog() {
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
+        #expect(TestProcess.isRunning)
+        #expect(!LogFile.shared.directory.standardizedFileURL.path.hasPrefix(home + "/Library"))
+    }
+
     @Test func createsPrivateFilesAndDeletesThemWhenDisabled() throws {
         let directory = try TemporaryDirectory()
         defer { directory.remove() }

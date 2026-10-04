@@ -6,9 +6,10 @@ import MeterDomain
 ///
 /// One scanner serves one provider for the life of the app. Between scans it keeps a
 /// discovery cursor, the inventory of found files, and one cursor per file, so an unchanged
-/// file costs one `fstat` and a grown file costs only its new lines. Blocking reads run inside
-/// ``BlockingIO``. A scan checks for cancellation between directory pages and between files,
-/// and keeps the progress that it made before the cancellation.
+/// file costs one `open` and `fstat`, and a grown file costs only its new lines. Blocking
+/// reads run inside ``BlockingIO``. A scan checks for cancellation between directory pages and
+/// between files, and keeps the progress that it made before the cancellation. A blocking
+/// read that times out ends that phase of the scan, and the result is partial.
 public actor HistoryScanner<Parser: HistoryFileParser> {
     private typealias Cursor = FileCursor<Parser>
 
@@ -95,13 +96,21 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
                 HistoryLimits.entriesPerCall, limits.directoryEntries - work.directoryEntries)
             let maxFiles = limits.files - work.discoveredFiles
             let (match, before) = (self.match, current)
-            let (after, page) = try await blocking { cancellation in
-                var next = before
-                let page = next.advance(
-                    maxEntries: maxEntries, maxFiles: maxFiles, since: start, match: match,
-                    cancellation: cancellation)
-                return (next, page)
+            let result: (DiscoverySweep, DiscoverySweep.Page)
+            do {
+                result = try await blocking { cancellation in
+                    var next = before
+                    let page = next.advance(
+                        maxEntries: maxEntries, maxFiles: maxFiles, since: start, match: match,
+                        cancellation: cancellation)
+                    return (next, page)
+                }
+            } catch is TimeoutError, is BlockingIO.BusyError {
+                // A stuck folder must not hide the files found so far. The sweep stays
+                // incomplete, so its roots read as partial, and the next scan tries again.
+                break
             }
+            let (after, page) = result
             current = after
             current.record(page.files, limit: limits.files)
             // An incomplete page is no evidence that an earlier file was deleted, so pages

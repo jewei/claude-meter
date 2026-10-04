@@ -41,9 +41,10 @@ struct LocalIdentity: Sendable, Equatable {
         return directory.appending(path: ".claude.json")
     }
 
-    /// Reads the file. Blocking: call through ``BlockingIO``. A missing file, or something
-    /// other than a regular file, is absent. A file that ends before its root object does, is
-    /// larger than `maxBytes`, or fails to read is unreadable.
+    /// Reads the file. Blocking: call through ``BlockingIO``. A missing file, something other
+    /// than a regular file, a file that is not one JSON object, and an `oauthAccount` that is
+    /// larger than 1 MiB or not valid JSON are absent. A file that ends before its root object
+    /// does, is larger than `maxBytes`, or fails to read is unreadable.
     static func read(
         _ file: URL, maxBytes: Int = maxFileBytes, cancellation: BlockingIO.Cancellation? = nil
     ) -> Read {
@@ -82,8 +83,10 @@ struct LocalIdentity: Sendable, Equatable {
 
     private static func result(of scanner: OAuthAccountScanner) -> Read {
         if let object = scanner.object {
+            // The object is complete, so bytes that are not valid JSON stay that way: the file
+            // names no login, and waiting for it would stop requests for good.
             guard let account = try? JSONSerialization.jsonObject(with: object) as? [String: Any]
-            else { return .unreadable }
+            else { return .absent }
             return .found(
                 LocalIdentity(
                     accountUUID: account["accountUuid"] as? String,

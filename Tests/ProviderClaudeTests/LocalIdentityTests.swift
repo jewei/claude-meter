@@ -44,6 +44,10 @@ extension ClaudeTests {
             // A file that can never be a JSON object is not being written; it names no login.
             #expect(read("[]") == .absent)
             #expect(read("null") == .absent)
+            // A complete object that is not valid JSON, or too large to be a login record.
+            #expect(read(#"{"oauthAccount": {"accountUuid" 1}}"#) == .absent)
+            let large = String(repeating: "x", count: OAuthAccountScanner.maximumObjectBytes)
+            #expect(read(#"{"oauthAccount": {"note": "\#(large)"}}"#) == .absent)
         }
 
         @Test func theFileIsReadInChunksAndLimited() throws {

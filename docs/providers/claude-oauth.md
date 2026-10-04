@@ -27,7 +27,7 @@ User-Agent: claude-cli/2.1.280 (external, cli)
 4. HTTP 200 is usage. 401 and 403 mean the token was rejected: 401 means the token is not
    valid (a manual refresh token can help), 403 that it may not read usage (a refresh cannot
    help). 429 closes the rate-limit gate. Other status codes are failures with the status in
-   the text.
+   the text. HTTP 200 with a body that is not a JSON object is an invalid response.
 
 ### Usage response fields read
 
@@ -37,7 +37,7 @@ User-Agent: claude-cli/2.1.280 (external, cli)
 | `seven_day.utilization`, `.resets_at` | Weekly window |
 | `seven_day_opus` | Opus Weekly window, only when `utilization` has a value |
 | other `seven_day_<scope>` objects | Scoped windows, only when `utilization` has a value |
-| `limits[]` with `kind: "weekly_scoped"` | Fills scoped windows that the flat fields do not have |
+| `limits[].{kind, scope.model.display_name, percent, resets_at}` | Entries with `kind: "weekly_scoped"` fill scoped windows that the flat fields do not have. An entry without a display name or a numeric `percent` is skipped. |
 | `extra_usage.{is_enabled, used_credits, monthly_limit, decimal_places, utilization, currency}` | Extra usage window and balance |
 | `cedar_ember.{eligible, ineligible_reason, grants[]}` | Usage-limit resets |
 | `grants[].{label, resets_left, starts_at, ends_at}` | One reset grant |
@@ -98,7 +98,9 @@ The `.claude.json` read scans the file in 256 KiB chunks and keeps only the top-
 little memory. The limit is 256 MiB. The result is one of three states:
 
 - found: the file has a top-level `oauthAccount` object;
-- absent: no file, not a regular file, or a complete file without that object;
+- absent: no file, not a regular file, a complete file without that object, a file that
+  is not one JSON object, or an `oauthAccount` that is larger than 1 MiB or not valid JSON
+  (such bytes stay that way, so the file names no login);
 - unreadable: the file ends before its root object does (Claude Code is writing it), is
   larger than the limit, or the read fails or takes more than 5 s.
 
@@ -215,7 +217,9 @@ little memory. The limit is 256 MiB. The result is one of three states:
    rejects the refreshed token (HTTP 401 or 403), or a 401 cannot be refreshed, the
    connection gets no more requests. Both marks last until the next Connect or app launch,
    and the card asks for a new Connect. After a temporary failure, refreshes wait 5
-   minutes, doubling up to 6 hours. The reason of the failure is in the log and on the card.
+   minutes, doubling up to 6 hours. The fetch that failed shows the reason on the card
+   ("Could not refresh the Claude tokens. <reason>"), and the log keeps it; while the
+   refresh waits, the card says "Retrying the Claude token refresh…".
 10. Manual tokens must come from a separate login, never from Claude Code's own Keychain
     item. A refresh rotates the refresh token, so a copy of Claude Code's token would sign
     Claude Code out at its next renewal. Settings must say this next to the token fields.
@@ -270,7 +274,8 @@ little memory. The limit is 256 MiB. The result is one of three states:
 6. Usage-limit resets: `eligible: false` with `ineligible_reason: "surface"` is unknown (nil).
    Any other `eligible: false` is zero resets. Keep grants with `resets_left > 0` that have
    started and not ended. An empty label is "Usage reset". At most 99 resets count in
-   total, over all grants; grants after the limit are not read.
+   total, over all grants; grants after the limit are not read. Without `cedar_ember`, with
+   `grants` missing, or with a grant that is not an object, the count is unknown.
 7. The plan is from the credential's `subscriptionType` and `rateLimitTier`, else the
    `.claude.json` tier: "Max 20x", "Max 5x", "Max", "Pro", "Team", "Enterprise", "Free".
    Manual tokens name no plan: the card shows the plan badge saved for `claude` in Settings.
@@ -305,6 +310,7 @@ are quoted outside the tilde), or `` `claude` `` for `~/.claude`.
 | `.claude.json` unreadable | Could not read Claude Code's account file. Retrying at the next refresh. | Same | — |
 | HTTP 429 | Anthropic is rate-limiting usage checks. (with `retryAt`) | Same | Same |
 | Other HTTP status | Anthropic usage check failed (HTTP <status>). | Same | Same |
+| Invalid response | Claude returned an invalid usage response. | Same | Same |
 | Network failure | Could not refresh Claude usage. <reason> | Same | Same |
 | Out of time | The Claude usage check timed out. | Same | Same |
 | Token refresh waiting | — | — | Retrying the Claude token refresh… |
@@ -313,6 +319,19 @@ are quoted outside the tilde), or `` `claude` `` for `~/.claude`.
 Missing, unreadable, and rejected credentials set `needsAction`, and so do all manual
 credential cases. An expired Claude Code token does not: Claude Code renews it the next time
 it runs. Rate limits set `retryAt`; the UI shows the countdown.
+
+Texts of a refresh that fails as a whole (`ProviderError`). The app keeps the last reading,
+marked stale, unless the last column says no.
+
+| Case | Text | Keeps the reading |
+| --- | --- | --- |
+| Claude not connected | Connect Claude in Settings to read usage. | No |
+| Gate closed | Anthropic is rate-limiting usage checks. (with `retryAt`) | Yes |
+| Config dirs not listed in 5 s | Could not read the Claude config folders. <reason> | Yes |
+| Keychain did not answer, no account left | The Keychain did not answer. If your Mac is locked, unlock it. Retrying at the next refresh. | Yes |
+| Every config dir turned off | Every Claude config dir is turned off. Turn one on in Settings. | No |
+| No config dir and no login | Claude Code isn't signed in. Open Claude Code and run /login. | No |
+| Whole refresh out of time (65 s automatic, 60 s manual) | Could not refresh Claude usage. Timed out after <limit>. | Yes |
 
 Settings texts for automatic Connect:
 
@@ -323,6 +342,10 @@ Settings texts for automatic Connect:
 | Expired | Claude Code's token expired. Open Claude Code, then try again. |
 | HTTP 401 or 403 | Anthropic rejected Claude Code's sign-in. Open Claude Code and run /login, then try again. |
 | Gate closed or HTTP 429 | Anthropic is rate-limiting usage checks. Try again in <wait>. (with `retryAt`; `<wait>` is minutes or hours, rounded up) |
+| Network failure | Could not refresh Claude usage. <reason> |
+| Other HTTP status | Anthropic usage check failed (HTTP <status>). |
+| Invalid response | Claude returned an invalid usage response. |
+| Usage check out of time (60 s) | Could not check Claude usage. Timed out after 60s. |
 
 Settings texts for manual Connect:
 
@@ -333,6 +356,6 @@ Settings texts for manual Connect:
 | Refresh token rejected (`invalid_grant`) | Anthropic rejected the refresh token. Enter new tokens. |
 | Refresh failed (temporary) | Could not refresh the tokens. <reason> Try again shortly. |
 | HTTP 401 or 403 | Anthropic rejected these tokens. Check them and try again. |
-| Gate closed or HTTP 429 | The same text as automatic Connect |
+| Gate closed or HTTP 429, network failure, other HTTP status, invalid response, out of time | The same texts as automatic Connect |
 | Disconnect or newer Connect meanwhile | The Claude connection changed while the tokens were checked. Try again. |
-| Save failed | Could not save credentials: <reason> |
+| Save failed, or the old item cannot be read before the save | Could not save credentials: <reason> |

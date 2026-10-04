@@ -97,7 +97,8 @@ Only the fields below are read. All other fields are skipped.
     `cache_creation_input_tokens`.
 20. The key of a record is the request ID (`requestId`, then `request_id`) and `message.id`.
     Without a request ID, `message.id` alone is the key. The session ID is never part of it:
-    a resumed session copies a response under a new session ID.
+    a resumed session copies a response under a new session ID. A line without `message.id`
+    has no key: it still counts, once per line, and it makes the history partial (rule 64).
 21. Records with the same key count once. Claude Code writes one line per content block,
     and each line repeats the cumulative usage of the response. The account folders come
     from the config dirs. When they cannot be listed in time, the read fails and keeps its

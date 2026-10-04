@@ -37,6 +37,10 @@ public final class LineProcess: @unchecked Sendable {
     /// I/O, such as a read from a hung network volume, can outlive SIGKILL for a long time.
     public static let reapLimit: Duration = .seconds(2)
     private static let log = Log(.app)
+    /// A serial queue gets a thread even when blocked work fills the global pool, so the
+    /// grace period and the reap limit always end.
+    private static let timers = DispatchQueue(
+        label: "com.jewei.claudemeter.line-process.timers", qos: .utility)
 
     /// Complete stdout lines, without the newline. Finishes when stdout closes.
     public let lines: AsyncThrowingStream<Data, any Error>
@@ -206,7 +210,7 @@ public final class LineProcess: @unchecked Sendable {
             if hasExited {
                 waiter.resume(true)
             } else {
-                DispatchQueue.global().asyncAfter(deadline: .now() + timeout.timeInterval) {
+                Self.timers.asyncAfter(deadline: .now() + timeout.timeInterval) {
                     waiter.resume(false)
                 }
             }

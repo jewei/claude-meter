@@ -12,6 +12,16 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Quota refreshes bypass the local HTTP cache to request current provider readings.
+- Card reordering uses a drag inside the popover. Text dragged from another app cannot
+  change the card order.
+- Token history scans resume across refreshes in large folders, so later files can be
+  found within the scan limits.
+- Slow token history configuration reads no longer use the capacity reserved for Codex
+  quota configuration.
+
 ## [3.1.1] - 2026-10-03
 
 ### Added

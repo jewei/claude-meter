@@ -85,7 +85,6 @@ import SwiftUI
         if automatic { lastAutomaticClose = ProcessInfo.processInfo.systemUptime }
         removeMonitors()
         panel.orderOut(nil)
-        model.popoverDidClose()
         onVisibilityChange(false)
     }
 

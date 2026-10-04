@@ -141,8 +141,8 @@ its focus.
   "Update available", and when Settings opens. One click changes the popover once: the mouse
   monitors ignore clicks on the status button (macOS 26 draws the menu bar in another
   process, so such a click can reach the global monitor), and a toggle within 0.35 s of an
-  automatic close does nothing. Keys that nothing handles do not beep. It calls
-  `popoverDidOpen()` and `popoverDidClose()`.
+  automatic close does nothing. Keys that nothing handles do not beep. Opening calls
+  `popoverDidOpen()`, which refreshes due readings.
 - While visible, `SecondClock` renders the content every whole second. While hidden the clock
   stops, spinners are static, and a store change renders for the current time.
 

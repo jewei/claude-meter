@@ -14,8 +14,6 @@ public final class AppModel {
     public let updater: any Updater
     /// The optional log file that the "Write a log file" setting turns on and off.
     public let logFile: LogFile
-    /// Whether the popover is on screen. Countdowns tick only while it is.
-    public private(set) var isPopoverVisible = false
 
     /// The Claude connection and config dirs for Settings. Nil in previews.
     public let claudeSettings: ClaudeSettingsModel?
@@ -69,13 +67,9 @@ public final class AppModel {
 
     // MARK: - Popover actions
 
+    /// Refreshes readings that are missing, failed, stale, or at least 60 s old.
     public func popoverDidOpen() {
-        isPopoverVisible = true
         scheduler?.popoverDidOpen()
-    }
-
-    public func popoverDidClose() {
-        isPopoverVisible = false
     }
 
     /// Any path into Settings from the popover finishes the welcome and starts updates.

@@ -1,4 +1,5 @@
 import AppKit
+import MeterPlatform
 import SwiftUI
 import Testing
 
@@ -61,6 +62,13 @@ import Testing
         let paused = Array(
             SecondClock(isPaused: true).entries(from: start, mode: .normal).prefix(3))
         #expect(paused == [start])
+    }
+
+    /// "Cannot start this copy" is a warning, not a wait (review UI-51).
+    @Test func loginItemNotesHaveTheirOwnSymbol() {
+        #expect(LoginItem.Status.requiresApproval.noteSymbol == "hourglass")
+        #expect(LoginItem.Status.unavailable.noteSymbol == "exclamationmark.triangle.fill")
+        #expect(LoginItem.Status.enabled.noteSymbol == nil)
     }
 
     @Test func statusMessagesRenderInlineCode() {

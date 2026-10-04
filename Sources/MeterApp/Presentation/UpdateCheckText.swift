@@ -15,6 +15,26 @@ public enum UpdateCheckText {
         }
     }
 
+    /// How the status line reads.
+    public enum Tone: Equatable, Sendable {
+        /// An update is waiting.
+        case attention
+        /// The installed version is known and current.
+        case current
+        /// Nothing to report, such as an unknown version.
+        case neutral
+    }
+
+    /// The status text with its tone. An unknown version is neutral, never a success.
+    public static func statusLine(
+        version: String?, build: String?, isUpdateAvailable: Bool
+    ) -> (text: String, tone: Tone) {
+        let text = status(version: version, build: build, isUpdateAvailable: isUpdateAvailable)
+        if isUpdateAvailable { return (text, .attention) }
+        guard let version, !version.isEmpty else { return (text, .neutral) }
+        return (text, .current)
+    }
+
     /// `Installed v4.0.0 (400)`, or the update notice when one is waiting.
     public static func status(version: String?, build: String?, isUpdateAvailable: Bool) -> String {
         if isUpdateAvailable { return "An update is available." }

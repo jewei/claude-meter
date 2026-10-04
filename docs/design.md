@@ -281,9 +281,14 @@ the app is regular; "About Claude Meter" opens the About tab.
   menu bar 5h / 7d / Both; warning and critical sliders (`ThresholdSlider`: step 5, arrow
   keys, VoiceOver adjustable, focus border) written through `Thresholds`; "Use automatic
   order" when `CardOrderHint.canReset`.
-- **Advanced**: Fetch usage, Launch at login (`LoginItem`, with approval and error text),
-  automatic update checks with "Check for Updates…" and the last check, Diagnostics (a sheet
-  with a Copy button; Escape closes it), and "Write a log file" with Show in Finder.
+- **Advanced**: Fetch usage, Launch at login (`LoginItem`, with approval and error text; the
+  state is read again when the app or the window becomes active; an hourglass while waiting
+  for approval, a warning symbol when macOS cannot start this copy), automatic update checks
+  with "Check for Updates…" and the last check (renders every minute; the status line's tone
+  comes from `UpdateCheckText.statusLine`, so an unknown version is muted, not green),
+  Diagnostics (a sheet with a Copy button; Escape closes it), and "Write a log file" with
+  Show in Finder (selects the file, or opens the folder before the first line) and the log
+  folder of this build.
 - **About**: the bolt tile, name, version and build, the GitHub link, MIT license, font
   credits, and the disclaimer.
 

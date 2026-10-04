@@ -112,6 +112,22 @@ import Testing
             UpdateCheckText.lastChecked(.reference(-200_000), now: now) == "Last checked 2d ago")
     }
 
+    /// An unknown version is not a success (review UI-34).
+    @Test func statusToneFollowsWhatIsKnown() {
+        let current = UpdateCheckText.statusLine(
+            version: "4.0.0", build: "400", isUpdateAvailable: false)
+        #expect(current.text == "Installed v4.0.0 (400)")
+        #expect(current.tone == .current)
+        let unknown = UpdateCheckText.statusLine(version: nil, build: nil, isUpdateAvailable: false)
+        #expect(unknown.text == "Installed version unknown")
+        #expect(unknown.tone == .neutral)
+        #expect(
+            UpdateCheckText.statusLine(version: "", build: "1", isUpdateAvailable: false).tone
+                == .neutral)
+        let update = UpdateCheckText.statusLine(version: nil, build: nil, isUpdateAvailable: true)
+        #expect(update.tone == .attention)
+    }
+
     @Test func installedVersion() {
         #expect(
             UpdateCheckText.status(version: "4.0.0", build: "400", isUpdateAvailable: false)

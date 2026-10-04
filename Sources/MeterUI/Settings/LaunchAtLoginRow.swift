@@ -1,8 +1,10 @@
+import AppKit
 import MeterPlatform
 import SwiftUI
 
-/// The launch-at-login switch. macOS owns the state, so the row reads it each time it
-/// appears and after each change.
+/// The launch-at-login switch. macOS owns the state, so the row reads it when it appears,
+/// after each change, and when the user comes back to the app or the window, for example
+/// after approving the item in System Settings.
 struct LaunchAtLoginRow: View {
     @State private var status = LoginItem.Status.disabled
     @State private var error: String?
@@ -18,10 +20,12 @@ struct LaunchAtLoginRow: View {
             }
             if let note = status.note {
                 HStack(spacing: 8) {
-                    Image(systemName: "hourglass")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Palette.energyLow)
-                        .accessibilityHidden(true)
+                    if let symbol = status.noteSymbol {
+                        Image(systemName: symbol)
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(Palette.energyLowInk)
+                            .accessibilityHidden(true)
+                    }
                     Text(note)
                         .font(MeterFont.body(12, .semibold))
                         .foregroundStyle(Palette.inkMuted)
@@ -46,6 +50,12 @@ struct LaunchAtLoginRow: View {
             }
         }
         .onAppear { status = LoginItem.status }
+        .onReceive(
+            NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+        ) { _ in status = LoginItem.status }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) {
+            _ in status = LoginItem.status
+        }
     }
 
     private var isOn: Binding<Bool> {
@@ -54,6 +64,18 @@ struct LaunchAtLoginRow: View {
         } set: { isOn in
             error = LoginItem.setEnabled(isOn)
             status = LoginItem.status
+        }
+    }
+}
+
+extension LoginItem.Status {
+    /// The symbol before the note: waiting for approval, or a warning when macOS cannot start
+    /// this copy at all.
+    var noteSymbol: String? {
+        switch self {
+        case .enabled, .disabled: nil
+        case .requiresApproval: "hourglass"
+        case .unavailable: "exclamationmark.triangle.fill"
         }
     }
 }

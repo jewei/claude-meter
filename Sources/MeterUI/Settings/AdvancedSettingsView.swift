@@ -58,21 +58,33 @@ struct AdvancedSettingsView: View {
                 }
                 if store.settings.writesLogFile {
                     HStack(spacing: 12) {
-                        Button {
-                            NSWorkspace.shared.activateFileViewerSelecting([model.logFile.current])
-                        } label: {
+                        Button(action: showLogInFinder) {
                             ChunkyButtonLabel(title: "Show in Finder", symbol: "folder")
                         }
                         .buttonStyle(QuietButtonStyle(radius: 12))
-                        Text("Library/Logs/\(model.logFile.directory.lastPathComponent)")
-                            .font(MeterFont.body(12, .semibold))
-                            .foregroundStyle(Palette.inkMuted)
+                        // The folder of this build: Debug builds log to "ClaudeMeter Debug".
+                        Text(
+                            (model.logFile.directory.path as NSString).abbreviatingWithTildeInPath
+                        )
+                        .font(MeterFont.body(12, .semibold))
+                        .foregroundStyle(Palette.inkMuted)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(model.logFile.directory.path)
                     }
                 }
             }
         }
         .sheet(isPresented: $showsDiagnostics) {
             DiagnosticsSheet { await model.diagnostics() }
+        }
+    }
+
+    /// Selects the log file in Finder, or opens its folder when the file is not written yet.
+    private func showLogInFinder() {
+        let log = model.logFile
+        if !NSWorkspace.shared.selectFile(log.current.path, inFileViewerRootedAtPath: "") {
+            NSWorkspace.shared.open(log.directory)
         }
     }
 }

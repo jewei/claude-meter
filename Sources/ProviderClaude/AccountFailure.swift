@@ -43,6 +43,11 @@ enum AccountFailure: Error, Equatable {
 
     static let notConnectedMessage = "Connect Claude in Settings to read usage."
     static let rateLimitedMessage = "Anthropic is rate-limiting usage checks."
+    /// A locked Keychain, a read that timed out, a full pool of blocking reads, and an item
+    /// that would need the user's approval all look the same here, so the text names none.
+    static let keychainSilent = UsageIssue(
+        "The Keychain did not answer. If your Mac is locked, unlock it. Retrying at the next "
+            + "refresh.")
 
     init(_ failure: UsageFailure) {
         switch failure {
@@ -97,7 +102,7 @@ enum AccountFailure: Error, Equatable {
         case .credentialsMissing:
             action("Claude Code isn't signed in. Open Claude Code and run /login.")
         case .credentialsUnavailable:
-            UsageIssue("Keychain is locked. Unlock your Mac to refresh Claude usage.")
+            Self.keychainSilent
         case .credentialsInvalid:
             action("Claude Code's credentials can't be read. Open Claude Code and run /login.")
         case .credentialsExpired:
@@ -136,7 +141,7 @@ enum AccountFailure: Error, Equatable {
         case .credentialsMissing, .notConnected:
             action(Self.notConnectedMessage)
         case .credentialsUnavailable:
-            UsageIssue("Keychain is locked. Unlock your Mac to refresh Claude usage.")
+            Self.keychainSilent
         case .credentialsInvalid:
             action("The saved Claude tokens can't be read. Connect again in Settings.")
         case .credentialsExpired, .unauthorized:

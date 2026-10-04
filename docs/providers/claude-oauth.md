@@ -297,7 +297,7 @@ are quoted outside the tilde), or `` `claude` `` for `~/.claude`.
 | Case | Active login | Other config dir | Manual |
 | --- | --- | --- | --- |
 | No credential | Claude Code isn't signed in. Open Claude Code and run /login. | Not signed in. Run `<cmd>`, then /login. | Connect Claude in Settings to read usage. |
-| Keychain locked | Keychain is locked. Unlock your Mac to refresh Claude usage. | Keychain is temporarily unavailable. | Same as active login |
+| Keychain did not answer (locked, timed out, too many reads waiting, or an item that needs approval) | The Keychain did not answer. If your Mac is locked, unlock it. Retrying at the next refresh. | Keychain is temporarily unavailable. | Same as active login |
 | Credential unreadable | Claude Code's credentials can't be read. Open Claude Code and run /login. | Credentials can't be read. Run `<cmd>`, then /login. | The saved Claude tokens can't be read. Connect again in Settings. |
 | Expired | Claude Code's token expired. Open Claude Code once to renew it. | Token expired. Run `<cmd>` once to renew it. | The saved Claude tokens no longer work. Connect again in Settings with new tokens. |
 | HTTP 401 or 403 | Anthropic rejected Claude Code's sign-in. Open Claude Code and run /login. | Sign-in rejected. Run `<cmd>`, then /login. | Same as expired |
@@ -319,7 +319,7 @@ Settings texts for automatic Connect:
 | Case | Text |
 | --- | --- |
 | No login, unreadable item | The active-login card texts above |
-| Keychain locked | Keychain access is unavailable. Unlock your Mac and try again. |
+| Keychain did not answer | The Keychain did not answer. If your Mac is locked, unlock it, then try again. |
 | Expired | Claude Code's token expired. Open Claude Code, then try again. |
 | HTTP 401 or 403 | Anthropic rejected Claude Code's sign-in. Open Claude Code and run /login, then try again. |
 | Gate closed or HTTP 429 | Anthropic is rate-limiting usage checks. Try again in <wait>. (with `retryAt`; `<wait>` is minutes or hours, rounded up) |

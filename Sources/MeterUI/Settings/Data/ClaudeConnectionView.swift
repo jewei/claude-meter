@@ -73,7 +73,7 @@ struct ClaudeConnectionView: View {
         } message: {
             Text(
                 "Claude Meter reads Claude Code's login from your Keychain to check your usage. "
-                    + "macOS may ask you to allow it. Claude Meter never changes or deletes that login."
+                    + "It never shows a Keychain prompt, and it never changes or deletes that login."
             )
         }
     }

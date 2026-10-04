@@ -81,8 +81,10 @@ extension ClaudeProvider {
         gate.blockedUntil(now: now())
     }
 
+    /// The Keychain did not answer: it may be locked, slow, or need an approval that the app
+    /// never asks for, so the text names no single cause.
     private static let keychainUnavailable = ProviderError(
-        "Keychain access is unavailable. Unlock your Mac and try again.")
+        "The Keychain did not answer. If your Mac is locked, unlock it, then try again.")
 
     /// Settings does not retry, so the text says when the user can.
     func rateLimited(until: Date?) -> ProviderError {

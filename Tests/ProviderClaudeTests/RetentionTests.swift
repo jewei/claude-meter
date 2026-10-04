@@ -86,7 +86,8 @@ extension ClaudeTests {
             #expect(kept.isStale && kept.observedAt == .reference())
             #expect(
                 kept.issue?.message
-                    == "Keychain is locked. Unlock your Mac to refresh Claude usage.")
+                    == "The Keychain did not answer. If your Mac is locked, unlock it. "
+                    + "Retrying at the next refresh.")
             #expect(http.usageTokens == ["elsewhere"])
 
             // Once the Keychain answers, a login that is gone drops the account.
@@ -113,7 +114,8 @@ extension ClaudeTests {
             }
             #expect(
                 error?.issue.message
-                    == "Keychain is locked. Unlock your Mac to refresh Claude usage.")
+                    == "The Keychain did not answer. If your Mac is locked, unlock it. "
+                    + "Retrying at the next refresh.")
             #expect(error?.keepsLastReading == true)
         }
 

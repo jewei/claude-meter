@@ -275,7 +275,8 @@ extension ClaudeTests {
             #expect(locked.accounts[0].hasObservation && locked.accounts[0].isStale)
             #expect(
                 locked.accounts[0].issue?.message
-                    == "Keychain is locked. Unlock your Mac to refresh Claude usage.")
+                    == "The Keychain did not answer. If your Mac is locked, unlock it. "
+                    + "Retrying at the next refresh.")
 
             harness.keychain.failure = nil
             try harness.signOut(main, legacy: true)

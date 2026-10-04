@@ -79,10 +79,14 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 4. Notices above the hero state, without repeats: the main provider's failed refresh, each
    main account's issue (prefixed with its name when there are several accounts), old data,
    and the failure of any other enabled provider that has no card. Issues with a retry time
-   count down: `Rate limited. Retrying in 3m.`
+   count down: `Rate limited. Retrying in 3m.` Old data that no failed refresh explains gets
+   its own notice, also beside other notices: `Claude data may be stale.`, or
+   `Work: Data may be stale.` when only some accounts are old. When the meter is unavailable,
+   the hero states the reason and no notice repeats it.
 5. The hero summarizes the main meter (`HeroModel`): its headline follows the selected
    account's severity, and its subline names the limiting window and its reset, or counts
-   fresh accounts and names the lowest other account.
+   the accounts with plenty left ("fresh") and names the lowest account. Stale accounts are
+   left out of that count and ranking, so old numbers never read as current.
 6. Cards: one per account, in the user's order, with the main card first and a **Menu bar**
    pill. Automatic order is the main provider's accounts (selected first), Claude extra usage,
    the other main-capable provider, Cursor, then Grok.

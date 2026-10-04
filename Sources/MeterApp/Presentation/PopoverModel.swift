@@ -83,8 +83,8 @@ public struct AccountsModel: Equatable, Sendable {
             automatic.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         cards = ids.compactMap { byID[$0] }
         hero = HeroModel(meter, context: context)
-        notices = Notice.notices(context, meter: meter, cards: cards)
-        showsRingLegend = context.settings.appearance.cardStyle == .rings
+        notices = Notice.notices(context, meter: meter, hero: hero, cards: cards)
+        showsRingLegend = cards.contains { if case .rings = $0.summary { true } else { false } }
         let eligible = cards.filter { $0.id.menuBarSelection != nil }.count
         dragHint = eligible > 1 ? "Drag a Claude or Codex card to the top for the menu bar." : nil
     }
@@ -107,31 +107,44 @@ public struct Notice: Equatable, Sendable, Identifiable {
     public var id: String { text }
 
     /// Notices for the main provider, and for enabled providers that failed with no card.
+    /// Text that the hero already states (the reason the meter is unavailable) is left out.
     static func notices(
-        _ context: PresentationContext, meter: MainMeter, cards: [CardModel]
+        _ context: PresentationContext, meter: MainMeter, hero: HeroModel, cards: [CardModel]
     ) -> [Notice] {
         var notices: [Notice] = []
         let name = meter.provider.displayName
+        let several = meter.accounts.count > 1
         // A failed reading that still lists accounts reports through their own issues.
+        var refreshFailed = false
         switch context.readings[meter.provider] {
         case .stale(_, _, let issue), .failed(let issue, partial: nil):
             if context.isEnabled(meter.provider) {
                 notices.append(Notice(issue: issue, now: context.now))
+                refreshFailed = true
             }
         default:
             break
         }
-        let withIssues = meter.accounts.filter { $0.issue != nil }
-        for account in withIssues {
+        for account in meter.accounts {
             guard let issue = account.issue else { continue }
             let text = NoticeText.text(for: issue, now: context.now)
             notices.append(
                 Notice(
-                    text: meter.accounts.count > 1 ? "\(account.name): \(text)" : text,
+                    text: several ? "\(account.name): \(text)" : text,
                     kind: issue.needsAction ? .action : .warning))
         }
-        if notices.isEmpty, meter.accounts.contains(where: { $0.isStale && $0.hasObservation }) {
-            notices.append(Notice(text: "\(name) data may be stale.", kind: .info))
+        // Old data that no failure above explains, whatever else is listed.
+        let observed = meter.accounts.filter(\.hasObservation)
+        let old = observed.filter { $0.isStale && $0.issue == nil }
+        if !refreshFailed, !old.isEmpty {
+            if old.count == observed.count {
+                notices.append(Notice(text: "\(name) data may be stale.", kind: .info))
+            } else {
+                for account in old {
+                    notices.append(
+                        Notice(text: "\(account.name): Data may be stale.", kind: .info))
+                }
+            }
         }
         let providersWithCards = Set(cards.map(\.provider))
         for provider in ProviderID.allCases
@@ -145,7 +158,7 @@ public struct Notice: Equatable, Sendable, Identifiable {
                         "\(provider.displayName): \(NoticeText.text(for: issue, now: context.now))",
                     kind: issue.needsAction ? .action : .warning))
         }
-        var seen = Set<String>()
+        var seen: Set<String> = meter.selected == nil ? [hero.subtitle] : []
         return notices.filter { seen.insert($0.text).inserted }
     }
 

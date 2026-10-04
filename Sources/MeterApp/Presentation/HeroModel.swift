@@ -24,9 +24,11 @@ public struct HeroModel: Equatable, Sendable {
     public init(_ meter: MainMeter, context: PresentationContext) {
         let name = meter.provider.displayName
         guard let selected = meter.selected else {
+            // Notices leave out this text, so the reason is stated once.
             self.init(
                 emoji: "🔌", title: "\(name) meter unavailable",
-                subtitle: meter.issue?.message ?? "Turn on \(name) in Settings > Data.",
+                subtitle: meter.issue.map { NoticeText.text(for: $0, now: context.now) }
+                    ?? "Turn on \(name) in Settings > Data.",
                 tone: .neutral)
             return
         }
@@ -36,7 +38,11 @@ public struct HeroModel: Equatable, Sendable {
                 tone: .neutral)
             return
         }
-        let others = meter.accounts.filter { $0.id != selected.id && $0.hasObservation }
+        // Stale accounts are left out: old numbers must not read as current. The old-data
+        // notice names them.
+        let others = meter.accounts.filter {
+            $0.id != selected.id && $0.hasObservation && !$0.isStale
+        }
         let severity = selected.severity(context.thresholds)
         let (emoji, title, tone) = Self.headline(severity)
         let subtitle =
@@ -73,19 +79,22 @@ public struct HeroModel: Equatable, Sendable {
         return severity == .normal ? "\(lead) 🎉" : lead
     }
 
-    /// Counts fresh accounts and names the lowest other one: `2 fresh · Work low · Weekly
-    /// resets in 1h 8m`, or `All 3 accounts fresh 🎉`.
+    /// Counts the accounts with plenty left ("fresh" in the copy: normal severity) and names
+    /// the lowest account, which can be the selected one: `2 fresh · Work low · Weekly resets
+    /// in 1h 8m`, or `All 3 accounts fresh 🎉`.
     private static func multipleSubtitle(
         _ accounts: [AccountUsage], context: PresentationContext
     ) -> String {
         let rated = accounts.map { ($0, $0.severity(context.thresholds)) }
-        let fresh = rated.filter { $0.1 == .normal }.count
+        let plenty = rated.filter { $0.1 == .normal }.count
         let warming = rated.filter { $0.1 == .unknown }.count
         let lowest = rated.filter { $0.1 > .normal }.max { $0.0.pressure < $1.0.pressure }
         let warmingText = warming == 0 ? "" : " · \(warming) warming up"
 
         guard let (account, severity) = lowest else {
-            if warming > 0 { return fresh == 0 ? "Warming up…" : "\(fresh) fresh\(warmingText)" }
+            if warming > 0 {
+                return plenty == 0 ? "Warming up…" : "\(plenty) fresh\(warmingText)"
+            }
             return "All \(accounts.count) accounts fresh 🎉"
         }
         let word =
@@ -95,8 +104,8 @@ public struct HeroModel: Equatable, Sendable {
             default: "nearly dry"
             }
         let reset = limitingReset(account, now: context.now).map { " · \($0)" } ?? ""
-        if fresh == 0 { return "\(account.name) is \(word)\(reset)\(warmingText)" }
-        return "\(fresh) fresh · \(account.name) \(word)\(reset)\(warmingText)"
+        if plenty == 0 { return "\(account.name) is \(word)\(reset)\(warmingText)" }
+        return "\(plenty) fresh · \(account.name) \(word)\(reset)\(warmingText)"
     }
 
     /// `Weekly resets in 1h 8m` for the most constrained binding window. Equal usage picks the

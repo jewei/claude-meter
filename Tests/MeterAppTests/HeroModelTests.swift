@@ -105,6 +105,53 @@ import Testing
         #expect(hero.tone == .neutral)
     }
 
+    @Test func staleAccountsAreNotRankedFromOldData() {
+        let home = AccountUsage(
+            id: "home", name: "Home", windows: [Fixture.window(.session, used: 5)],
+            observedAt: .reference())
+        let work = AccountUsage(
+            id: "work", name: "Work", windows: [Fixture.window(.session, used: 90)],
+            observedAt: .reference(-5_000))
+        let hero = hero([home, work], pin: "home")
+        #expect(hero.subtitle == "Plenty in the tank · Session resets in 2h")
+    }
+
+    @Test func heroCountsWarmingUpAccounts() {
+        let home = AccountUsage(
+            id: "home", name: "Home", windows: [Fixture.window(.session, used: 5)],
+            observedAt: .reference())
+        let work = AccountUsage(
+            id: "work", name: "Work", windows: [Fixture.window(.session, used: nil)],
+            observedAt: .reference())
+        #expect(hero([home, work], pin: "home").subtitle == "1 fresh · 1 warming up")
+    }
+
+    @Test func heroAllUnknownIsWarmingUp() {
+        let accounts = ["a", "b"].map {
+            AccountUsage(
+                id: AccountID($0), name: $0, windows: [Fixture.window(.session, used: nil)],
+                observedAt: .reference())
+        }
+        let hero = hero(accounts)
+        #expect(hero.title == "Warming up")
+        #expect(hero.subtitle == "Warming up…")
+    }
+
+    @Test func heroNotConnectedCopy() {
+        let settings = Fixture.settings { $0.claude.connection = .off }
+        let context = Fixture.context(settings, readings: [:])
+        let hero = HeroModel(MainMeter(context), context: context)
+        #expect(hero.title == "Claude meter unavailable")
+        #expect(hero.subtitle == "Connect Claude in Settings > Data.")
+    }
+
+    @Test func unavailableHeroCountsDownRetry() {
+        let issue = UsageIssue("Rate limited.", retryAt: .reference(.minutes(3)))
+        let context = Fixture.context(Fixture.settings(), readings: [.claude: .failed(issue)])
+        let hero = HeroModel(MainMeter(context), context: context)
+        #expect(hero.subtitle == "Rate limited. Retrying in 3m.")
+    }
+
     @Test func unavailableMeterExplainsWhy() {
         let hero = hero([single(session: 10)], pin: "missing")
         #expect(hero.title == "Claude meter unavailable")

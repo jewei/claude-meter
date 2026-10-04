@@ -34,8 +34,10 @@ public struct PopoverModel: Equatable, Sendable {
 
         let automatic = CardBuilder(context: context, meter: meter).cards()
         let enabled = settings.enabledProviders
+        // Sources whose switch is on, with Claude counted before it is connected.
+        let switchedOn = settings.claude.needsConnection ? enabled.union([.claude]) : enabled
         if settings.isPaused, automatic.isEmpty { return .status(.paused) }
-        guard !enabled.isEmpty else { return .status(.noSources) }
+        guard !switchedOn.isEmpty else { return .status(.noSources) }
         if automatic.isEmpty {
             if !context.refreshing.isDisjoint(with: enabled) {
                 return .loading(loadingMessage(enabled))
@@ -43,7 +45,7 @@ public struct PopoverModel: Equatable, Sendable {
             if let (provider, issue) = firstFailure(context, meter: meter) {
                 return .status(.error(provider, message: issue.message))
             }
-            return .status(.setup(enabled))
+            return .status(.setup(switchedOn))
         }
         return .accounts(AccountsModel(context, meter: meter, automatic: automatic))
     }

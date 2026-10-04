@@ -23,10 +23,13 @@ public struct Settings: Codable, Equatable, Sendable {
 
     public init() {}
 
-    /// Providers whose source switch is on.
+    /// Providers in use: the source switch is on and, for Claude, a connection is chosen. Only
+    /// these refresh, show cards, and can own the menu bar. Claude with its switch on but no
+    /// connection has nothing to read, so it stays quiet until the user connects it
+    /// (``ClaudeSettings/needsConnection``).
     public var enabledProviders: Set<ProviderID> {
         var enabled: Set<ProviderID> = []
-        if claude.isEnabled { enabled.insert(.claude) }
+        if claude.isEnabled && claude.connection != .off { enabled.insert(.claude) }
         if codex.isEnabled { enabled.insert(.codex) }
         if cursor.isEnabled { enabled.insert(.cursor) }
         if grok.isEnabled { enabled.insert(.grok) }
@@ -89,6 +92,11 @@ public struct ClaudeSettings: Codable, Equatable, Sendable {
     public var planOverrides: [AccountID: String] = [:]
 
     public init() {}
+
+    /// The Claude switch is on but no connection is chosen, so Claude is not in use yet.
+    public var needsConnection: Bool {
+        isEnabled && connection == .off
+    }
 }
 
 public struct CodexSettings: Codable, Equatable, Sendable {
@@ -135,16 +143,13 @@ public struct AppearanceSettings: Codable, Equatable, Sendable {
 }
 
 public struct MenuBarSettings: Codable, Equatable, Sendable {
-    /// The provider that owns the menu bar, the hero, and the first card. Claude or Codex.
+    /// The provider chosen to own the menu bar, the hero, and the first card. Claude or Codex.
+    /// ``PresentationContext/mainProvider`` decides which provider owns them now.
     public var provider = ProviderID.claude
     /// An exact account per provider. Without a pin, the account nearest its limit wins.
     public var pinnedAccounts: [ProviderID: AccountID] = [:]
 
     public init() {}
-
-    public var pinnedAccount: AccountID? {
-        pinnedAccounts[provider]
-    }
 }
 
 public struct CardSettings: Codable, Equatable, Sendable {

@@ -22,19 +22,36 @@ public enum CardOrder {
         public let newMain: CardID?
     }
 
-    /// Moves `card` to `index` within the visible order. Returns nil when nothing changes, or
-    /// when the move would put a card first that cannot own the menu bar (Cursor, Grok, extra
-    /// usage).
+    public enum MoveResult: Equatable, Sendable {
+        case moved(Move)
+        /// The card is already there, and is the main card or not first.
+        case unchanged
+        /// The move would put a card first that cannot own the menu bar (Cursor, Grok, extra
+        /// usage) while a card that can is visible.
+        case refused
+    }
+
+    /// Moves `card` to `index` within the visible order.
+    ///
+    /// A Claude or Codex card that ends up first becomes the main meter. That includes a drop
+    /// in place of a first card that is not the main card yet, which happens when the main
+    /// provider has no card: otherwise that card could never become the main meter.
     public static func move(
         _ card: CardID, to index: Int, visible: [CardID], saved: [CardID], main: CardID?
-    ) -> Move? {
-        guard let from = visible.firstIndex(of: card), index != from,
-            visible.indices.contains(index)
-        else { return nil }
+    ) -> MoveResult {
+        guard let from = visible.firstIndex(of: card), visible.indices.contains(index) else {
+            return .unchanged
+        }
+        if index == from, index != 0 || card == main || card.menuBarSelection == nil {
+            return .unchanged
+        }
         var order = visible
         order.insert(order.remove(at: from), at: index)
-        guard let first = order.first, first.menuBarSelection != nil else { return nil }
+        guard let first = order.first else { return .unchanged }
+        let anyEligible = visible.contains { $0.menuBarSelection != nil }
+        if first.menuBarSelection == nil, anyEligible { return .refused }
+        let newMain = first.menuBarSelection != nil && first != main ? first : nil
         let hidden = saved.filter { !visible.contains($0) }
-        return Move(order: order + hidden, newMain: first == main ? nil : first)
+        return .moved(Move(order: order + hidden, newMain: newMain))
     }
 }

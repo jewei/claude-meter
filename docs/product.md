@@ -26,16 +26,26 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 
 1. Only Claude or Codex can own the menu bar, the hero, and the first card
    (`ProviderID.canOwnMenuBar`). Claude is the default.
-2. An exact account pin wins. Without a pin, the observed account nearest its limit wins;
+2. A provider is **in use** when its source switch is on; Claude also needs a connection
+   (`Settings.enabledProviders`). Claude with its switch on but not connected neither
+   refreshes nor shows a card or notice; Settings asks the user to connect it.
+3. The chosen main provider owns the menu bar while it is in use. When it is not in use and
+   the other main-capable provider is, the other one owns it, so a user who uses only Codex
+   always gets a Codex meter (`PresentationContext.mainProvider`). This follows the user's
+   settings, not failures: a provider that is in use keeps the meter while it fails or has
+   no reading.
+4. An exact account pin wins. Without a pin, the observed account nearest its limit wins;
    ties keep provider order (`AccountSelection.primary`).
-3. A missing pinned account, a disabled provider, or a provider without readings shows as
-   unavailable with a reason. It never falls back to another account or provider
-   (`MainMeter`).
-4. The menu-bar dot shows the highest severity of the pinned account, or of every account of
+5. A missing pinned account, a main provider that is in use without a reading, or no
+   main-capable provider in use shows as unavailable with a reason. It never falls back to
+   another account of the same provider, and a pin never falls back (`MainMeter`).
+6. The menu-bar dot shows the highest severity of the pinned account, or of every account of
    the provider without a pin.
-5. Dragging a Claude or Codex card to the top of the list pins it and makes its provider
-   the main meter. Cursor, Grok, and extra usage cannot go first (`CardOrder.move`).
-   **Use automatic order** in Appearance clears the order and every pin.
+7. Dragging a Claude or Codex card to the top of the list pins it and makes its provider
+   the main meter. A drop in place of a first card that is not the main card does the same,
+   so that card can always become the main meter. While a Claude or Codex card is visible,
+   Cursor, Grok, and extra usage cannot go first (`CardOrder.move`). **Use automatic order**
+   in Appearance clears the order and every pin.
 
 ## 3. Menu bar (`MenuBarModel`)
 
@@ -55,9 +65,10 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 
 1. The header shows the main meter's observation age (`Just now`, `42s ago`, `12m ago`,
    `3h ago`, `2d ago`), Settings, and Quit.
-2. The content is the first match of: welcome (onboarding), paused with no data, no sources
-   on, loading before the first reading, accounts, an error screen for the first failed
-   provider (main first), and setup help.
+2. The content is the first match of: welcome (onboarding), paused with no data, no source
+   switch on, loading before the first reading, accounts, an error screen for the first
+   failed provider (main first), and setup help (which asks to connect Claude when its
+   switch is on without a connection).
 3. Every path into Settings from the popover finishes the welcome and starts updates.
 4. Notices above the hero state, without repeats: the main provider's failed refresh, each
    main account's issue (prefixed with its name when there are several accounts), old data,

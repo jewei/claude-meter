@@ -44,9 +44,17 @@ public struct PresentationContext: Sendable {
     public var thresholds: Thresholds { settings.appearance.thresholds }
     public var showsUsed: Bool { settings.appearance.meterMode == .used }
 
-    /// The provider that owns the menu bar. Settings can hold only Claude or Codex.
+    /// The provider that owns the menu bar, the hero, and the first card.
+    ///
+    /// The chosen provider (Claude by default) owns them while it is in use. When it is off or
+    /// Claude is not connected, and the other provider that can own the menu bar is in use,
+    /// that one owns them, so a Codex-only user never faces an unavailable Claude meter. A
+    /// chosen provider that is in use never yields, even while it fails or has no reading.
     public var mainProvider: ProviderID {
-        settings.menuBar.provider.canOwnMenuBar ? settings.menuBar.provider : .claude
+        let chosen = settings.menuBar.provider.canOwnMenuBar ? settings.menuBar.provider : .claude
+        guard !isEnabled(chosen) else { return chosen }
+        return ProviderID.allCases.first { $0 != chosen && $0.canOwnMenuBar && isEnabled($0) }
+            ?? chosen
     }
 
     public func isEnabled(_ provider: ProviderID) -> Bool {

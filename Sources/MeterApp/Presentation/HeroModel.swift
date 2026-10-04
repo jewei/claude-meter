@@ -31,12 +31,8 @@ public struct HeroModel: Equatable, Sendable {
             return
         }
         guard !selected.isStale else {
-            let notConnected =
-                meter.provider == .claude && context.settings.claude.connection == .off
             self.init(
-                emoji: "🛰️", title: "Refresh needed",
-                subtitle: notConnected
-                    ? "Connect Claude in Settings." : "\(name) data is out of date.",
+                emoji: "🛰️", title: "Refresh needed", subtitle: "\(name) data is out of date.",
                 tone: .neutral)
             return
         }

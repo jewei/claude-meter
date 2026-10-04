@@ -48,10 +48,56 @@ import Testing
         #expect(meter.issue?.message == "The selected Claude account has no usage reading.")
     }
 
-    @Test func disabledProviderNeverFallsBack() {
-        let meter = meter([Fixture.account("home")], enabled: [.codex])
+    @Test func offProviderWithoutAnotherMainProviderExplainsItself() {
+        let meter = meter([Fixture.account("home")], enabled: [.cursor])
+        #expect(meter.provider == .claude)
         #expect(meter.selected == nil)
         #expect(meter.issue?.message == "Claude is off. Turn it on in Settings > Data.")
+    }
+
+    @Test func unconnectedClaudeAsksToConnect() {
+        let settings = Fixture.settings(enabled: [.claude]) { $0.claude.connection = .off }
+        let meter = MainMeter(Fixture.context(settings, readings: [:]))
+        #expect(meter.provider == .claude)
+        #expect(meter.issue?.message == "Connect Claude in Settings > Data.")
+    }
+
+    @Test func offMainProviderYieldsToTheProviderInUse() {
+        let codex = Fixture.usage(.codex, Fixture.account("/h"))
+        for configure: (inout Settings) -> Void in [
+            { $0.claude.connection = .off }, { $0.claude.isEnabled = false },
+        ] {
+            let settings = Fixture.settings(enabled: [.claude, .codex], configure: configure)
+            let meter = MainMeter(
+                Fixture.context(settings, readings: [.codex: Fixture.current(codex)]))
+            #expect(meter.provider == .codex)
+            #expect(meter.selected?.id == "/h")
+        }
+    }
+
+    @Test func providerInUseNeverYieldsToTheOther() {
+        let settings = Fixture.settings(enabled: [.claude, .codex])
+        let codex = Fixture.usage(.codex, Fixture.account("/h"))
+        let meter = MainMeter(
+            Fixture.context(
+                settings,
+                readings: [
+                    .claude: .failed(UsageIssue("Sign in again.")), .codex: Fixture.current(codex),
+                ]))
+        #expect(meter.provider == .claude)
+        #expect(meter.selected == nil)
+        #expect(meter.issue?.message == "Sign in again.")
+    }
+
+    @Test func missingCodexPinNeverFallsBackToAnotherCodexAccount() {
+        let settings = Fixture.settings(enabled: [.codex], main: .codex) {
+            $0.menuBar.pinnedAccounts[.codex] = "/gone"
+        }
+        let codex = Fixture.usage(.codex, Fixture.account("/h"))
+        let meter = MainMeter(Fixture.context(settings, readings: [.codex: Fixture.current(codex)]))
+        #expect(meter.provider == .codex)
+        #expect(meter.selected == nil)
+        #expect(meter.issue?.message == "The selected Codex account is no longer configured.")
     }
 
     @Test func oldObservationsAreStale() {

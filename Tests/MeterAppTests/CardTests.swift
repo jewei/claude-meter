@@ -34,29 +34,58 @@ import Testing
             .account(.codex, "b"), to: 0, visible: visible, saved: [.account(.grok, .default)],
             main: .account(.claude, "a"))
         #expect(
-            move?.order == [
-                .account(.codex, "b"), .account(.claude, "a"), .extraUsage,
-                .account(.grok, .default),
-            ])
-        #expect(move?.newMain == .account(.codex, "b"))
+            move
+                == .moved(
+                    .init(
+                        order: [
+                            .account(.codex, "b"), .account(.claude, "a"), .extraUsage,
+                            .account(.grok, .default),
+                        ], newMain: .account(.codex, "b"))))
     }
 
     @Test func movesBelowTheTopKeepTheMainMeter() {
         let visible: [CardID] = [.account(.claude, "a"), .account(.codex, "b"), .extraUsage]
         let move = CardOrder.move(
             .extraUsage, to: 1, visible: visible, saved: [], main: .account(.claude, "a"))
-        #expect(move?.order == [.account(.claude, "a"), .extraUsage, .account(.codex, "b")])
-        #expect(move?.newMain == nil)
+        #expect(
+            move
+                == .moved(
+                    .init(
+                        order: [.account(.claude, "a"), .extraUsage, .account(.codex, "b")],
+                        newMain: nil)))
     }
 
     @Test func refusesCardsThatCannotOwnTheMenuBar() {
         let visible: [CardID] = [.account(.claude, "a"), .account(.cursor, .default), .extraUsage]
         for card in [CardID.account(.cursor, .default), .extraUsage] {
-            #expect(CardOrder.move(card, to: 0, visible: visible, saved: [], main: nil) == nil)
+            #expect(
+                CardOrder.move(card, to: 0, visible: visible, saved: [], main: nil) == .refused)
         }
+    }
+
+    @Test func droppingTheMainCardInPlaceChangesNothing() {
+        let visible: [CardID] = [.account(.claude, "a"), .account(.codex, "b")]
+        let main = CardID.account(.claude, "a")
         #expect(
-            CardOrder.move(.account(.claude, "a"), to: 0, visible: visible, saved: [], main: nil)
-                == nil)
+            CardOrder.move(main, to: 0, visible: visible, saved: [], main: main) == .unchanged)
+        #expect(
+            CardOrder.move(.account(.codex, "b"), to: 1, visible: visible, saved: [], main: main)
+                == .unchanged)
+    }
+
+    @Test func codexCardAlreadyFirstCanBecomeMain() {
+        // Claude is on but has no card, so the Codex card is first without being the main card.
+        let visible: [CardID] = [.account(.codex, "/h"), .account(.cursor, .default)]
+        #expect(
+            CardOrder.move(.account(.codex, "/h"), to: 0, visible: visible, saved: [], main: nil)
+                == .moved(.init(order: visible, newMain: .account(.codex, "/h"))))
+    }
+
+    @Test func cardsReorderFreelyWhenNoneCanOwnTheMenuBar() {
+        let visible: [CardID] = [.account(.cursor, .default), .account(.grok, .default)]
+        #expect(
+            CardOrder.move(.account(.grok, .default), to: 0, visible: visible, saved: [], main: nil)
+                == .moved(.init(order: visible.reversed(), newMain: nil)))
     }
 }
 

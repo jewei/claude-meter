@@ -22,12 +22,11 @@ struct LiveProviders {
         let claude = ClaudeProvider(
             configuration: { @MainActor in settings.claudeConfiguration }, store: store)
         self.claude = claude
-        // Each enabled config dir is one account's history root.
         claudeHistory = ClaudeTokenHistory(roots: {
             let configuration = await MainActor.run { settings.claudeConfiguration }
-            return await claude.accounts(for: configuration).filter(\.isEnabled).map {
-                HistoryRoot(account: $0.id, directory: $0.directory)
-            }
+            guard configuration.connection != .off else { return [] }
+            return Self.claudeHistoryRoots(
+                await claude.accounts(for: configuration), connection: configuration.connection)
         })
         let codex = CodexProvider(configuration: { @MainActor in settings.codexConfiguration })
         self.codex = codex
@@ -47,6 +46,21 @@ struct LiveProviders {
         grokHistory = GrokTokenHistory(roots: {
             [HistoryRoot(account: .default, directory: grokHome)]
         })
+    }
+
+    /// The config dirs whose local sessions count as Claude token history: only folders that
+    /// have a card. None before Claude is connected, only the default folder for a manual
+    /// login (its one account), and every enabled folder in automatic mode.
+    nonisolated static func claudeHistoryRoots(
+        _ accounts: [ClaudeAccount], connection: ClaudeConfiguration.Connection
+    ) -> [HistoryRoot] {
+        let shown: [ClaudeAccount] =
+            switch connection {
+            case .off: []
+            case .manual: accounts.filter { $0.id == ClaudeAccount.defaultID }
+            case .automatic: accounts.filter(\.isEnabled)
+            }
+        return shown.map { HistoryRoot(account: $0.id, directory: $0.directory) }
     }
 
     var usageProviders: [any UsageProvider] {

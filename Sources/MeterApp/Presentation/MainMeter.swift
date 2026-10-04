@@ -26,7 +26,10 @@ public struct MainMeter: Equatable, Sendable {
             accounts = []
             selected = nil
             severity = .unknown
-            issue = UsageIssue("\(name) is off. Turn it on in Settings > Data.", needsAction: true)
+            issue =
+                provider == .claude && context.settings.claude.needsConnection
+                ? UsageIssue("Connect Claude in Settings > Data.", needsAction: true)
+                : UsageIssue("\(name) is off. Turn it on in Settings > Data.", needsAction: true)
             return
         }
         let accounts = context.accounts(for: provider)

@@ -11,14 +11,20 @@ public struct AccountUsage: Codable, Hashable, Sendable, Identifiable {
     public var balances: [Balance]
     /// Nil when the provider reports no reset allowance for this account.
     public var resetAllowance: ResetAllowance?
-    /// When the provider observed this usage. Nil means no usable observation.
-    public var observedAt: Date?
+    /// When the provider observed this usage. Nil means no usable observation. A date outside
+    /// ``DateBounds`` becomes nil.
+    public var observedAt: Date? {
+        didSet { observedAt = DateBounds.validated(observedAt) }
+    }
     /// The source says this observation is old, for example after a failed refresh.
     /// Consumers also treat an old `observedAt` as stale.
     public var isStale: Bool
     public var issue: UsageIssue?
-    /// When the provider last tried to refresh this account, successful or not.
-    public var attemptedAt: Date?
+    /// When the provider last tried to refresh this account, successful or not. A date outside
+    /// ``DateBounds`` becomes nil.
+    public var attemptedAt: Date? {
+        didSet { attemptedAt = DateBounds.validated(attemptedAt) }
+    }
     /// Who the observation belongs to. Nil when the provider cannot tell.
     public var owner: AccountOwner?
     /// Another configured account uses the same login.
@@ -50,6 +56,26 @@ public struct AccountUsage: Codable, Hashable, Sendable, Identifiable {
         self.attemptedAt = DateBounds.validated(attemptedAt)
         self.owner = owner
         self.sharesLogin = sharesLogin
+    }
+
+    /// Decodes through the initializer above, so dates from disk are validated like dates
+    /// from providers.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(AccountID.self, forKey: .id),
+            name: try container.decode(String.self, forKey: .name),
+            plan: try container.decodeIfPresent(String.self, forKey: .plan),
+            windows: try container.decode([QuotaWindow].self, forKey: .windows),
+            balances: try container.decode([Balance].self, forKey: .balances),
+            resetAllowance: try container.decodeIfPresent(
+                ResetAllowance.self, forKey: .resetAllowance),
+            observedAt: try container.decodeIfPresent(Date.self, forKey: .observedAt),
+            isStale: try container.decode(Bool.self, forKey: .isStale),
+            issue: try container.decodeIfPresent(UsageIssue.self, forKey: .issue),
+            attemptedAt: try container.decodeIfPresent(Date.self, forKey: .attemptedAt),
+            owner: try container.decodeIfPresent(AccountOwner.self, forKey: .owner),
+            sharesLogin: try container.decode(Bool.self, forKey: .sharesLogin))
     }
 
     /// A configured account with no usable observation.

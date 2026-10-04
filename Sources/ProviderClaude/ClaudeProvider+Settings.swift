@@ -57,71 +57,14 @@ extension ClaudeProvider {
                     "Claude Code's token expired. Open Claude Code, then try again.",
                     needsAction: true)
             }
-            try await verify(
-                accessToken: credential.accessToken,
-                rejection: ProviderError(
+            do {
+                try await checkUsage(accessToken: credential.accessToken)
+            } catch is UsageFailure {
+                throw ProviderError(
                     "Anthropic rejected Claude Code's sign-in. Open Claude Code and run /login, "
                         + "then try again.",
-                    needsAction: true))
-        }
-    }
-
-    /// Verifies tokens that the user entered with one usage request, then stores them as the
-    /// manual login. Tokens that expire within 60 s are refreshed first. A failure leaves an
-    /// existing manual login unchanged. Throws ``ProviderError`` with text for the user.
-    public func connectManually(accessToken: String, refreshToken: String?, expiresAt: Date?)
-        async throws
-    {
-        let access = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        let refresh = refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !access.isEmpty else {
-            throw ProviderError("Enter an access token.", needsAction: true)
-        }
-        // A Disconnect, or a newer Connect, after this point wins over this Connect.
-        let ticket = await manualLogin.beginConnect()
-        var candidate = ManualCredential(
-            accessToken: access, refreshToken: refresh?.isEmpty == false ? refresh : nil,
-            expiresAt: expiresAt, subscriptionType: nil, connectionID: UUID().uuidString)
-        if candidate.isExpired(at: now()) {
-            do {
-                candidate = try await manualLogin.refreshedCandidate(candidate)
-            } catch ManualLogin.Failure.expired {
-                throw ProviderError(
-                    "The access token has expired. Enter a new one, or add a refresh token.",
                     needsAction: true)
-            } catch ManualLogin.Failure.rejected {
-                throw ProviderError(
-                    "Anthropic rejected the refresh token. Enter new tokens.", needsAction: true)
-            } catch ManualLogin.Failure.refreshFailed(let reason) {
-                throw ProviderError("Could not refresh the tokens. \(reason) Try again shortly.")
             }
-        }
-        try await verify(
-            accessToken: candidate.accessToken,
-            rejection: ProviderError(
-                "Anthropic rejected these tokens. Check them and try again.", needsAction: true))
-        do {
-            try await manualLogin.connect(candidate, ticket: ticket)
-        } catch ManualLogin.Failure.changed {
-            throw ProviderError(
-                "The Claude connection changed while the tokens were checked. Try again.")
-        } catch {
-            throw ProviderError("Could not save credentials: \(error.localizedDescription)")
-        }
-    }
-
-    /// Whether a manual login is stored. Reads item attributes only.
-    public func manualSignInStatus() async -> SignInStatus {
-        await vault.signInStatus()
-    }
-
-    /// Deletes the manual login, the only item the app owns. A refresh that is still running
-    /// can never write it back.
-    public func disconnectManual() async throws {
-        do {
-            try await manualLogin.disconnect()
-        } catch {
-            throw ProviderError("Could not disconnect: \(error.localizedDescription)")
         }
     }
 
@@ -148,17 +91,20 @@ extension ClaudeProvider {
         return rest == 0 ? "in \(hours) h" : "in \(hours) h \(rest) min"
     }
 
-    private func verify(accessToken: String, rejection: ProviderError) async throws {
+    /// One usage request for Settings. Rethrows HTTP 401 and 403 as ``UsageFailure``, so the
+    /// caller can choose the text or try a refresh token. Every other failure becomes a
+    /// ``ProviderError`` with text for Settings.
+    func checkUsage(accessToken: String) async throws {
         do {
             _ = try await withDeadline(limits.refresh) { [api] in
                 try await api.usage(accessToken: accessToken)
             }
-        } catch UsageFailure.unauthorized {
-            throw rejection
-        } catch UsageFailure.rateLimited(let until) {
-            throw rateLimited(until: until)
         } catch let failure as UsageFailure {
-            throw ProviderError(AccountFailure(failure).issue(for: .activeLogin))
+            switch failure {
+            case .unauthorized, .forbidden: throw failure
+            case .rateLimited(let until): throw rateLimited(until: until)
+            default: throw ProviderError(AccountFailure(failure).issue(for: .activeLogin))
+            }
         } catch let error as TimeoutError {
             throw ProviderError("Could not check Claude usage. \(error.localizedDescription)")
         }

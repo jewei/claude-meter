@@ -2,18 +2,6 @@ import Foundation
 import MeterDomain
 import MeterPlatform
 
-/// Why a usage request produced no usage.
-enum UsageFailure: Error, Equatable {
-    /// HTTP 429 now or earlier: the shared gate blocks requests until `until`.
-    case rateLimited(until: Date?)
-    /// HTTP 401 or 403: the token was rejected.
-    case unauthorized
-    case httpStatus(Int)
-    case invalidResponse
-    /// The request did not complete, with the transport's reason.
-    case transport(String)
-}
-
 /// `GET /api/oauth/usage` for one access token, behind the shared 429 gate.
 struct UsageAPI: Sendable {
     // Compile-time literals.
@@ -62,8 +50,10 @@ struct UsageAPI: Sendable {
             } catch {
                 throw UsageFailure.invalidResponse
             }
-        case 401, 403:
+        case 401:
             throw UsageFailure.unauthorized
+        case 403:
+            throw UsageFailure.forbidden
         case 429:
             let until = gate.recordRateLimit(retryAfter: response.header("retry-after"), now: now())
             throw UsageFailure.rateLimited(until: until)

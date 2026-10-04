@@ -24,8 +24,10 @@ User-Agent: claude-cli/2.1.280 (external, cli)
 3. Keep the User-Agent format `claude-cli/<version> (external, cli)`. The server decides
    reset eligibility from it. The old `claude-code/<version>` form gets
    `ineligible_reason: "surface"`.
-4. HTTP 200 is usage. 401 and 403 mean the token was rejected. 429 closes the rate-limit
-   gate. Other status codes are failures with the status in the text.
+4. HTTP 200 is usage. 401 and 403 mean the token was rejected: 401 means the token is not
+   valid (a manual refresh token can help), 403 that it may not read usage (a refresh cannot
+   help). 429 closes the rate-limit gate. Other status codes are failures with the status in
+   the text.
 
 ### Usage response fields read
 
@@ -152,10 +154,18 @@ little memory. The limit is 256 MiB. The result is one of three states:
 ### Manual mode
 
 1. Manual mode has one account, `claude` (`default`).
-2. Connect sends one usage request with the new tokens, then saves them. A token that
-   expires within 60 s is refreshed first. A failure leaves the old manual login unchanged.
-3. A token is refreshed when it expires within 60 s, and once after HTTP 401.
-4. Callers with the same refresh token share one token request.
+2. Connect checks the new tokens with a usage request, then saves them. A token that
+   expires within 60 s is refreshed first. When the request gets HTTP 401 and no refresh
+   happened yet (for example, no expiry was entered), the refresh token is tried once and
+   the request is sent again. A failure leaves the old manual login unchanged.
+3. A refresh spends the pasted refresh token, so Connect never sends one while the 429 gate
+   is closed; it says when to try again. The tokens that a Connect refresh got stay in
+   memory until a Connect saves them, so a retry with the same pasted tokens uses them and
+   sends no new token request. HTTP 401 or 403 for them, `invalid_grant`, Disconnect, or
+   quitting the app forgets them.
+4. A stored token is refreshed when it expires within 60 s, and once after HTTP 401. HTTP
+   403 is not refreshed: a refresh does not change the scopes. Callers with the same refresh
+   token share one token request.
 5. Disconnect wins. From the moment it starts there is no manual login: a fetch reports
    "not connected" without a Keychain read, and nothing that started earlier (a fetch, a
    token refresh, or a Connect) can save or change anything. A Connect that started before
@@ -168,8 +178,11 @@ little memory. The limit is 256 MiB. The result is one of three states:
    save of rotated tokens finishes even when the refresh that got them was cancelled.
 7. A Connect whose save fails leaves the old login as it was, and a rotation of the old
    login that arrives meanwhile is still saved.
-8. A refresh token rejected with `invalid_grant` is not sent again. After a temporary
-   failure, refreshes wait 5 minutes, doubling up to 6 hours.
+8. A refresh token rejected with `invalid_grant` is not sent again. When the server also
+   rejects the refreshed token (HTTP 401 or 403), or a 401 cannot be refreshed, the
+   connection gets no more requests. Both marks last until the next Connect or app launch,
+   and the card asks for a new Connect. After a temporary failure, refreshes wait 5
+   minutes, doubling up to 6 hours. The reason of the failure is in the log and on the card.
 
 ### Rate-limit gate
 
@@ -269,3 +282,16 @@ Settings texts for automatic Connect:
 | Expired | Claude Code's token expired. Open Claude Code, then try again. |
 | HTTP 401 or 403 | Anthropic rejected Claude Code's sign-in. Open Claude Code and run /login, then try again. |
 | Gate closed or HTTP 429 | Anthropic is rate-limiting usage checks. Try again in <wait>. (with `retryAt`; `<wait>` is minutes or hours, rounded up) |
+
+Settings texts for manual Connect:
+
+| Case | Text |
+| --- | --- |
+| No access token | Enter an access token. |
+| Expired, no refresh token | The access token has expired. Enter a new one, or add a refresh token. |
+| Refresh token rejected (`invalid_grant`) | Anthropic rejected the refresh token. Enter new tokens. |
+| Refresh failed (temporary) | Could not refresh the tokens. <reason> Try again shortly. |
+| HTTP 401 or 403 | Anthropic rejected these tokens. Check them and try again. |
+| Gate closed or HTTP 429 | The same text as automatic Connect |
+| Disconnect or newer Connect meanwhile | The Claude connection changed while the tokens were checked. Try again. |
+| Save failed | Could not save credentials: <reason> |

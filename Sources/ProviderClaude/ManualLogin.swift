@@ -9,24 +9,11 @@ import MeterPlatform
 /// - Disconnect wins. From the moment it starts there is no login, and nothing that started
 ///   earlier (a fetch, a refresh, or a Connect) can store or change anything afterwards.
 /// - Keychain writes run one at a time, in order, so a late save never follows a delete.
-/// - A refresh token rejected with `invalid_grant` is not sent again. Temporary failures back
-///   off for 5 minutes, doubling up to 6 hours.
+/// - A refresh token rejected with `invalid_grant` is not sent again, and neither are tokens
+///   that the server rejected after a refresh. Temporary failures back off for 5 minutes,
+///   doubling up to 6 hours. These marks last until the next Connect or app launch.
+/// - A rotation that Connect got but could not store yet is kept for a retry of Connect.
 actor ManualLogin {
-    enum Failure: Error, Equatable {
-        /// No manual login is stored.
-        case missing
-        case invalid
-        case unavailable(String)
-        /// The token expired and there is no refresh token.
-        case expired
-        case rejected
-        /// Waiting after earlier temporary refresh failures.
-        case deferred
-        case refreshFailed(String)
-        /// Disconnected or reconnected while the work was in progress.
-        case changed
-    }
-
     /// Identifies one Connect. A Disconnect, or a newer Connect, makes it stale.
     struct Ticket: Sendable, Equatable {
         fileprivate let generation: UInt64
@@ -57,8 +44,15 @@ actor ManualLogin {
     /// Callers waiting for a shared token request now. Tests use it to prove the sharing.
     private(set) var refreshWaiters = 0
     private var rejectedRefreshToken: String?
+    /// The connection whose tokens the server rejected after the refresh token was tried. No
+    /// request goes out for it until the next Connect.
+    private var rejectedConnectionID: String?
     private var transientFailures = 0
     private var backoffUntil: Date?
+    /// Tokens that a Connect got from the token endpoint but has not stored, by the refresh
+    /// token that the user pasted. The server spent that token when it rotated it, so a retry
+    /// of Connect with the same pasted tokens must use these instead.
+    private var pendingRotation: (pasted: String, credential: ManualCredential)?
 
     init(
         vault: ManualCredentialVault, refresher: TokenRefresher, now: @escaping @Sendable () -> Date
@@ -95,9 +89,11 @@ actor ManualLogin {
         }
     }
 
-    /// A credential that does not expire within 60 s, refreshed first when needed.
+    /// A credential that does not expire within 60 s, refreshed first when needed. Throws
+    /// ``Failure/rejected`` without a request for a connection that the server rejected.
     func usable() async throws -> ManualCredential {
         let credential = try await current()
+        guard credential.connectionID != rejectedConnectionID else { throw Failure.rejected }
         guard credential.isExpired(at: now()) else { return credential }
         return try await refreshed(from: credential)
     }
@@ -107,11 +103,42 @@ actor ManualLogin {
         try await refreshed(from: credential)
     }
 
+    /// Stops all requests for the connection of `credential` until the next Connect: the
+    /// server rejected its tokens, and a refresh did not help.
+    func markRejected(_ credential: ManualCredential) {
+        guard rejectedConnectionID != credential.connectionID else { return }
+        rejectedConnectionID = credential.connectionID
+        log.notice("Manual Claude tokens were rejected; waiting for a new Connect")
+    }
+
+    /// The rotation that an earlier Connect got for the refresh token the user pasted.
+    func pendingRotation(for pastedRefreshToken: String) -> ManualCredential? {
+        guard let pendingRotation, pendingRotation.pasted == pastedRefreshToken else { return nil }
+        return pendingRotation.credential
+    }
+
+    /// Forgets the pending rotation of `pastedRefreshToken`, after the server rejected it.
+    func discardPendingRotation(for pastedRefreshToken: String) {
+        if pendingRotation?.pasted == pastedRefreshToken { pendingRotation = nil }
+    }
+
     /// Refreshes tokens that are not stored yet, during Connect. Shares an in-flight request
-    /// for the same refresh token but stores nothing and ignores the backoff.
-    func refreshedCandidate(_ candidate: ManualCredential) async throws -> ManualCredential {
+    /// for the same refresh token and ignores the backoff. Stores nothing in the Keychain, but
+    /// keeps the rotation for `pastedRefreshToken` until a Connect stores it.
+    func refreshedCandidate(_ candidate: ManualCredential, pastedRefreshToken: String)
+        async throws -> ManualCredential
+    {
         guard let refreshToken = candidate.refreshToken else { throw Failure.expired }
-        return try await sharedRefresh(candidate, refreshToken: refreshToken).result.get()
+        switch await sharedRefresh(candidate, refreshToken: refreshToken).result {
+        case .success(let fresh):
+            pendingRotation = (pastedRefreshToken, fresh)
+            return fresh
+        case .failure(Failure.rejected):
+            discardPendingRotation(for: pastedRefreshToken)
+            throw Failure.rejected
+        case .failure(let error):
+            throw error
+        }
     }
 
     /// Who owns readings of the stored login now.
@@ -145,14 +172,16 @@ actor ManualLogin {
         startGeneration()
         isDisconnected = false
         latest = credential
+        pendingRotation = nil
     }
 
-    /// Deletes the stored login. From now on there is no login, and work that started before
-    /// cannot write it back.
+    /// Deletes the stored login and forgets every token in memory. From now on there is no
+    /// login, and work that started before cannot write it back.
     func disconnect() async throws {
         startGeneration()
         isDisconnected = true
         latest = nil
+        pendingRotation = nil
         await lockWrites()
         defer { unlockWrites() }
         writeSequence += 1
@@ -167,6 +196,7 @@ actor ManualLogin {
         generation &+= 1
         refreshes.removeAll()
         rejectedRefreshToken = nil
+        rejectedConnectionID = nil
         transientFailures = 0
         backoffUntil = nil
     }

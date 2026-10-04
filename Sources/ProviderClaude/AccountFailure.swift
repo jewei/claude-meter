@@ -47,7 +47,7 @@ enum AccountFailure: Error, Equatable {
     init(_ failure: UsageFailure) {
         switch failure {
         case .rateLimited(let until): self = .rateLimited(until: until)
-        case .unauthorized: self = .unauthorized
+        case .unauthorized, .forbidden: self = .unauthorized
         case .httpStatus(let status): self = .httpStatus(status)
         case .invalidResponse: self = .invalidResponse
         case .transport(let reason): self = .transport(reason)

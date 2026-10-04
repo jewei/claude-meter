@@ -82,7 +82,12 @@ extension ClaudeTests {
 
             async let first = provider.fetch(previous: nil)
             async let second = provider.fetch(previous: nil)
-            try await Task.sleep(for: .milliseconds(100))
+            // Both callers wait on the one token request before it answers.
+            let deadline = ContinuousClock.now + .seconds(5)
+            while await provider.manualLogin.refreshWaiters < 2, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(1))
+            }
+            #expect(await provider.manualLogin.refreshWaiters == 2)
             await latch.open()
             let results = try await [first, second]
 
@@ -115,6 +120,42 @@ extension ClaudeTests {
             #expect(http.requests(to: TokenRefresher.url).count == 1)
             #expect(usage.accounts[0].windows.first?.usedPercent == 9)
             #expect(usage.accounts[0].plan == "Pro")
+        }
+
+        @Test func tokensRejectedAfterARefreshAreNotSentAgain() async throws {
+            let harness = try connected(expiresAt: nil)
+            // The refreshed token is rejected too; only tokens from a new Connect work.
+            let http = usageServer(["fresh": "{}"], tokenResponse: .json(200, Self.rotated))
+            let provider = harness.provider(http)
+
+            let first = try await provider.fetch(previous: nil)
+            #expect(http.usageTokens == ["old-access", "new-access"])
+            #expect(http.requests(to: TokenRefresher.url).count == 1)
+            #expect(first.accounts[0].issue == Self.connectAgain)
+
+            let second = try await provider.fetch(previous: first)
+            #expect(http.requests.count == 3)
+            #expect(second.accounts[0].issue == Self.connectAgain)
+
+            // A new Connect starts over.
+            try await provider.connectManually(
+                accessToken: "fresh", refreshToken: nil, expiresAt: nil)
+            let third = try await provider.fetch(previous: second)
+            #expect(third.accounts[0].hasObservation)
+        }
+
+        @Test func http403IsNotRefreshed() async throws {
+            let harness = try connected(expiresAt: nil)
+            let http = FakeHTTPClient { request in
+                request.url == TokenRefresher.url
+                    ? .json(200, Self.rotated) : .json(403, #"{"error": "scope"}"#)
+            }
+
+            let usage = try await harness.provider(http).fetch(previous: nil)
+
+            #expect(http.usageTokens == ["old-access"])
+            #expect(http.requests(to: TokenRefresher.url).isEmpty)
+            #expect(usage.accounts[0].issue == Self.connectAgain)
         }
 
         @Test func aShortLifetimeIsRaisedToFiveMinutes() async throws {

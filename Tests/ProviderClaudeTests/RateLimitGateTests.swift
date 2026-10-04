@@ -117,7 +117,7 @@ extension ClaudeTests {
             #expect(await outcome(.json(200, ClaudeFixtures.fullUsage)) == nil)
             #expect(await outcome(.json(200, "[]")) == .invalidResponse)
             #expect(await outcome(.json(401, "{}")) == .unauthorized)
-            #expect(await outcome(.json(403, "{}")) == .unauthorized)
+            #expect(await outcome(.json(403, "{}")) == .forbidden)
             #expect(await outcome(.json(500, "{}")) == .httpStatus(500))
             #expect(
                 await outcome(.json(429, "{}", headers: ["Retry-After": "120"]))

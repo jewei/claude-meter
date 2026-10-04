@@ -90,6 +90,23 @@ A reading may outlive a failed refresh only while it belongs to the signed-in lo
 - `AccountUsage.belongs(to:)` decides: same owner or unknown → keep; signed out or a
   different owner → drop. A response that arrives after the login changed is discarded.
 
+## Rate limits: one hold for Codex, Cursor, and Grok
+
+After HTTP 429 with `Retry-After`, a provider sends no request for the same login before the
+retry time, so the card's countdown is true. One pure rule decides (`RateLimitHold`):
+
+- The retry time is the server's, at most 1 hour after the 429.
+- The hold stops only the requests of the login (`AccountOwner`) that got the 429. Another
+  login sends at once.
+- A retry time more than 1 hour after now holds nothing. The rule never makes one, so the
+  clock moved back or an older version saved it in the reading archive. That hold ends.
+- A 429 without a usable `Retry-After` holds nothing.
+
+Quota keeps the hold in the account's issue (`AccountUsage.rateLimitHold(for:now:)`): the
+refresh keeps the account as stale with that issue and sends nothing. The hold survives a
+restart in the reading archive and still ends within 1 hour. Claude has its own gate, because
+one Claude limit covers every account and the Settings check (`docs/providers/claude-oauth.md`).
+
 ## Scheduling (`RefreshScheduler`)
 
 | Event | Refreshes quota of |

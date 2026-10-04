@@ -93,6 +93,49 @@ extension GrokProviderTests {
         #expect(http.requests.count == 2)
     }
 
+    @Test func aRateLimitOfAnotherLoginHoldsNothing() async throws {
+        try signIn()
+        let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "120"])
+        let limited = try await provider(http).fetch(previous: previous())
+        try signIn(JWTFixture.token(["sub": "user-2"]))
+
+        _ = try await provider(http).fetch(previous: limited)
+
+        #expect(http.requests.count == 2)
+    }
+
+    /// A wrong `Retry-After` cannot stop requests for more than one hour.
+    @Test func aRateLimitHoldsAtMostOneHour() async throws {
+        try signIn()
+        let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "86400"])
+        let provider = provider(http)
+
+        let limited = try await provider.fetch(previous: previous())
+        #expect(try account(limited).issue?.retryAt == .reference(.hours(1)))
+        advance(.hours(1) - 1)
+        let held = try await provider.fetch(previous: limited)
+        #expect(http.requests.count == 1)
+        advance(1)
+        _ = try await provider.fetch(previous: held)
+        #expect(http.requests.count == 2)
+    }
+
+    /// A retry time more than one hour ahead, such as one that an older version saved in the
+    /// reading archive, or one after the clock moved back, holds nothing.
+    @Test func aRetryTimeMoreThanOneHourAheadHoldsNothing() async throws {
+        try signIn()
+        let http = FakeHTTPClient(json: Self.liveFixture)
+        var archived = try account(previous())
+        archived.issue = GrokFailure.rateLimited(retryAt: .reference(.days(300))).issue
+
+        let account = try account(
+            try await provider(http).fetch(
+                previous: ProviderUsage(provider: .grok, accounts: [archived])))
+
+        #expect(http.requests.count == 1)
+        #expect(account.issue == nil)
+    }
+
     /// After the period ends, a stale card must not show the old period's on-demand spend
     /// beside an unknown percentage. The prepaid balance is not tied to a period.
     @Test func aStaleReadingDropsItsOnDemandSpendAfterThePeriodEnds() async throws {

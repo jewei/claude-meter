@@ -176,40 +176,41 @@ The email is never part of the reading.
 17. Expired token, HTTP 401, or HTTP 403: keep the last observation as stale, with an issue that
     asks the user to act, while the owner is unchanged.
 18. Busy database, locked Keychain, network failure, other HTTP status, or an unexpected
-    response: keep the last observation as stale while the owner is unchanged. After HTTP 429
-    with a `Retry-After`, no request is sent before the retry time, so the card's countdown is
-    true. Once the billing period of a kept observation ends, its window is unknown and its
-    spend is dropped.
-19. `"enabled": false`: drop the last observation, because it no longer describes the account.
-20. If the owner after the response differs from the owner before it, discard the response.
-21. `reconcile` drops the reading when the owner changed or the user signed out. It reads local
+    response: keep the last observation as stale while the owner is unchanged. Once the
+    billing period of a kept observation ends, its window is unknown and its spend is dropped.
+19. After HTTP 429 with a `Retry-After`, the shared rate-limit hold applies
+    (`docs/architecture.md`): no request for the same login before the retry time, at most
+    1 hour after the 429, so the card's countdown is true. Another login sends at once.
+20. `"enabled": false`: drop the last observation, because it no longer describes the account.
+21. If the owner after the response differs from the owner before it, discard the response.
+22. `reconcile` drops the reading when the owner changed or the user signed out. It reads local
     data only.
 
 ### Token history
 
-22. The export covers local midnight six days ago through now. Each read uses the system time
+23. The export covers local midnight six days ago through now. Each read uses the system time
     zone of that moment for the range, the days, and the history's label, so a time zone change
     applies at the next read.
-23. The four token columns are disjoint. Their sum is the row's count. Prices never count.
-24. A header-only export is a real zero for the range.
-25. A missing header or malformed CSV is an unexpected response for the whole export.
-26. A row with the wrong column count, a bad date, or a bad number makes the history partial.
-27. A row before the range start is ignored. A row after now makes the history partial.
-28. Numbers accept thousands separators only in strict groups of three. An empty field is zero.
-29. An export above the 8 MiB response limit fails, and the message points to the Cursor
+24. The four token columns are disjoint. Their sum is the row's count. Prices never count.
+25. A header-only export is a real zero for the range.
+26. A missing header or malformed CSV is an unexpected response for the whole export.
+27. A row with the wrong column count, a bad date, or a bad number makes the history partial.
+28. A row before the range start is ignored. A row after now makes the history partial.
+29. Numbers accept thousands separators only in strict groups of three. An empty field is zero.
+30. An export above the 8 MiB response limit fails, and the message points to the Cursor
     dashboard. The history is unknown, not partial, because no row arrives. Inside the limit,
     rows after the first 100,000 are not counted, and the history is partial.
-30. A token without a `sub` user ID, or with characters outside `A-Z a-z 0-9 _ - .`, is an
+31. A token without a `sub` user ID, or with characters outside `A-Z a-z 0-9 _ - .`, is an
     unexpected token format. No request is sent.
-31. A failure keeps the previous history only while it belongs to the signed-in login, the rule
+32. A failure keeps the previous history only while it belongs to the signed-in login, the rule
     of `AccountUsage.belongs(to:)`. The app does not tell the provider which history it holds,
     so the provider keeps the set of logins whose history it returned in this run. The history
     stays only while that set is exactly the signed-in login, or while the login cannot be read.
     After a login change in one run, every later failure clears the history, and the next
     success shows it again. A login change during the request rejects the result.
-32. After HTTP 429 with a `Retry-After`, no export is sent before the retry time.
+33. After HTTP 429 with a `Retry-After`, no export is sent before the retry time.
 
 ### Messages
 
-33. Every message says what to do, for example "Open Cursor and sign in again."
-34. A decoding failure shows "Cursor returned an unexpected response.", never a system error.
+34. Every message says what to do, for example "Open Cursor and sign in again."
+35. A decoding failure shows "Cursor returned an unexpected response.", never a system error.

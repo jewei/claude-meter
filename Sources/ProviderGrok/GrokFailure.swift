@@ -91,7 +91,8 @@ enum GrokFailure: Error, Equatable, Sendable {
         case 403: self = .accessDenied
         case 429:
             self = .rateLimited(
-                retryAt: RetryAfter.delay(retryAfter, now: now).map { now.addingTimeInterval($0) })
+                retryAt: RateLimitHold.retryAt(
+                    delay: RetryAfter.delay(retryAfter, now: now), now: now))
         default: self = .httpStatus(status)
         }
     }

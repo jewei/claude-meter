@@ -124,15 +124,17 @@ never reaches a reading, a log, or the disk.
     403 means that the login works but has no access to usage data, so it asks the user to
     check the Grok plan.
 11. Unreadable file, network failure, other HTTP status, or an unexpected response: keep the
-    last observation as stale while the owner is unchanged. After HTTP 429 with a
-    `Retry-After`, no request is sent before the retry time, so the card's countdown is true.
-    Once the period of a kept observation ends, its window is unknown and its on-demand spend
-    is dropped. The prepaid balance stays.
-12. If the owner after the response differs from the owner before it, discard the response.
-13. `reconcile` drops the reading when the owner changed or the user signed out. It reads local
+    last observation as stale while the owner is unchanged. Once the period of a kept
+    observation ends, its window is unknown and its on-demand spend is dropped. The prepaid
+    balance stays.
+12. After HTTP 429 with a `Retry-After`, the shared rate-limit hold applies
+    (`docs/architecture.md`): no request for the same login before the retry time, at most
+    1 hour after the 429, so the card's countdown is true. Another login sends at once.
+13. If the owner after the response differs from the owner before it, discard the response.
+14. `reconcile` drops the reading when the owner changed or the user signed out. It reads local
     files only.
 
 ### Messages
 
-14. Every message says what to do, for example "Open Grok Build and run `grok login`."
-15. A decoding failure shows "Grok returned an unexpected response.", never a system error.
+15. Every message says what to do, for example "Open Grok Build and run `grok login`."
+16. A decoding failure shows "Grok returned an unexpected response.", never a system error.

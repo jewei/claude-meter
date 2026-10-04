@@ -146,12 +146,10 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
         guard !credentials.isExpired(at: now) else {
             return failed(.sessionExpired, previous: previous, status: .signedIn(owner), now: now)
         }
-        // Grok asked for a pause after HTTP 429. Send nothing before its retry time, so the
-        // card's countdown is true.
-        if let previous, previous.owner == owner, let issue = previous.issue,
-            let retryAt = issue.retryAt, retryAt > now
-        {
-            return Self.kept(previous, issue: issue, now: now)
+        // Grok asked this login to pause after HTTP 429. Send nothing before the retry time, so
+        // the card's countdown is true.
+        if let previous, let hold = previous.rateLimitHold(for: owner, now: now) {
+            return previous.retained(issue: hold, now: now)
         }
         let result: Result<AccountUsage, GrokFailure>
         do {
@@ -206,7 +204,9 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
     }
 
     /// The account after `failure`: the previous observation, kept as stale while it belongs to
-    /// `status`, or an unavailable account.
+    /// `status`, or an unavailable account. A kept observation past its period has an unknown
+    /// window and no on-demand spend; the prepaid balance stays
+    /// (``AccountUsage/retained(issue:now:)``).
     private func failed(
         _ failure: GrokFailure, previous: AccountUsage?, status: OwnerStatus, now: Date
     ) -> AccountUsage {
@@ -215,7 +215,7 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
             Self.log.warning("Grok refresh failed: \(failure.issue.message)")
         }
         if let previous, previous.hasObservation, previous.belongs(to: status) {
-            return Self.kept(previous, issue: failure.issue, now: now)
+            return previous.retained(issue: failure.issue, now: now)
         }
         var owner: AccountOwner?
         if case .signedIn(let current) = status { owner = current }
@@ -234,21 +234,6 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
             case .failure(let failure): $0 = "Failed at \(time): \(failure.issue.message)"
             }
         }
-    }
-
-    /// `previous` kept as stale with `issue`. ``AccountUsage/retained(issue:now:)`` makes a
-    /// window past its reset unknown; on-demand spend belongs to that period, so it goes too.
-    /// The prepaid balance does not belong to a period and stays.
-    private static func kept(_ previous: AccountUsage, issue: UsageIssue, now: Date)
-        -> AccountUsage
-    {
-        var kept = previous.retained(issue: issue, now: now)
-        if let periodEnd = previous.windows.first(where: { $0.kind == .billing })?.resetsAt,
-            periodEnd <= now
-        {
-            kept.balances.removeAll { $0.kind == .onDemand }
-        }
-        return kept
     }
 
     private static func isBlank(_ value: String) -> Bool {

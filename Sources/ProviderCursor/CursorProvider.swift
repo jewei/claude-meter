@@ -117,12 +117,10 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
         guard !credentials.isExpired(at: now) else {
             return failed(.sessionExpired, previous: previous, status: .signedIn(owner), now: now)
         }
-        // Cursor asked for a pause after HTTP 429. Send nothing before its retry time, so the
-        // card's countdown is true.
-        if let previous, previous.owner == owner, let issue = previous.issue,
-            let retryAt = issue.retryAt, retryAt > now
-        {
-            return Self.kept(previous, issue: issue, now: now)
+        // Cursor asked this login to pause after HTTP 429. Send nothing before the retry time,
+        // so the card's countdown is true.
+        if let previous, let hold = previous.rateLimitHold(for: owner, now: now) {
+            return previous.retained(issue: hold, now: now)
         }
         let result: Result<AccountUsage, CursorFailure>
         do {
@@ -190,7 +188,8 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
     }
 
     /// The account after `failure`: the previous observation, kept as stale while it belongs to
-    /// `status`, or an unavailable account.
+    /// `status`, or an unavailable account. A kept observation past its billing period has an
+    /// unknown window and no spend (``AccountUsage/retained(issue:now:)``).
     private func failed(
         _ failure: CursorFailure, previous: AccountUsage?, status: OwnerStatus, now: Date
     ) -> AccountUsage {
@@ -201,7 +200,7 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
         if failure.keepsObservation, let previous, previous.hasObservation,
             previous.belongs(to: status)
         {
-            return Self.kept(previous, issue: failure.issue, now: now)
+            return previous.retained(issue: failure.issue, now: now)
         }
         var owner: AccountOwner?
         if case .signedIn(let current) = status { owner = current }
@@ -220,20 +219,6 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
             case .failure(let failure): $0 = "Failed at \(time): \(failure.issue.message)"
             }
         }
-    }
-
-    /// `previous` kept as stale with `issue`. ``AccountUsage/retained(issue:now:)`` makes a
-    /// window past its reset unknown; the spend belongs to that billing period, so it goes too.
-    private static func kept(_ previous: AccountUsage, issue: UsageIssue, now: Date)
-        -> AccountUsage
-    {
-        var kept = previous.retained(issue: issue, now: now)
-        if let periodEnd = previous.windows.first(where: { $0.kind == .billing })?.resetsAt,
-            periodEnd <= now
-        {
-            kept.balances.removeAll { $0.kind == .spend }
-        }
-        return kept
     }
 
     private func expiryText(_ credentials: CursorCredentials) -> String {

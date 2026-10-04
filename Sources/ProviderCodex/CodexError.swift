@@ -6,7 +6,10 @@ import MeterDomain
 enum CodexError: Error, Equatable, LocalizedError, Sendable {
     // auth.json
     case authFileMissing
+    /// The auth file cannot be read, for example because of its permissions.
     case authFileUnreadable
+    /// The read of the auth file timed out or found no free thread. It can pass.
+    case authFileTimedOut
     case authFileInvalid
     case missingTokens
     case apiKeyOnly
@@ -47,6 +50,8 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
             "Codex auth file not found."
         case .authFileUnreadable:
             "Could not read Codex auth file. Check that your user can read it."
+        case .authFileTimedOut:
+            "Reading the Codex auth file took too long. Claude Meter will try again soon."
         case .authFileInvalid:
             "Could not decode Codex auth file. Run `codex login`."
         case .missingTokens:
@@ -120,8 +125,8 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
     /// recovery: Codex cannot fix them, and the original error is more useful.
     var startsRecovery: Bool {
         switch self {
-        case .authFileMissing, .authFileUnreadable, .authFileInvalid, .missingTokens,
-            .accessTokenExpired, .loginRequired:
+        case .authFileMissing, .authFileUnreadable, .authFileTimedOut, .authFileInvalid,
+            .missingTokens, .accessTokenExpired, .loginRequired:
             true
         default:
             false

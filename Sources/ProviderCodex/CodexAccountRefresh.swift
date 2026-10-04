@@ -70,7 +70,7 @@ struct CodexAccountRefresh: Sendable {
         case .noHome:
             return Outcome(
                 kind: .failed(.homeMissing, status: .signedOut), login: before.summary)
-        case .chatGPT, .missing, .noTokens, .invalid, .unreadable:
+        case .chatGPT, .missing, .noTokens, .invalid, .unreadable, .notReadInTime:
             break
         }
         if let owner = before.owner, let hold = previous?.rateLimitHold(for: owner, now: now()) {
@@ -98,7 +98,12 @@ struct CodexAccountRefresh: Sendable {
             {
                 return .observed(quota, owner: owner)
             }
-            let error: CodexError = after == .unreadable ? .authFileUnreadable : .signInChanged
+            let error: CodexError =
+                switch after {
+                case .unreadable: .authFileUnreadable
+                case .notReadInTime: .authFileTimedOut
+                default: .signInChanged
+                }
             return .failed(error, status: status(after: after, error: error, request.report))
         }
     }
@@ -140,7 +145,7 @@ struct CodexAccountRefresh: Sendable {
             guard before == .missing, case .signedIn(let owner) = report else { return nil }
             return owner
         case (.recovery, .apiKey), (.recovery, .noHome), (.recovery, .invalid),
-            (.recovery, .unreadable):
+            (.recovery, .unreadable), (.recovery, .notReadInTime):
             return nil
         }
     }

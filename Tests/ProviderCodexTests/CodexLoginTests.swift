@@ -85,6 +85,49 @@ extension CodexTests {
             #expect(try await CodexLogin.read(file, timeout: .seconds(5)) == .noHome)
         }
 
+        /// A slow read can pass at the next refresh; a refused read needs the user.
+        @Test func aSlowReadIsTemporaryAndARefusedReadIsNot() throws {
+            #expect(try CodexLogin.readFailure(TimeoutError(limit: .seconds(5))) == .notReadInTime)
+            for error: any Error in [
+                LocalFile.ReadError.notRegularFile, LocalFile.ReadError.tooLarge(limit: 1),
+                LocalFile.ReadError.unreadable(errno: EACCES),
+            ] {
+                #expect(try CodexLogin.readFailure(error) == .unreadable)
+            }
+            #expect(throws: CancellationError.self) {
+                try CodexLogin.readFailure(CancellationError())
+            }
+            #expect(CodexLogin.notReadInTime.ownerStatus == .unknown)
+            #expect(CodexLogin.notReadInTime.owner == nil)
+            #expect(CodexLogin.notReadInTime.recoveryReason == .authFileTimedOut)
+            #expect(
+                CodexError.authFileTimedOut.localizedDescription
+                    == "Reading the Codex auth file took too long. Claude Meter will try again soon."
+            )
+            #expect(!CodexError.authFileTimedOut.needsAction)
+        }
+
+        /// The read after the request names the failure that it had.
+        @Test func aFailedReadAfterTheRequestNamesItsCause() {
+            let request = CodexAccountRefresh.RequestResult(
+                quota: .success(CodexQuota()), source: .direct)
+            let before = CodexLogin.parse(Data(CodexFixtures.authJSON().utf8))
+            for (after, expected) in [
+                (CodexLogin.unreadable, CodexError.authFileUnreadable),
+                (.notReadInTime, .authFileTimedOut),
+            ] {
+                guard
+                    case .failed(let error, let status) = CodexAccountRefresh.kind(
+                        of: request, before: before, after: after)
+                else {
+                    Issue.record("A response without a verified owner must fail")
+                    continue
+                }
+                #expect(error == expected)
+                #expect(status == .unknown)
+            }
+        }
+
         @Test func aFIFOAuthFileDoesNotBlock() async throws {
             let root = try TemporaryDirectory()
             defer { root.remove() }

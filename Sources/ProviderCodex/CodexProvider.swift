@@ -120,14 +120,18 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
             return .signedIn
         case .apiKey, .noHome:
             return .signedOut
-        case .missing, .noTokens, .invalid, .unreadable:
+        case .missing, .noTokens, .invalid, .unreadable, .notReadInTime:
             if (try? await locateCLI()) != nil {
                 return .unknown("Codex detected; checking sign-in during refresh.")
             }
-            if login == .unreadable {
+            switch login {
+            case .unreadable:
                 return .unknown(CodexError.authFileUnreadable.localizedDescription)
+            case .notReadInTime:
+                return .unknown(CodexError.authFileTimedOut.localizedDescription)
+            default:
+                return .signedOut
             }
-            return .signedOut
         }
     }
 

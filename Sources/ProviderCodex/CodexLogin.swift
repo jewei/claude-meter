@@ -22,8 +22,11 @@ enum CodexLogin: Sendable, Equatable {
     case noTokens(fileDigest: String)
     /// The file is not JSON. Codex can be in the middle of rewriting it.
     case invalid
-    /// The file could not be read now, for example because the read timed out.
+    /// The file cannot be read: it is not a regular file, it is too large, or the system
+    /// refused the read. Only the user can change that.
     case unreadable
+    /// The read did not finish in time, or no blocking-read thread was free. It can pass.
+    case notReadInTime
 
     /// Reads and parses `home`'s auth file without blocking a cooperative thread.
     /// Throws only `CancellationError`.
@@ -38,10 +41,17 @@ enum CodexLogin: Sendable, Equatable {
                     return LocalFile.isDirectory(directory) ? .missing : .noHome
                 }
             }
-        } catch is CancellationError {
-            throw CancellationError()
         } catch {
-            return .unreadable
+            return try readFailure(error)
+        }
+    }
+
+    /// The login for a read that failed with `error`. Rethrows `CancellationError`.
+    static func readFailure(_ error: any Error) throws -> CodexLogin {
+        switch error {
+        case is CancellationError: throw CancellationError()
+        case is TimeoutError, is BlockingIO.BusyError: return .notReadInTime
+        default: return .unreadable
         }
     }
 
@@ -69,20 +79,21 @@ enum CodexLogin: Sendable, Equatable {
         switch self {
         case .chatGPT(let credentials): credentials.owner
         case .noTokens(let digest): .credential(digest)
-        case .apiKey, .missing, .noHome, .invalid, .unreadable: nil
+        case .apiKey, .missing, .noHome, .invalid, .unreadable, .notReadInTime: nil
         }
     }
 
     /// The owner status that the file alone proves, for ``AccountUsage/belongs(to:)``.
     ///
     /// A missing file is unknown, because Codex can keep the login in the keyring. A file
-    /// that is not JSON is unknown, because Codex can be rewriting it. Only API-key auth and a
-    /// home folder that does not exist are signed out.
+    /// that is not JSON is unknown, because Codex can be rewriting it. A file that cannot be
+    /// read proves nothing. Only API-key auth and a home folder that does not exist are signed
+    /// out.
     var ownerStatus: OwnerStatus {
         switch self {
         case .chatGPT, .noTokens: owner.map(OwnerStatus.signedIn) ?? .unknown
         case .apiKey, .noHome: .signedOut
-        case .missing, .invalid, .unreadable: .unknown
+        case .missing, .invalid, .unreadable, .notReadInTime: .unknown
         }
     }
 
@@ -94,6 +105,7 @@ enum CodexLogin: Sendable, Equatable {
         case .noTokens: .missingTokens
         case .invalid: .authFileInvalid
         case .unreadable: .authFileUnreadable
+        case .notReadInTime: .authFileTimedOut
         case .chatGPT, .apiKey, .noHome: nil
         }
     }
@@ -108,6 +120,7 @@ enum CodexLogin: Sendable, Equatable {
         case .noTokens: "No tokens"
         case .invalid: "Unreadable JSON"
         case .unreadable: "Could not read the auth file"
+        case .notReadInTime: "Not read in time"
         }
     }
 }

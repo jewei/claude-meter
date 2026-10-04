@@ -228,7 +228,10 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
 26. The owner status from the file: tokens are signed in with their owner. API-key auth and
     a home folder that does not exist are signed out. A missing file is unknown (only Codex
     knows a keyring login). A file that is not JSON is unknown (Codex can be rewriting it). A
-    file that cannot be read now is unknown.
+    file that cannot be read now is unknown. A read that times out or finds no free
+    blocking-read thread is temporary: `Reading the Codex auth file took too long. Claude Meter
+    will try again soon.` Any other read failure (not a regular file, over 4 MiB, or refused)
+    says `Could not read Codex auth file. Check that your user can read it.`
 27. After a direct request, the owner must be the same, or the response is discarded with
     `Codex sign-in changed or could not be verified. Refresh again.`
 28. After recovery, a ChatGPT identity must stay the same. Without an identity before, the

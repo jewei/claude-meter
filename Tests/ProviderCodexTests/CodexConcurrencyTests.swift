@@ -87,6 +87,7 @@ extension CodexTests {
             // Three homes time out at the deadline; the other three never start.
             #expect(ContinuousClock.now - start < .seconds(2))
             #expect(bed.http.requests.count == 6 + 3)
+            #expect(second.accounts.count == 6)
             #expect(second.accounts.allSatisfy { $0.isStale && $0.hasObservation })
             #expect(
                 second.accounts.allSatisfy { $0.issue?.message.contains("did not answer") == true })

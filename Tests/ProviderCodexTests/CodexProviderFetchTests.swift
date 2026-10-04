@@ -150,6 +150,19 @@ extension CodexTests {
         }
 
         /// CDX-07: the card shows one sentence with one action. Diagnostics keep both reasons.
+        /// CDX-26: a cancel that the refresh did not cause is a network failure, not a
+        /// time-out and not a cancelled refresh.
+        @Test func aTransportCancelIsANetworkFailure() async throws {
+            let bed = try CodexTestBed(http: FakeHTTPClient { _ in throw CancellationError() })
+            defer { bed.remove() }
+            try bed.writeAuth()
+            let account = try #require(try await bed.provider.fetch(previous: nil).accounts.first)
+            #expect(
+                account.issue?.message
+                    == CodexError.network("The request was cancelled.").localizedDescription)
+            #expect(bed.recovery.calls == 0)
+        }
+
         @Test func aFailedRecoveryShowsOneSentenceAndKeepsBothReasons() async throws {
             struct Boom: Error, LocalizedError {
                 var errorDescription: String? { "The child said no." }

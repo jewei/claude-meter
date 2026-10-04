@@ -194,7 +194,8 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
     // MARK: - Work
 
     /// Runs at most ``CodexLimits/concurrentHomes`` homes at once. A free slot starts the next
-    /// home. Results keep the configured order.
+    /// home while time is left; after the deadline or a cancel, the homes that did not start
+    /// time out without a task. Results keep the configured order.
     private func refreshAll(
         _ homes: [CodexHome], until deadline: ContinuousClock.Instant
     ) async -> [CodexAttempt] {
@@ -220,7 +221,14 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
             }
             for await (index, finished) in group {
                 attempts[index] = finished
-                if started < homes.count {
+                guard started < homes.count else { continue }
+                if ContinuousClock.now >= deadline || Task.isCancelled {
+                    for next in started..<homes.count {
+                        attempts[next] = CodexAttempt(
+                            home: homes[next], outcome: .timedOut, attemptedAt: now())
+                    }
+                    started = homes.count
+                } else {
                     let next = started
                     group.addTask { (next, await attempt(homes[next])) }
                     started += 1

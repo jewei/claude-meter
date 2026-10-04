@@ -14,15 +14,19 @@ struct CodexUsageAPI: Sendable {
 
     /// Sends `GET wham/usage` once. HTTP 401 and 403 throw ``CodexError/loginRequired``.
     /// When the response reports reset credits, one more request reads their details.
-    /// Throws ``CodexError`` or `CancellationError`.
+    /// Throws ``CodexError``, or `CancellationError` only when this refresh was cancelled.
     func quota(with credentials: CodexCredentials, now: Date) async throws -> CodexQuota {
         let request = HTTPRequest(
             .get, url: Self.usageURL, headers: Self.headers(for: credentials), retry: .never)
         let response: HTTPResponse
         do {
             response = try await http.send(request)
-        } catch is CancellationError {
+        } catch is CancellationError where Task.isCancelled {
             throw CancellationError()
+        } catch is CancellationError {
+            // The transport cancelled the request on its own, for example after a
+            // `URLError.cancelled` that this refresh did not cause.
+            throw CodexError.network("The request was cancelled.")
         } catch {
             throw CodexError.network(error.localizedDescription)
         }

@@ -40,6 +40,11 @@ actor ManualLogin {
     /// The token refreshes of this generation. `ManualLogin+Refresh.swift` owns its fields;
     /// this file only starts it over.
     var refreshState = RefreshState()
+    /// Connections whose Connect wrote its tokens to the item without storing them: the
+    /// Connect has not decided yet, it was abandoned, or its save failed and may still land.
+    /// The item can hold their tokens until the old item is written back, so ``current()``
+    /// never uses them. A stored Connect or a Disconnect starts over.
+    private var unsettledConnections: Set<String> = []
 
     init(
         vault: ManualCredentialVault, refresher: TokenRefresher, now: @escaping @Sendable () -> Date
@@ -63,6 +68,11 @@ actor ManualLogin {
         switch read {
         case .found(let stored):
             if let latest, latest.connectionID == stored.connectionID { return latest }
+            guard !unsettledConnections.contains(stored.connectionID) else {
+                // A Connect saved these tokens but did not store them; the old item comes back.
+                guard let latest else { throw Failure.changed }
+                return latest
+            }
             latest = stored
             return stored
         case .missing:
@@ -110,11 +120,13 @@ actor ManualLogin {
     ///
     /// Throws ``Failure/changed`` and leaves the old item as it was when the Connect is no
     /// longer wanted: a Disconnect or a newer Connect started after `ticket`, the Connect was
-    /// cancelled, or `isWanted` returns false. Both are checked before the save and again after
-    /// it, the second time under the write lock; a Connect abandoned during the save writes the
-    /// old item back (or deletes the new one when there was none). When the save fails, the old login and
-    /// its in-flight refreshes stay as they were. Throws the Keychain error when the old item
-    /// cannot be read, before anything is written.
+    /// cancelled, or `isWanted` returns false. `isWanted` is asked before the write lock, and
+    /// again after the save, under the lock; the ticket is also checked when the lock is
+    /// taken. A Connect abandoned during the save writes the old item back (or deletes the new
+    /// one when there was none). Until the Connect is stored, ``current()`` never uses its
+    /// tokens. When the save fails, the old login and its in-flight refreshes stay as they
+    /// were. Throws the Keychain error when the old item cannot be read, before anything is
+    /// written.
     func connect(
         _ credential: ManualCredential, ticket: Ticket, isWanted: @Sendable () async -> Bool
     ) async throws {
@@ -126,10 +138,16 @@ actor ManualLogin {
         // Read first, so that a Connect abandoned during the save can be undone.
         let previous = try await vault.storedValue()
         guard ticket == currentTicket else { throw Failure.changed }
+        // From the save on, the item can hold these tokens before the Connect is decided.
+        unsettledConnections.insert(credential.connectionID)
         writeSequence += 1
         try await vault.save(credential, sequence: writeSequence)
         guard await mayStore(ticket, isWanted) else {
-            // After a Disconnect, its delete runs after this save anyway.
+            // After a Disconnect, its delete runs after this save anyway. The connection stays
+            // unsettled, so a read that returns these tokens, also one that started before the
+            // write-back or one after a write-back that failed, uses the old login. A new
+            // generation is not needed for that, and would drop a rotation of the old login
+            // that is in flight.
             if ticket.generation == generation { await restore(previous) }
             throw Failure.changed
         }
@@ -173,11 +191,12 @@ actor ManualLogin {
         }
     }
 
-    /// Forgets the token requests in flight, the refresh failures, and the rotation that a
-    /// Connect got: a Connect was stored, or a Disconnect started.
+    /// Forgets the token requests in flight, the refresh failures, the rotation that a Connect
+    /// got, and the unsettled connections: a Connect was stored, or a Disconnect started.
     private func startGeneration() {
         generation &+= 1
         refreshState = RefreshState()
+        unsettledConnections.removeAll()
     }
 
     /// Takes `fresh`, a rotation of the stored login that a refresh of generation `expected`

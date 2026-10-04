@@ -198,11 +198,16 @@ little memory. The limit is 256 MiB. The result is one of three states:
    Disconnect is forgotten. A Connect that started before a Disconnect, or before a newer
    Connect, stores nothing and says that the connection changed. `cancelManualConnect()`
    does the same for running Connects and keeps the stored login.
-6. Connect checks its ticket, and asks its caller whether it is still wanted (`isWanted`),
-   right before the save and again after it; the second check runs under the write lock.
-   Before the save it reads the old item. A Connect that is abandoned during the save writes the old item back, or
-   deletes the new one when there was none, and says that the connection changed. When the
-   old item cannot be read, Connect fails before it writes.
+6. Connect asks its caller whether it is still wanted (`isWanted`) twice: before it takes
+   the write lock, and again after the save, under the lock. It checks its ticket each time,
+   and again when it has the lock. Under the lock, before the save, it reads the old item. A
+   Connect that is abandoned during the save writes the old item back, or deletes the new one
+   when there was none, and says that the connection changed. When the old item cannot be
+   read, Connect fails before it writes. Until a Connect is stored, its tokens are not the
+   login, even when a fetch reads them from the Keychain: the fetch uses the old login from
+   memory, or says that the connection changed, so it never shows their quota or refreshes
+   them. This also holds after the Connect was abandoned or its save failed, until the next
+   stored Connect or Disconnect.
 7. `ClaudeSettingsModel` runs one attempt at a time; a newer attempt overtakes an older one.
    Its `isWanted` is true while the Connect is the newest attempt, the user did not abandon
    it (Cancel, or Claude turned off), and Claude is on. A manual Connect that the provider

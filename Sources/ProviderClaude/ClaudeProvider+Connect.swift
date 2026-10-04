@@ -12,10 +12,10 @@ extension ClaudeProvider {
     /// got are kept for a retry of Connect until they are stored or rejected. A failure leaves
     /// an existing manual login unchanged, and a Disconnect that starts meanwhile wins.
     ///
-    /// - Parameter isWanted: Asked right before the save and again after it. When it returns
-    ///   false, nothing stays stored and the Connect throws that the connection changed.
-    ///   Settings uses it so that a Connect that the user abandoned, or one that finishes after
-    ///   Claude was turned off, never stores tokens.
+    /// - Parameter isWanted: Asked before the Keychain write lock is taken, and again after
+    ///   the save, under the lock. When it returns false, nothing stays stored and the Connect
+    ///   throws that the connection changed. Settings uses it so that a Connect that the user
+    ///   abandoned, or one that finishes after Claude was turned off, never stores tokens.
     public func connectManually(
         accessToken: String, refreshToken: String?, expiresAt: Date?,
         isWanted: @escaping @Sendable () async -> Bool = { true }

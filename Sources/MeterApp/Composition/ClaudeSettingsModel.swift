@@ -8,9 +8,9 @@ import ProviderClaude
 ///
 /// Connect and Disconnect are attempts; only the newest attempt applies its result. A Connect
 /// is done when its result is stored: a manual Connect stores the tokens in the provider, which
-/// asks this model right before and after the Keychain save whether the Connect is still
-/// wanted; an automatic Connect stores only the connection setting. Cancel and turning Claude
-/// off abandon a running Connect, never a Disconnect.
+/// asks this model before it takes the Keychain write lock and again after the save whether
+/// the Connect is still wanted; an automatic Connect stores only the connection setting.
+/// Cancel and turning Claude off abandon a running Connect, never a Disconnect.
 @MainActor @Observable
 public final class ClaudeSettingsModel {
     public struct Account: Identifiable, Equatable, Sendable {

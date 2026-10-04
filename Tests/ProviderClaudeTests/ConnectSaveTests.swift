@@ -11,6 +11,67 @@ extension ClaudeTests {
     /// The save of a Connect: it is undone when abandoned, never replaces the old login when it
     /// fails, and Keychain writes land in order.
     @Suite struct ConnectSaveTests {
+        /// While a Connect has saved its tokens but not decided, a fetch reads them from the
+        /// Keychain. It must neither show their quota nor refresh them, whatever the Connect
+        /// decides then.
+        @Test(arguments: [false, true])
+        func aFetchBeforeTheConnectDecidesUsesTheOldLogin(isStored: Bool) async throws {
+            let harness = try ClaudeHarness.manual(expiresAt: .reference(7200))
+            let http = usageServer(
+                [
+                    "old-access": ClaudeFixtures.usage(session: 10),
+                    "pasted": ClaudeFixtures.usage(session: 70), "new-access": "{}",
+                ],
+                tokenResponse: .json(200, ClaudeFixtures.rotated))
+            let provider = harness.provider(http)
+            let first = try await provider.fetch(previous: nil)
+            let deciding = Gate()
+            let questions = Locked(0)
+
+            let connect = Task {
+                try await provider.connectManually(
+                    accessToken: "pasted", refreshToken: "pasted-refresh",
+                    expiresAt: .reference(100),
+                    isWanted: {
+                        let question = questions.withLock { count -> Int in
+                            count += 1
+                            return count
+                        }
+                        // The second question comes after the save.
+                        guard question == 2 else { return true }
+                        await deciding.wait()
+                        return isStored
+                    })
+            }
+            #expect(await deciding.waitForArrivals())
+            #expect(harness.manualItem()?.accessToken == "pasted")
+            // The new tokens now expire within 60 s: a fetch that used them would refresh them,
+            // then wait for the write lock that the Connect holds to save the rotation.
+            harness.advance(50)
+            let isFetched = Locked(false)
+            let fetch = Task {
+                defer { isFetched.withLock { $0 = true } }
+                return try await provider.fetch(previous: first)
+            }
+            #expect(await waitUntil { isFetched.value })
+            deciding.open()
+            let during = try await fetch.value
+            if isStored {
+                try await connect.value
+            } else {
+                await #expect(throws: ProviderError.self) { try await connect.value }
+            }
+
+            #expect(during.accounts[0].windows.first?.usedPercent == 10)
+            #expect(during.accounts[0].owner == first.accounts[0].owner)
+            #expect(http.usageTokens == ["old-access", "pasted", "old-access"])
+            #expect(http.requests(to: TokenRefresher.url).isEmpty)
+            #expect(harness.manualItem()?.accessToken == (isStored ? "pasted" : "old-access"))
+            // Only a stored Connect makes its tokens the login.
+            _ = try await provider.fetch(previous: during)
+            #expect(http.usageTokens.last == (isStored ? "new-access" : "old-access"))
+        }
+
         @Test(arguments: [true, false])
         func aConnectCancelledDuringItsSaveWritesTheOldItemBack(hasOldLogin: Bool) async throws {
             let harness = try ClaudeHarness(.manual)

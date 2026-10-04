@@ -89,6 +89,30 @@ extension ClaudeTests {
             #expect(accounts.allSatisfy { $0.issue == nil })
         }
 
+        @Test func onlyTheDefaultFolderClaimsTheDefaultAccount() throws {
+            let home = try TemporaryDirectory()
+            defer { home.remove() }
+            _ = try home.makeDirectory(".claude/projects")
+            try FileManager.default.createSymbolicLink(
+                at: home.path(".claude-alias"), withDestinationURL: home.path(".claude"))
+            let configuration = ClaudeConfiguration(connection: .automatic)
+            let alias = home.path(".claude-alias")
+            let main = home.path(".claude")
+
+            // Whatever the order of the folder listing, a link to ~/.claude never takes the
+            // default account.
+            for scanned in [[alias, main], [main, alias]] {
+                let accounts = ConfigDirectoryScanner.discover(
+                    home: home.url, configuration: configuration, scanned: scanned)
+                #expect(accounts.map(\.id) == ["claude"])
+                #expect(accounts.first?.directory.lastPathComponent == ".claude")
+                #expect(accounts.first?.isDefault == true)
+            }
+            let found = ConfigDirectoryScanner.discover(
+                home: home.url, configuration: configuration)
+            #expect(found.map(\.id) == ["claude"])
+        }
+
         @Test func aConfiguredFolderThatIsNoLongerAConfigDirStaysListedWithAnIssue() throws {
             let home = try TemporaryDirectory()
             defer { home.remove() }

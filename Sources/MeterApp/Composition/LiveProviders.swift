@@ -22,11 +22,13 @@ struct LiveProviders {
         let claude = ClaudeProvider(
             configuration: { @MainActor in settings.claudeConfiguration }, store: store)
         self.claude = claude
+        // A slow disk throws instead of returning no config dirs, so the scan state survives.
         claudeHistory = ClaudeTokenHistory(roots: {
             let configuration = await MainActor.run { settings.claudeConfiguration }
             guard configuration.connection != .off else { return [] }
             return Self.claudeHistoryRoots(
-                await claude.accounts(for: configuration), connection: configuration.connection)
+                try await claude.accounts(for: configuration),
+                connection: configuration.connection)
         })
         let codex = CodexProvider(configuration: { @MainActor in settings.codexConfiguration })
         self.codex = codex

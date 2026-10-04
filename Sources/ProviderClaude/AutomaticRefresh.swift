@@ -26,17 +26,22 @@ struct AutomaticRefresh: Sendable {
         let activeID: AccountID?
     }
 
+    /// Lists the config dirs. Blocking: called through ``BlockingIO``.
+    typealias Scan = @Sendable (_ home: URL, ClaudeConfiguration) -> [ClaudeAccount]
+
     let home: URL
     let keychain: ClaudeCodeKeychain
     let logins: LoginReader
     let api: UsageAPI
     let now: @Sendable () -> Date
     let limits: ClaudeLimits
+    let scan: Scan
     let log = Log(.claude)
 
     init(
         home: URL, keychain: ClaudeCodeKeychain, logins: LoginReader, api: UsageAPI,
-        now: @escaping @Sendable () -> Date, limits: ClaudeLimits
+        now: @escaping @Sendable () -> Date, limits: ClaudeLimits,
+        scan: @escaping Scan = ConfigDirectoryScanner.discover(home:configuration:)
     ) {
         self.home = home
         self.keychain = keychain
@@ -44,6 +49,7 @@ struct AutomaticRefresh: Sendable {
         self.api = api
         self.now = now
         self.limits = limits
+        self.scan = scan
     }
 
     func fetch(_ configuration: ClaudeConfiguration, previous: ProviderUsage?) async throws

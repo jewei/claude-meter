@@ -47,6 +47,16 @@ import Testing
             in: period, now: .reference(), calendar: calendar ?? self.calendar)
     }
 
+    @Test func configDirsThatCannotBeListedFailTheRead() async {
+        let history = ClaudeTokenHistory(
+            roots: { throw ProviderError("Could not read the Claude config folders.") },
+            calendar: calendar)
+
+        await #expect(throws: ProviderError.self) {
+            try await history.history(now: .reference(), previous: nil)
+        }
+    }
+
     @Test func streamedAndCopiedResponsesCountOnce() async throws {
         let home = try TemporaryDirectory()
         defer { home.remove() }

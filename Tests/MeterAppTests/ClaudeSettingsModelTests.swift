@@ -1,11 +1,12 @@
+import Dispatch
 import Foundation
 import MeterDomain
 import MeterPlatform
 import MeterTestSupport
-import ProviderClaude
 import Testing
 
 @testable import MeterApp
+@testable import ProviderClaude
 
 @MainActor
 @Suite(.timeLimit(.minutes(1))) final class ClaudeSettingsModelTests {
@@ -79,6 +80,40 @@ import Testing
         #expect(settings.settings.claude.extraDirectories == [work.path])
         #expect(await !model.addDirectory(work))
         #expect(model.directoryMessage == "That config dir is already listed.")
+    }
+
+    @Test func aSlowDiskKeepsTheListedConfigDirs() async throws {
+        try home.write("{}", to: ".claude-work/settings.json")
+        let stuck = Locked(false)
+        // Holds a stuck listing until the test ends; each waiter lets the next one go.
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        var limits = ClaudeLimits()
+        limits.discovery = .milliseconds(100)
+        let settings = settings
+        let provider = ClaudeProvider(
+            configuration: { @MainActor in settings.claudeConfiguration }, keychain: keychain,
+            http: FakeHTTPClient { _ in .json(500, "{}") }, store: MemoryStore(), home: home.url,
+            now: Date.init, keychainUser: "alice", limits: limits,
+            scan: { home, configuration in
+                if stuck.value {
+                    release.wait()
+                    release.signal()
+                }
+                return ConfigDirectoryScanner.discover(home: home, configuration: configuration)
+            })
+        let model = ClaudeSettingsModel(settings: settings, usage: usage, provider: provider)
+        await model.reload()
+        #expect(model.accounts.map(\.id) == ["claude", "claude-work"])
+
+        stuck.withLock { $0 = true }
+        await model.reload()
+
+        #expect(model.accounts.map(\.id) == ["claude", "claude-work"])
+        let other = try home.write("{}", to: "other/settings.json").deletingLastPathComponent()
+        #expect(await !model.addDirectory(other))
+        #expect(model.directoryMessage == "Could not list the config dirs in time. Try again.")
+        #expect(settings.settings.claude.extraDirectories.isEmpty)
     }
 
     @Test func accountsFollowSettingsAndReadingsAtOnce() async throws {

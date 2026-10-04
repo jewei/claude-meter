@@ -65,9 +65,16 @@ enum ConfigDirectoryScanner {
     /// the user can remove it, but only when no working dir has its key. The result lists the
     /// default account first, then the others by key.
     static func discover(home: URL, configuration: ClaudeConfiguration) -> [ClaudeAccount] {
-        let defaultPath = canonicalPath(
-            home.appending(path: ".claude", directoryHint: .isDirectory))
-        let scanned = scannedDirectories(in: home).map { Candidate($0, isConfigured: false) }
+        discover(home: home, configuration: configuration, scanned: scannedDirectories(in: home))
+    }
+
+    /// ``discover(home:configuration:)`` with the `~/.claude*` dirs already listed, in any
+    /// order. Only `~/.claude` itself claims the default account first, so a `~/.claude-*`
+    /// link to it never takes the default account, whatever the order of the folder listing.
+    static func discover(home: URL, configuration: ClaudeConfiguration, scanned: [URL])
+        -> [ClaudeAccount]
+    {
+        let scanned = scanned.map { Candidate($0, isConfigured: false) }
         let configured = configuration.extraDirectories.map { Candidate($0, isConfigured: true) }
         let configuredPaths = Set(configured.filter { $0.issue == nil }.map(\.path))
 
@@ -89,7 +96,9 @@ enum ConfigDirectoryScanner {
                     isEnabled: configuration.isEnabled(candidate.id), issue: candidate.issue))
         }
 
-        for candidate in scanned where candidate.path == defaultPath { consider(candidate) }
+        for candidate in scanned where candidate.url.lastPathComponent == defaultFolder {
+            consider(candidate)
+        }
         let working = (scanned + configured).filter { $0.issue == nil }.sorted { lhs, rhs in
             if lhs.id != rhs.id { return lhs.id < rhs.id }
             let lhsConfigured = configuredPaths.contains(lhs.path)
@@ -125,16 +134,23 @@ enum ConfigDirectoryScanner {
         }
     }
 
+    /// The name of the default config dir in the home folder.
+    private static let defaultFolder = ".claude"
+
+    /// `~/.claude` and the `~/.claude-*` dirs that hold `settings.json` or `projects`, sorted
+    /// by name, so that every discovery sees them in the same order.
     private static func scannedDirectories(in home: URL) -> [URL] {
         let children =
             (try? FileManager.default.contentsOfDirectory(
                 at: home, includingPropertiesForKeys: nil, options: [])) ?? []
         return children.filter { child in
             let name = child.lastPathComponent
-            guard name == ".claude" || name.hasPrefix(".claude-"), LocalFile.isDirectory(child)
+            guard name == defaultFolder || name.hasPrefix(defaultFolder + "-"),
+                LocalFile.isDirectory(child)
             else { return false }
-            return name == ".claude" || hasConfigContents(child)
+            return name == defaultFolder || hasConfigContents(child)
         }
+        .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
     private static func hasConfigContents(_ directory: URL) -> Bool {

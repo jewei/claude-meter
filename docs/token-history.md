@@ -99,7 +99,10 @@ Only the fields below are read. All other fields are skipped.
     Without a request ID, `message.id` alone is the key. The session ID is never part of it:
     a resumed session copies a response under a new session ID.
 21. Records with the same key count once. Claude Code writes one line per content block,
-    and each line repeats the cumulative usage of the response.
+    and each line repeats the cumulative usage of the response. The account folders come
+    from the config dirs. When they cannot be listed in time, the read fails and keeps its
+    last value. It never scans an empty root list, which would discard the scan state
+    (rule 59).
 
 ## Counting rules: Codex
 

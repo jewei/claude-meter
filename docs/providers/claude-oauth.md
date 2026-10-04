@@ -118,9 +118,13 @@ little memory. The limit is 256 MiB. The result is one of three states:
    `claude`, the part after `claude-` for `claude-<name>`, else the key. A display name that
    the user sets replaces it on the card.
 3. Discovery lists `~/.claude` when it exists, other `~/.claude-*` dirs that have
-   `settings.json` or `projects`, and the configured dirs.
+   `settings.json` or `projects` (sorted by name), and the configured dirs. When the folders
+   cannot be listed in 5 s, discovery fails: a refresh keeps its reading, Settings keeps its
+   list, and token history keeps its scan state. It never returns an empty list instead.
 4. Two dirs with the same resolved path are one account. Two dirs with the same key keep
-   one: `~/.claude` owns `claude`, then a configured dir wins, then the smaller path. A dir
+   one: `~/.claude` owns `claude`, then a configured dir wins, then the smaller path. Only
+   the folder named `.claude` in the home folder claims the default account first, so a
+   `~/.claude-*` link to it is the same account and never takes the default account. A dir
    that loses on its key does not claim its path, and a dir that loses on its path does not
    claim its key.
 5. Order: the default account first, then the others by key.

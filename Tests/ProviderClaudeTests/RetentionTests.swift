@@ -142,19 +142,29 @@ extension ClaudeTests {
             let harness = try signedInDefault()
             let provider = harness.provider(usageServer(["main": "{}"]))
             let usage = try await provider.fetch(previous: nil)
-            // Enough folders that listing them takes far longer than the limit.
-            for index in 0..<300 { _ = try harness.home.makeDirectory(".claude-\(index)/projects") }
+            // A listing that hangs, as on a stuck network volume, until the test ends.
+            let release = Signal()
+            defer { release.raise() }
             var limits = ClaudeLimits()
-            limits.discovery = .nanoseconds(1)
-            let slow = harness.provider(usageServer(["main": "{}"]), limits: limits)
+            limits.discovery = .milliseconds(100)
+            let stuck = harness.provider(
+                usageServer(["main": "{}"]), limits: limits,
+                scan: { _, _ in
+                    release.block()
+                    return []
+                })
 
-            #expect(await slow.reconcile(usage) == usage)
+            #expect(await stuck.reconcile(usage) == usage)
             let error = await #expect(throws: ProviderError.self) {
-                try await slow.fetch(previous: usage)
+                try await stuck.fetch(previous: usage)
             }
             #expect(
                 error?.issue.message.hasPrefix("Could not read the Claude config folders.") == true)
             #expect(error?.keepsLastReading == true)
+            // Settings and token history get the failure, never an empty list.
+            await #expect(throws: ProviderError.self) {
+                try await stuck.accounts(for: harness.configuration)
+            }
         }
 
         @Test func theLegacyLoginWithoutAConfigDirUsesTheHomeIdentityFile() async throws {

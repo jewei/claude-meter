@@ -54,7 +54,9 @@ public final class ClaudeProvider: UsageProvider, DiagnosticsReporting {
         home: URL,
         now: @escaping @Sendable () -> Date,
         keychainUser: String,
-        limits: ClaudeLimits
+        limits: ClaudeLimits,
+        scan: @escaping AutomaticRefresh.Scan = ConfigDirectoryScanner.discover(
+            home:configuration:)
     ) {
         self.configuration = configuration
         self.home = home
@@ -70,7 +72,7 @@ public final class ClaudeProvider: UsageProvider, DiagnosticsReporting {
         automatic = AutomaticRefresh(
             home: home, keychain: self.keychain,
             logins: LoginReader(keychain: self.keychain, fileTimeout: limits.localRead), api: api,
-            now: now, limits: limits)
+            now: now, limits: limits, scan: scan)
         manual = ManualRefresh(login: manualLogin, api: api, now: now)
     }
 
@@ -131,17 +133,21 @@ public final class ClaudeProvider: UsageProvider, DiagnosticsReporting {
     /// Sources, the 429 gate, and the outcome of the last refresh. Values are redacted.
     public func diagnostics() async -> [DiagnosticFact] {
         let configuration = await configuration()
-        let accounts = await accounts(for: configuration)
-        var facts = [
-            DiagnosticFact("Connection", configuration.connection.rawValue),
-            DiagnosticFact(
-                "Config dirs",
-                "\(accounts.count) found, \(accounts.filter { !$0.isEnabled }.count) disabled"),
-        ]
-        for account in accounts {
-            if let issue = account.issue {
-                facts.append(DiagnosticFact("Config dir \(account.id)", issue.message))
+        var facts = [DiagnosticFact("Connection", configuration.connection.rawValue)]
+        do {
+            let accounts = try await accounts(for: configuration)
+            facts.append(
+                DiagnosticFact(
+                    "Config dirs",
+                    "\(accounts.count) found, \(accounts.filter { !$0.isEnabled }.count) disabled"))
+            for account in accounts {
+                if let issue = account.issue {
+                    facts.append(DiagnosticFact("Config dir \(account.id)", issue.message))
+                }
             }
+        } catch {
+            facts.append(
+                DiagnosticFact("Config dirs", ProviderError(wrapping: error).issue.message))
         }
         facts.append(DiagnosticFact("Claude Code login", Self.text(await automaticSignInStatus())))
         facts.append(DiagnosticFact("Manual login", Self.text(await manualSignInStatus())))

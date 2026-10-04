@@ -146,7 +146,7 @@ extension ClaudeTests {
             try harness.directory(".claude-work")
             let provider = harness.provider(usageServer([:]))
 
-            let accounts = await provider.accounts(
+            let accounts = try await provider.accounts(
                 for: ClaudeConfiguration(connection: .automatic, disabledAccounts: ["claude-work"]))
 
             #expect(accounts.map(\.id) == ["claude", "claude-work"])

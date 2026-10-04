@@ -99,13 +99,14 @@ public final class ClaudeSettingsModel {
     }
 
     /// Lists the config dirs and checks both logins without reading a secret. A reload that a
-    /// newer one overtook stops without writing.
+    /// newer one overtook stops without writing. When the config dirs cannot be listed in
+    /// time, the last list stays.
     public func reload() async {
         generation += 1
         let current = generation
-        let found = await provider.accounts(for: settings.claudeConfiguration)
+        let found = try? await provider.accounts(for: settings.claudeConfiguration)
         guard current == generation else { return }
-        discovered = found
+        if let found { discovered = found }
         let automatic = await provider.automaticSignInStatus()
         guard current == generation else { return }
         automaticStatus = automatic
@@ -234,7 +235,10 @@ public final class ClaudeSettingsModel {
             return false
         }
         // A fresh discovery, so the default dir counts even before the first reload.
-        let found = await provider.accounts(for: settings.claudeConfiguration)
+        guard let found = try? await provider.accounts(for: settings.claudeConfiguration) else {
+            directoryMessage = "Could not list the config dirs in time. Try again."
+            return false
+        }
         let listed = found.map(\.canonicalPath) + settings.settings.claude.extraDirectories
         guard !listed.contains(canonical.path) else {
             directoryMessage = "That config dir is already listed."

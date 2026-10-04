@@ -35,14 +35,16 @@ final class ClaudeHarness: Sendable {
 
     func provider(
         _ http: any HTTPClient, keychain: (any Keychain)? = nil,
-        limits: ClaudeLimits = ClaudeLimits()
+        limits: ClaudeLimits = ClaudeLimits(),
+        scan: @escaping AutomaticRefresh.Scan = ConfigDirectoryScanner.discover(
+            home:configuration:)
     ) -> ClaudeProvider {
         let clock = clock
         let settings = settings
         return ClaudeProvider(
             configuration: { settings.value }, keychain: keychain ?? self.keychain, http: http,
             store: store, home: home.url, now: { clock.value }, keychainUser: Self.user,
-            limits: limits)
+            limits: limits, scan: scan)
     }
 
     /// Creates a config dir with `settings.json` and, when `account` is set, an identity file.

@@ -50,13 +50,15 @@ extension AutomaticRefresh {
         }
     }
 
-    /// Discovers config dirs and maps Claude Code's active Keychain item to one of them.
-    func plan(_ configuration: ClaudeConfiguration) async throws -> Plan {
+    /// Every config dir, enabled and disabled. Throws a ``ProviderError`` that keeps the last
+    /// reading when the folders cannot be listed in time, so a slow disk never looks like "no
+    /// config dirs", and `CancellationError`.
+    func discover(_ configuration: ClaudeConfiguration) async throws -> [ClaudeAccount] {
         let home = home
-        let accounts: [ClaudeAccount]
+        let scan = scan
         do {
-            accounts = try await BlockingIO.run(timeout: limits.discovery) { _ in
-                ConfigDirectoryScanner.discover(home: home, configuration: configuration)
+            return try await BlockingIO.run(timeout: limits.discovery) { _ in
+                scan(home, configuration)
             }
         } catch is CancellationError {
             throw CancellationError()
@@ -64,6 +66,11 @@ extension AutomaticRefresh {
             throw ProviderError(
                 "Could not read the Claude config folders. \(error.localizedDescription)")
         }
+    }
+
+    /// Discovers config dirs and maps Claude Code's active Keychain item to one of them.
+    func plan(_ configuration: ClaudeConfiguration) async throws -> Plan {
+        let accounts = try await discover(configuration)
         let activeLogin: ActiveLogin
         do {
             activeLogin = try await keychain.activeService().map(ActiveLogin.service) ?? .none

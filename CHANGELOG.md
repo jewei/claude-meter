@@ -7,7 +7,8 @@ are in the `v3.1.3` tag.
 
 <!-- Every user-visible change has an entry under [Unreleased] (AGENTS.md). scripts/release.sh
      turns the heading into the release version and uses the section as the release notes,
-     so keep entries user-facing. -->
+     so keep entries user-facing. Each entry describes a change against the last release
+     (3.1.3, the v3.1.3 tag), never a fix of code that was not released. -->
 
 ## [Unreleased]
 
@@ -16,65 +17,54 @@ core.
 
 ### Changed
 
-- Settings start fresh. After the welcome screen, connect Claude and turn on your other
-  sources again, and set names, plans, and card order.
-- A manual Claude connection from 3.x must be entered again. Claude Meter deletes the old
-  Keychain item.
-- Settings lists a Claude login that has no config dir, so you can name it and set its
-  plan.
-- The popover is a native panel that resizes smoothly when you open and close cards.
+- Settings start fresh. After the welcome screen, connect Claude, turn on your other
+  sources, and set your added folders, names, plans, appearance, and card order again.
+  Launch at login and automatic update checks keep their setting.
+- A manual Claude connection from 3.x must be entered again. When you connect Claude,
+  Claude Meter deletes the old Keychain item.
+- Settings always lists your Claude logins, also a single login and a login that has no
+  config dir, so you can name each one and set its plan. A manual Claude connection can set
+  its plan when the login does not report one.
+- Settings can disconnect Claude and remove a Claude config dir that you added. Removing a
+  folder asks first, and so does a Disconnect that deletes tokens you entered.
 - Settings opens as a normal window with a Dock icon while it is open, and no longer floats
   above other apps.
-- The Settings window can be resized, and always fits on the screen.
+- You can make the Settings window taller or shorter, and it always fits on the screen.
 - A card's context menu has **Use in Menu Bar**, also as a VoiceOver action, so you can
   choose the menu-bar account without a drag.
-- Removing a folder, and a Disconnect that deletes tokens you entered, ask first.
+- The menu-bar card stays first. To use another account in the menu bar, drag its card to
+  the top or use **Use in Menu Bar**. Moving the first card lower no longer changes the
+  menu-bar account.
 - The welcome screen offers Quit.
 - Every percentage is a whole number, everywhere.
-- Codex windows are named Session and Weekly, the same as Claude.
 - Exactly 100% used now shows as out of energy in the menu bar as well as in the hero.
 - "Last updated" shows hours and days for old data.
-- The menu bar updates countdowns and staleness every 30 seconds, not only after a refresh.
+- The menu bar shows a passed reset and old data within 30 seconds, not only after a
+  refresh.
 - Cursor and Grok keep showing the last reading, marked stale, when the sign-in expires,
   until you sign in again. Signing out removes it.
-- The popover has rounded corners and a border.
-- Cursor and Grok bars have no label above the bar. The caption below already names the
-  window and the reset.
+- After a rate limit, Codex, Cursor, and Grok wait for the retry time before they ask
+  again, at most one hour, and only for the limited account.
 - The expand arrow is always last in the header of a bar card.
 - The Grok mark has the same color as the other marks, not the color of its energy level.
 
 ### Fixed
 
 - Codex usage with a fractional percentage no longer fails to load.
-- A Codex request that times out names the step that timed out.
 - A failed manual Claude reconnection keeps the earlier working connection.
 - Manual Claude tokens refresh before they expire, not only after a rejected request.
 - Two people in the same Claude team are no longer marked as the same login.
-- Cursor and Grok accept numbers sent as text, and a valid Grok sign-in is used even when
-  an expired one comes first.
-- Reset countdowns between 47h 30m and 48h no longer show "48h".
-- The loading indicator in the menu bar spins.
-- The popover closes when you switch apps or Spaces, and a click on the menu-bar icon
-  right after it closed no longer opens it again.
+- Cursor and Grok accept numbers sent as text, and a valid Grok sign-in of the same account
+  is used when an expired one comes first.
+- Reset countdowns from 12 to 48 hours round the hours down, so 47h 40m shows "47h", not
+  "48h".
+- The loading indicator in the menu bar spins, and it shows only before the first reading.
+  During a later refresh, the bolt stays.
 - Releasing a dragged card no longer opens or closes it.
-- The popover fits on short screens and with a hidden menu bar.
-- Text has enough contrast in light and dark mode, also on hover and press.
-- Moving a card lower in the popover no longer changes the menu-bar meter or its pinned
-  account.
+- The popover fits on short screens.
+- Text in light mode has enough contrast, also on hover and press.
 - A saved card order no longer keeps Cursor, Grok, or extra usage first while a Claude or
   Codex card shows.
 - A retry after a failed refresh keeps the error in the menu bar and the popover, instead
   of a spinner.
-- Settings no longer saves the default Codex home again as an added home when you add it
-  before the list loads, and a name typed for a removed Codex home no longer comes back.
-- One saved reading that cannot be read no longer discards the saved readings of the other
-  sources at launch.
-- After a rate limit, Codex, Cursor, and Grok wait for the retry time before they ask
-  again, at most one hour, and only for the limited account. The countdown on the card is
-  true.
 - A Codex CLI that is too old for usage checks asks you to update it.
-
-### Removed
-
-- The one-time cleanup of 2.x hooks, statusline commands, and cache files. Installations
-  older than 3.0 receive 3.1.3 first, which does this cleanup.

@@ -23,7 +23,9 @@ Agents never run `make release`, `make release-candidate`, or `scripts/release.s
 
 A change is done when `make check` passes and the docs that describe the behavior are
 updated in the same commit. A user-visible change also has an entry under
-`## [Unreleased]` in `CHANGELOG.md`.
+`## [Unreleased]` in `CHANGELOG.md`. Entries describe changes against the last release (the
+newest `v*` tag), never fixes of unreleased code. A fix of a defect that no release had gets
+no entry, but update any `[Unreleased]` entry that the fix makes false.
 
 ## Map
 

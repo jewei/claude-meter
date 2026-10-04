@@ -138,4 +138,4 @@ else is written.
 | One provider refresh (safety net) | 90 s |
 | One history refresh | 20 s |
 | Blocking file, SQLite, or Keychain read | 5 s. A read past its limit is abandoned and keeps its thread until it ends; while 16 abandoned reads still run, new reads fail at once. History scans have a separate pool with the same limits. |
-| Child process (Codex recovery) | 5 s per step, TERM then KILL after 0.25 s |
+| Child process (Codex recovery) | 5 s for the search and `initialize`, 15 s each for `account/read` and `account/rateLimits/read`; TERM, then KILL after 0.25 s |

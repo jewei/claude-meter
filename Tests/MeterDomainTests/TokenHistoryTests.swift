@@ -50,6 +50,32 @@ import Testing
         #expect(history([0: 1]).tokens(in: .today, now: tomorrow, calendar: calendar) == nil)
     }
 
+    @Test(arguments: [TokenPeriod.yesterday, .lastSevenDays])
+    func observationFromAnEarlierDayCannotAnswerAPeriodThatEndedLater(period: TokenPeriod) {
+        // Observed yesterday at 10:00: the rest of yesterday and all of today are missing.
+        let yesterdayMorning = TokenHistory(
+            dailyTokens: [day(-1): 100], coverageStart: day(-7),
+            observedAt: day(-1).addingTimeInterval(.hours(10)),
+            timeZoneID: calendar.timeZone.identifier)
+        #expect(yesterdayMorning.tokens(in: period, now: .reference(), calendar: calendar) == nil)
+        // Observed five days ago: five days are missing.
+        let older = TokenHistory(
+            dailyTokens: [day(-5): 7], coverageStart: day(-12),
+            observedAt: day(-5).addingTimeInterval(.hours(12)),
+            timeZoneID: calendar.timeZone.identifier)
+        #expect(older.tokens(in: period, now: .reference(), calendar: calendar) == nil)
+    }
+
+    @Test func observationEarlierTodayAnswersEveryPeriod() {
+        let morning = TokenHistory(
+            dailyTokens: [day(-1): 20, day(0): 10], coverageStart: day(-6),
+            observedAt: today.addingTimeInterval(.minutes(1)),
+            timeZoneID: calendar.timeZone.identifier)
+        #expect(morning.tokens(in: .today, now: .reference(), calendar: calendar) == 10)
+        #expect(morning.tokens(in: .yesterday, now: .reference(), calendar: calendar) == 20)
+        #expect(morning.tokens(in: .lastSevenDays, now: .reference(), calendar: calendar) == 30)
+    }
+
     @Test func timeZoneChangeIsUnknown() {
         let other = history([0: 1], timeZoneID: "Asia/Tokyo")
         #expect(other.tokens(in: .today, now: .reference(), calendar: calendar) == nil)

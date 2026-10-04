@@ -219,8 +219,9 @@ Only the fields below are read. All other fields are skipped.
 
 ## Partial and unknown history
 
-62. History is unknown when the account has no records, when the time zone changed, or when
-    the covered days do not include the period.
+62. History is unknown when the account has no records, when the time zone changed, when
+    the covered days do not include the period, or when the last read was on an earlier day
+    (the days after that read are not covered).
 63. Partial coverage belongs to the account whose folder caused it. Other accounts stay
     complete.
 64. These conditions make an account partial:

@@ -37,7 +37,8 @@ public enum TokenPeriod: CaseIterable, Sendable {
 ///
 /// History counts tokens, not money or quota. It never affects severity, selection, or quota
 /// freshness. A missing day is zero only when the history covers that day; an uncovered
-/// period is unknown.
+/// period is unknown. The history covers the days from ``coverageStart`` through the day of
+/// ``observedAt``, so a history observed on an earlier day cannot answer for any period.
 public struct TokenHistory: Hashable, Sendable {
     /// Start of a local day → tokens used on that day.
     public let dailyTokens: [Date: Int64]
@@ -74,11 +75,15 @@ public struct TokenHistory: Hashable, Sendable {
     }
 
     /// Total tokens in `period`, or nil when the history cannot answer for that period.
+    ///
+    /// The history must be observed after the period ended, or today for a period that
+    /// includes today. An older history would count the days after its observation as zero.
     public func tokens(in period: TokenPeriod, now: Date, calendar: Calendar) -> Int64? {
         guard hasRecords, timeZoneID == calendar.timeZone.identifier,
             DateBounds.contains(coverageStart), DateBounds.contains(observedAt),
             let interval = period.interval(at: now, calendar: calendar),
-            coverageStart <= interval.start, observedAt >= interval.start
+            coverageStart <= interval.start,
+            observedAt >= min(interval.end, calendar.startOfDay(for: now))
         else { return nil }
         var total: Int64 = 0
         for (day, count) in dailyTokens where day >= interval.start && day < interval.end {

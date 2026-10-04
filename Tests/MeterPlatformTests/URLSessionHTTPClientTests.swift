@@ -166,6 +166,19 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
         #expect(StubProtocol.requestCount(host: host) == 1)
     }
 
+    @Test func returnsTheResponseForAHugeServerDelay() async throws {
+        for delay in ["99999999999999999999999", String(repeating: "9", count: 400)] {
+            let host = uniqueHost()
+            StubProtocol.install(
+                host: host,
+                steps: [.respond(status: 503, headers: ["Retry-After": delay], body: Data())])
+            let request = HTTPRequest(
+                url: URL(string: "https://\(host)/")!, retry: .transientFailures)
+            #expect(try await client().send(request).status == 503)
+            #expect(StubProtocol.requestCount(host: host) == 1)
+        }
+    }
+
     @Test func mapsTransportFailures() async {
         let host = uniqueHost()
         StubProtocol.install(host: host, steps: [.fail(.notConnectedToInternet)])

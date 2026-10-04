@@ -57,7 +57,7 @@ public final class URLSessionHTTPClient: HTTPClient {
             } catch let error as HTTPError where retries && error.isTransient {
                 guard attempt < Self.maxAttempts else { throw error }
                 let wait = Self.backoff(attempt: attempt)
-                guard ContinuousClock.now + .seconds(wait) < deadline else { throw error }
+                guard Self.fits(wait, before: deadline) else { throw error }
                 try await Task.sleep(for: .seconds(wait))
                 attempt += 1
                 continue
@@ -69,7 +69,7 @@ public final class URLSessionHTTPClient: HTTPClient {
             let wait =
                 RetryAfter.delay(response.header("retry-after"), now: Date())
                 ?? Self.backoff(attempt: attempt)
-            guard ContinuousClock.now + .seconds(wait) < deadline else { return response }
+            guard Self.fits(wait, before: deadline) else { return response }
             try await Task.sleep(for: .seconds(wait))
             attempt += 1
         }
@@ -77,6 +77,12 @@ public final class URLSessionHTTPClient: HTTPClient {
 
     private static func backoff(attempt: Int) -> TimeInterval {
         min(maxBackoff, pow(2, Double(attempt - 1)))
+    }
+
+    /// Compares in seconds, so a huge server delay never becomes a `Duration`, which traps.
+    private static func fits(_ wait: TimeInterval, before deadline: ContinuousClock.Instant) -> Bool
+    {
+        wait.isFinite && wait < (deadline - ContinuousClock.now).timeInterval
     }
 
     private func sendOnce(_ request: HTTPRequest) async throws -> HTTPResponse {

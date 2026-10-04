@@ -20,6 +20,15 @@ import Testing
         #expect(RetryAfter.delay("Sun, 04 Oct 2026 12:01:30 GMT", now: .reference()) == 90)
         #expect(RetryAfter.delay("Sun, 04 Oct 2026 11:59:00 GMT", now: .reference()) == nil)
     }
+
+    @Test func clampsHugeValues() {
+        for value in [
+            "99999999999999999999999", String(repeating: "9", count: 400),
+            "Fri, 31 Dec 9999 23:59:59 GMT",
+        ] {
+            #expect(RetryAfter.delay(value, now: .reference()) == RetryAfter.maximum)
+        }
+    }
 }
 
 @Suite struct JWTTests {

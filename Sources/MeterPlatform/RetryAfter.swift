@@ -2,21 +2,26 @@ import Foundation
 
 /// Parses the HTTP `Retry-After` header.
 public enum RetryAfter {
-    /// Seconds to wait after `now`, or nil when the value is missing, invalid, or not in the
-    /// future. Accepts delta-seconds (ASCII digits only) and IMF-fixdate HTTP dates.
+    /// The longest delay that ``delay(_:now:)`` returns: 366 days. A larger value is clamped,
+    /// so a broken proxy cannot make a caller overflow a `Duration` or a `Date`.
+    public static let maximum: TimeInterval = 366 * 86_400
+
+    /// Seconds to wait after `now`, at most ``maximum``, or nil when the value is missing,
+    /// invalid, or not in the future. Accepts delta-seconds (ASCII digits only, any length)
+    /// and IMF-fixdate HTTP dates.
     public static func delay(_ value: String?, now: Date) -> TimeInterval? {
         guard let value = value?.trimmingCharacters(in: .whitespaces), !value.isEmpty else {
             return nil
         }
         if value.allSatisfy({ $0.isASCII && $0.isNumber }) {
-            guard let seconds = TimeInterval(value), seconds > 0, seconds.isFinite else {
-                return nil
-            }
-            return seconds
+            // Too many digits parse as infinity, which still means "later than the maximum".
+            guard let seconds = TimeInterval(value), seconds > 0 else { return nil }
+            return min(seconds, maximum)
         }
         guard let date = httpDate(value) else { return nil }
         let seconds = date.timeIntervalSince(now)
-        return seconds > 0 ? seconds : nil
+        guard seconds.isFinite, seconds > 0 else { return nil }
+        return min(seconds, maximum)
     }
 
     private static func httpDate(_ value: String) -> Date? {

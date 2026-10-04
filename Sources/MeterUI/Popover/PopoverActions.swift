@@ -2,7 +2,8 @@ import CoreGraphics
 
 /// What the popover views can ask the app to do.
 @MainActor struct PopoverActions {
-    var openSettings: () -> Void = {}
+    /// Opens Settings on a tab, or on the tab that the user left. It also ends the welcome.
+    var openSettings: (SettingsTab?) -> Void = { _ in }
     /// Closes the popover, then starts a user-initiated update check in Sparkle's window.
     var checkForUpdates: () -> Void = {}
     var quit: () -> Void = {}

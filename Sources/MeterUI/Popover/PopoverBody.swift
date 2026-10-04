@@ -27,8 +27,11 @@ struct PopoverBody: View {
                 LoadingView(message: message)
             case .status(let screen):
                 StatusScreenView(screen: screen) {
-                    model.completeOnboarding()
-                    actions.openSettings()
+                    switch screen.action {
+                    // The welcome asks for a data source, so it opens on Data.
+                    case .getStarted: actions.openSettings(.data)
+                    case .openSettings: actions.openSettings(nil)
+                    }
                 }
             case .accounts(let accounts):
                 AccountsView(accounts: accounts, model: model)

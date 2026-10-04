@@ -19,7 +19,9 @@ import MeterApp
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         MeterFont.registerBundledFonts()
-        NSApp.mainMenu = MainMenu.make(settingsTarget: self)
+        let menu = MainMenu.make(target: self)
+        NSApp.mainMenu = menu.main
+        NSApp.windowsMenu = menu.window
 
         let model = AppModel.live(updater: updater)
         let statusItem = StatusItemController(model: model)
@@ -32,7 +34,7 @@ import MeterApp
         popover.onVisibilityChange = { [weak statusItem] isVisible in
             statusItem?.setHighlighted(isVisible)
         }
-        popover.onOpenSettings = { [weak self] in self?.openSettings(nil) }
+        popover.onOpenSettings = { [weak self] tab in self?.openSettings(tab: tab) }
 
         self.model = model
         self.statusItem = statusItem
@@ -47,9 +49,21 @@ import MeterApp
         return false
     }
 
-    /// Closes the popover and brings Settings to the front.
+    /// Command-comma and Settings… in the app menu.
     @objc func openSettings(_ sender: Any?) {
+        openSettings(tab: nil)
+    }
+
+    /// About Claude Meter in the app menu.
+    @objc func openAbout(_ sender: Any?) {
+        openSettings(tab: .about)
+    }
+
+    /// Closes the popover and brings Settings to the front. Every path into Settings ends
+    /// the welcome, so the "Fetch usage" switch there is true: refreshing starts.
+    private func openSettings(tab: SettingsTab?) {
+        model?.completeOnboarding()
         popover?.close()
-        settingsWindow?.show()
+        settingsWindow?.show(tab: tab)
     }
 }

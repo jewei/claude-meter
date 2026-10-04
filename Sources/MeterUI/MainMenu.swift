@@ -1,27 +1,31 @@
 import AppKit
 
 /// The menu bar that shows while Settings is open: the app menu, Edit (so copy and paste work
-/// in text fields), and Window.
+/// in text fields), and Window. The app installs it once at launch; macOS shows it only
+/// while the app is regular.
 @MainActor enum MainMenu {
-    /// - Parameter settingsTarget: receives `openSettings(_:)` for Command-comma.
-    static func make(settingsTarget: AnyObject) -> NSMenu {
+    /// - Parameter target: receives `openSettings(_:)` for Command-comma and `openAbout(_:)`.
+    /// - Returns: the main menu, and the Window menu for `NSApplication.windowsMenu`.
+    static func make(target: AppController) -> (main: NSMenu, window: NSMenu) {
         let main = NSMenu()
-        main.addItem(submenu(appMenu(settingsTarget: settingsTarget)))
+        let window = windowMenu()
+        main.addItem(submenu(appMenu(target: target)))
         main.addItem(submenu(editMenu()))
-        main.addItem(submenu(windowMenu()))
-        return main
+        main.addItem(submenu(window))
+        return (main, window)
     }
 
-    private static func appMenu(settingsTarget: AnyObject) -> NSMenu {
+    private static func appMenu(target: AppController) -> NSMenu {
         let menu = NSMenu(title: "Claude Meter")
-        menu.addItem(
-            withTitle: "About Claude Meter",
-            action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        let about = menu.addItem(
+            withTitle: "About Claude Meter", action: #selector(AppController.openAbout(_:)),
+            keyEquivalent: "")
+        about.target = target
         menu.addItem(.separator())
         let settings = menu.addItem(
             withTitle: "Settings…", action: #selector(AppController.openSettings(_:)),
             keyEquivalent: ",")
-        settings.target = settingsTarget
+        settings.target = target
         menu.addItem(.separator())
         menu.addItem(
             withTitle: "Hide Claude Meter", action: #selector(NSApplication.hide(_:)),
@@ -61,7 +65,6 @@ import AppKit
             keyEquivalent: "m")
         menu.addItem(
             withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-        NSApplication.shared.windowsMenu = menu
         return menu
     }
 

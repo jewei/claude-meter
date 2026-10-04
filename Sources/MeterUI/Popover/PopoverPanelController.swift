@@ -17,7 +17,7 @@ import SwiftUI
     /// Height changes smaller than this are measurement noise.
     static let tolerance: CGFloat = 0.5
 
-    var onOpenSettings: () -> Void = {}
+    var onOpenSettings: (SettingsTab?) -> Void = { _ in }
     var onVisibilityChange: (Bool) -> Void = { _ in }
 
     private let model: AppModel
@@ -93,7 +93,7 @@ import SwiftUI
 
     private func makeActions() -> PopoverActions {
         PopoverActions(
-            openSettings: { [weak self] in self?.onOpenSettings() },
+            openSettings: { [weak self] tab in self?.onOpenSettings(tab) },
             checkForUpdates: { [weak self] in
                 // Sparkle's window opens in front; the panel must not cover it.
                 self?.close()

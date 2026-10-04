@@ -33,8 +33,7 @@ struct PopoverHeader: View {
                     .accessibilityLabel("Last updated \(updated)")
             }
             SquareIconButton(symbol: "gearshape.fill", label: "Settings") {
-                model.completeOnboarding()
-                actions.openSettings()
+                actions.openSettings(nil)
             }
             if popover.showsQuit {
                 SquareIconButton(symbol: "power", label: "Quit Claude Meter", action: actions.quit)

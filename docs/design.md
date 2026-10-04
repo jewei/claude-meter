@@ -153,8 +153,8 @@ its focus.
 ```
 
 Header: a 30 pt bolt tile, "Claude Meter" (never wraps), the updated time (truncates first),
-then Settings and Quit (28 pt). Settings, "Get started →", and "Open Settings" all call
-`completeOnboarding()` and open Settings.
+then Settings and Quit (28 pt). Settings, "Get started →" (on the Data tab), and "Open
+Settings" open Settings, which ends the welcome.
 
 Status screens (`StatusScreenView`): a 76 pt raised disc with the mascot (hidden from
 accessibility), Fredoka SemiBold 20 title, wrapping Nunito SemiBold 12 message (inline code
@@ -221,10 +221,17 @@ stays still. Loading, stale, and error periods do not restart it. Reduce Motion 
 
 ## Settings (`Settings/`)
 
-`SettingsWindowController` owns a titled 580×700 window, "Claude Meter Settings". While it is
-open the app uses the regular activation policy (Dock icon, menu bar, Command-Tab) and comes
-to the front; it returns to accessory when the window closes. `MainMenu` provides the app,
-Edit, and Window menus for that time.
+`SettingsWindowController` owns a titled window, "Claude Meter Settings", 580 pt wide and
+700 pt tall when the screen allows it. The height can change (at least 420 pt), and the
+window never reaches past the visible frame (`SettingsWindowPlacement`, pure); pages scroll.
+It remembers its place and its tab (`SettingsNavigation`); while it is closed its SwiftUI
+content is gone, so nothing renders. To open, the app switches to the regular activation
+policy (Dock icon, menu bar, Command-Tab), activates, and then orders the window to the
+front, asking once more on the next turn because activation is cooperative. It returns to
+accessory when the last titled window closes, so Sparkle's window keeps the Dock icon. Every
+path into Settings (the popover, Command-comma, reopening the app, About) calls
+`completeOnboarding()`. `MainMenu` (app, Edit, Window) is installed at launch and shows while
+the app is regular; "About Claude Meter" opens the About tab.
 
 - Tab bar (`SettingsTabBar`): Data, Appearance, Advanced, About; 112 pt targets; the selected
   tab has the hero-full fill and border and the selected trait; Command-1 to Command-4.

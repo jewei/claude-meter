@@ -184,6 +184,23 @@ import Testing
         #expect(!model.isWorking)
     }
 
+    /// Settings shows failures as errors without reading the message text (review UI-33).
+    @Test func onlyFailuresAreMarkedAsProblems() async {
+        #expect(await !model.connectAutomatically())
+        #expect(model.messageIsProblem)
+        storeClaudeCodeLogin()
+        gate.open()
+        #expect(await model.connectAutomatically())
+        #expect(model.message == "Connected.")
+        #expect(!model.messageIsProblem)
+        status.withLock { $0 = 401 }
+        #expect(await !connectManually("token"))
+        #expect(model.messageIsProblem)
+        await model.abandonConnect()
+        #expect(model.message == nil)
+        #expect(!model.messageIsProblem)
+    }
+
     @Test func reconnectingInTheSameModeRefreshesClaude() async {
         storeClaudeCodeLogin()
         gate.open()

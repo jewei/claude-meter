@@ -32,7 +32,11 @@ public final class ClaudeSettingsModel {
     /// A connect or disconnect is running.
     public private(set) var isWorking = false
     /// The result of the last connect or disconnect, for the user.
-    public private(set) var message: String?
+    public private(set) var message: String? {
+        didSet { messageIsProblem = false }
+    }
+    /// ``message`` reports a failure, so Settings shows it as an error.
+    public private(set) var messageIsProblem = false
     /// Why the last config dir could not be added, for the user.
     public private(set) var directoryMessage: String?
 
@@ -144,7 +148,7 @@ public final class ClaudeSettingsModel {
             try await provider.disconnectManual()
         } catch {
             if connection == .manual {
-                if current == attempt { message = Self.text(for: error) }
+                if current == attempt { fail(error) }
                 return
             }
         }
@@ -201,10 +205,16 @@ public final class ClaudeSettingsModel {
             return false
         } catch {
             guard current == attempt else { return false }
-            message = Self.text(for: error)
+            fail(error)
         }
         await reload()
         return saved
+    }
+
+    /// Shows a failure as an error message.
+    private func fail(_ error: any Error) {
+        message = Self.text(for: error)
+        messageIsProblem = true
     }
 
     /// Error text for the user, always redacted.

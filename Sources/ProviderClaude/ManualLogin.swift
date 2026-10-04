@@ -24,9 +24,12 @@ actor ManualLogin {
     let now: @Sendable () -> Date
     let log = Log(.claude)
 
+    // `ManualLogin+Refresh.swift` reads or changes the members below that are not private.
+    // Nothing outside this actor may touch them.
+
     /// Moves when a Connect is stored and when a Disconnect starts. Work that began in an
     /// older generation cannot store or change anything.
-    private var generation: UInt64 = 0
+    private(set) var generation: UInt64 = 0
     private var connectAttempts: UInt64 = 0
     /// Set when a Disconnect starts and cleared by the next Connect. While it is set there is
     /// no login, whatever a Keychain read that started earlier returns.
@@ -35,13 +38,13 @@ actor ManualLogin {
     private var isWriting = false
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
     /// The newest known credential of the stored connection, including unsaved rotations.
-    private var latest: ManualCredential?
-    private var refreshes: [String: Task<ManualCredential, any Error>] = [:]
-    private var policy = ManualRefreshPolicy()
+    var latest: ManualCredential?
+    var refreshes: [String: Task<ManualCredential, any Error>] = [:]
+    var policy = ManualRefreshPolicy()
     /// Tokens that a Connect got from the token endpoint but has not stored, by the refresh
     /// token that the user pasted. The server spent that token when it rotated it, so a retry
     /// of Connect with the same pasted tokens must use these instead.
-    private var pendingRotation: (pasted: String, credential: ManualCredential)?
+    var pendingRotation: (pasted: String, credential: ManualCredential)?
 
     init(
         vault: ManualCredentialVault, refresher: TokenRefresher, now: @escaping @Sendable () -> Date
@@ -78,70 +81,11 @@ actor ManualLogin {
         }
     }
 
-    /// A credential that does not expire within 60 s, refreshed first when needed. Throws
-    /// ``Failure/rejected`` without a request for a connection that the server rejected.
-    func usable() async throws -> ManualCredential {
-        let credential = try await current()
-        guard !policy.isRejected(connectionID: credential.connectionID) else {
-            throw Failure.rejected
-        }
-        guard credential.isExpired(at: now()) else { return credential }
-        return try await refreshed(from: credential)
-    }
-
-    /// One refresh after the server rejected `credential` with HTTP 401. Throws
-    /// ``Failure/changed`` without a request when `credential` is no longer the stored login.
-    func refreshedAfterRejection(of credential: ManualCredential) async throws -> ManualCredential {
-        try await refreshed(from: credential)
-    }
-
     /// Throws ``Failure/changed`` unless `credential` belongs to the stored login: after a
     /// Disconnect, or a Connect of other tokens, its tokens must not be sent again.
     func ensureCurrent(_ credential: ManualCredential) throws {
         guard !isDisconnected, latest?.connectionID == credential.connectionID else {
             throw Failure.changed
-        }
-    }
-
-    /// Stops all requests for the connection of `credential` until the next Connect: the
-    /// server rejected its tokens, and a refresh did not help.
-    func markRejected(_ credential: ManualCredential) {
-        guard policy.rejectConnection(credential.connectionID) else { return }
-        log.notice("Manual Claude tokens were rejected; waiting for a new Connect")
-    }
-
-    /// The rotation that an earlier Connect got for the refresh token the user pasted.
-    func pendingRotation(for pastedRefreshToken: String) -> ManualCredential? {
-        guard let pendingRotation, pendingRotation.pasted == pastedRefreshToken else { return nil }
-        return pendingRotation.credential
-    }
-
-    /// Forgets the pending rotation of `pastedRefreshToken`, after the server rejected it.
-    func discardPendingRotation(for pastedRefreshToken: String) {
-        if pendingRotation?.pasted == pastedRefreshToken { pendingRotation = nil }
-    }
-
-    /// Refreshes tokens that are not stored yet, during Connect. Shares an in-flight request
-    /// for the same refresh token and ignores the backoff. Stores nothing in the Keychain, but
-    /// keeps the rotation for `pastedRefreshToken` until a Connect stores it. A Disconnect or a
-    /// stored Connect during the request forgets the rotation and throws ``Failure/changed``.
-    func refreshedCandidate(_ candidate: ManualCredential, pastedRefreshToken: String)
-        async throws -> ManualCredential
-    {
-        guard let refreshToken = candidate.refreshToken else { throw Failure.expired }
-        let startGeneration = generation
-        switch await sharedRefresh(candidate, refreshToken: refreshToken).result {
-        case .success(var fresh):
-            guard generation == startGeneration else { throw Failure.changed }
-            // The shared request may have started for the stored connection.
-            fresh.connectionID = candidate.connectionID
-            pendingRotation = (pastedRefreshToken, fresh)
-            return fresh
-        case .failure(Failure.rejected):
-            discardPendingRotation(for: pastedRefreshToken)
-            throw Failure.rejected
-        case .failure(let error):
-            throw error
         }
     }
 
@@ -172,16 +116,18 @@ actor ManualLogin {
     /// Throws ``Failure/changed`` and leaves the old item as it was when the Connect is no
     /// longer wanted: a Disconnect or a newer Connect started after `ticket`, the Connect was
     /// cancelled, or `isWanted` returns false. Both are checked before the save and again after
-    /// it, under the write lock; a Connect abandoned during the save writes the old item back
-    /// (or deletes the new one when there was none). When the save fails, the old login and
+    /// it, the second time under the write lock; a Connect abandoned during the save writes the
+    /// old item back (or deletes the new one when there was none). When the save fails, the old login and
     /// its in-flight refreshes stay as they were. Throws the Keychain error when the old item
     /// cannot be read, before anything is written.
     func connect(
         _ credential: ManualCredential, ticket: Ticket, isWanted: @Sendable () async -> Bool
     ) async throws {
+        // Asked before the write lock, so that a slow answer never holds other writes.
+        guard await mayStore(ticket, isWanted) else { throw Failure.changed }
         await lockWrites()
         defer { unlockWrites() }
-        guard await mayStore(ticket, isWanted) else { throw Failure.changed }
+        guard ticket == currentTicket else { throw Failure.changed }
         // Read first, so that a Connect abandoned during the save can be undone.
         let previous = try await vault.storedValue()
         guard ticket == currentTicket else { throw Failure.changed }
@@ -240,46 +186,10 @@ actor ManualLogin {
         policy = ManualRefreshPolicy()
     }
 
-    private func refreshed(from used: ManualCredential) async throws -> ManualCredential {
-        try ensureCurrent(used)
-        // Another caller already rotated this connection's tokens.
-        if let latest, latest.accessToken != used.accessToken, !latest.isExpired(at: now()) {
-            return latest
-        }
-        guard let refreshToken = used.refreshToken else { throw Failure.expired }
-        try policy.checkRefresh(refreshToken, now: now())
-
-        let startGeneration = generation
-        let (result, isFirst) = await sharedRefresh(used, refreshToken: refreshToken)
-        guard generation == startGeneration else { throw Failure.changed }
-        switch result {
-        case .success(var fresh):
-            // The shared request may have started for a Connect of the same refresh token.
-            fresh.connectionID = used.connectionID
-            if latest?.connectionID == used.connectionID, latest?.accessToken != fresh.accessToken {
-                // In memory at once, so that no other caller sends the rotated refresh token.
-                latest = fresh
-                policy.recordSuccess()
-                await persist(fresh, generation: startGeneration)
-            }
-            return fresh
-        case .failure(Failure.rejected):
-            policy.rejectRefreshToken(refreshToken)
-            if isFirst { log.notice("Manual Claude refresh token was rejected") }
-            throw Failure.rejected
-        case .failure(let error):
-            if isFirst {
-                policy.recordTemporaryFailure(now: now())
-                log.warning("Manual Claude token refresh failed: \(error.localizedDescription)")
-            }
-            throw error
-        }
-    }
-
     /// Stores a rotation after the writes before it. A Connect or Disconnect meanwhile, or a
     /// newer rotation, makes it obsolete. The in-memory rotation stays usable when the save
     /// fails, until the next save works.
-    private func persist(_ credential: ManualCredential, generation expected: UInt64) async {
+    func persist(_ credential: ManualCredential, generation expected: UInt64) async {
         await lockWrites()
         defer { unlockWrites() }
         guard generation == expected, latest == credential else { return }
@@ -289,33 +199,6 @@ actor ManualLogin {
         } catch {
             log.error("Could not save refreshed manual Claude tokens", error)
         }
-    }
-
-    /// Joins the in-flight refresh of `refreshToken`, or starts one. `isFirst` is true for the
-    /// one caller that sees the request finish first, so outcomes are recorded once.
-    private func sharedRefresh(
-        _ credential: ManualCredential, refreshToken: String
-    ) async -> (result: Result<ManualCredential, any Error>, isFirst: Bool) {
-        let task: Task<ManualCredential, any Error>
-        if let running = refreshes[refreshToken] {
-            task = running
-        } else {
-            let refresher = refresher
-            task = Task {
-                do {
-                    return try await refresher.refresh(credential, using: refreshToken)
-                } catch TokenRefresher.Failure.rejected {
-                    throw Failure.rejected
-                } catch TokenRefresher.Failure.failed(let reason) {
-                    throw Failure.refreshFailed(reason)
-                }
-            }
-            refreshes[refreshToken] = task
-        }
-        let result = await task.result
-        let isFirst = refreshes[refreshToken] == task
-        if isFirst { refreshes[refreshToken] = nil }
-        return (result, isFirst)
     }
 
     /// Waits until no other Keychain write of this login runs. Writes run in arrival order.

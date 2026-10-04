@@ -144,12 +144,12 @@ extension ClaudeTests {
             #expect(await refreshing.waitForArrivals())
             // A fetch of the stored login joins it once it has read the stored item.
             let fetch = Task { try await provider.fetch(previous: nil) }
-            let deadline = ContinuousClock.now + .seconds(5)
-            while !harness.keychain.readServices.contains(ManualCredentialVault.service),
-                ContinuousClock.now < deadline
-            {
-                try await Task.sleep(for: .milliseconds(1))
-            }
+            #expect(
+                await waitUntil {
+                    harness.keychain.readServices.contains(ManualCredentialVault.service)
+                })
+            // Time to join. A fetch that has not joined yet sends its own request instead, and
+            // the owners below are the same.
             try await Task.sleep(for: .milliseconds(50))
             refreshing.open()
             let usage = try await fetch.value

@@ -199,8 +199,8 @@ little memory. The limit is 256 MiB. The result is one of three states:
    Connect, stores nothing and says that the connection changed. `cancelManualConnect()`
    does the same for running Connects and keeps the stored login.
 6. Connect checks its ticket, and asks its caller whether it is still wanted (`isWanted`),
-   right before the save and again after it, under the write lock. Before the save it reads
-   the old item. A Connect that is abandoned during the save writes the old item back, or
+   right before the save and again after it; the second check runs under the write lock.
+   Before the save it reads the old item. A Connect that is abandoned during the save writes the old item back, or
    deletes the new one when there was none, and says that the connection changed. When the
    old item cannot be read, Connect fails before it writes.
 7. `ClaudeSettingsModel` runs one attempt at a time; a newer attempt overtakes an older one.

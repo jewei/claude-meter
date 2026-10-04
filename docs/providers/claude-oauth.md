@@ -224,20 +224,39 @@ little memory. The limit is 256 MiB. The result is one of three states:
 
 ### User-facing text
 
-| Case | Active login or manual | Other config dir |
-| --- | --- | --- |
-| No credential | Claude Code isn't signed in — run `claude login` to restore Claude usage | Credentials missing. Run claude login for this account. |
-| Keychain locked | Keychain is locked — unlock your Mac to refresh Claude usage | Keychain is temporarily unavailable. |
-| Credential unreadable | Claude Code credentials couldn't be read — run `claude login` to re-create them | Credentials invalid. Run claude login for this account. |
-| Expired | Claude Code sign-in expired — run `claude login` to restore Claude usage | Credentials expired. Run claude login for this account. |
-| `.claude.json` unreadable | Could not read Claude Code's account file. Retrying at the next refresh. | Same |
-| HTTP 401 or 403 | Claude Code sign-in expired — run `claude login` to restore Claude usage | Sign in again with claude login for this account. |
-| HTTP 429 | Anthropic is rate-limiting usage checks. (with `retryAt`) | Same |
-| Other HTTP status | Anthropic usage check failed (HTTP <status>). | Same |
-| Network failure | Could not refresh Claude usage. <reason> | Same |
-| Out of time | The Claude usage check timed out. | Same |
-| Owner changed | Claude Code sign-in changed during the usage check. | Same |
-| Manual refresh waiting | Retrying the Claude Code sign-in… | — |
-| Not connected | Connect Claude in Settings to read usage. | — |
+The advice depends on who can fix the problem (`AccountFailure.Audience`). Claude Code
+commands never appear in manual-mode texts: they cannot change the app's manual login.
 
-Credential cases set `needsAction`. Rate limits set `retryAt`; the UI shows the countdown.
+Card texts. `<cmd>` opens Claude Code with the account's config dir:
+`` `CLAUDE_CONFIG_DIR=~/.claude-work claude` `` (the path is home-relative; other characters
+are quoted outside the tilde), or `` `claude` `` for `~/.claude`.
+
+| Case | Active login | Other config dir | Manual |
+| --- | --- | --- | --- |
+| No credential | Claude Code isn't signed in. Open Claude Code and run /login. | Not signed in. Run `<cmd>`, then /login. | Connect Claude in Settings to read usage. |
+| Keychain locked | Keychain is locked. Unlock your Mac to refresh Claude usage. | Keychain is temporarily unavailable. | Same as active login |
+| Credential unreadable | Claude Code's credentials can't be read. Open Claude Code and run /login. | Credentials can't be read. Run `<cmd>`, then /login. | The saved Claude tokens can't be read. Connect again in Settings. |
+| Expired | Claude Code's token expired. Open Claude Code once to renew it. | Token expired. Run `<cmd>` once to renew it. | The saved Claude tokens no longer work. Connect again in Settings with new tokens. |
+| HTTP 401 or 403 | Anthropic rejected Claude Code's sign-in. Open Claude Code and run /login. | Sign-in rejected. Run `<cmd>`, then /login. | Same as expired |
+| Owner changed | Claude Code sign-in changed during the usage check. | Same as active login | The Claude connection changed during the usage check. |
+| `.claude.json` unreadable | Could not read Claude Code's account file. Retrying at the next refresh. | Same | — |
+| HTTP 429 | Anthropic is rate-limiting usage checks. (with `retryAt`) | Same | Same |
+| Other HTTP status | Anthropic usage check failed (HTTP <status>). | Same | Same |
+| Network failure | Could not refresh Claude usage. <reason> | Same | Same |
+| Out of time | The Claude usage check timed out. | Same | Same |
+| Token refresh waiting | — | — | Retrying the Claude token refresh… |
+| Token refresh failed | — | — | Could not refresh the Claude tokens. <reason> |
+
+Missing, unreadable, and rejected credentials set `needsAction`, and so do all manual
+credential cases. An expired Claude Code token does not: Claude Code renews it the next time
+it runs. Rate limits set `retryAt`; the UI shows the countdown.
+
+Settings texts for automatic Connect:
+
+| Case | Text |
+| --- | --- |
+| No login, unreadable item | The active-login card texts above |
+| Keychain locked | Keychain access is unavailable. Unlock your Mac and try again. |
+| Expired | Claude Code's token expired. Open Claude Code, then try again. |
+| HTTP 401 or 403 | Anthropic rejected Claude Code's sign-in. Open Claude Code and run /login, then try again. |
+| Gate closed or HTTP 429 | Anthropic is rate-limiting usage checks. Try again in <wait>. (with `retryAt`; `<wait>` is minutes or hours, rounded up) |

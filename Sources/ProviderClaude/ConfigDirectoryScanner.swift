@@ -40,6 +40,16 @@ enum ConfigDirectoryScanner {
         directory.resolvingSymlinksInPath().standardizedFileURL.path
     }
 
+    /// The path to show the user: `~/…` inside the home folder, so that no text names the
+    /// macOS user, else the full path.
+    static func displayPath(_ directory: URL, home: URL) -> String {
+        let path = directory.standardizedFileURL.path
+        let homePath = home.standardizedFileURL.path
+        if path == homePath { return "~" }
+        guard path.hasPrefix(homePath + "/") else { return path }
+        return "~/" + path.dropFirst(homePath.count + 1)
+    }
+
     /// A directory that holds `settings.json` or `projects`.
     static func isConfigDirectory(_ url: URL) -> Bool {
         LocalFile.isDirectory(url) && hasConfigContents(url)

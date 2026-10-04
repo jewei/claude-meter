@@ -12,7 +12,7 @@ struct ManualRefresh: Sendable {
 
     func fetch(previous: ProviderUsage?) async throws -> ProviderUsage {
         if let until = api.gate.blockedUntil(now: now()) {
-            throw ProviderError(AccountFailure.rateLimited(until: until).issue(isActiveLogin: true))
+            throw ProviderError(AccountFailure.rateLimited(until: until).issue(for: .manual))
         }
         let prior = previous?.account(Self.accountID)
         let slotName = ConfigDirectoryScanner.name(for: Self.accountID)
@@ -61,6 +61,6 @@ struct ManualRefresh: Sendable {
     private func failed(_ failure: AccountFailure, _ prior: AccountUsage?) async -> AccountUsage {
         failure.account(
             id: Self.accountID, name: ConfigDirectoryScanner.name(for: Self.accountID),
-            prior: prior, status: await login.ownerStatus(), isActiveLogin: true, now: now())
+            prior: prior, status: await login.ownerStatus(), audience: .manual, now: now())
     }
 }

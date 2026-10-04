@@ -193,7 +193,7 @@ extension ClaudeTests {
             #expect(usage.accounts[0].owner == .credential(Digest.sha256("elsewhere")))
             #expect(
                 usage.accounts[1].issue?.message
-                    == "Credentials missing. Run claude login for this account.")
+                    == "Not signed in. Run `claude`, then /login.")
         }
 
         @Test func expiredClaudeCodeTokensAreNeverRefreshedOrSent() async throws {
@@ -207,15 +207,43 @@ extension ClaudeTests {
             let usage = try await harness.provider(http).fetch(previous: nil)
 
             #expect(http.requests.isEmpty)
+            // Claude Code renews an expired token when it runs, so no sign-in is asked for.
             #expect(
                 usage.accounts[0].issue
+                    == UsageIssue("Claude Code's token expired. Open Claude Code once to renew it.")
+            )
+            #expect(
+                usage.accounts[1].issue
                     == UsageIssue(
-                        "Claude Code sign-in expired — run `claude login` to restore Claude usage",
+                        "Token expired. Run `CLAUDE_CONFIG_DIR=~/.claude-work claude` once to renew it."
+                    ))
+        }
+
+        @Test func otherConfigDirsGetAdviceForTheirOwnFolder() async throws {
+            let harness = try ClaudeHarness()
+            let main = try harness.directory(".claude", account: "acc-1")
+            try harness.directory(".claude-work", account: "acc-2")
+            harness.signIn(main, token: "main", legacy: true)
+            let spaced = harness.home.path("My Configs/.claude-it's")
+            try harness.home.write("{}", to: "My Configs/.claude-it's/settings.json")
+            harness.signIn(spaced, token: "spaced")
+            harness.configuration = ClaudeConfiguration(
+                connection: .automatic, extraDirectories: [spaced])
+            let http = usageServer(["main": "{}"])
+
+            let usage = try await harness.provider(http).fetch(previous: nil)
+
+            #expect(usage.accounts.map(\.id) == ["claude", "claude-its", "claude-work"])
+            #expect(
+                usage.accounts[1].issue
+                    == UsageIssue(
+                        #"Sign-in rejected. Run `CLAUDE_CONFIG_DIR=~/'My Configs/.claude-it'\''s' claude`, then /login."#,
                         needsAction: true))
             #expect(
-                usage.accounts[1].issue?.message
-                    == "Credentials expired. Run claude login for this account.")
-            #expect(usage.accounts[1].issue?.needsAction == true)
+                usage.accounts[2].issue
+                    == UsageIssue(
+                        "Not signed in. Run `CLAUDE_CONFIG_DIR=~/.claude-work claude`, then /login.",
+                        needsAction: true))
         }
 
         @Test func failuresKeepThePreviousObservationAsStaleWithPreciseText() async throws {
@@ -267,7 +295,7 @@ extension ClaudeTests {
             #expect(locked.accounts[0].hasObservation && locked.accounts[0].isStale)
             #expect(
                 locked.accounts[0].issue?.message
-                    == "Keychain is locked — unlock your Mac to refresh Claude usage")
+                    == "Keychain is locked. Unlock your Mac to refresh Claude usage.")
 
             harness.keychain.failure = nil
             try harness.signOut(main, legacy: true)
@@ -275,7 +303,7 @@ extension ClaudeTests {
             #expect(!signedOut.accounts[0].hasObservation)
             #expect(
                 signedOut.accounts[0].issue?.message
-                    == "Claude Code isn't signed in — run `claude login` to restore Claude usage")
+                    == "Claude Code isn't signed in. Open Claude Code and run /login.")
         }
 
         @Test func disabledAndBrokenAccountsAreNotRead() async throws {
@@ -303,7 +331,7 @@ extension ClaudeTests {
             }
             #expect(
                 error?.issue.message
-                    == "Claude Code isn't signed in — run `claude login` to restore Claude usage")
+                    == "Claude Code isn't signed in. Open Claude Code and run /login.")
             #expect(error?.keepsLastReading == false)
         }
 

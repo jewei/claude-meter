@@ -16,6 +16,8 @@ struct LoginSlot: Sendable, Equatable {
     let identityFile: URL?
     /// A folder problem. Such a slot is listed but never read.
     let issue: UsageIssue?
+    /// Who reads failure texts while the slot is not the active login.
+    let audience: AccountFailure.Audience
 
     init(account: ClaudeAccount, home: URL) {
         id = account.id
@@ -23,6 +25,8 @@ struct LoginSlot: Sendable, Equatable {
         services = ClaudeCodeKeychain.services(for: account)
         identityFile = LocalIdentity.file(for: account.directory, home: home)
         issue = account.issue
+        audience = .configDirectory(
+            ConfigDirectoryScanner.displayPath(account.directory, home: home))
     }
 
     /// The active login of a Keychain item that matches no config dir. It keeps its own key,
@@ -33,6 +37,7 @@ struct LoginSlot: Sendable, Equatable {
         services = [service]
         identityFile = nil
         issue = nil
+        audience = .activeLogin
     }
 
     /// The legacy item when `~/.claude` does not exist. It keeps the default account key and
@@ -51,5 +56,6 @@ struct LoginSlot: Sendable, Equatable {
         self.services = services
         self.identityFile = identityFile
         self.issue = nil
+        self.audience = .activeLogin
     }
 }

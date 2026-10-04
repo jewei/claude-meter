@@ -39,22 +39,30 @@ extension ClaudeProvider {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            throw ProviderError("Keychain access is unavailable. Unlock your Mac and try again.")
+            throw Self.keychainUnavailable
         }
-        let notFound = ProviderError(
-            "Claude Code credentials were not found in Keychain", needsAction: true)
+        let notFound = ProviderError(AccountFailure.credentialsMissing.issue(for: .activeLogin))
         guard let service else { throw notFound }
         switch try await keychain.credential(services: [service]) {
         case .missing:
             throw notFound
         case .invalid:
-            throw ProviderError(
-                "Claude Code credentials in Keychain are invalid", needsAction: true)
+            throw ProviderError(AccountFailure.credentialsInvalid.issue(for: .activeLogin))
         case .unavailable:
-            throw ProviderError("Keychain access is unavailable. Unlock your Mac and try again.")
+            throw Self.keychainUnavailable
         case .found(let credential):
-            guard !credential.isExpired(at: now()) else { throw Self.rejected }
-            try await verify(accessToken: credential.accessToken, rejection: Self.rejected)
+            // Claude Code renews its own token; the app never does.
+            guard !credential.isExpired(at: now()) else {
+                throw ProviderError(
+                    "Claude Code's token expired. Open Claude Code, then try again.",
+                    needsAction: true)
+            }
+            try await verify(
+                accessToken: credential.accessToken,
+                rejection: ProviderError(
+                    "Anthropic rejected Claude Code's sign-in. Open Claude Code and run /login, "
+                        + "then try again.",
+                    needsAction: true))
         }
     }
 
@@ -81,11 +89,9 @@ extension ClaudeProvider {
                     needsAction: true)
             } catch ManualLogin.Failure.rejected {
                 throw ProviderError(
-                    "Claude Code sign-in expired — run `claude auth login`, then retry",
-                    needsAction: true)
-            } catch ManualLogin.Failure.refreshFailed {
-                throw ProviderError(
-                    "Claude Code sign-in could not be refreshed — try again shortly")
+                    "Anthropic rejected the refresh token. Enter new tokens.", needsAction: true)
+            } catch ManualLogin.Failure.refreshFailed(let reason) {
+                throw ProviderError("Could not refresh the tokens. \(reason) Try again shortly.")
             }
         }
         try await verify(
@@ -119,9 +125,23 @@ extension ClaudeProvider {
         gate.blockedUntil(now: now())
     }
 
-    private static let rejected = ProviderError(
-        "Claude Code sign-in was rejected — run `claude auth login`, then retry",
-        needsAction: true)
+    private static let keychainUnavailable = ProviderError(
+        "Keychain access is unavailable. Unlock your Mac and try again.")
+
+    /// Settings does not retry, so the text says when the user can.
+    func rateLimited(until: Date?) -> ProviderError {
+        let wait = until.map { Self.waitText(seconds: $0.timeIntervalSince(now())) } ?? "later"
+        return ProviderError(
+            "\(AccountFailure.rateLimitedMessage) Try again \(wait).", retryAt: until)
+    }
+
+    /// "in 3 min", "in 2 h", or "in 1 h 5 min", rounded up to whole minutes.
+    static func waitText(seconds: TimeInterval) -> String {
+        let minutes = max(1, Int((max(0, seconds) / 60).rounded(.up)))
+        guard minutes >= 60 else { return "in \(minutes) min" }
+        let (hours, rest) = minutes.quotientAndRemainder(dividingBy: 60)
+        return rest == 0 ? "in \(hours) h" : "in \(hours) h \(rest) min"
+    }
 
     private func verify(accessToken: String, rejection: ProviderError) async throws {
         do {
@@ -131,10 +151,9 @@ extension ClaudeProvider {
         } catch UsageFailure.unauthorized {
             throw rejection
         } catch UsageFailure.rateLimited(let until) {
-            throw ProviderError(
-                "Anthropic is rate-limiting usage checks — retrying automatically", retryAt: until)
+            throw rateLimited(until: until)
         } catch let failure as UsageFailure {
-            throw ProviderError(AccountFailure(failure).issue(isActiveLogin: true))
+            throw ProviderError(AccountFailure(failure).issue(for: .activeLogin))
         } catch let error as TimeoutError {
             throw ProviderError("Could not check Claude usage. \(error.localizedDescription)")
         }

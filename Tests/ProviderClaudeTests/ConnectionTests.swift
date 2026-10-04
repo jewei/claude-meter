@@ -38,7 +38,8 @@ extension ClaudeTests {
             #expect(
                 missing?.issue
                     == UsageIssue(
-                        "Claude Code credentials were not found in Keychain", needsAction: true))
+                        "Claude Code isn't signed in. Open Claude Code and run /login.",
+                        needsAction: true))
 
             harness.signIn(service: "Claude Code-credentials-12345678", token: "active")
             try await provider.verifyAutomaticConnection()
@@ -49,27 +50,35 @@ extension ClaudeTests {
             let invalid = await #expect(throws: ProviderError.self) {
                 try await provider.verifyAutomaticConnection()
             }
-            #expect(invalid?.issue.message == "Claude Code credentials in Keychain are invalid")
+            #expect(
+                invalid?.issue.message
+                    == "Claude Code's credentials can't be read. Open Claude Code and run /login.")
         }
 
         @Test func automaticVerificationReportsARejectedOrExpiredLogin() async throws {
             let harness = try ClaudeHarness(.off)
             let http = usageServer([:])
             let provider = harness.provider(http)
-            let rejected = "Claude Code sign-in was rejected — run `claude auth login`, then retry"
-
             harness.signIn(service: ClaudeCodeKeychain.legacyService, token: "revoked")
             let error = await #expect(throws: ProviderError.self) {
                 try await provider.verifyAutomaticConnection()
             }
-            #expect(error?.issue == UsageIssue(rejected, needsAction: true))
+            #expect(
+                error?.issue
+                    == UsageIssue(
+                        "Anthropic rejected Claude Code's sign-in. Open Claude Code and run "
+                            + "/login, then try again.",
+                        needsAction: true))
 
+            // An expired token only needs Claude Code to run once; it was not rejected.
             harness.signIn(
                 service: ClaudeCodeKeychain.legacyService, token: "old", expiresAt: .reference(10))
             let expired = await #expect(throws: ProviderError.self) {
                 try await provider.verifyAutomaticConnection()
             }
-            #expect(expired?.issue.message == rejected)
+            #expect(
+                expired?.issue.message
+                    == "Claude Code's token expired. Open Claude Code, then try again.")
             #expect(http.usageTokens == ["revoked"])
         }
 

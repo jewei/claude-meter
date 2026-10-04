@@ -85,7 +85,7 @@ extension AutomaticRefresh {
     ) -> AccountOutcome {
         let usage = failure.account(
             id: slot.id, name: slot.name, prior: prior, status: status,
-            isActiveLogin: isActive, now: now())
+            audience: isActive ? .activeLogin : slot.audience, now: now())
         return AccountOutcome(usage: usage, identity: identity, failure: failure)
     }
 }

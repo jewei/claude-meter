@@ -46,7 +46,7 @@ struct AutomaticRefresh: Sendable {
         let deadline = ContinuousClock.now + limits.refresh
         let plan = try await plan(configuration)
         if let until = api.gate.blockedUntil(now: now()) {
-            throw ProviderError(AccountFailure.rateLimited(until: until).issue(isActiveLogin: true))
+            throw ProviderError(AccountFailure.rateLimited(until: until).issue(for: .activeLogin))
         }
         // While the Keychain cannot say which login is active, the account of that login has
         // no slot. Its reading stays, marked stale.
@@ -55,15 +55,15 @@ struct AutomaticRefresh: Sendable {
         }.map { account in
             AccountFailure.credentialsUnavailable.account(
                 id: account.id, name: account.name, prior: account, status: .unknown,
-                isActiveLogin: true, now: now())
+                audience: .activeLogin, now: now())
         }
         guard !plan.slots.isEmpty || !carried.isEmpty else {
             if plan.activeLogin == .unknown {
                 throw ProviderError(
-                    AccountFailure.credentialsUnavailable.issue(isActiveLogin: true))
+                    AccountFailure.credentialsUnavailable.issue(for: .activeLogin))
             }
             throw ProviderError(
-                AccountFailure.credentialsMissing.issue(isActiveLogin: true),
+                AccountFailure.credentialsMissing.issue(for: .activeLogin),
                 keepsLastReading: false)
         }
 
@@ -102,7 +102,7 @@ struct AutomaticRefresh: Sendable {
         let shared = Self.sharedLogins(identities)
         // An account without a previous value is always due, so only a stop can skip it.
         let skipped =
-            stop?.issue(isActiveLogin: false) ?? UsageIssue("Claude usage is unavailable.")
+            stop?.issue(for: .activeLogin) ?? UsageIssue("Claude usage is unavailable.")
         let accounts = plan.slots.map { slot in
             var account =
                 fetched[slot.id] ?? previous?.account(slot.id)

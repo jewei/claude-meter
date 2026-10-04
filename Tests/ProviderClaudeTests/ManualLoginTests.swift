@@ -139,12 +139,34 @@ extension ClaudeTests {
 
             #expect(http.requests(to: TokenRefresher.url).count == 1)
             #expect(http.usageTokens.isEmpty)
-            #expect(
-                second.accounts[0].issue
-                    == UsageIssue(
-                        "Claude Code sign-in expired — run `claude login` to restore Claude usage",
-                        needsAction: true))
+            // Claude Code commands cannot change the manual login; only a new Connect can.
+            #expect(second.accounts[0].issue == Self.connectAgain)
         }
+
+        @Test func manualTextsGiveManualAdvice() async throws {
+            let noRefresh = try connected(expiresAt: .reference(10), refreshToken: nil)
+            let expired = try await noRefresh.provider(usageServer([:])).fetch(previous: nil)
+            #expect(expired.accounts[0].issue == Self.connectAgain)
+
+            let unreadable = try ClaudeHarness(.manual)
+            unreadable.keychain.store(
+                "not json", service: ManualCredentialVault.service,
+                account: ManualCredentialVault.account)
+            let invalid = try await unreadable.provider(usageServer([:])).fetch(previous: nil)
+            #expect(
+                invalid.accounts[0].issue
+                    == UsageIssue(
+                        "The saved Claude tokens can't be read. Connect again in Settings.",
+                        needsAction: true))
+
+            for usage in [expired, invalid] {
+                #expect(usage.accounts[0].issue?.message.contains("claude") == false)
+            }
+        }
+
+        private static let connectAgain = UsageIssue(
+            "The saved Claude tokens no longer work. Connect again in Settings with new tokens.",
+            needsAction: true)
 
         @Test func temporaryRefreshFailuresBackOff() async throws {
             let harness = try connected(expiresAt: .reference(10))
@@ -152,7 +174,9 @@ extension ClaudeTests {
             let provider = harness.provider(http)
 
             let first = try await provider.fetch(previous: nil)
-            #expect(first.accounts[0].issue?.message == "Retrying the Claude Code sign-in…")
+            #expect(
+                first.accounts[0].issue?.message
+                    == "Could not refresh the Claude tokens. The token server returned HTTP 503.")
             _ = try await provider.fetch(previous: first)
             #expect(http.requests(to: TokenRefresher.url).count == 1)
 
@@ -184,7 +208,7 @@ extension ClaudeTests {
             #expect(!usage.accounts[0].hasObservation)
             #expect(
                 usage.accounts[0].issue?.message
-                    == "Claude Code sign-in changed during the usage check.")
+                    == "The Claude connection changed during the usage check.")
             #expect(harness.manualItem() == nil)
             #expect(await provider.manualSignInStatus() == .signedOut)
             #expect(http.usageTokens.isEmpty)

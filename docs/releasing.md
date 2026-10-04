@@ -16,7 +16,7 @@ Do these steps once on each Mac that makes releases.
 
    To get one, use Xcode (Settings, Accounts, Manage Certificates) or the Apple Developer
    web site. Keep a backup: export the identity from Keychain Access as a `.p12` file with a
-   strong password, and store it offline.
+   strong password to a folder outside this repository, and store it offline.
 
 2. **Notarization credentials.** Store them in the Keychain under the profile name
    `notarytool`:
@@ -44,15 +44,18 @@ Do these steps once on each Mac that makes releases.
    The output must be `Ns9aeDpiL/p7DCVX4TRw4OnqkmZs0y6+7afPO+i1vPM=`.
 
    **Back up the private key.** Without it, you cannot publish an update that installed
-   copies accept. Export it, store the file offline (for example in a password manager),
-   then delete the file:
+   copies accept. Export it to a private folder outside this repository, store the file
+   offline (for example in a password manager), then delete it:
 
    ```bash
-   build/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys -x sparkle-private-key.txt
+   key_dir="$(mktemp -d)"
+   build/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys -x "$key_dir/sparkle-private-key.txt"
+   # Store the file in your password manager, then:
+   rm -P "$key_dir/sparkle-private-key.txt" && rmdir "$key_dir"
    ```
 
-   To install the key on another Mac, use `generate_keys -f sparkle-private-key.txt`. Never
-   commit the file. Sparkle lets one update change the EdDSA key or the Developer ID
+   To install the key on another Mac, use `generate_keys -f <file>`. Never put the file in
+   this repository; `.gitignore` also refuses `sparkle-private-key*`, `*.p12`, and `*.p8`. Sparkle lets one update change the EdDSA key or the Developer ID
    certificate, but not both.
 
 4. **GitHub CLI.** Run `gh auth login` with access to `jewei/claude-meter`.
@@ -88,7 +91,7 @@ step prints `==> <step>`.
    and tag `vVERSION` does not exist. BUILD is greater than every `sparkle:version` in
    `appcast.xml`. `CHANGELOG.md` has a `## [Unreleased]` section that is not empty. The
    signing identity, the notarization profile, and the Sparkle key are present.
-2. **Run `make check`.** The same gate as CI.
+2. **Run `make check`.** The same gate as CI, including an unsigned Release build.
 3. **Archive and export with Developer ID.** A universal Release archive in
    `build/release`, with the version and build from the command line. The export uses
    `scripts/ExportOptions.plist` and signs Sparkle's helpers again.
@@ -97,19 +100,23 @@ step prints `==> <step>`.
    link to `/Applications`.
 6. **Sign the DMG for Sparkle** with `sign_update` from `build/SourcePackages`, the
    package version that the project pins.
-7. **Validate the artifacts:** `codesign --verify --deep --strict`, the team identifier,
-   `spctl` for the app and the DMG, `stapler validate` for both, `sign_update --verify`, the
-   DMG length, the app version and build, and the dSYM UUIDs against the app binary. Then
-   it zips the dSYMs.
+7. **Validate the artifacts:** `codesign --verify --deep --strict`, the app's own update
+   requirement (`ClaudeMeterUpdateRequirement` in Info.plist; an app that fails it never
+   updates), the team identifier, `spctl` for the app and the DMG, `stapler validate` for
+   both, `sign_update --verify`, the DMG length, the app version and build, the dSYM UUIDs
+   against the app binary, and the app inside the mounted DMG with its `Applications`
+   link. Then it zips the dSYMs.
 8. **Write the candidate feed** to `build/release/appcast.xml`. It adds one item above the
    newest item and keeps all existing items. The item has the version, the build, the
-   minimum macOS version from the app, `minimumUpdateVersion` 295, the HTML release notes,
-   the DMG URL, the length, and the EdDSA signature.
+   minimum macOS version from the app, `minimumUpdateVersion` 295,
+   `minimumAutoupdateVersion` 400, the HTML release notes, the DMG URL, the length, and the
+   EdDSA signature.
 
 With `--prepare-only` the script stops here. It changes no tracked file and publishes
 nothing. Without it, it continues:
 
-9. **Commit and tag the release.** It copies the feed to `appcast.xml`, promotes
+9. **Commit and tag the release.** It stops if `HEAD` changed during the build. It copies the
+   feed to `appcast.xml`, promotes
    `[Unreleased]` in `CHANGELOG.md` to the version and date, writes the version and build
    into `Config/Version.xcconfig`, commits `Release vVERSION`, and makes the tag.
 10. **Publish the GitHub release.** It pushes the tag, then runs
@@ -145,11 +152,17 @@ Sparkle 2.9.3 or later.
   3.1.3. 3.1.3 runs the 2.x migrations. On the next check, it sees 4.x.
 - A 3.x install sees 4.x at once.
 
+Every 4.x item also has `<sparkle:minimumAutoupdateVersion>400</sparkle:minimumAutoupdateVersion>`.
+4.0 starts with fresh settings, so a 3.x install always shows the update window with the
+release notes, even when the user chose automatic installs. 4.x installs keep updating
+silently.
+
 Keep the 3.1.3 item in `appcast.xml` for as long as 2.x installs can exist. Do not remove
 old items, and do not delete a release asset that the feed names.
 
 The script accepts only 4.x versions. Before a 5.0 release, decide the gate for 5.x, then
-change `MINIMUM_UPDATE_BUILD` and the version check in `scripts/release.sh`.
+change `MINIMUM_UPDATE_BUILD`, `MAJOR_START_BUILD`, and the version check in
+`scripts/release.sh`.
 
 To test the gate before you publish, use a separate macOS user account or a virtual
 machine with an older release installed. Upload the candidate feed to an HTTPS location,
@@ -167,11 +180,12 @@ Select Check for Updates. Remove the override after the test:
 When a step fails, the script names the step, shows the failed command, and says what is
 already public. Find the last step that started, then do the related procedure.
 
-**Steps 1 to 8 (before "Commit and tag the release").** Nothing changed outside
-`build/release`. Correct the cause and run the script again. If notarization failed, the
+**Steps 1 to 8 (before "Commit and tag the release").** No tracked file changed and nothing
+was published. Correct the cause and run the script again. If notarization failed, the
 script prints Apple's log above the error.
 
-**Step 9, "Commit and tag the release".** The commit and the tag exist only on this Mac.
+**Step 9, "Commit and tag the release".** Tracked files, the commit, and the tag exist only
+on this Mac.
 Remove them, then run the script again:
 
 ```bash
@@ -182,7 +196,15 @@ git reset --hard origin/main
 The tree was clean before the script started, so this removes only the release commit.
 
 **Step 10, "Publish the GitHub release".** If the tag push failed, do the step 9 procedure.
-If the tag is on GitHub but the release is not, finish the release by hand:
+If the tag is on GitHub, first check whether GitHub made the release or a draft:
+
+```bash
+gh release view vVERSION --repo jewei/claude-meter --json isDraft,assets
+```
+
+If a draft exists, upload what is missing with `gh release upload vVERSION <files>
+--clobber`, publish it with `gh release edit vVERSION --draft=false`, and push `main`. If no
+release exists, finish it by hand:
 
 ```bash
 gh release create vVERSION build/release/ClaudeMeter-VERSION.dmg \
@@ -205,9 +227,15 @@ see it yet. This is safe. Push again:
 git push origin HEAD:main
 ```
 
-If `main` moved, run `git pull --rebase origin main`, make sure that the new item is still
-the first item in `appcast.xml`, and push.
+If `main` moved, merge, do not rebase: the tag must stay on a commit that `main` contains.
+Run `git pull --no-rebase origin main`, make sure that the new item is still the first
+item in `appcast.xml`, and push.
 
 **A bad release after publication.** Publish a corrected release with a higher build
 number. To stop more installs at once, remove the bad item from `appcast.xml` in a commit
 on `main`. Copies that already updated stay on the bad release until the next one.
+
+**Two valid Developer ID certificates.** During a certificate renewal, `codesign --sign
+"Developer ID Application: …"` stops with "ambiguous". Set `SIGNING_IDENTITY` to the SHA-1
+of the new certificate (`security find-identity -v -p codesigning`), or remove the old one
+from the Keychain before you release.

@@ -28,6 +28,8 @@ SWIFT_TREAT_WARNINGS_AS_ERRORS = YES
 
 // Build hygiene
 DEAD_CODE_STRIPPING = YES
+// Sparkle's binaries are signed; stripping them on copy only prints warnings.
+COPY_PHASE_STRIP = NO
 ENABLE_USER_SCRIPT_SANDBOXING = YES
 ENABLE_STRICT_OBJC_MSGSEND = YES
 ALWAYS_SEARCH_USER_PATHS = NO

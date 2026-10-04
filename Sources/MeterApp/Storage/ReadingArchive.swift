@@ -24,10 +24,11 @@ public final class ReadingArchive: Sendable {
         self.file = file
     }
 
-    /// `~/Library/Application Support/ClaudeMeter/readings.json`.
+    /// `~/Library/Application Support/ClaudeMeter/readings.json` (`ClaudeMeter Debug` for a
+    /// development build).
     public static var standardFile: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: "Library/Application Support/ClaudeMeter/readings.json")
+            .appending(path: "Library/Application Support/\(AppIdentity.folderName)/readings.json")
     }
 
     /// Reads the saved readings. A missing or unreadable file reads as empty.

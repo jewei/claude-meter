@@ -20,6 +20,9 @@ readonly REPO=jewei/claude-meter TEAM_ID=4L4SS26L9J APP_NAME=ClaudeMeter
 # Every 4.x item hides from installs below build 295 (3.0). Those 2.x installs update to the
 # newest 3.x item first, which runs the 2.x migrations, and see 4.x on their next check.
 readonly MINIMUM_UPDATE_BUILD=295
+# 4.0 starts with fresh settings, so every 3.x install sees the update window and its notes
+# instead of a silent automatic install. 4.x installs keep silent updates.
+readonly MAJOR_START_BUILD=400
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT WORK="$ROOT/build/release"
@@ -44,9 +47,12 @@ finish() {
     if [[ -n "$FAILED_COMMAND" ]]; then printf 'Failed: %s\n' "$FAILED_COMMAND" >&2; fi
     case "$PHASE" in
         local) echo "Nothing was published. Correct the cause and run the script again." ;;
+        committing) echo "Tracked files, and maybe a local commit, changed. Run:" \
+            "git tag -d $TAG 2>/dev/null; git reset --hard origin/main" ;;
         committed) echo "Commit and tag $TAG exist only on this Mac. See docs/releasing.md." ;;
         tagged) echo "Tag $TAG is on GitHub. The release and feed are not. See docs/releasing.md." ;;
-        *) echo "The GitHub release is public, but the feed is not. Run: git push origin HEAD:main" ;;
+        *) echo "The GitHub release is public, but the feed is not. Run: git push origin HEAD:main" \
+            "(if main moved: git pull --no-rebase origin main, then push)" ;;
     esac >&2
 }
 
@@ -78,6 +84,21 @@ promote_changelog() {
         { print }
         END { if (!linked) print "\n" links }' CHANGELOG.md >"$WORK/CHANGELOG.md"
     mv "$WORK/CHANGELOG.md" CHANGELOG.md
+}
+
+# Mounts the DMG read-only and checks the copy that users install, then detaches it.
+check_dmg_contents() {
+    local mount="$WORK/mount" status=0
+    mkdir -p "$mount"
+    hdiutil attach -quiet -nobrowse -readonly -mountpoint "$mount" "$DMG"
+    {
+        [[ -L "$mount/Applications" ]] || die "The DMG has no Applications link."
+        codesign --verify --deep --strict "$mount/$APP_NAME.app"
+        xcrun stapler validate "$mount/$APP_NAME.app"
+        spctl --assess --type execute "$mount/$APP_NAME.app"
+    } || status=$?
+    hdiutil detach -quiet "$mount"
+    ((status == 0)) || die "The app inside the DMG failed its checks."
 }
 
 # Submits a file to Apple and waits. On rejection, prints Apple's log and stops.
@@ -113,10 +134,15 @@ main() {
         git fetch --quiet origin main
         [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/main)" ]] ||
             die "HEAD is not origin/main. Pull or push first."
-        if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null ||
-            git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
-            die "Tag $TAG already exists on this Mac or on GitHub."
-        fi
+        git rev-parse -q --verify "refs/tags/$TAG" >/dev/null &&
+            die "Tag $TAG already exists on this Mac."
+        local remote_status=0
+        git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null || remote_status=$?
+        # 2 means "no such tag". Anything else is a network or login error, not an answer.
+        ((remote_status == 2)) || {
+            ((remote_status == 0)) && die "Tag $TAG already exists on GitHub."
+            die "Could not ask GitHub for tag $TAG (git ls-remote exit $remote_status)."
+        }
         gh auth status >/dev/null 2>&1 || die "Log in to GitHub first: gh auth login"
     fi
     local latest_build identities
@@ -124,9 +150,11 @@ main() {
         sort -n | tail -n 1)"
     ((BUILD > ${latest_build:-0})) ||
         die "BUILD $BUILD must be greater than $latest_build, the newest build in appcast.xml."
-    # The newest item is first. Its version is the base of the CHANGELOG compare link.
-    PREVIOUS_VERSION="$(xmllint --xpath \
-        "string((//item)[1]/*[local-name()='shortVersionString'])" appcast.xml)"
+    # The newest release tag is the base of the CHANGELOG compare link. The feed can lose a
+    # bad item, but tags keep the history.
+    PREVIOUS_VERSION="$(git describe --tags --abbrev=0 --match 'v*')"
+    PREVIOUS_VERSION="${PREVIOUS_VERSION#v}"
+    SOURCE_COMMIT="$(git rev-parse HEAD)"
     if [[ ! -f CHANGELOG.md ]] || ! grep -q '^## \[Unreleased\]' CHANGELOG.md; then
         die "CHANGELOG.md needs a '## [Unreleased]' section with the release notes."
     fi
@@ -181,6 +209,9 @@ main() {
     step "Validate the artifacts"
     local details binary_uuids symbol_uuids
     codesign --verify --deep --strict --verbose=2 "$APP"
+    # The app updates itself only when it meets this requirement (App/Sources/ReleaseSignature).
+    codesign --verify --strict -R="=$(plist_value ClaudeMeterUpdateRequirement)" "$APP" ||
+        die "The app does not meet its own update requirement, so it would never update."
     details="$(codesign -dv "$APP" 2>&1)"
     [[ "$details" == *"TeamIdentifier=$TEAM_ID"* ]] || die "The app is not signed by $TEAM_ID."
     spctl --assess --type execute --verbose=2 "$APP"
@@ -196,6 +227,7 @@ main() {
     symbol_uuids="$(debug_uuids "$ARCHIVE/dSYMs/$APP_NAME.app.dSYM")"
     [[ -n "$binary_uuids" && "$binary_uuids" == "$symbol_uuids" ]] ||
         die "The dSYM UUIDs do not match the app binary."
+    check_dmg_contents
     ditto -c -k --keepParent "$ARCHIVE/dSYMs" "$DSYMS"
 
     step "Write the candidate feed"
@@ -210,6 +242,7 @@ main() {
             <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>$minimum_system</sparkle:minimumSystemVersion>
             <sparkle:minimumUpdateVersion>$MINIMUM_UPDATE_BUILD</sparkle:minimumUpdateVersion>
+            <sparkle:minimumAutoupdateVersion>$MAJOR_START_BUILD</sparkle:minimumAutoupdateVersion>
             <description><![CDATA[
 $description
             ]]></description>
@@ -239,6 +272,9 @@ EOF
     fi
 
     step "Commit and tag the release"
+    [[ "$(git rev-parse HEAD)" == "$SOURCE_COMMIT" ]] ||
+        die "HEAD changed during the build. The DMG does not contain the new commit."
+    PHASE="committing"
     cp "$WORK/appcast.xml" appcast.xml
     promote_changelog
     sed -i '' -E "s/^(MARKETING_VERSION = ).*/\1$VERSION/;s/^(CURRENT_PROJECT_VERSION = ).*/\1$BUILD/" \

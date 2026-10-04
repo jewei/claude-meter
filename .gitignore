@@ -19,3 +19,8 @@ xcuserdata/
 .agents/
 .claude/
 docs/superpowers/
+
+# Signing material must never enter this public repository.
+sparkle-private-key*
+*.p12
+*.p8

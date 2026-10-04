@@ -24,38 +24,27 @@ jobs:
       - name: Check out
         uses: actions/checkout@v7
 
-      # The runner's default Xcode can be older than the newest one on the image. Use the
-      # newest release Xcode so that CI is as close as possible to local builds.
-      - name: Select the newest Xcode
+      # One pinned Xcode, so CI does not change compiler or formatter when the runner image
+      # changes. docs/development.md names the same version; change both together.
+      - name: Select Xcode
         id: xcode
+        env:
+          XCODE_APP: /Applications/Xcode_26.6.app
         run: |
-          newest="$(
-            for app in /Applications/Xcode*.app; do
-              # Skip the version symlinks and prerelease copies.
-              if [[ -L "$app" || "$app" == *[Bb]eta* ]]; then continue; fi
-              version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
-                "$app/Contents/Info.plist")"
-              IFS=. read -r major minor patch <<<"$version"
-              printf '%03d%03d%03d %s\n' "$major" "${minor:-0}" "${patch:-0}" "$app"
-            done | sort | tail -n 1 | cut -d' ' -f2-
-          )"
-          sudo xcode-select --switch "$newest"
+          sudo xcode-select --switch "$XCODE_APP"
           xcodebuild -version
           swift --version
           sw_vers
           xcode="$(xcodebuild -version | awk 'NR == 1 { v = $2 } NR == 2 { print v "-" $3 }')"
           echo "cache_prefix=swift-$RUNNER_OS-$RUNNER_ARCH-xcode-$xcode" >> "$GITHUB_OUTPUT"
 
-      # .build is the swift test build. build/SourcePackages is the Sparkle checkout that
-      # make app uses. The key changes with the manifests, the pins, and the Xcode version.
-      - name: Cache Swift packages and build output
+      # Only the resolved Sparkle package is worth caching. A fresh checkout gives every
+      # source a new timestamp, so a cached .build would be recompiled anyway.
+      - name: Cache the Sparkle package
         uses: actions/cache@v6
         with:
-          path: |
-            .build
-            build/SourcePackages
-          key: ${{ steps.xcode.outputs.cache_prefix }}-${{ hashFiles('Package.swift', 'Package.resolved', 'ClaudeMeter.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
-          restore-keys: ${{ steps.xcode.outputs.cache_prefix }}-
+          path: build/SourcePackages
+          key: ${{ steps.xcode.outputs.cache_prefix }}-${{ hashFiles('ClaudeMeter.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       - name: make check
         run: make check

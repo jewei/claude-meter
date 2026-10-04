@@ -183,14 +183,12 @@
 		42AE97CEA17534BA4FFDFA00 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				SDKROOT = macosx;
 			};
 			name = Release;
 		};
 		4721C66322E8BEADB3A35226 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				SDKROOT = macosx;
 			};
 			name = Debug;
 		};

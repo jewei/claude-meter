@@ -15,7 +15,8 @@ final class ManualCredentialVault: Sendable {
         case unavailable(String)
     }
 
-    static let service = "com.jewei.claudemeter.claude-oauth"
+    /// `com.jewei.claudemeter.claude-oauth`; a development build uses its own item.
+    static let service = AppIdentity.keychainService("claude-oauth")
     static let account = "manual"
 
     private let keychain: any Keychain

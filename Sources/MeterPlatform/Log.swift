@@ -48,14 +48,15 @@ public struct Log: Sendable {
     }
 }
 
-/// An optional copy of the log in `~/Library/Logs/ClaudeMeter/ClaudeMeter.log`.
+/// An optional copy of the log in `~/Library/Logs/ClaudeMeter/ClaudeMeter.log`
+/// (`ClaudeMeter Debug` for a development build).
 ///
 /// Off by default. The directory is private to the user (0700) and the file is 0600. At 4 MiB
 /// the file rotates once to `ClaudeMeter.previous.log`. Turning it off deletes both files.
 public final class LogFile: Sendable {
     public static let shared = LogFile(
         directory: FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: "Library/Logs/ClaudeMeter", directoryHint: .isDirectory))
+            .appending(path: "Library/Logs/\(AppIdentity.folderName)", directoryHint: .isDirectory))
 
     public let directory: URL
     public let rotationBytes: UInt64

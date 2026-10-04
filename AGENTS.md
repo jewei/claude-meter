@@ -10,11 +10,11 @@ that a change has broken before.
 
 | Command | What it does |
 | --- | --- |
-| `make check` | The gate. Format lint, all tests with warnings as errors, unsigned app build. CI runs exactly this. |
+| `make check` | The gate. Format lint, all tests with warnings as errors, unsigned Debug and Release app builds. CI runs exactly this. |
 | `make test` | `swift test` with warnings as errors. Fast; no Xcode project involved. |
 | `make format` | Format every Swift file with `swift format` and `.swift-format`. |
 | `make app` / `make run` | Build the unsigned Debug app / build and launch it. |
-| `make release VERSION=… BUILD=…` | Signed, notarized release. Maintainer only. See `docs/releasing.md`. |
+| `make release VERSION=… BUILD=…` | Signed, notarized release. Maintainer only; agents never run it. See `docs/releasing.md`. |
 
 A change is done when `make check` passes and the docs that describe the behavior are
 updated in the same commit.
@@ -35,9 +35,17 @@ All code is one Swift package (`Package.swift`). A module imports only modules a
 Tests mirror the modules in `Tests/`. Shared fakes (`FakeHTTPClient`, `FakeKeychain`,
 `TemporaryDirectory`, `JWTFixture`, `.reference()` dates) are in `Tests/MeterTestSupport`.
 
-Docs: `docs/architecture.md` (data flow, refresh lifecycle, storage),
-`docs/product.md` (user-visible behavior), `docs/design.md` (visual system),
-`docs/providers/*.md` (each provider's external contracts), `docs/releasing.md`.
+Docs, each the single source for its topic:
+
+| Doc | Topic |
+| --- | --- |
+| `docs/architecture.md` | Layers, data flow, provider contract, refresh lifecycle, retention, storage, time limits |
+| `docs/product.md` | Every user-visible rule and the code that owns it |
+| `docs/design.md` | Visual tokens, type, components, layout, animation, accessibility |
+| `docs/providers/*.md` | Each provider's external contracts and rules (Claude: `claude-oauth.md`) |
+| `docs/token-history.md` | Local token history: files, counting rules, limits |
+| `docs/development.md` | Requirements, commands, the Xcode project, where things live |
+| `docs/releasing.md` | Signing, notarization, the update feed, recovery |
 
 ## Rules
 
@@ -76,11 +84,22 @@ Docs: `docs/architecture.md` (data flow, refresh lifecycle, storage),
 - Tests never touch the network, the real Keychain, the real home directory, or
   `UserDefaults.standard`. Inject fakes.
 
+### Release invariants
+
+Every installed copy depends on these. Never change them without the maintainer:
+
+- `appcast.xml` is the live update feed. Only `scripts/release.sh` edits it; keep every item.
+- The bundle identifier, team, `SUFeedURL`, `SUPublicEDKey`, `ClaudeMeterUpdateRequirement`,
+  and the Sparkle version pin.
+- `CURRENT_PROJECT_VERSION` only grows, and stays above every build in `appcast.xml`.
+
 ### Style
 
+`make check` enforces formatting and warnings. Reviews enforce the rest:
+
 - Name things for what they are. No `Manager`, `Helper`, `Utils`, or abbreviations.
-- One main type per file, file named after it. Keep files under ~300 lines.
-- Comments explain why, not what. Public API has a doc comment.
+- Prefer one main type per file, named after it, and files under ~300 lines.
+- Comments explain why, not what. Give API that other modules call a doc comment.
 - No force unwrap or `try!` in `Sources/` unless the value is a compile-time literal.
 - Errors that users see are short sentences that say what to do.
 - `swift format` owns formatting. Do not fight it.

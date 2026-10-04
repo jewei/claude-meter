@@ -5,8 +5,9 @@ How to build, run, and test Claude Meter, and how the Xcode project is set up.
 ## Requirements
 
 - A Mac with macOS 14 or later.
-- Xcode 26 or later. `Package.swift` uses Swift tools version 6.2. The maintainer uses
-  Xcode 27. CI uses the newest release Xcode on the `macos-26` runner.
+- Xcode 26.6 or later. `Package.swift` uses Swift tools version 6.2, so the code must build
+  with Swift 6.2. CI pins Xcode 26.6 (`.github/workflows/ci.yml`); the maintainer also
+  builds with Xcode 27. Change the CI version and this line together.
 - Nothing else. `swift format` and `make` come with Xcode.
 
 ## First build
@@ -17,7 +18,8 @@ cd claude-meter
 make check
 ```
 
-`make check` lints the format, runs all tests, and builds the unsigned Debug app. The first
+`make check` lints the format, runs all tests, and builds the unsigned Debug app and the
+unsigned universal Release app. The first
 run downloads Sparkle into `build/SourcePackages`. CI runs the same command. A change is
 done when `make check` passes.
 
@@ -28,9 +30,10 @@ make run
 ```
 
 > **Note:** The development build uses the bundle identifier `com.jewei.claudemeter.debug`.
-> Its settings and saved readings are separate from an installed Claude Meter. It reads the
-> same provider credentials, because Claude Code, Codex, Cursor, and Grok own them.
-> `make run` quits only an earlier development build before it opens the new one.
+> Its settings, saved readings (`Application Support/ClaudeMeter Debug`), log file, and
+> manual Claude Keychain item are separate from an installed Claude Meter (`AppIdentity`).
+> It reads the same provider credentials, because Claude Code, Codex, Cursor, and Grok own
+> them. `make run` quits only the development build of this checkout.
 
 To work in Xcode, open `ClaudeMeter.xcodeproj` and run the `ClaudeMeter` scheme. Xcode
 signs Debug builds with the Apple Development certificate of team 4L4SS26L9J. If you are
@@ -40,12 +43,14 @@ not on that team, use `make app` and `make run`. They build without a signature.
 
 | Command | What it does |
 | --- | --- |
-| `make check` | The gate: format lint, all tests, unsigned Debug app. |
+| `make check` | The gate: format lint, all tests, unsigned Debug and universal Release apps. |
 | `make test` | `swift test` with warnings as errors. It does not use the Xcode project. |
 | `make format` | Format all Swift files in place with `.swift-format`. |
 | `make lint` | Fail on a format difference. |
 | `make app` | Build the unsigned Debug app into `build/DerivedData`. |
 | `make run` | Build the Debug app and open it. |
+| `make release-build` | Build the unsigned universal Release app. |
+| `make release-candidate VERSION=… BUILD=…` | Build and validate a signed release without publishing. |
 | `make clean` | Remove `.build` and `build`. |
 | `make release VERSION=… BUILD=…` | Publish a signed release. See [releasing.md](releasing.md). |
 

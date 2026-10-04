@@ -49,6 +49,7 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    example `Claude Meter. Claude. Session 15 percent left. Overall quota warning.`
 5. The label refreshes on every store change and every 30 s.
 6. When the severity becomes critical, the dot pulses three times, unless Reduce Motion is on.
+   The view owns this animation (`MeterUI`); the model only reports the severity.
 
 ## 4. Popover (`PopoverModel`)
 
@@ -73,6 +74,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 8. A card shows its account's own issue. A card of a provider that is not the main meter also
    shows a failed refresh or old data; the main provider shows those as notices instead.
 9. While the popover is open, countdowns and ages update every second.
+10. When a background check finds an update that Sparkle did not show, the popover shows
+    "Update available"; selecting it opens Sparkle's update window
+    (`PopoverModel.showsUpdateNotice`, `Updater.isUpdateAvailable`).
 
 ## 5. Tokens used (`TokenRowsBuilder`)
 

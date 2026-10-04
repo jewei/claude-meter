@@ -20,7 +20,7 @@ struct ClaudeSourceSection: View {
                     setEnabled: { claude.setEnabled($0, $1) },
                     setPlan: { claude.setPlanOverride($0, $1) },
                     remove: { claude.removeDirectory($0) },
-                    add: addDirectory)
+                    add: addDirectory, message: claude.directoryMessage)
             }
         }
     }
@@ -38,8 +38,6 @@ struct ClaudeSourceSection: View {
             connectManually: { access, refresh, expiry in
                 await claude.connectManually(
                     accessToken: access, refreshToken: refresh, expiresAt: expiry)
-                // The model reports success only through its message.
-                return claude.connection == .manual && claude.message == "Connected."
             },
             disconnect: { await claude.disconnect() })
     }
@@ -51,6 +49,6 @@ struct ClaudeSourceSection: View {
                 message:
                     "Choose a Claude config dir: a folder with settings.json, such as ~/.claude.")
         else { return }
-        claude.addDirectory(url)
+        Task { await claude.addDirectory(url) }
     }
 }

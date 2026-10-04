@@ -17,7 +17,7 @@ struct CodexSourceSection: View {
                         title: "Add Codex Home",
                         message: "Choose a Codex home: a folder with auth.json, such as ~/.codex.")
                 else { return }
-                codex.addHome(url)
+                Task { await codex.addHome(url) }
             })
     }
 }

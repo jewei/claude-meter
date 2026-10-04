@@ -16,8 +16,8 @@ core.
 
 ### Changed
 
-- Settings start fresh. Turn on your sources and set names, plans, and card order again.
-  Claude and Codex readings refresh on first launch.
+- Settings start fresh. After the welcome screen, connect Claude and turn on your other
+  sources again, and set names, plans, and card order.
 - The popover is a native panel that resizes smoothly when you open and close cards.
 - Settings opens as a normal window with a Dock icon while it is open, and no longer floats
   above other apps.

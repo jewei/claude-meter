@@ -12,6 +12,8 @@ struct ClaudeAccountsList: View {
     let setPlan: (AccountID, String?) -> Void
     let remove: (AccountID) -> Void
     let add: () -> Void
+    /// The last folder error, such as a folder that is not a config dir.
+    var message: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -28,6 +30,12 @@ struct ClaudeAccountsList: View {
                     remove: { remove(account.id) })
             }
             AddFolderButton(title: "Add config dir…", action: add)
+            if let message {
+                Text(message)
+                    .font(MeterFont.body(11, .bold))
+                    .foregroundStyle(Palette.energyEmptyInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }

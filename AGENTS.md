@@ -62,7 +62,8 @@ Docs, each the single source for its topic:
 5. **Views render, models decide.** Anything with an `if` about data (ordering, copy,
    severity, staleness) is a pure function in `MeterApp/Presentation` with a test.
 6. **Only Claude and Codex can own the menu bar** (`ProviderID.canOwnMenuBar`). A missing
-   selection shows as unavailable; it never falls back to another account or provider.
+   selection shows as unavailable: it never falls back to another account, and a provider
+   in use never yields to the other provider (`docs/product.md` §2).
 
 ### Concurrency
 

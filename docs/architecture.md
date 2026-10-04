@@ -104,8 +104,8 @@ There is one global cadence. No battery, network, or per-provider timers.
 | --- | --- | --- |
 | Settings | `UserDefaults` key `settings` | JSON of `Settings` |
 | Last readings | `~/Library/Application Support/ClaudeMeter/readings.json` | JSON of `[ProviderID: ProviderUsage]`, identity owners only |
-| Claude rate-limit deadline | `UserDefaults` key `claude.rateLimitedUntil` | JSON date |
-| Manual Claude OAuth | Keychain, service `com.jewei.claudemeter.claude-oauth`, account `manual` | JSON |
+| Claude rate-limit deadline | `UserDefaults` key `claude.rateLimitedUntil` | JSON `{recordedAt, until}`, ISO-8601 dates |
+| Manual Claude OAuth | Keychain, service `com.jewei.claudemeter.claude-oauth`, account `manual` | JSON `{accessToken, refreshToken, expiresAt, subscriptionType, connectionID}` |
 | Log file (opt-in) | `~/Library/Logs/ClaudeMeter/ClaudeMeter.log` | text, 0600, rotates once at 4 MiB |
 
 Token history is memory only and rebuilt after launch. Nothing else is written.

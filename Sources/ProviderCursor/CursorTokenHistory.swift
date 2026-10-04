@@ -6,6 +6,14 @@ import MeterPlatform
 ///
 /// Uses the login that the Cursor app stores, read-only. The history describes the account,
 /// not this Mac, and has one account, ``AccountID/default``.
+///
+/// A failure may keep the previous history only while that history belongs to the signed-in
+/// login, the rule that quota follows. ``TokenHistoryProvider`` hands in neither the previous
+/// history nor its owner, so this type cannot see whose history the app holds. It keeps only
+/// what proves it: the logins whose history it ever returned. While that set is exactly the
+/// signed-in login, the held history, if any, is that login's. After a login change the set
+/// has two logins, so later failures clear the history instead of showing another login's
+/// tokens.
 public final class CursorTokenHistory: TokenHistoryProvider {
     private static let log = Log(.cursor)
 
@@ -13,9 +21,12 @@ public final class CursorTokenHistory: TokenHistoryProvider {
     private let http: any HTTPClient
     /// Read once per call, so a time zone change applies to the next read.
     private let calendar: @Sendable () -> Calendar
-    /// The login of the last history returned. A failure keeps the previous history only
-    /// while this login is still signed in.
-    private let lastOwner = Locked<AccountOwner?>(nil)
+    /// Every login whose history this value returned. The app can discard a returned history,
+    /// so this is a superset of the owner of the history that the app holds. It only grows, so
+    /// it can drop a history that could stay, but never keeps one of another login.
+    private let returnedOwners = Locked<Set<AccountOwner>>([])
+    /// The retry time of the last HTTP 429. No export is sent before it.
+    private let retryAt = Locked<Date?>(nil)
     /// The last failure, so that the log records changes only.
     private let lastFailure = Locked<CursorFailure?>(nil)
 
@@ -48,34 +59,52 @@ public final class CursorTokenHistory: TokenHistoryProvider {
 
     /// Reads token history for today and the previous six local days.
     ///
-    /// Throws ``ProviderError``, which keeps the previous history only while the same login is
-    /// signed in, or `CancellationError`. A response that arrives after the login changed is
-    /// discarded.
+    /// Throws ``ProviderError``, which keeps the previous history only while it provably
+    /// belongs to the signed-in login, or `CancellationError`. A response that arrives after
+    /// the login changed is discarded.
     public func history(now: Date) async throws -> ProviderTokenHistory {
         let credentials: CursorCredentials
         switch try await store.read() {
         case .found(let found):
             credentials = found
         case .missing:
-            throw failure(.signedOut, keepsLastReading: false)
+            throw failure(.signedOut, status: .signedOut)
         case .unreadable(let failure):
-            throw self.failure(failure, keepsLastReading: true)
+            throw self.failure(failure, status: .unknown)
         }
         let owner = credentials.owner
-        let isSameLogin = lastOwner.value == owner
+        if let retryAt = retryAt.value, retryAt > now {
+            throw failure(.rateLimited(retryAt: retryAt), status: .signedIn(owner))
+        }
+        let result: Result<ProviderTokenHistory, CursorFailure>
         do {
-            let history = try await export(credentials, now: now)
-            switch try await store.read().ownerStatus {
-            case .signedOut: throw CursorFailure.signedOut
-            case .signedIn(let current) where current != owner: throw CursorFailure.signInChanged
-            case .signedIn, .unknown: break
-            }
-            lastOwner.withLock { $0 = owner }
-            lastFailure.withLock { $0 = nil }
-            return history
+            result = .success(try await export(credentials, now: now))
         } catch let failure as CursorFailure {
-            let keeps = isSameLogin && failure != .signedOut && failure != .signInChanged
-            throw self.failure(failure, keepsLastReading: keeps)
+            result = .failure(failure)
+        }
+        // The response belongs to the login that sent it. Discard it if the login changed.
+        let after = try await store.read().ownerStatus
+        switch after {
+        case .signedOut:
+            throw failure(.signedOut, status: after)
+        case .signedIn(let current) where current != owner:
+            throw failure(.signInChanged, status: after)
+        case .signedIn, .unknown:
+            break
+        }
+        switch result {
+        case .success(let history):
+            returnedOwners.withLock { _ = $0.insert(owner) }
+            retryAt.withLock { $0 = nil }
+            let recovered = lastFailure.withLock { last in
+                defer { last = nil }
+                return last != nil
+            }
+            if recovered { Self.log.notice("Cursor token history recovered.") }
+            return history
+        case .failure(let failure):
+            if case .rateLimited(let date?) = failure { retryAt.withLock { $0 = date } }
+            throw self.failure(failure, status: .signedIn(owner))
         }
     }
 
@@ -101,7 +130,11 @@ public final class CursorTokenHistory: TokenHistoryProvider {
             coverageStart: range.start, observedAt: now, timeZoneID: calendar.timeZone.identifier)
     }
 
-    private func failure(_ failure: CursorFailure, keepsLastReading: Bool) -> ProviderError {
+    /// The error for `failure` while the login is `status`. The previous history stays only
+    /// while the login cannot be read, or while every history returned so far belongs to the
+    /// signed-in login: the rule of ``AccountUsage/belongs(to:)``, applied to a history whose
+    /// owner this type can only bound.
+    private func failure(_ failure: CursorFailure, status: OwnerStatus) -> ProviderError {
         let isNew = lastFailure.withLock { last in
             defer { last = failure }
             return last != failure
@@ -109,6 +142,12 @@ public final class CursorTokenHistory: TokenHistoryProvider {
         if isNew {
             Self.log.warning("Cursor token history failed: \(failure.issue.message)")
         }
-        return ProviderError(failure.issue, keepsLastReading: keepsLastReading)
+        let belongs: Bool
+        switch status {
+        case .unknown: belongs = true
+        case .signedOut: belongs = false
+        case .signedIn(let current): belongs = returnedOwners.value == [current]
+        }
+        return ProviderError(failure.issue, keepsLastReading: belongs && failure.keepsObservation)
     }
 }

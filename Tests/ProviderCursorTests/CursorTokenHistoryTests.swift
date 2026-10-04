@@ -159,6 +159,69 @@ import Testing
         #expect(otherLogin?.keepsLastReading == false)
     }
 
+    /// The app can discard a returned history, for example when a newer refresh superseded it,
+    /// and then still holds the earlier login's history. A failure of the new login must not
+    /// keep that history.
+    @Test func aDiscardedHistoryOfANewLoginNeverKeepsTheEarlierOne() async throws {
+        keychain.store(CursorFixture.token(), service: "cursor-access-token")
+        let status = Locked(200)
+        let http = FakeHTTPClient { _ in .json(status.value, Self.header) }
+        let source = source(http)
+        _ = try await source.history(now: .reference())
+
+        keychain.store(CursorFixture.token(subject: "auth0|other"), service: "cursor-access-token")
+        _ = try await source.history(now: .reference())
+        status.withLock { $0 = 500 }
+        let failure = await providerError { try await source.history(now: .reference()) }
+
+        #expect(failure?.issue.message.contains("HTTP 500") == true)
+        #expect(failure?.keepsLastReading == false)
+    }
+
+    /// Retention follows the login that is signed in after the request, as for quota. A change
+    /// back to the only login with a history keeps that history.
+    @Test func aLoginChangeKeepsOnlyTheHistoryOfTheLoginSignedInAfterIt() async throws {
+        let first = CursorFixture.token()
+        let other = CursorFixture.token(subject: "auth0|other")
+        let keychain = keychain
+        let switchTo = Locked<String?>(nil)
+        let http = FakeHTTPClient { _ in
+            if let token = switchTo.value { keychain.store(token, service: "cursor-access-token") }
+            return .json(200, Self.header)
+        }
+        let source = source(http)
+        keychain.store(first, service: "cursor-access-token")
+        _ = try await source.history(now: .reference())
+
+        // The app holds the first login's history, and the other login is signed in now.
+        switchTo.withLock { $0 = other }
+        let toOther = await providerError { try await source.history(now: .reference()) }
+        #expect(toOther?.issue == CursorFailure.signInChanged.issue)
+        #expect(toOther?.keepsLastReading == false)
+
+        // The first login is signed in again, and its history is the only one returned.
+        switchTo.withLock { $0 = first }
+        let back = await providerError { try await source.history(now: .reference()) }
+        #expect(back?.issue == CursorFailure.signInChanged.issue)
+        #expect(back?.keepsLastReading == true)
+    }
+
+    /// Nothing is sent before the server's retry time.
+    @Test func aRateLimitHoldsTheExportUntilItsRetryTime() async throws {
+        keychain.store(CursorFixture.token(), service: "cursor-access-token")
+        let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "120"])
+        let source = source(http)
+
+        let limited = await providerError { try await source.history(now: .reference()) }
+        let held = await providerError { try await source.history(now: .reference(60)) }
+
+        #expect(limited?.issue.retryAt == .reference(120))
+        #expect(held?.issue.retryAt == .reference(120))
+        #expect(http.requests.count == 1)
+        _ = await providerError { try await source.history(now: .reference(121)) }
+        #expect(http.requests.count == 2)
+    }
+
     @Test func signingOutClearsTheHistory() async throws {
         let error = await providerError {
             try await source(FakeHTTPClient(json: Self.header)).history(now: .reference())

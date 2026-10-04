@@ -190,10 +190,15 @@ The email is never part of the reading.
 29. After 100,000 rows, the remaining rows are not counted, and the history is partial.
 30. A token without a `sub` user ID, or with characters outside `A-Z a-z 0-9 _ - .`, is an
     unexpected token format. No request is sent.
-31. A failure keeps the previous history only while the login of the last history is still
-    signed in. A login change during the request rejects the result.
+31. A failure keeps the previous history only while it belongs to the signed-in login, the rule
+    of `AccountUsage.belongs(to:)`. The app does not tell the provider which history it holds,
+    so the provider keeps the set of logins whose history it returned in this run. The history
+    stays only while that set is exactly the signed-in login, or while the login cannot be read.
+    After a login change in one run, every later failure clears the history, and the next
+    success shows it again. A login change during the request rejects the result.
+32. After HTTP 429 with a `Retry-After`, no export is sent before the retry time.
 
 ### Messages
 
-32. Every message says what to do, for example "Open Cursor and sign in again."
-33. A decoding failure shows "Cursor returned an unexpected response.", never a system error.
+33. Every message says what to do, for example "Open Cursor and sign in again."
+34. A decoding failure shows "Cursor returned an unexpected response.", never a system error.

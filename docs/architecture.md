@@ -154,8 +154,8 @@ There is one global cadence. No battery, network, or per-provider timers.
 
 Every JSON value above stores dates as ISO-8601 text (`JSONEncoder.meter`): a whole second
 as `2026-10-04T12:00:00Z`, and a date with a fraction with milliseconds, as
-`2026-10-04T12:00:00.750Z`. Both forms load. Token history is memory only and rebuilt after launch. Nothing
-else is written.
+`2026-10-04T12:00:00.750Z`. Both forms load. Token history is memory only and rebuilt after
+launch. Nothing else is written.
 
 ## Time limits
 

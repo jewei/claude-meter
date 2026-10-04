@@ -30,12 +30,15 @@ import Testing
         clock.withLock { $0 = $0.addingTimeInterval(seconds) }
     }
 
-    private func previous(owner: AccountOwner? = nil) -> ProviderUsage {
+    private func previous(
+        owner: AccountOwner? = nil, periodEnd: Date = .reference(.days(10))
+    ) -> ProviderUsage {
         let window = QuotaWindow(
             id: "billing", title: "Billing period", kind: .billing, usedPercent: 40,
-            resetsAt: .reference(.days(10)))
+            resetsAt: periodEnd)
+        let spend = Balance(kind: .spend, amount: 12, limit: 20, unit: .currency("USD"))
         let account = AccountUsage(
-            id: .default, name: "Cursor", plan: "Pro", windows: [window],
+            id: .default, name: "Cursor", plan: "Pro", windows: [window], balances: [spend],
             observedAt: .reference(-.minutes(10)), owner: owner ?? self.owner)
         return ProviderUsage(provider: .cursor, accounts: [account])
     }
@@ -276,6 +279,24 @@ import Testing
         #expect(!account.hasObservation)
         #expect(account.issue?.needsAction == true)
         #expect(http.requests.count == 1)
+    }
+
+    /// After the billing period ends, a stale card must not show the old period's spend beside
+    /// an unknown percentage.
+    @Test func aStaleReadingDropsItsSpendAfterThePeriodEnds() async throws {
+        try home.write(token: CursorFixture.token())
+        let http = FakeHTTPClient(status: 500, json: "")
+
+        let inPeriod = try account(try await provider(http).fetch(previous: previous()))
+        let after = try account(
+            try await provider(http).fetch(previous: previous(periodEnd: .reference(-60))))
+
+        #expect(inPeriod.isStale)
+        #expect(inPeriod.balance(.spend)?.amount == 12)
+        #expect(after.isStale)
+        #expect(after.windows.first?.usedPercent == nil)
+        #expect(after.balance(.spend) == nil)
+        #expect(after.plan == "Pro")
     }
 
     @Test func serverErrorsKeepTheReading() async throws {

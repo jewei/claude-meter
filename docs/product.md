@@ -79,9 +79,10 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 1. The header shows the main meter's observation age (`Just now`, `42s ago`, `12m ago`,
    `3h ago`, `2d ago`), Settings, and Quit.
 2. The content is the first match of: welcome (onboarding), paused with no data, no source
-   switch on, loading before the first reading, accounts, an error screen for the first
-   failed provider (main first; also while a retry runs), and setup help (which asks to
-   connect Claude when its switch is on without a connection).
+   switch on, and accounts when any card shows. With no card, it is loading before the first
+   reading, then an error screen for the first failed provider (main first; also while a
+   retry runs), then setup help (which asks to connect Claude when its switch is on without a
+   connection).
 3. Every path into Settings from the popover finishes the welcome and starts updates.
 4. Notices above the hero state, without repeats: the main provider's failed refresh, each
    main account's issue (prefixed with its name when there are several accounts), old data,
@@ -97,7 +98,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 6. Cards: one per account, in the user's order, with the main card first and a **Menu bar**
    pill. Without a main card, the first Claude or Codex card comes first
    (`CardOrder.ordered`). Automatic order is the main provider's accounts (selected first),
-   Claude extra usage, the other main-capable provider, Cursor, then Grok.
+   Claude extra usage, the other main-capable provider, Cursor, then Grok. The extra-usage
+   card shows only while Claude is the main meter, for its selected account, when that
+   account reports extra usage (`CardBuilder`).
 7. **Rings** cards are always open. **Bars**, Cursor, and Grok cards open and close, and
    remember their state. Details hold scoped windows, usage-limit resets, and tokens used.
 8. A card shows its account's own issue. A card of a provider that is not the main meter also
@@ -122,8 +125,10 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 1. **Data**: one switch per source, then each provider's accounts: Claude config dirs and
    connection, Codex homes, display names, and plan badges for logins that report none. Removing a
    config dir or a Codex home also removes its name, plan badge, switch, pin, and card state
-   (`Settings.forgetAccount`). Every connect and disconnect refreshes Claude, also when the
-   connection mode stays the same (`ClaudeSettingsModel`). Claude Code's active login with no config
+   (`Settings.forgetAccount`). Only the newest Connect or Disconnect applies its result. A
+   Connect that is saved, and a Disconnect, refresh Claude, also when the connection mode stays
+   the same. A Connect that fails, is abandoned, or is replaced saves nothing and refreshes
+   nothing (`ClaudeSettingsModel`). Claude Code's active login with no config
    dir (`oauth-…`) is listed too, to name it and set its plan; it has no switch and no Remove. In
    manual mode, Settings shows the plan badge of the manual login, which reports no plan
    (`ClaudeSettingsModel.manualPlan`). A config dir is listed once by its canonical path. Removing a

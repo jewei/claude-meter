@@ -126,7 +126,7 @@ public final class RefreshScheduler {
     }
 
     /// Requests may go out: refreshing is active and the display is awake.
-    private var canRequest: Bool {
+    var canRequest: Bool {
         configuration?.canRefresh == true && display?.isDisplayAsleep != true
     }
 

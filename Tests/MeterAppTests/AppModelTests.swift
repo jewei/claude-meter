@@ -14,7 +14,9 @@ import Testing
     private let grok = FakeUsageProvider(.grok)
     private let logFile = LogFile.temporary()
 
-    private func makeModel(_ settings: Settings = Settings()) -> AppModel {
+    private func makeModel(
+        _ settings: Settings = Settings(), display: FakeDisplay? = nil
+    ) -> AppModel {
         claude.enqueue(.sample(.claude, account: "claude", observedAt: Date()))
         codex.enqueue(.sample(.codex, observedAt: Date()))
         grok.enqueue(.sample(.grok, observedAt: Date()))
@@ -22,7 +24,7 @@ import Testing
         defaults.set(SettingsCodec.encode(settings), forKey: SettingsStore.storageKey)
         let store = UsageStore(providers: [claude, codex, grok])
         let scheduler = RefreshScheduler(
-            store: store, display: nil,
+            store: store, display: display,
             sleep: { _ in
                 try await Task.sleep(for: .seconds(3_600))
             })
@@ -151,6 +153,24 @@ import Testing
         #expect(model.usage.readings[.claude] == nil)
         // Grok is off, so its saved reading is not restored.
         #expect(model.usage.readings[.grok] == nil)
+        #expect(claude.fetchCount == 0)
+    }
+
+    @Test func startWithTheDisplayAsleepReconcilesWithoutRefreshing() async throws {
+        let directory = try TemporaryDirectory()
+        defer { directory.remove() }
+        let file = directory.path("readings.json")
+        let writer = ReadingArchive(file: file)
+        writer.record(.sample(.claude, account: "claude"), for: .claude)
+        writer.flush()
+
+        let display = FakeDisplay()
+        display.isDisplayAsleep = true
+        let model = makeModel(active(), display: display)
+        // The Claude login changed while the app was closed.
+        claude.setReconcile { _ in nil }
+        await model.start(archive: ReadingArchive(file: file))
+        #expect(model.usage.readings[.claude] == nil)
         #expect(claude.fetchCount == 0)
     }
 

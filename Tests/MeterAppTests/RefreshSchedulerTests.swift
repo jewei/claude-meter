@@ -6,23 +6,6 @@ import Testing
 
 @testable import MeterApp
 
-@MainActor
-private final class FakeDisplay: DisplayStateMonitoring {
-    var isDisplayAsleep = false
-    var onSleep: (() -> Void)?
-    var onWake: (() -> Void)?
-
-    func sleep() {
-        isDisplayAsleep = true
-        onSleep?()
-    }
-
-    func wake() {
-        isDisplayAsleep = false
-        onWake?()
-    }
-}
-
 /// A sleep function that returns only when a test fires it.
 private final class ManualTimer: Sendable {
     private let gates = Locked<[Gate]>([])

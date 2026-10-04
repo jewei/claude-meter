@@ -18,9 +18,10 @@ extension AppModel {
         logFile.setEnabled(current.writesLogFile)
         let configuration = Self.refreshConfiguration(current)
         scheduler?.update(configuration)
-        // A refresh reconciles first. Without one, still drop saved accounts whose login or
-        // folder is gone, from local reads only.
-        if !configuration.canRefresh, !restored.isEmpty {
+        // A refresh reconciles first. When no request may go out (paused, before onboarding,
+        // or with the display asleep), still drop saved accounts whose login or folder is
+        // gone, from local reads only.
+        if scheduler?.canRequest != true, !restored.isEmpty {
             await usage.reconcile(restored)
         }
         await claudeSettings?.reload()

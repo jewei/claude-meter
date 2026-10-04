@@ -111,7 +111,7 @@ When no request may go out (paused, before onboarding, or with the display aslee
 account or credential change still runs that provider's `reconcile` alone
 (`UsageStore.reconcile`): local reads, no request, and the result is published and saved. So
 a removed account or a changed login disappears at once. At launch, saved readings are
-reconciled the same way when refreshing cannot start.
+reconciled the same way when no request may go out, also with the display asleep.
 
 There is one global cadence. No battery, network, or per-provider timers.
 

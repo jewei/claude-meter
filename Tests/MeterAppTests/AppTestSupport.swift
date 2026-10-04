@@ -3,6 +3,8 @@ import MeterDomain
 import MeterPlatform
 import MeterTestSupport
 
+@testable import MeterApp
+
 /// A clock that tests move by hand. Starts at `Date.reference()`.
 final class TestClock: Sendable {
     private let date = Locked(Date.reference())
@@ -28,5 +30,23 @@ extension ProviderTokenHistory {
         ProviderTokenHistory(
             provider: provider, source: .thisMac, accounts: [:], coverageStart: now,
             observedAt: now, timeZoneID: calendar.timeZone.identifier)
+    }
+}
+
+/// A display that tests put to sleep and wake by hand.
+@MainActor
+final class FakeDisplay: DisplayStateMonitoring {
+    var isDisplayAsleep = false
+    var onSleep: (() -> Void)?
+    var onWake: (() -> Void)?
+
+    func sleep() {
+        isDisplayAsleep = true
+        onSleep?()
+    }
+
+    func wake() {
+        isDisplayAsleep = false
+        onWake?()
     }
 }

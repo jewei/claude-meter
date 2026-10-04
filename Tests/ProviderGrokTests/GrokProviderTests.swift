@@ -126,8 +126,11 @@ import Testing
         #expect(account.issue?.needsAction == true)
     }
 
-    @Test func anExpiredTokenIsNeverSent() async throws {
-        try signIn(expiresAt: "2026-10-04T11:59:00Z")
+    /// A key that expires in less than 30 s counts as expired, so it never comes back as a
+    /// 401 with the harsher message.
+    @Test(arguments: ["2026-10-04T11:59:00Z", "2026-10-04T12:00:10Z"])
+    func anExpiredTokenIsNeverSent(expiresAt: String) async throws {
+        try signIn(expiresAt: expiresAt)
         let http = FakeHTTPClient(json: Self.liveFixture)
 
         let account = try account(try await provider(http).fetch(previous: previous()))

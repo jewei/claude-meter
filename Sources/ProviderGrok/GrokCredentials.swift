@@ -36,9 +36,15 @@ struct GrokCredentials: Hashable, Sendable {
         }
     }
 
+    /// A key this close to its expiry counts as expired. Sent, it would come back as HTTP 401
+    /// after a clock difference or a slow request, with a harsher message.
+    static let expiryMargin: TimeInterval = 30
+
+    /// Whether `expires_at` has passed or is less than ``expiryMargin`` away. Such a key is
+    /// never sent.
     func isExpired(at now: Date) -> Bool {
         guard let expiresAt else { return false }
-        return expiresAt <= now
+        return expiresAt <= now.addingTimeInterval(Self.expiryMargin)
     }
 
     /// The `sub` claim when the bearer is a JSON Web Token.

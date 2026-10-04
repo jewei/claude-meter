@@ -39,21 +39,22 @@ enum CursorAPI {
         credentials: CursorCredentials, range: DateInterval, now: Date
     ) throws(CursorFailure) -> HTTPRequest {
         let token = credentials.accessToken
+        // The user ID is the text after the last `|`, even when that text is empty, so
+        // `auth0|` is an unexpected token and never becomes the user `auth0`.
         guard let subject = credentials.subject,
-            let userID = subject.split(separator: "|").last.map(String.init),
+            let userID = subject.split(separator: "|", omittingEmptySubsequences: false).last
+                .map(String.init),
             !userID.isEmpty, userID.utf8.allSatisfy(isUserIDByte),
-            token.utf8.allSatisfy({ isUserIDByte($0) || $0 == UInt8(ascii: ".") }),
-            var components = URLComponents(url: exportURL, resolvingAgainstBaseURL: false)
+            token.utf8.allSatisfy({ isUserIDByte($0) || $0 == UInt8(ascii: ".") })
         else { throw .unexpectedToken }
         guard let start = milliseconds(range.start), let end = milliseconds(now) else {
             throw .invalidDate
         }
-        components.queryItems = [
+        let url = exportURL.appending(queryItems: [
             URLQueryItem(name: "startDate", value: String(start)),
             URLQueryItem(name: "endDate", value: String(end)),
             URLQueryItem(name: "strategy", value: "tokens"),
-        ]
-        guard let url = components.url else { throw .unexpectedToken }
+        ])
         return HTTPRequest(
             .get, url: url,
             headers: [

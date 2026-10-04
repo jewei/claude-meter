@@ -107,7 +107,11 @@ import Testing
         #expect(start == String(Int64(range.start.timeIntervalSince1970 * 1000)))
     }
 
-    @Test(arguments: ["opaque token!", JWTFixture.token(["exp": 1_791_200_000])])
+    /// `auth0|` has an empty user ID after the last `|`; it must not become the user `auth0`.
+    @Test(arguments: [
+        "opaque token!", JWTFixture.token(["exp": 1_791_200_000]),
+        CursorFixture.token(subject: "auth0|"), CursorFixture.token(subject: "auth0|user 1"),
+    ])
     func aTokenOfUnexpectedFormatIsNotCalledExpired(token: String) async throws {
         keychain.store(token, service: "cursor-access-token")
         let http = FakeHTTPClient(json: Self.header)

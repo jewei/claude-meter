@@ -91,6 +91,47 @@ import Testing
     }
 }
 
+@Suite struct JSONValueTests {
+    @Test func decodesEveryKind() throws {
+        let json = #"{"a":null,"b":true,"c":1.5,"d":"x","e":[1,"2"],"f":{"g":false}}"#
+        let value = try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))
+        #expect(
+            value
+                == .object([
+                    "a": .null, "b": .bool(true), "c": .number(1.5), "d": .string("x"),
+                    "e": .array([.number(1), .string("2")]), "f": .object(["g": .bool(false)]),
+                ]))
+        #expect(value["f"]?["g"]?.boolValue == false)
+        #expect(value["d"]?.stringValue == "x")
+        #expect(value["missing"] == nil)
+        #expect(JSONValue.string("x")["key"] == nil)
+    }
+
+    @Test func readsNumbersFromNumbersAndDecimalText() {
+        #expect(JSONValue.number(2.5).doubleValue == 2.5)
+        #expect(JSONValue.string("9007199254740992").doubleValue == 9_007_199_254_740_992)
+        #expect(JSONValue.string("0x10").doubleValue == nil)
+        #expect(JSONValue.bool(true).doubleValue == nil)
+        #expect(JSONValue.null.doubleValue == nil)
+    }
+}
+
+@Suite struct Base64URLTests {
+    @Test func decodesWithAndWithoutPadding() {
+        #expect(Base64URL.decode("YQ") == Data("a".utf8))
+        #expect(Base64URL.decode("YQ==") == Data("a".utf8))
+        #expect(Base64URL.decode("YWI") == Data("ab".utf8))
+        #expect(Base64URL.decode("YWI=") == Data("ab".utf8))
+        // `-` and `_` replace `+` and `/`.
+        #expect(Base64URL.decode("-_8") == Data([0xFB, 0xFF]))
+    }
+
+    @Test func rejectsInvalidText() {
+        #expect(Base64URL.decode("Y") == nil)
+        #expect(Base64URL.decode("Y$Q=") == nil)
+    }
+}
+
 @Suite struct NumericTextTests {
     @Test func acceptsDecimalText() {
         #expect(NumericText.double("12") == 12)

@@ -44,6 +44,39 @@ extension HistoryScans {
             #expect(recovered.total() == 11)
         }
 
+        @Test func aFileThatGrowsWhileItIsReadKeepsTheNewOffset() async throws {
+            let home = try TemporaryDirectory()
+            defer { home.remove() }
+            let blocked = BlockedLines.make()
+            try home.write(line("first", 1) + line(blocked, 2), to: "live.jsonl")
+            let scanner = CountingScanner(match: jsonl)
+            let task = Task { try await scanner.scan([home.root()], since: rangeStart) }
+            #expect(await waitUntil { BlockedLines.hasArrived(blocked) })
+            // The session appends while the scan reads.
+            try home.append(line("appended", 4), to: "live.jsonl")
+            BlockedLines.open(blocked)
+            let during = try await task.value
+            #expect(during.total() == 3)
+
+            let next = try await scanner.scan([home.root()], since: rangeStart)
+            #expect(next.total() == 7)
+            #expect(next.work.parsedLines == 1)
+            #expect(!next.isPartial())
+        }
+
+        @Test func aFinalLineWithoutALineFeedStaysPartial() async throws {
+            let home = try TemporaryDirectory()
+            defer { home.remove() }
+            try home.write(line("done", 5) + #"{"id":"open","count":9}"#, to: "open.jsonl")
+            let scanner = CountingScanner(match: jsonl)
+            for _ in 0..<3 {
+                let result = try await scanner.scan([home.root()], since: rangeStart)
+                #expect(result.isPartial())
+                #expect(result.total() == 5)
+                #expect(result.work.parsedLines <= 1)
+            }
+        }
+
         @Test func aRootCheckWithoutAThreadKeepsTheLastFilesAsPartial() async throws {
             let home = try TemporaryDirectory()
             defer { home.remove() }

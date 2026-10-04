@@ -10,10 +10,11 @@ public final class DisplaySleepMonitor {
     public var onSleep: (() -> Void)?
     public var onWake: (() -> Void)?
 
-    private let observers = ObserverTokens()
+    private let observers: ObserverTokens
 
-    public init() {
-        let center = NSWorkspace.shared.notificationCenter
+    /// Observes `center`, the workspace notification center by default. Tests pass their own.
+    public init(center: NotificationCenter = NSWorkspace.shared.notificationCenter) {
+        observers = ObserverTokens(center: center)
         observers.tokens.append(
             center.addObserver(
                 forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main
@@ -45,10 +46,14 @@ public final class DisplaySleepMonitor {
 /// Removes notification observers when the monitor goes away. A separate nonisolated
 /// object, because a main-actor class cannot touch its state from `deinit`.
 private final class ObserverTokens {
+    let center: NotificationCenter
     var tokens: [any NSObjectProtocol] = []
 
+    init(center: NotificationCenter) {
+        self.center = center
+    }
+
     deinit {
-        let center = NSWorkspace.shared.notificationCenter
         for token in tokens { center.removeObserver(token) }
     }
 }

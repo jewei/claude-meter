@@ -64,14 +64,19 @@ Retry: never. Deadline: 20 s. Only HTTP 200 is success.
 | Field | Meaning |
 | --- | --- |
 | `billingCycleEnd` | End of the billing period: epoch seconds or milliseconds, or ISO-8601. String or number. |
-| `planUsage.totalPercentUsed` | Percent used. The authoritative value. |
+| `planUsage.totalPercentUsed` | Percent used. The authoritative value. Absent means 0 when `planUsage` is present. |
 | `planUsage.autoPercentUsed` | Percent used by Auto and Composer. Optional. |
 | `planUsage.apiPercentUsed` | Percent used by named API models. Optional. |
-| `planUsage.totalSpend` | Spend in US cents. |
-| `planUsage.limit` | Spend limit in US cents. Zero or less means no fixed limit. |
+| `planUsage.totalSpend` | Spend in US cents. Absent means 0 when `planUsage` is present. |
+| `planUsage.limit` | Spend limit in US cents. Absent, zero, or less means no fixed limit. |
 | `enabled` | `false` means that Cursor reports no usage for the account. |
 
-Every number can be a JSON number or a numeric string. Other fields are ignored.
+The response is Connect JSON: it omits proto3 zero values and can send 64-bit integers as
+strings. A present `planUsage` without `totalPercentUsed` is 0% used, so
+`{"planUsage":{}}` at the start of a billing period reads as 0%, not unknown. Without
+`planUsage`, the usage is unknown. A plain proto3 `enabled: false` would also be omitted, so
+only an explicit `false` turns usage off. Every number can be a JSON number or a numeric
+string. Other fields are ignored.
 
 ### Plan: `GetPlanInfo`
 
@@ -118,7 +123,7 @@ This row counts 2 + 10 + 1000 + 3 = 1015 tokens on 1 October, local time.
 | Window `billing`, "Billing period", `.billing`, binding | `totalPercentUsed`, resets at `billingCycleEnd` |
 | Window `auto`, "Auto + Composer", `.scoped`, not binding | `autoPercentUsed`, only when present |
 | Window `api`, "API", `.scoped`, not binding | `apiPercentUsed`, only when present |
-| `Balance(kind: .spend, unit: .currency("USD"))` | `totalSpend` / 100 with `limit` / 100, only when either is present |
+| `Balance(kind: .spend, unit: .currency("USD"))` | `totalSpend` / 100 with `limit` / 100, only when `planUsage` is present |
 | Plan | Membership or `planName`: `free` Free, `pro` Pro, `pro_plus` or `pro+` Pro+, `ultra` Ultra, `business` Business, `team` or `teams` Teams; any other name as written |
 | Owner | `.identity(sha256("cursor", sub))`, or `.credential(sha256("cursor", token))` without `sub` |
 

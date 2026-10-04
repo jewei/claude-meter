@@ -93,6 +93,59 @@ import Testing
         #expect(!full.canMove(ids[1], by: 0))
     }
 
+    /// A drag shows the new order before the drop, and the pill on the card that the drop
+    /// makes the main meter. Back in its own place, the card changes nothing (review R3-U-03).
+    @Test func aDragPreviewMovesThePillOnlyWhileTheCardIsOnTop() throws {
+        let model = try accounts()
+        let ids = model.cards.map(\.id)
+        let main = try #require(ids.first)
+        let codex = CardID.account(.codex, "/codex")
+        let from = try #require(ids.firstIndex(of: codex))
+
+        let top = try #require(model.dragPreview(moving: codex, to: 0))
+        #expect(top.index == 0)
+        #expect(top.order == [codex] + ids.filter { $0 != codex })
+        #expect(top.menuBarCard == codex)
+        #expect(model.cards(during: top).map(\.id) == top.order)
+        #expect(model.showsMenuBarPill(codex, during: top))
+        #expect(!model.showsMenuBarPill(main, during: top))
+
+        let back = try #require(model.dragPreview(moving: codex, to: from))
+        #expect(back.order == ids)
+        #expect(back.menuBarCard == main)
+        #expect(model.cards(during: back) == model.cards)
+        #expect(model.showsMenuBarPill(main, during: back))
+        #expect(!model.showsMenuBarPill(codex, during: back))
+    }
+
+    /// The preview never shows a place that the drop refuses, so the drop always applies.
+    @Test func aDragPreviewSkipsPlacesThatTheDropRefuses() throws {
+        let model = try accounts()
+        let ids = model.cards.map(\.id)
+        // Cursor never goes first while a Claude card shows, and the main card stays first.
+        #expect(model.dragPreview(moving: .account(.cursor, "cursor"), to: 0) == nil)
+        #expect(model.dragPreview(moving: ids[0], to: 1) == nil)
+        #expect(model.dragPreview(moving: ids[1], to: ids.count) == nil)
+        #expect(model.dragPreview(moving: ids[1], to: -1) == nil)
+        #expect(model.dragPreview(moving: .account(.grok, .default), to: 1) == nil)
+        // A move lower in the list keeps the main card and its pill.
+        let lower = try #require(model.dragPreview(moving: ids[1], to: ids.count - 1))
+        #expect(lower.menuBarCard == ids[0])
+    }
+
+    /// A refresh that changes the cards during a drag ends the preview: the list shows the
+    /// cards in their own order, and the drop does nothing.
+    @Test func aPreviewThatNoLongerFitsTheCardsIsIgnored() throws {
+        let full = try accounts()
+        let preview = try #require(full.dragPreview(moving: .account(.codex, "/codex"), to: 1))
+        #expect(full.accepts(preview))
+        let fewer = try accounts(cursor: false)
+        #expect(!fewer.accepts(preview))
+        #expect(fewer.cards(during: preview) == fewer.cards)
+        #expect(fewer.showsMenuBarPill(try #require(fewer.cards.first).id, during: preview))
+        #expect(fewer.cards(during: nil) == fewer.cards)
+    }
+
     @Test func announcementsSayWhereTheCardWent() throws {
         let model = try accounts()
         let codex = try card(model, .account(.codex, "/codex"))

@@ -35,6 +35,8 @@ core.
 - The menu-bar card stays first. To use another account in the menu bar, drag its card to
   the top or use **Use in Menu Bar**. Moving the first card lower no longer changes the
   menu-bar account.
+- A dragged card changes the order and the menu-bar account when you drop it, not while it
+  passes the top of the list.
 - The welcome screen offers Quit.
 - Every percentage is a whole number, everywhere.
 - Exactly 100% used now shows as out of energy in the menu bar as well as in the hero.

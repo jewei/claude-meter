@@ -52,8 +52,12 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    so that card can always become the main meter. Only the card dropped on top changes the
    main meter: a move lower in the list keeps the main meter and every pin, also a missing
    pinned account. The main card stays first. While a Claude or Codex card is visible,
-   Cursor, Grok, and extra usage cannot go first (`CardOrder.move`). **Use in Menu Bar** in
-   a card's context menu, also a VoiceOver action, does the same as a drag to the top
+   Cursor, Grok, and extra usage cannot go first (`CardOrder.move`). The list shows the new
+   order while the card moves, but the settings change once, when the user drops the card:
+   a card that passes over the top and comes back changes nothing. During the drag, the card
+   takes only places that the drop accepts, and the **Menu bar** pill moves to the card that
+   the drop makes the main meter (`CardDragPreview`). **Use in Menu Bar** in a card's
+   context menu, also a VoiceOver action, does the same as a drag to the top
    (`CardModel.canUseInMenuBar`). **Use automatic order** in Appearance clears the order and
    every pin.
 

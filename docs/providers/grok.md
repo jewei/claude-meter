@@ -96,8 +96,11 @@ never reaches a reading, a log, or the disk.
 
 1. Order the entries: keys that start with `https://auth.x.ai`, then
    `https://accounts.x.ai/sign-in`, then all other keys. Sort the keys inside each group.
-2. Use the first entry that has a key and has not expired.
-3. If every entry with a key has expired, the login is expired. No token is sent.
+2. The first entry that has a key is the login. The clock never changes which entry that is,
+   so the owner does not flip when a key expires.
+3. If that entry has expired, a later entry with the same owner that has not expired is used.
+   Otherwise the login is expired, and no token is sent. An entry of another login, such as
+   an old legacy key, is never sent in its place.
 4. An `expires_at` that does not parse means no known expiry.
 5. A missing file, a missing folder, or no entry with a key means signed out.
 6. A file that is not a regular file, is larger than 4 MiB, or is not a JSON object is

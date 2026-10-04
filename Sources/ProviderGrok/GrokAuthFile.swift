@@ -41,8 +41,12 @@ struct GrokAuthFile: Sendable {
 
     /// Chooses an entry. Keys sort inside each group, so the choice never depends on
     /// dictionary order: auth.x.ai entries, then the legacy entry, then any other entry.
-    /// The first entry with a key that has not expired wins. When every such entry has
-    /// expired, the first one is returned, so that its owner can keep the last reading.
+    ///
+    /// The first entry with a key is the login, so the owner never depends on the clock. When
+    /// it has expired, a later entry that has not expired stands in only if it has the same
+    /// owner. Otherwise the expired entry is returned: its owner keeps the last reading, and
+    /// the card asks the user to renew it. An entry of another login, often an old legacy key,
+    /// is never sent in its place.
     static func lookup(_ data: Data, now: Date) -> GrokCredentialLookup {
         guard let json = try? JSONDecoder().decode(JSONValue.self, from: data),
             case .object(let entries) = json
@@ -54,10 +58,15 @@ struct GrokAuthFile: Sendable {
         let candidates = (oidc + legacy + others).compactMap { scope in
             entries[scope].flatMap { credentials(scope: scope, entry: $0) }
         }
-        if let usable = candidates.first(where: { !$0.isExpired(at: now) }) {
-            return .found(usable)
+        guard let first = candidates.first else { return .missing }
+        if first.isExpired(at: now),
+            let sameAccount = candidates.dropFirst().first(where: {
+                $0.owner == first.owner && !$0.isExpired(at: now)
+            })
+        {
+            return .found(sameAccount)
         }
-        return candidates.first.map { .found($0) } ?? .missing
+        return .found(first)
     }
 
     /// An entry with a non-blank `key`. `expires_at`, the account ID, and the email are

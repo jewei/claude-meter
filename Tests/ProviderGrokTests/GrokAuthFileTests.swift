@@ -71,13 +71,41 @@ import Testing
         #expect(found?.bearer == "oidc-token")
     }
 
-    @Test func anExpiredPreferredEntryDoesNotHideAValidOne() {
+    /// An expired preferred entry is reported expired. An entry of another login, such as an
+    /// old legacy key, is never sent in its place.
+    @Test func anExpiredPreferredEntryIsNotReplacedByAnotherLogin() throws {
+        let found = try #require(
+            credentials(
+                """
+                {"https://auth.x.ai::client-uuid":{"key":"expired-token","expires_at":"2026-07-01T00:00:00Z"},
+                 "https://accounts.x.ai/sign-in":{"key":"legacy-token","expires_at":"2099-01-01T00:00:00Z"}}
+                """))
+        #expect(found.bearer == "expired-token")
+        #expect(found.isExpired(at: now))
+    }
+
+    @Test func anExpiredPreferredEntryCanBeReplacedByTheSameAccount() {
         let found = credentials(
             """
-            {"https://auth.x.ai::client-uuid":{"key":"expired-token","expires_at":"2026-07-01T00:00:00Z"},
-             "https://accounts.x.ai/sign-in":{"key":"legacy-token","expires_at":"2099-01-01T00:00:00Z"}}
+            {"https://auth.x.ai::aaa":{"key":"oidc-old","email":"alpha@example.com","expires_at":"2026-07-01T00:00:00Z"},
+             "https://auth.x.ai::bbb":{"key":"oidc-new","email":"alpha@example.com","expires_at":"2099-01-01T00:00:00Z"},
+             "https://accounts.x.ai/sign-in":{"key":"legacy-token"}}
             """)
-        #expect(found?.bearer == "legacy-token")
+        #expect(found?.bearer == "oidc-new")
+    }
+
+    /// The owner must not flip when the preferred entry expires, or every expiry drops the
+    /// reading and sends another login's key.
+    @Test func theOwnerDoesNotDependOnTheClock() {
+        let json = Data(
+            """
+            {"https://auth.x.ai::c":{"key":"oidc-key","user_id":"u-1","expires_at":"2026-07-11T05:30:00Z"},
+             "https://accounts.x.ai/sign-in":{"key":"legacy-token"}}
+            """.utf8)
+        let before = GrokAuthFile.lookup(json, now: now)
+        let after = GrokAuthFile.lookup(json, now: now.addingTimeInterval(3_600))
+        #expect(before.ownerStatus == after.ownerStatus)
+        #expect(before.ownerStatus == .signedIn(.identity(Digest.sha256(parts: ["grok", "u-1"]))))
     }
 
     @Test func whenEveryEntryExpiredTheFirstIsReportedExpired() throws {

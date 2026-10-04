@@ -93,7 +93,7 @@ public enum DataSourceText {
                 isSignedIn: false, isProblem: true)
         case .unknown(let reason):
             Status(
-                text: "Could not check Claude Code's login. \(reason)", isSignedIn: false,
+                text: "Could not check Claude Code's login. \(reason.text)", isSignedIn: false,
                 isProblem: true)
         }
     }
@@ -109,7 +109,7 @@ public enum DataSourceText {
             Status(text: "No tokens are saved.", isSignedIn: false, isProblem: false)
         case .unknown(let reason):
             Status(
-                text: "Could not check the saved tokens. \(reason)", isSignedIn: false,
+                text: "Could not check the saved tokens. \(reason.text)", isSignedIn: false,
                 isProblem: true)
         }
     }
@@ -126,7 +126,7 @@ public enum DataSourceText {
                 text: "API-key sign-in has no subscription quota. Sign in with ChatGPT in Codex.",
                 isSignedIn: false, isProblem: true)
         case .unknown(let reason):
-            Status(text: reason, isSignedIn: false, isProblem: true)
+            Status(text: reason.text, isSignedIn: false, isProblem: true)
         }
     }
 }

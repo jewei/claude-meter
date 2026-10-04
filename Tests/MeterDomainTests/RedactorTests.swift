@@ -64,4 +64,15 @@ import Testing
         #expect(UsageIssue("failed for me@example.com").message == "failed for [redacted]")
         #expect(ProviderError("Bearer abc").issue.message == "Bearer [redacted]")
     }
+
+    @Test func signInReasonsAreAlwaysRedacted() {
+        let error = "The Keychain is locked for me@example.com."
+        #expect(SignInStatus.unknown(error) == .unknown(SignInStatus.Reason(error)))
+        guard case .unknown(let reason) = SignInStatus.unknown(error) else {
+            Issue.record("Expected an unknown status.")
+            return
+        }
+        #expect(reason.text == "The Keychain is locked for [redacted].")
+        #expect("\(reason)" == reason.text)
+    }
 }

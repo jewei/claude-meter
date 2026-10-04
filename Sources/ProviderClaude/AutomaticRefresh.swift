@@ -26,8 +26,8 @@ struct AutomaticRefresh: Sendable {
         let activeID: AccountID?
     }
 
-    /// Lists the config dirs. Blocking: called through ``BlockingIO``. An error fails the
-    /// discovery like a timeout does.
+    /// Lists the config dirs. Blocking: called through ``BlockingIO``. An error, such as a home
+    /// folder that cannot be listed, fails the discovery like a timeout does.
     typealias Scan = @Sendable (_ home: URL, ClaudeConfiguration) throws -> [ClaudeAccount]
 
     let home: URL

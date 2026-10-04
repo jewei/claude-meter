@@ -120,9 +120,10 @@ little memory. The limit is 256 MiB. The result is one of three states:
    `claude`, the part after `claude-` for `claude-<name>`, else the key. A display name that
    the user sets replaces it on the card.
 3. Discovery lists `~/.claude` when it exists, other `~/.claude-*` dirs that have
-   `settings.json` or `projects` (sorted by name), and the configured dirs. When the folders
-   cannot be listed in 5 s, discovery fails: a refresh keeps its reading, Settings keeps its
-   list, and token history keeps its scan state. It never returns an empty list instead.
+   `settings.json` or `projects` (sorted by name), and the configured dirs. When the home
+   folder cannot be listed, or the folders cannot be listed in 5 s, discovery fails: a refresh
+   keeps its reading, Settings keeps its list, and token history keeps its scan state. It
+   never returns an empty list instead.
 4. Two dirs with the same resolved path are one account. Two dirs with the same key keep
    one: `~/.claude` owns `claude`, then a configured dir wins, then the smaller path. Only
    the folder named `.claude` in the home folder claims the default account first, so a
@@ -345,7 +346,7 @@ marked stale, unless the last column says no.
 | --- | --- | --- |
 | Claude not connected | Connect Claude in Settings to read usage. | No |
 | Gate closed | Anthropic is rate-limiting usage checks. (with `retryAt`) | Yes |
-| Config dirs not listed in 5 s | Could not read the Claude config folders. <reason> | Yes |
+| Config dirs not listed: the home folder cannot be listed, or 5 s passed | Could not read the Claude config folders. <reason> | Yes |
 | Keychain did not answer, no account left | The Keychain did not answer. If your Mac is locked, unlock it. Retrying at the next refresh. | Yes |
 | Every config dir turned off | Every Claude config dir is turned off. Turn one on in Settings. | No |
 | No config dir and no login | Claude Code isn't signed in. Open Claude Code and run /login. | No |

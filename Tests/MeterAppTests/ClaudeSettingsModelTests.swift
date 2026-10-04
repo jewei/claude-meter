@@ -76,7 +76,7 @@ import Testing
             scan: { home, configuration in
                 // A listing that fails as one that runs out of time does.
                 if isStuck.value { throw TimeoutError(limit: .seconds(5)) }
-                return ConfigDirectoryScanner.discover(home: home, configuration: configuration)
+                return try ConfigDirectoryScanner.discover(home: home, configuration: configuration)
             })
         let model = ClaudeSettingsModel(
             settings: settings, usage: fixture.usage, provider: provider)
@@ -89,7 +89,7 @@ import Testing
         #expect(model.accounts.map(\.id) == ["claude", "claude-work"])
         let other = try home.write("{}", to: "other/settings.json").deletingLastPathComponent()
         #expect(await !model.addDirectory(other))
-        #expect(model.directoryMessage == "Could not list the config dirs in time. Try again.")
+        #expect(model.directoryMessage == "Could not list the config dirs. Try again.")
         #expect(settings.settings.claude.extraDirectories.isEmpty)
     }
 

@@ -36,13 +36,40 @@ extension ClaudeTests {
             _ = try home.makeDirectory(".claude-empty")
             try home.write("{}", to: ".config/settings.json")
 
-            let accounts = ConfigDirectoryScanner.discover(
+            let accounts = try ConfigDirectoryScanner.discover(
                 home: home.url, configuration: ClaudeConfiguration(connection: .automatic))
 
             #expect(accounts.map(\.id) == ["claude", "claude-team", "claude-work"])
             #expect(accounts.map(\.name) == ["default", "team", "work"])
             #expect(accounts.map(\.isDefault) == [true, false, false])
             #expect(accounts.allSatisfy { $0.isEnabled && $0.issue == nil })
+        }
+
+        @Test func aHomeThatCannotBeListedFailsDiscovery() async throws {
+            let harness = try ClaudeHarness()
+            try harness.directory(".claude", account: "acc-1")
+            let home = harness.home.url
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o000], ofItemAtPath: home.path)
+            // Uses the harness, so it lives until the folder can be removed again.
+            defer {
+                try? FileManager.default.setAttributes(
+                    [.posixPermissions: 0o700], ofItemAtPath: harness.home.url.path)
+            }
+
+            #expect(throws: ConfigDirectoryScanner.HomeNotListed()) {
+                try ConfigDirectoryScanner.discover(
+                    home: home, configuration: harness.configuration)
+            }
+            // Settings and token history get the failure, never an empty list.
+            let error = await #expect(throws: ProviderError.self) {
+                try await harness.provider(usageServer([:])).accounts(for: harness.configuration)
+            }
+            #expect(
+                error?.issue.message
+                    == "Could not read the Claude config folders. The home folder cannot be listed."
+            )
+            #expect(error?.keepsLastReading == true)
         }
 
         @Test func disabledAccountsAreListedButTheDefaultCannotBeDisabled() throws {
@@ -53,7 +80,7 @@ extension ClaudeTests {
 
             let configuration = ClaudeConfiguration(
                 connection: .automatic, disabledAccounts: ["claude", "claude-work"])
-            let accounts = ConfigDirectoryScanner.discover(
+            let accounts = try ConfigDirectoryScanner.discover(
                 home: home.url, configuration: configuration)
 
             #expect(configuration.disabledAccounts == ["claude-work"])
@@ -78,7 +105,7 @@ extension ClaudeTests {
                     home.path("elsewhere/.claude-work"), home.path("custom/.claude-extra"),
                     home.path("alias"), home.path(".claude-team"),
                 ])
-            let accounts = ConfigDirectoryScanner.discover(
+            let accounts = try ConfigDirectoryScanner.discover(
                 home: home.url, configuration: configuration)
 
             // The alias of ~/.claude collapses into the default account, a configured copy of a
@@ -108,7 +135,7 @@ extension ClaudeTests {
                 #expect(accounts.first?.directory.lastPathComponent == ".claude")
                 #expect(accounts.first?.isDefault == true)
             }
-            let found = ConfigDirectoryScanner.discover(
+            let found = try ConfigDirectoryScanner.discover(
                 home: home.url, configuration: configuration)
             #expect(found.map(\.id) == ["claude"])
         }
@@ -122,7 +149,7 @@ extension ClaudeTests {
             let configuration = ClaudeConfiguration(
                 connection: .automatic,
                 extraDirectories: [home.path("old/.claude-old"), home.path("gone/.claude-gone")])
-            let accounts = ConfigDirectoryScanner.discover(
+            let accounts = try ConfigDirectoryScanner.discover(
                 home: home.url, configuration: configuration)
 
             #expect(accounts.map(\.id) == ["claude", "claude-gone", "claude-old"])
@@ -144,7 +171,7 @@ extension ClaudeTests {
             let configuration = ClaudeConfiguration(
                 connection: .automatic,
                 extraDirectories: [home.path("usb/.claude-work"), home.path("empty/.claude-work")])
-            let accounts = ConfigDirectoryScanner.discover(
+            let accounts = try ConfigDirectoryScanner.discover(
                 home: home.url, configuration: configuration)
 
             #expect(accounts.map(\.id) == ["claude", "claude-work"])
@@ -167,7 +194,7 @@ extension ClaudeTests {
 
             let configuration = ClaudeConfiguration(
                 connection: .automatic, extraDirectories: [home.path("other/.claude-alias")])
-            let accounts = ConfigDirectoryScanner.discover(
+            let accounts = try ConfigDirectoryScanner.discover(
                 home: home.url, configuration: configuration)
 
             // The configured dir takes the key `claude-alias`, so the link loses it; the work

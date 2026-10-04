@@ -64,8 +64,18 @@ enum ConfigDirectoryScanner {
     /// configured dir that is gone or is no longer a config dir is listed with its issue, so
     /// the user can remove it, but only when no working dir has its key. The result lists the
     /// default account first, then the others by key.
-    static func discover(home: URL, configuration: ClaudeConfiguration) -> [ClaudeAccount] {
-        discover(home: home, configuration: configuration, scanned: scannedDirectories(in: home))
+    ///
+    /// Throws ``HomeNotListed`` when the home folder cannot be listed: an empty list would
+    /// look like "no config dirs" to Settings and token history.
+    static func discover(home: URL, configuration: ClaudeConfiguration) throws -> [ClaudeAccount] {
+        discover(
+            home: home, configuration: configuration, scanned: try scannedDirectories(in: home))
+    }
+
+    /// The home folder could not be listed. The text names no path: the name of the home
+    /// folder is the macOS user name.
+    struct HomeNotListed: LocalizedError, Equatable {
+        var errorDescription: String? { "The home folder cannot be listed." }
     }
 
     /// ``discover(home:configuration:)`` with the `~/.claude*` dirs already listed, in any
@@ -139,10 +149,14 @@ enum ConfigDirectoryScanner {
 
     /// `~/.claude` and the `~/.claude-*` dirs that hold `settings.json` or `projects`, sorted
     /// by name, so that every discovery sees them in the same order.
-    private static func scannedDirectories(in home: URL) -> [URL] {
-        let children =
-            (try? FileManager.default.contentsOfDirectory(
-                at: home, includingPropertiesForKeys: nil, options: [])) ?? []
+    private static func scannedDirectories(in home: URL) throws(HomeNotListed) -> [URL] {
+        let children: [URL]
+        do {
+            children = try FileManager.default.contentsOfDirectory(
+                at: home, includingPropertiesForKeys: nil, options: [])
+        } catch {
+            throw HomeNotListed()
+        }
         return children.filter { child in
             let name = child.lastPathComponent
             guard name == defaultFolder || name.hasPrefix(defaultFolder + "-"),

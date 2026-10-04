@@ -6,9 +6,10 @@ extension ClaudeProvider {
     /// Every config dir for `configuration`, enabled and disabled, default first. Settings
     /// lists them and token history scans them.
     ///
-    /// - Throws: `CancellationError`, or a ``ProviderError`` when the folders cannot be listed
-    ///   in 5 s. Callers keep what they had: a slow disk must never look like "no config
-    ///   dirs", which would empty the Settings list and discard the history scan state.
+    /// - Throws: `CancellationError`, or a ``ProviderError`` when the home folder cannot be
+    ///   listed, or the folders cannot be listed in 5 s. Callers keep what they had: a slow
+    ///   disk must never look like "no config dirs", which would empty the Settings list and
+    ///   discard the history scan state.
     public func accounts(for configuration: ClaudeConfiguration) async throws -> [ClaudeAccount] {
         try await automatic.discover(configuration)
     }

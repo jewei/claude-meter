@@ -51,8 +51,8 @@ extension AutomaticRefresh {
     }
 
     /// Every config dir, enabled and disabled. Throws a ``ProviderError`` that keeps the last
-    /// reading when the folders cannot be listed in time, so a slow disk never looks like "no
-    /// config dirs", and `CancellationError`.
+    /// reading when the folders cannot be listed, or not in time, so a slow or locked disk
+    /// never looks like "no config dirs", and `CancellationError`.
     func discover(_ configuration: ClaudeConfiguration) async throws -> [ClaudeAccount] {
         let home = home
         let scan = scan

@@ -42,7 +42,7 @@ extension ClaudeSettingsModel {
         }
         // A fresh discovery, so the default dir counts even before the first reload.
         guard let found = try? await provider.accounts(for: settings.claudeConfiguration) else {
-            directoryMessage = "Could not list the config dirs in time. Try again."
+            directoryMessage = "Could not list the config dirs. Try again."
             return false
         }
         let listed = found.map(\.canonicalPath) + settings.settings.claude.extraDirectories

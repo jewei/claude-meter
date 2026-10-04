@@ -58,7 +58,7 @@ extension AutomaticRefresh {
         let scan = scan
         do {
             return try await BlockingIO.run(timeout: limits.discovery) { _ in
-                scan(home, configuration)
+                try scan(home, configuration)
             }
         } catch is CancellationError {
             throw CancellationError()

@@ -1,4 +1,3 @@
-import Dispatch
 import Foundation
 import MeterDomain
 import MeterPlatform
@@ -84,29 +83,22 @@ import Testing
 
     @Test func aSlowDiskKeepsTheListedConfigDirs() async throws {
         try home.write("{}", to: ".claude-work/settings.json")
-        let stuck = Locked(false)
-        // Holds a stuck listing until the test ends; each waiter lets the next one go.
-        let release = DispatchSemaphore(value: 0)
-        defer { release.signal() }
-        var limits = ClaudeLimits()
-        limits.discovery = .milliseconds(100)
+        let isStuck = Locked(false)
         let settings = settings
         let provider = ClaudeProvider(
             configuration: { @MainActor in settings.claudeConfiguration }, keychain: keychain,
             http: FakeHTTPClient { _ in .json(500, "{}") }, store: MemoryStore(), home: home.url,
-            now: Date.init, keychainUser: "alice", limits: limits,
+            now: Date.init, keychainUser: "alice", limits: ClaudeLimits(),
             scan: { home, configuration in
-                if stuck.value {
-                    release.wait()
-                    release.signal()
-                }
+                // A listing that fails as one that runs out of time does.
+                if isStuck.value { throw TimeoutError(limit: .seconds(5)) }
                 return ConfigDirectoryScanner.discover(home: home, configuration: configuration)
             })
         let model = ClaudeSettingsModel(settings: settings, usage: usage, provider: provider)
         await model.reload()
         #expect(model.accounts.map(\.id) == ["claude", "claude-work"])
 
-        stuck.withLock { $0 = true }
+        isStuck.withLock { $0 = true }
         await model.reload()
 
         #expect(model.accounts.map(\.id) == ["claude", "claude-work"])

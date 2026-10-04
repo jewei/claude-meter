@@ -85,7 +85,16 @@ Content-Type: application/json
 | Path | Fields |
 | --- | --- |
 | `~/.claude*/` | Existence of `settings.json` or `projects` |
-| `~/.claude.json` (for `~/.claude`) or `<config dir>/.claude.json` | `oauthAccount.accountUuid`, `.organizationUuid`, `.organizationRateLimitTier`, `.userRateLimitTier` (4 MiB limit) |
+| `~/.claude.json` (for `~/.claude`) or `<config dir>/.claude.json` | `oauthAccount.accountUuid`, `.organizationUuid`, `.organizationRateLimitTier`, `.userRateLimitTier` |
+
+The `.claude.json` read scans the file in 256 KiB chunks and keeps only the top-level
+`oauthAccount` object, so a large file (Claude Code keeps per-project state in it) costs
+little memory. The limit is 256 MiB. The result is one of three states:
+
+- found: the file has a top-level `oauthAccount` object;
+- absent: no file, not a regular file, or a complete file without that object;
+- unreadable: the file ends before its root object does (Claude Code is writing it), is
+  larger than the limit, or the read fails or takes more than 5 s.
 
 ### Stored values
 
@@ -112,7 +121,7 @@ Content-Type: application/json
    with an issue that asks the user to remove it. It is not read.
 8. The active login is the legacy item when it exists, else the most recently modified
    hashed item (equal dates: the smallest service name). It belongs to the config dir whose
-   services contain it. A legacy item without `~/.claude` belongs to `claude`. A hashed item
+   services contain it. A legacy item without `~/.claude` belongs to `claude` and uses `~/.claude.json`. A hashed item
    that matches no config dir gets its own account `oauth-<first 8 hex of SHA-256 of the
    service>`, shown first.
 
@@ -158,8 +167,10 @@ Content-Type: application/json
 ### Retention and owners
 
 1. The owner of an observation is `.identity(sha256(parts: ["claude", accountUuid,
-   organizationUuid]))` from `.claude.json` when it names an account. Else it is
-   `.credential(sha256(accessToken))`.
+   organizationUuid]))` from `.claude.json` when it names an account. When the file is
+   absent or names no account, it is `.credential(sha256(accessToken))`. When the file is
+   unreadable, the owner is unknown (`OwnerStatus.unknown`): the reading is kept, and no
+   request goes out for that account until the file can be read.
 2. The manual owner is `.identity(sha256(parts: ["claude", "manual", connectionID]))`. The
    connection ID is random and made at connect time.
 3. A failed account keeps its last observation, marked stale, only while
@@ -206,6 +217,7 @@ Content-Type: application/json
 | Keychain locked | Keychain is locked — unlock your Mac to refresh Claude usage | Keychain is temporarily unavailable. |
 | Credential unreadable | Claude Code credentials couldn't be read — run `claude login` to re-create them | Credentials invalid. Run claude login for this account. |
 | Expired | Claude Code sign-in expired — run `claude login` to restore Claude usage | Credentials expired. Run claude login for this account. |
+| `.claude.json` unreadable | Could not read Claude Code's account file. Retrying at the next refresh. | Same |
 | HTTP 401 or 403 | Claude Code sign-in expired — run `claude login` to restore Claude usage | Sign in again with claude login for this account. |
 | HTTP 429 | Anthropic is rate-limiting usage checks. (with `retryAt`) | Same |
 | Other HTTP status | Anthropic usage check failed (HTTP <status>). | Same |

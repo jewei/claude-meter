@@ -10,6 +10,8 @@ enum AccountFailure: Error, Equatable {
     case credentialsUnavailable
     case credentialsInvalid
     case credentialsExpired
+    /// The credential was read, but the identity file could not be read now.
+    case identityUnavailable
     case unauthorized
     case rateLimited(until: Date?)
     case invalidResponse
@@ -70,6 +72,8 @@ enum AccountFailure: Error, Equatable {
             isActiveLogin
                 ? Self.signInExpired
                 : action("Credentials expired. Run claude login for this account.")
+        case .identityUnavailable:
+            UsageIssue("Could not read Claude Code's account file. Retrying at the next refresh.")
         case .unauthorized:
             isActiveLogin
                 ? Self.signInExpired

@@ -135,16 +135,24 @@ extension ClaudeTests {
         }
 
         @Test func identityNamesTheOwner() throws {
-            let identity = try #require(
-                LocalIdentity.parse(
-                    Data(ClaudeFixtures.identity(account: "acc-1", tier: "max_5x").utf8)))
+            let read = LocalIdentity.parse(
+                Data(ClaudeFixtures.identity(account: "acc-1", tier: "max_5x").utf8))
+            guard case .found(let identity) = read else {
+                Issue.record("No identity in \(read)")
+                return
+            }
             #expect(identity.accountUUID == "acc-1")
             #expect(identity.organizationUUID == "org-1")
             #expect(identity.rateLimitTier == "max_5x")
             #expect(
                 identity.owner == .identity(Digest.sha256(parts: ["claude", "acc-1", "org-1"])))
-            #expect(LocalIdentity.parse(Data(#"{"numStartups": 1}"#.utf8)) == nil)
-            #expect(LocalIdentity.parse(Data(#"{"oauthAccount": {}}"#.utf8))?.owner == nil)
+            #expect(LocalIdentity.parse(Data(#"{"numStartups": 1}"#.utf8)) == .absent)
+            guard case .found(let empty) = LocalIdentity.parse(Data(#"{"oauthAccount": {}}"#.utf8))
+            else {
+                Issue.record("An empty oauthAccount is still an identity record")
+                return
+            }
+            #expect(empty.owner == nil)
         }
     }
 }

@@ -30,6 +30,9 @@ extension AutomaticRefresh {
         switch try await logins.read(slot) {
         case .failed(let failure, let status):
             return failed(failure, status, nil)
+        case .ownerUnknown:
+            // Without an owner the response could not be kept safely, so nothing is sent.
+            return failed(.identityUnavailable, .unknown, nil)
         case .signedIn(let readCredential, let readOwner, let readIdentity):
             (credential, owner, identity) = (readCredential, readOwner, readIdentity)
         }

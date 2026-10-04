@@ -1,11 +1,24 @@
+import Darwin
 import Foundation
 import MeterDomain
 import MeterPlatform
 
 /// The login that Claude Code recorded in a config dir's `.claude.json`, read without network.
 struct LocalIdentity: Sendable, Equatable {
-    /// Claude Code keeps per-project state in this file too, so it can be large.
-    static let maxFileBytes = 4 * 1024 * 1024
+    /// The outcome of reading an identity file.
+    enum Read: Sendable, Equatable {
+        case found(LocalIdentity)
+        /// No file, or a complete file that names no login.
+        case absent
+        /// The file could not be read now, for example while Claude Code writes it. Proves
+        /// nothing about the login.
+        case unreadable
+    }
+
+    /// Claude Code keeps per-project state in this file too, so it can be very large. The read
+    /// scans the file in chunks and keeps only the `oauthAccount` object.
+    static let maxFileBytes = 256 * 1024 * 1024
+    private static let chunkBytes = 256 * 1024
 
     let accountUUID: String?
     let organizationUUID: String?
@@ -28,21 +41,57 @@ struct LocalIdentity: Sendable, Equatable {
         return directory.appending(path: ".claude.json")
     }
 
-    /// Reads the file. Blocking: call through ``BlockingIO``. Nil when the file is missing,
-    /// unreadable, or has no `oauthAccount` object.
-    static func read(_ file: URL) -> LocalIdentity? {
-        guard let data = try? LocalFile.read(file, maxBytes: maxFileBytes) else { return nil }
-        return parse(data)
+    /// Reads the file. Blocking: call through ``BlockingIO``. A missing file, or something
+    /// other than a regular file, is absent. A file that ends before its root object does, is
+    /// larger than `maxBytes`, or fails to read is unreadable.
+    static func read(
+        _ file: URL, maxBytes: Int = maxFileBytes, cancellation: BlockingIO.Cancellation? = nil
+    ) -> Read {
+        // The same safe open as `LocalFile.read`: no blocking on a FIFO, regular files only.
+        let descriptor = open(file.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else {
+            return errno == ENOENT || errno == ENOTDIR ? .absent : .unreadable
+        }
+        defer { close(descriptor) }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0 else { return .unreadable }
+        guard info.st_mode & S_IFMT == S_IFREG else { return .absent }
+        guard info.st_size <= maxBytes else { return .unreadable }
+
+        var scanner = OAuthAccountScanner()
+        var offset: Int64 = 0
+        while !scanner.isFinished {
+            if cancellation?.isCancelled == true { return .unreadable }
+            guard let chunk = try? LocalFile.read(descriptor, from: offset, count: chunkBytes)
+            else { return .unreadable }
+            if chunk.isEmpty { break }
+            offset += Int64(chunk.count)
+            // The file grew past the limit while it was read.
+            guard offset <= maxBytes else { return .unreadable }
+            scanner.feed(chunk)
+        }
+        return result(of: scanner)
     }
 
-    static func parse(_ data: Data) -> LocalIdentity? {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let account = root["oauthAccount"] as? [String: Any]
-        else { return nil }
-        return LocalIdentity(
-            accountUUID: account["accountUuid"] as? String,
-            organizationUUID: account["organizationUuid"] as? String,
-            rateLimitTier: account["organizationRateLimitTier"] as? String
-                ?? account["userRateLimitTier"] as? String)
+    /// Reads identity file contents that are already in memory.
+    static func parse(_ data: Data) -> Read {
+        var scanner = OAuthAccountScanner()
+        scanner.feed(data)
+        return result(of: scanner)
+    }
+
+    private static func result(of scanner: OAuthAccountScanner) -> Read {
+        if let object = scanner.object {
+            guard let account = try? JSONSerialization.jsonObject(with: object) as? [String: Any]
+            else { return .unreadable }
+            return .found(
+                LocalIdentity(
+                    accountUUID: account["accountUuid"] as? String,
+                    organizationUUID: account["organizationUuid"] as? String,
+                    rateLimitTier: account["organizationRateLimitTier"] as? String
+                        ?? account["userRateLimitTier"] as? String))
+        }
+        // A file that is not a JSON object stays that way; a file cut short is being written.
+        return scanner.isComplete || scanner.isMalformed ? .absent : .unreadable
     }
 }

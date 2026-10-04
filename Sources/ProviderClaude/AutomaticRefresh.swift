@@ -76,7 +76,7 @@ struct AutomaticRefresh: Sendable {
             }) {
                 activeID = owner.id
             } else if service == ClaudeCodeKeychain.legacyService {
-                slots.insert(.legacyDefault, at: 0)
+                slots.insert(.legacyDefault(home: home), at: 0)
             } else {
                 let unmapped = LoginSlot(unmappedService: service)
                 slots.insert(unmapped, at: 0)
@@ -117,7 +117,9 @@ struct AutomaticRefresh: Sendable {
             if case .rateLimited = outcome.failure { stop = outcome.failure }
         }
         for slot in plan.slots where identities[slot.id] == nil && slot.issue == nil {
-            identities[slot.id] = await logins.identity(slot.identityFile)
+            if case .found(let identity) = try await logins.identity(slot.identityFile) {
+                identities[slot.id] = identity
+            }
         }
 
         let shared = Self.sharedLogins(identities)

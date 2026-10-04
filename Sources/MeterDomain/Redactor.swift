@@ -32,18 +32,33 @@ public enum Redactor {
     private static let rules: [Rule] = [
         // Anthropic API and OAuth tokens.
         Rule(#"sk-ant-[A-Za-z0-9_-]+"#),
-        // Grok OIDC tokens.
-        Rule(#"oidc-[A-Za-z0-9._~+/\-=]+"#),
+        // OpenAI API keys, such as `sk-proj-…`. The length keeps words like `sk-learn`.
+        Rule(#"\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{16,}"#),
+        // xAI API keys.
+        Rule(#"\bxai-[A-Za-z0-9_-]{16,}"#),
+        // Grok OIDC tokens. The length keeps words like `oidc-client`.
+        Rule(#"\boidc-[A-Za-z0-9._~+/=-]{20,}"#),
         // JSON Web Tokens.
         Rule(#"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"#),
         // Authorization header values.
         Rule(#"(?i)\b(Bearer)\s+[A-Za-z0-9._~+/\-=]+"#, "$1 \(placeholder)"),
+        Rule(#"(?i)\b(Authorization:\s*[A-Za-z]+)\s+[^\s,;]+"#, "$1 \(placeholder)"),
+        // Basic credentials outside a header: Base64 with a digit, a symbol, or a lowercase
+        // letter followed by an uppercase one, so `Basic authentication` stays.
+        Rule(
+            #"\b((?i:basic))\s+(?=[A-Za-z0-9+/]*(?:[0-9+/]|[a-z][A-Z]))[A-Za-z0-9+/]{8,}={0,2}(?![A-Za-z0-9+/=])"#,
+            "$1 \(placeholder)"),
         // Session cookies.
         Rule(#"(?i)\b(sessionKey=|WorkosCursorSessionToken=)[^;\s]+"#, "$1\(placeholder)"),
-        // Labeled secrets in JSON, query strings, or prose: `"access_token": "…"`, `refreshToken=…`.
+        // Labeled secrets in JSON, escaped JSON, query strings, or prose, with any prefix:
+        // `"access_token": "…"`, `{\"session_token\":\"…\"}`, `OPENAI_API_KEY=…`.
         Rule(
-            #"(?i)\b(access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|password)(["']?\s*[:=]\s*["']?)[^"',\s;}&]+"#,
+            #"(?i)((?:[A-Za-z0-9]+[_-])*(?:access|refresh|id|session|auth)[_-]?token|(?:[A-Za-z0-9]+[_-])*api[_-]?key|client[_-]?secret|password)(\\?["']?\s*[:=]\s*\\?["']?)[^"'\\,\s;}&]+"#,
             "$1$2\(placeholder)"),
+        // Secrets in URL query parameters: `?token=…`, `&code=…`.
+        Rule(
+            #"(?i)([?&](?:token|key|code|secret|signature|access_token)=)[^&\s#"']+"#,
+            "$1\(placeholder)"),
         // Generic secret fields in JSON: `"key": "…"`, `"token": "…"`, `"secret": "…"`.
         Rule(#"(?i)"(key|token|secret)"(\s*:\s*)"[^"]*""#, "\"$1\"$2\"\(placeholder)\""),
         // UUIDs identify accounts and organizations.

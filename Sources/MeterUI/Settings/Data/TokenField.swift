@@ -1,7 +1,10 @@
 import SwiftUI
 
-/// A labeled token field: a secure field while hidden, a plain field when shown.
+/// A labeled token field: a secure field while hidden, a plain field when shown. While it is
+/// empty it says "Paste here" in `inkMuted` (`fieldPlaceholder`).
 struct TokenField: View {
+    static let placeholder = "Paste here"
+
     let title: String
     @Binding var text: String
     let isRevealed: Bool
@@ -19,8 +22,9 @@ struct TokenField: View {
             field
                 .labelsHidden()
                 .textFieldStyle(.plain)
-                .font(.system(size: 12, design: .monospaced))
+                .font(Self.font)
                 .foregroundStyle(Palette.ink)
+                .fieldPlaceholder(Self.placeholder, isShown: text.isEmpty, font: Self.font)
                 .focused($isFocused)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 6)
@@ -34,14 +38,17 @@ struct TokenField: View {
         }
     }
 
+    private static let font = Font.system(size: 12, design: .monospaced)
+
     @ViewBuilder private var field: some View {
         if rendersStatically {
-            Text(text.isEmpty ? "Paste here" : String(repeating: "•", count: min(24, text.count)))
-                .foregroundStyle(Palette.inkMuted)
+            // A space keeps the line height of an empty field.
+            Text(text.isEmpty ? " " : String(repeating: "•", count: min(24, text.count)))
+                .frame(maxWidth: .infinity, alignment: .leading)
         } else if isRevealed {
-            TextField(title, text: $text, prompt: Text("Paste here"))
+            TextField(title, text: $text, prompt: Text(""))
         } else {
-            SecureField(title, text: $text, prompt: Text("Paste here"))
+            SecureField(title, text: $text, prompt: Text(""))
         }
     }
 }

@@ -73,6 +73,11 @@ import Testing
             name: "muted on card", text: Palette.inkMuted, background: Palette.card,
             isButton: true),
         Pair(name: "section label", text: Palette.sectionLabel, background: Palette.popover),
+        // The system placeholder color was 3.91:1 here in light mode (review R3-U-08).
+        Pair(
+            name: "display name placeholder", text: Palette.inkMuted,
+            background: Palette.popover),
+        Pair(name: "token placeholder", text: Palette.inkMuted, background: Palette.card),
         Pair(name: "chip", text: Palette.inkMuted, background: Palette.track),
         Pair(
             name: "menu bar pill", text: Palette.inkMuted, background: Palette.popover,

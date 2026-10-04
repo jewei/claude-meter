@@ -285,7 +285,9 @@ the app is regular; "About Claude Meter" opens the About tab.
   token fields are empty. Disconnect asks first in the page (`InlineConfirmation`) when it
   would delete tokens that the user entered (`DataSourceText.disconnectConfirmation`). Codex:
   the homes (`CodexHomesList`). Rows (`FolderRow`) show an avatar, a display-name field that
-  saves on Return, focus loss, leaving the page or the window, and Quit, a path chip with the
+  saves on Return, focus loss, leaving the page or the window, and Quit (while it is empty it
+  shows the default name in `inkMuted`; the system placeholder color is below 4.5:1, so
+  the name and token fields draw their own, `fieldPlaceholder`), a path chip with the
   full path in its tooltip, the plan (`PlanChoice`: the reported badge, or a menu), and 28 pt
   controls. A login that is not tracked dims only its avatar and shows a "Not tracked" chip,
   so its text keeps full contrast. Remove asks in the row first (`InlineConfirmation`).

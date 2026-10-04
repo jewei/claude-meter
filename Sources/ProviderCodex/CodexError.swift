@@ -29,11 +29,14 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
     case cliNotFound
     /// The search for the `codex` command did not finish in time.
     case cliSearchFailed
-    case appServerLaunchFailed
+    // `detail` is what the system or the child said, redacted, for Diagnostics only. The
+    // card never shows it (``detail``).
+    case appServerLaunchFailed(detail: String?)
     case appServerTimedOut(step: String)
     case appServerFailed(String)
-    case appServerStopped
-    case appServerUnexpected
+    /// The child ended before it answered `step`.
+    case appServerStopped(step: String, detail: String?)
+    case appServerUnexpected(detail: String?)
     /// `account/read` reported no account: Codex has no login for the home.
     case notSignedIn
     /// Recovery failed after the direct path sent the login to it. `message` is the one
@@ -84,6 +87,9 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
             "Codex CLI timed out during \(step). Refresh again."
         case .appServerFailed(let reason):
             "Codex CLI request failed: \(Self.sentence(reason)). Refresh again later."
+        case .appServerStopped(let step, _) where step == CodexAppServerSession.firstStep:
+            // A Codex without `app-server`, or one that cannot run, ends at once.
+            "Codex CLI stopped before it answered. Update Codex, then refresh."
         case .appServerStopped:
             "Codex CLI stopped before it answered. Check that `codex` runs in Terminal, then refresh."
         case .appServerUnexpected:
@@ -104,6 +110,28 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
         var text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         while text.hasSuffix(".") { text.removeLast() }
         return text.isEmpty ? "no details" : text
+    }
+
+    /// What the system or the child said about an app-server failure, for Diagnostics: the
+    /// last line of its standard error, or the launch error. Nil for other errors.
+    var detail: String? {
+        switch self {
+        case .appServerLaunchFailed(let detail), .appServerStopped(_, let detail),
+            .appServerUnexpected(let detail):
+            detail
+        default:
+            nil
+        }
+    }
+
+    /// This failure with `detail` added, when it is a stop or an unreadable answer without
+    /// one. Other errors stay as they are.
+    func adding(detail: String?) -> CodexError {
+        switch self {
+        case .appServerStopped(let step, nil): .appServerStopped(step: step, detail: detail)
+        case .appServerUnexpected(nil): .appServerUnexpected(detail: detail)
+        default: self
+        }
     }
 
     /// Only the user can fix it, for example by signing in again.
@@ -151,10 +179,12 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
         let showsRecovery =
             direct == .authFileMissing || recoveryNeedsAction || recoveryError == .noUsageData
         let shown = showsRecovery ? recovery.localizedDescription : direct.localizedDescription
+        var reasons =
+            "Usage request: \(direct.localizedDescription) "
+            + "Codex app-server: \(recovery.localizedDescription)"
+        if let detail = recoveryError?.detail { reasons += " Details: \(detail)" }
         return .recoveryFailed(
-            message: shown,
-            reasons: "Usage request: \(direct.localizedDescription) "
-                + "Codex app-server: \(recovery.localizedDescription)",
+            message: shown, reasons: reasons,
             needsAction: recoveryNeedsAction || direct.needsAction)
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import MeterDomain
 import MeterPlatform
 
 /// The live ``CodexRecovery``: one `codex app-server` child per call, with no reuse.
@@ -29,7 +30,8 @@ struct CodexAppServer: CodexRecovery {
         do {
             try process.start()
         } catch {
-            throw CodexError.appServerLaunchFailed
+            throw CodexError.appServerLaunchFailed(
+                detail: Redactor.redact(error.localizedDescription))
         }
         // One exit for every path, so the child is always stopped and reaped.
         let outcome: Result<CodexRecoveryReply, any Error>
@@ -42,6 +44,10 @@ struct CodexAppServer: CodexRecovery {
         }
         await process.stop()
         try Task.checkCancellation()
-        return try outcome.get()
+        // Read after `stop()`, so the line holds everything that the child wrote.
+        let errorLine = process.lastErrorLine
+        return try outcome.mapError { error in
+            (error as? CodexError)?.adding(detail: errorLine) ?? error
+        }.get()
     }
 }

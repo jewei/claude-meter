@@ -164,8 +164,10 @@ extension CodexTests {
         }
 
         @Test func rateLimitsMustBeAnObject() {
-            #expect(throws: CodexError.appServerUnexpected) { try quota(#"{"other":{}}"#) }
-            #expect(throws: CodexError.appServerUnexpected) {
+            #expect(throws: CodexError.appServerUnexpected(detail: nil)) {
+                try quota(#"{"other":{}}"#)
+            }
+            #expect(throws: CodexError.appServerUnexpected(detail: nil)) {
                 try CodexAppServerResult.quota(account: nil, rateLimits: nil, now: .reference())
             }
         }

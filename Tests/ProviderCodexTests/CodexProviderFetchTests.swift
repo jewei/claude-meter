@@ -211,6 +211,26 @@ extension CodexTests {
                 })
         }
 
+        /// What the child said stays in Diagnostics and never reaches the card.
+        @Test func theChildsLastErrorLineIsForDiagnosticsOnly() async throws {
+            let stopped = CodexError.appServerStopped(
+                step: "initialize", detail: "error: unknown command 'app-server'")
+            let bed = try CodexTestBed(recovery: FakeRecovery { _, _ in throw stopped })
+            defer { bed.remove() }
+
+            let account = try #require(try await bed.provider.fetch(previous: nil).accounts.first)
+
+            #expect(
+                account.issue?.message
+                    == "Codex CLI stopped before it answered. Update Codex, then refresh.")
+            let facts = await bed.provider.diagnostics()
+            #expect(
+                facts.contains {
+                    $0.label == "Codex reasons"
+                        && $0.value.hasSuffix("Details: error: unknown command 'app-server'")
+                })
+        }
+
         @Test func theCardShowsTheReasonThatTheUserCanActOn() {
             let timeout = CodexError.appServerTimedOut(step: "account/read")
             let cases: [(any Error, CodexError, CodexError, Bool)] = [
@@ -219,12 +239,18 @@ extension CodexTests {
                 (CodexError.cliNotFound, .authFileMissing, .cliNotFound, true),
                 // A recovery that only the user can fix wins.
                 (CodexError.cliNotFound, .accessTokenExpired, .cliNotFound, true),
-                (CodexError.appServerLaunchFailed, .loginRequired, .appServerLaunchFailed, true),
+                (
+                    CodexError.appServerLaunchFailed(detail: nil), .loginRequired,
+                    .appServerLaunchFailed(detail: nil), true
+                ),
                 // Codex answered, so the login works.
                 (CodexError.noUsageData, .loginRequired, .noUsageData, true),
                 // Otherwise the login problem and its fix.
                 (timeout, .accessTokenExpired, .accessTokenExpired, false),
-                (CodexError.appServerStopped, .loginRequired, .loginRequired, true),
+                (
+                    CodexError.appServerStopped(step: "account/read", detail: nil),
+                    .loginRequired, .loginRequired, true
+                ),
                 (CodexError.appServerFailed("revoked"), .authFileInvalid, .authFileInvalid, true),
             ]
             for (recovery, direct, shown, needsAction) in cases {

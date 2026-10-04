@@ -9,6 +9,10 @@ import MeterPlatform
 /// `account/rateLimits/read`. Each step has its own time limit: the two account steps reach
 /// the network, so they get a longer one. The caller stops the process.
 struct CodexAppServerSession {
+    /// The first request. A child that ends before it answers this one cannot run the
+    /// app server at all.
+    static let firstStep = "initialize"
+
     let process: LineProcess
     let stepLimit: Duration
     let networkStepLimit: Duration
@@ -20,8 +24,8 @@ struct CodexAppServerSession {
     }
 
     func run() async throws -> CodexRecoveryReply {
-        _ = try await call("initialize", id: 1, params: InitializeParams(), limit: stepLimit)
-        try send(Message(id: nil, method: "initialized", params: NoParams()))
+        _ = try await call(Self.firstStep, id: 1, params: InitializeParams(), limit: stepLimit)
+        try send(Message(id: nil, method: "initialized", params: NoParams()), step: "initialized")
         let account: JSONValue?
         do {
             account = try await call(
@@ -48,32 +52,32 @@ struct CodexAppServerSession {
     private func call(
         _ method: String, id: Int, params: some Encodable & Sendable, limit: Duration
     ) async throws -> JSONValue? {
-        try send(Message(id: id, method: method, params: params))
+        try send(Message(id: id, method: method, params: params), step: method)
         do {
             return try await withDeadline(limit) { [process] in
-                try await Self.response(to: id, from: process)
+                try await Self.response(to: id, step: method, from: process)
             }
         } catch is TimeoutError {
             throw CodexError.appServerTimedOut(step: method)
         }
     }
 
-    private func send(_ message: Message<some Encodable & Sendable>) throws {
+    private func send(_ message: Message<some Encodable & Sendable>, step: String) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let line = try encoder.encode(message)
         do {
             try process.send(line)
         } catch {
-            throw CodexError.appServerStopped
+            throw CodexError.appServerStopped(step: step, detail: nil)
         }
     }
 
     /// The `result` of the response with `id`. Skips lines that are not JSON objects, server
     /// notifications, and server requests, which carry a `method`.
-    private static func response(to id: Int, from process: LineProcess) async throws
-        -> JSONValue?
-    {
+    private static func response(
+        to id: Int, step: String, from process: LineProcess
+    ) async throws -> JSONValue? {
         do {
             for try await line in process.lines {
                 process.didConsume(line)
@@ -87,10 +91,10 @@ struct CodexAppServerSession {
                 return message["result"]
             }
         } catch is LineProcess.ProcessError {
-            throw CodexError.appServerUnexpected
+            throw CodexError.appServerUnexpected(detail: nil)
         }
         try Task.checkCancellation()
-        throw CodexError.appServerStopped
+        throw CodexError.appServerStopped(step: step, detail: nil)
     }
 }
 

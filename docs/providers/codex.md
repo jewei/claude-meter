@@ -170,7 +170,10 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
    reach the network and have a 15 s limit each, so recovery ends within 41 s, inside the
    fetch deadline. Every path stops the child: TERM, then KILL after 0.25 s, then a wait
    until it is reaped.
-9. A timeout names the step that timed out, such as `account/read`.
+9. A timeout names the step that timed out, such as `account/read`. A child that stops
+   before it answers `initialize` asks the user to update Codex, because a Codex without
+   `app-server`, or one that cannot run, ends at once. A child that stops later asks the
+   user to check that `codex` runs in Terminal.
 10. An error reply to `account/read` is ignored: account details are optional, and the rate
     limits are still read. An API-key account, and `"account": null` (no login), stop before
     `account/rateLimits/read`. An error reply to `account/rateLimits/read` reads
@@ -271,4 +274,7 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
 
 37. Diagnostics show the Codex CLI path and, for each home of the last fetch, the home path,
     what the auth file held, the source (`Usage request` or `Codex app-server`), the attempt
-    time, the result, and both reasons of a failed recovery. They are in memory only.
+    time, the result, and both reasons of a failed recovery. When the child could not start,
+    stopped, or sent a line that cannot be read, the reasons end with `Details:` and the
+    launch error or the last line that the child wrote to standard error, redacted. The card
+    never shows it. Diagnostics are in memory only.

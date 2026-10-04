@@ -33,7 +33,7 @@ enum CodexAppServerResult {
     ) throws(CodexError) -> CodexQuota {
         guard let result = rateLimits?.objectValue, let limits = result["rateLimits"]?.objectValue
         else {
-            throw .appServerUnexpected
+            throw .appServerUnexpected(detail: nil)
         }
         var quota = CodexQuota()
         quota.primary = window(limits["primary"])

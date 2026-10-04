@@ -21,10 +21,7 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
     private let refresh: CodexAccountRefresh
     private let now: @Sendable () -> Date
     private let lastAttempts = Locked<[CodexAttempt]>([])
-    /// Holds after HTTP 429 on the optional reset-credit details request. The usage request of
-    /// that refresh succeeded, so no account issue carries them. Memory only: a restart ends
-    /// them.
-    private let detailsHolds = Locked<[RateLimitHold]>([])
+    private let holds = CodexRateLimitHolds()
 
     /// Creates the provider.
     ///
@@ -172,10 +169,10 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
             Self.log.error("Codex homes could not be resolved", error)
             throw Self.homesUnresolved
         }
-        let holds = Self.rateLimitHolds(in: previous, now: now()) + detailsHolds.value
-        let attempts = await refreshAll(homes, holds: holds, until: deadline)
+        let current = holds.current(previous: previous, now: now())
+        let attempts = await refreshAll(homes, holds: current, until: deadline)
         // Codex answered with a 429, also when this fetch is cancelled now.
-        recordDetailsHolds(of: attempts)
+        holds.record(attempts, now: now())
         try Task.checkCancellation()
         lastAttempts.withLock { $0 = attempts }
         let accounts = attempts.map { attempt in
@@ -204,32 +201,6 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
     }
 
     // MARK: - Work
-
-    /// The rate-limit holds that run at `now`, of every account. A login that got HTTP 429 in
-    /// one home is held in every home, because the limit belongs to the login.
-    static func rateLimitHolds(in previous: ProviderUsage?, now: Date) -> [RateLimitHold] {
-        (previous?.accounts ?? []).compactMap { account in
-            guard let owner = account.owner,
-                let retryAt = account.rateLimitHold(for: owner, now: now)?.retryAt
-            else { return nil }
-            return RateLimitHold(owner: owner, retryAt: retryAt)
-        }
-    }
-
-    /// Keeps a hold for each login whose reset-credit details request got HTTP 429, and drops
-    /// the holds that ended.
-    private func recordDetailsHolds(of attempts: [CodexAttempt]) {
-        let now = now()
-        let started = attempts.compactMap { attempt -> RateLimitHold? in
-            guard case .observed(let quota, let owner) = attempt.outcome.kind,
-                let retryAt = quota.resetDetailsRetryAt
-            else { return nil }
-            return RateLimitHold(owner: owner, retryAt: retryAt)
-        }
-        detailsHolds.withLock { holds in
-            holds = (holds + started).filter { $0.holds($0.owner, now: now) }
-        }
-    }
 
     /// Runs at most ``CodexLimits/concurrentHomes`` homes at once. A free slot starts the next
     /// home while time is left; after the deadline or a cancel, the homes that did not start

@@ -19,7 +19,9 @@ struct GrokHistoryParser: HistoryFileParser {
             isPartial = true
             return
         }
-        guard let update = entry.update, update.isCompletedTurn, let models = update.models
+        // A turn without model usage used no tokens, so a missing date or ID loses nothing.
+        guard let update = entry.update, update.isCompletedTurn, let models = update.models,
+            !models.isEmpty
         else { return }
         guard let date = entry.date else {
             isPartial = true

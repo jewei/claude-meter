@@ -136,12 +136,17 @@ Only the fields below are read. All other fields are skipped.
 ## Counting rules: Grok Build
 
 31. Only `turn_completed` updates with `usage.modelUsage` count. Unfinished turns are
-    absent. They do not make history partial.
+    absent. They do not make history partial. A completed turn with an empty `modelUsage`
+    used no tokens, so it counts nothing and does not make history partial, even without a
+    date or an event ID.
 32. Tokens of a model in a turn = input + output. Cache and reasoning counts are parts of
     them. Output is zero when it is missing.
     `_meta.agentTimestampMs` is always milliseconds.
 33. The key of a record is the event ID and the model name. Records with the same key count
-    once.
+    once, also when one line has the `params` form and the other the top-level form.
+    A failed blocking read (a timeout or a full blocking-read pool) fails the read with "Reading
+    Grok Build sessions took too long. Claude Meter will try again soon." and keeps the
+    previous history.
 
 ## Copies and ties
 

@@ -13,6 +13,12 @@ public struct Balance: Codable, Hashable, Sendable, Identifiable {
         case onDemand
         /// Grok prepaid balance.
         case prepaid
+
+        /// Spend that counts one billing period and starts again in the next: Cursor spend and
+        /// Grok on-demand spend. It belongs to the account's billing window.
+        public var isPeriodSpend: Bool {
+            self == .spend || self == .onDemand
+        }
     }
 
     public enum Unit: Codable, Hashable, Sendable {

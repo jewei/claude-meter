@@ -99,10 +99,19 @@ public struct AccountUsage: Codable, Hashable, Sendable, Identifiable {
     }
 
     /// Windows resolved at `now`. See ``QuotaWindow/resolved(at:isStale:)``.
+    ///
+    /// When a billing window has reset, the balances of that period
+    /// (``Balance/Kind/isPeriodSpend``) are dropped: they counted a period that ended. Other
+    /// balances, such as prepaid money or credits, stay. Resolution is idempotent.
     public func resolved(at now: Date, isStale stale: Bool) -> AccountUsage {
         var copy = self
         copy.isStale = isStale || stale
         copy.windows = windows.map { $0.resolved(at: now, isStale: copy.isStale) }
+        let periodEnded = windows.contains { window in
+            guard window.kind == .billing, let resetsAt = window.resetsAt else { return false }
+            return resetsAt <= now
+        }
+        if periodEnded { copy.balances.removeAll { $0.kind.isPeriodSpend } }
         return copy
     }
 

@@ -193,15 +193,16 @@ public final class UsageStore {
         defer { finishQuota(id, token: token) }
         // One deadline covers reconcile and fetch, and holds even when the provider ignores
         // cancellation, so a stuck provider never stays "refreshing".
-        let deadline = ContinuousClock.now + quotaLimit
+        let start = ContinuousClock.now
         do {
-            let reconciled = try await SafetyDeadline.run(until: deadline, limit: quotaLimit) {
+            let reconciled = try await withDeadline(quotaLimit) {
                 await provider.reconcile(previous)
             }
             guard isCurrentQuota(id, token) else { return }
             if reconciled != previous { applyReconciled(reconciled, for: id) }
             guard fetches else { return }
-            let usage = try await SafetyDeadline.run(until: deadline, limit: quotaLimit) {
+            let remaining = quotaLimit - (ContinuousClock.now - start)
+            let usage = try await withDeadline(max(remaining, .zero)) {
                 try await provider.fetch(previous: reconciled)
             }
             guard isCurrentQuota(id, token) else { return }
@@ -287,7 +288,7 @@ public final class UsageStore {
         defer { finishHistory(id, token: token) }
         do {
             let limit = historyLimit
-            let history = try await SafetyDeadline.run(until: .now + limit, limit: limit) {
+            let history = try await withDeadline(limit) {
                 try await source.history(now: date)
             }
             guard isCurrentHistory(id, token) else { return }

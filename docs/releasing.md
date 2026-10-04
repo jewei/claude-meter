@@ -70,8 +70,13 @@ Do these steps once on each Mac that makes releases.
 4. Optional: make a private candidate first. This works on any branch:
 
    ```bash
-   scripts/release.sh 4.0.0 400 --prepare-only
+   make release-candidate VERSION=4.0.0 BUILD=400
    ```
+
+   For a release that changes Keychain or credential code, open the candidate on a Mac
+   where Claude Code is signed in. Open **Settings > Data** and confirm that no Keychain
+   dialog appears before you select **Connect automatically**. Tests cannot show a system
+   dialog, so this is the only check of the no-prompt rule.
 
 5. Publish:
 

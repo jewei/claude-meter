@@ -1,3 +1,4 @@
+import Foundation
 import MeterDomain
 import Testing
 
@@ -108,9 +109,12 @@ import Testing
     @Test(arguments: ["a", "aB3", "a_", "a@"])
     func longRunsRedactQuickly(unit: String) {
         let text = String(repeating: unit, count: Redactor.maximumLength / unit.count)
-        let start = ContinuousClock.now
+        // CPU time of this thread, so a busy machine cannot fail the test. The old rules
+        // needed about 10 s; the bounded ones need a few milliseconds.
+        let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
         _ = Redactor.redact(text)
-        #expect(ContinuousClock.now - start < .seconds(2))
+        let elapsed = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start
+        #expect(elapsed < 1_000_000_000)
     }
 
     @Test func longTextIsCutWithoutAPartialSecret() {

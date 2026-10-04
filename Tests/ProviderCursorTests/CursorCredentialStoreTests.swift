@@ -116,6 +116,49 @@ import Testing
         #expect(found?.accessToken == "utf16-token")
     }
 
+    /// A WAL reader sees the last commit, never a write that Cursor has not committed.
+    @Test func aWALReadSeesCommittedDataOnly() async throws {
+        let home = try CursorHome()
+        defer { home.remove() }
+        try home.write(token: "committed-token")
+        let store = CursorCredentialStore(home: home.url, keychain: FakeKeychain())
+        let writer = try home.beginWrite(token: "pending-token")
+
+        #expect(credentials(try await store.read())?.accessToken == "committed-token")
+        home.commit(writer)
+        #expect(credentials(try await store.read())?.accessToken == "pending-token")
+    }
+
+    @Test func readsTextFromAUTF16Database() async throws {
+        let home = try CursorHome()
+        defer { home.remove() }
+        try home.write(
+            [
+                "cursorAuth/accessToken": .text("utf16-database-token"),
+                "cursorAuth/stripeMembershipType": .text("pro"),
+            ], encoding: "UTF-16le")
+        let store = CursorCredentialStore(home: home.url, keychain: FakeKeychain())
+        let found = credentials(try await store.read())
+        #expect(found?.accessToken == "utf16-database-token")
+        #expect(found?.membership == "pro")
+    }
+
+    /// SQLite refuses a value above 1 MiB. The database is unreadable, not empty, so the
+    /// Keychain is not asked.
+    @Test func aValueAboveTheLimitMakesTheDatabaseUnreadable() async throws {
+        let home = try CursorHome()
+        defer { home.remove() }
+        let huge = String(repeating: "x", count: Int(SQLiteReader.maxValueBytes) + 1)
+        try home.write(["cursorAuth/accessToken": .text(huge)])
+        let keychain = FakeKeychain()
+        keychain.store("keychain-token", service: "cursor-access-token")
+
+        let lookup = try await CursorCredentialStore(home: home.url, keychain: keychain).read()
+
+        #expect(failure(lookup) == .credentialsUnreadable)
+        #expect(keychain.readServices.isEmpty)
+    }
+
     /// Rules 1 and 5: a busy database can still hold a token, and the Keychain item can belong
     /// to another login, so the read fails at once and never asks the Keychain.
     @Test func aBusyDatabaseNeverFallsBackToTheKeychain() async throws {

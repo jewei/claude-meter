@@ -31,8 +31,11 @@ struct CursorHome {
         directory.remove()
     }
 
-    /// Creates or replaces the database with `values` in `ItemTable`.
-    func write(_ values: [String: Value], journalMode: String = "WAL") throws {
+    /// Creates or replaces the database with `values` in `ItemTable`. `encoding` is the text
+    /// encoding of the new database, such as `UTF-16le`.
+    func write(
+        _ values: [String: Value], journalMode: String = "WAL", encoding: String = "UTF-8"
+    ) throws {
         let folder = database.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         for suffix in ["", "-wal", "-shm", "-journal"] {
@@ -40,6 +43,7 @@ struct CursorHome {
         }
         let handle = try open()
         defer { sqlite3_close(handle) }
+        try execute(handle, "PRAGMA encoding = '\(encoding)';")
         try execute(handle, "PRAGMA journal_mode=\(journalMode);")
         try execute(
             handle, "CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB);")
@@ -85,6 +89,27 @@ struct CursorHome {
 
     func unlock(_ handle: OpaquePointer) {
         sqlite3_exec(handle, "ROLLBACK;", nil, nil, nil)
+        sqlite3_close(handle)
+    }
+
+    /// Replaces the access token in a transaction that stays open until ``commit(_:)``, as
+    /// Cursor does while it writes.
+    func beginWrite(token: String) throws -> OpaquePointer {
+        let handle = try open()
+        try execute(handle, "BEGIN IMMEDIATE;")
+        var statement: OpaquePointer?
+        try check(
+            sqlite3_prepare_v2(
+                handle, "INSERT INTO ItemTable VALUES ('cursorAuth/accessToken', ?);", -1,
+                &statement, nil))
+        defer { sqlite3_finalize(statement) }
+        try check(sqlite3_bind_text(statement, 1, token, -1, transient))
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw SQLiteError(code: -1) }
+        return handle
+    }
+
+    func commit(_ handle: OpaquePointer) {
+        sqlite3_exec(handle, "COMMIT;", nil, nil, nil)
         sqlite3_close(handle)
     }
 

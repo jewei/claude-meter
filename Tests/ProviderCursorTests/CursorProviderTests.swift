@@ -220,13 +220,47 @@ import Testing
         #expect(keychain.readServices.isEmpty)
     }
 
-    @Test func reconcileKeepsOnlyTheSignedInOwner() async throws {
+    @Test func reconcileKeepsOnlyTheSignedInOwnerAndSendsNothing() async throws {
         try home.write(token: CursorFixture.token())
-        let provider = provider(FakeHTTPClient(json: CursorFixture.usage))
+        let http = FakeHTTPClient(json: CursorFixture.usage)
+        let provider = provider(http)
         #expect(await provider.reconcile(nil) == nil)
         #expect(await provider.reconcile(previous()) == previous())
         let other = previous(owner: CursorFixture.ownerOf(subject: "auth0|other"))
         #expect(await provider.reconcile(other) == nil)
+        #expect(http.requests.isEmpty)
+    }
+
+    @Test func aSignOutDuringTheRequestDropsTheReading() async throws {
+        try home.write(token: CursorFixture.token())
+        let home = home
+        let http = FakeHTTPClient { _ in
+            try FileManager.default.removeItem(at: home.database)
+            return .json(200, CursorFixture.usage)
+        }
+
+        let account = try account(try await provider(http).fetch(previous: previous()))
+
+        #expect(!account.hasObservation)
+        #expect(account.issue == CursorFailure.signedOut.issue)
+    }
+
+    /// An unreadable login after the response proves nothing, so the response stands.
+    @Test func anUnreadableLoginAfterTheResponseKeepsTheResponse() async throws {
+        try home.write(token: CursorFixture.token(), membership: "pro")
+        let home = home
+        let http = FakeHTTPClient { _ in
+            try home.directory.write(
+                "not a database",
+                to: "Library/Application Support/Cursor/User/globalStorage/state.vscdb")
+            return .json(200, CursorFixture.usage)
+        }
+
+        let account = try account(try await provider(http).fetch(previous: previous()))
+
+        #expect(account.observedAt == .reference())
+        #expect(account.issue == nil)
+        #expect(account.owner == owner)
     }
 
     @Test func aLoginChangeDuringTheRequestDiscardsTheResponse() async throws {

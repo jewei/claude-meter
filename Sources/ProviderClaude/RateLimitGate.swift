@@ -13,6 +13,9 @@ final class RateLimitGate: Sendable {
     static let defaultBlock: TimeInterval = 60
     /// A safety cap, so a wrong server value cannot stop usage checks for the life of the app.
     static let maximumBlock: TimeInterval = 24 * 60 * 60
+    /// How far the clock may move back before a block counts as invalid. Without it, a
+    /// block at the cap would end at the first small time correction.
+    static let clockTolerance: TimeInterval = 5 * 60
 
     private struct Record: Codable, Equatable {
         let recordedAt: Date
@@ -23,7 +26,7 @@ final class RateLimitGate: Sendable {
             let remaining = until.timeIntervalSince(now)
             return DateBounds.contains(recordedAt) && DateBounds.contains(until)
                 && DateBounds.contains(now) && length > 0 && length <= RateLimitGate.maximumBlock
-                && remaining <= RateLimitGate.maximumBlock
+                && remaining <= RateLimitGate.maximumBlock + RateLimitGate.clockTolerance
         }
     }
 

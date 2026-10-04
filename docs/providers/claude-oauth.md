@@ -200,7 +200,9 @@ little memory. The limit is 256 MiB. The result is one of three states:
 5. When the gate is closed at the start of a refresh, the refresh throws a `ProviderError`
    with `retryAt` and sends nothing.
 6. The deadline is stored under `claude.rateLimitedUntil`. Loading never extends it. An
-   invalid, expired, or longer-than-24-hours record is removed.
+   invalid or expired record is removed, and so is a record longer than 24 hours, or one
+   whose deadline is more than 24 hours and 5 minutes away (the clock moved back). The 5
+   minutes let a block at the cap survive a small time correction.
 
 ### Retention and owners
 

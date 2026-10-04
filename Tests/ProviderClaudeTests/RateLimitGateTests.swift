@@ -81,6 +81,19 @@ extension ClaudeTests {
             #expect(gate.blockedUntil(now: now.addingTimeInterval(-60)) != nil)
             #expect(gate.blockedUntil(now: now.addingTimeInterval(-86_400)) == nil)
         }
+
+        @Test func aBlockAtTheCapSurvivesASmallClockCorrection() {
+            let store = MemoryStore()
+            let gate = RateLimitGate(store: store, now: now)
+            gate.recordRateLimit(retryAfter: "999999", now: now)
+            let until = now.addingTimeInterval(86_400)
+
+            #expect(gate.blockedUntil(now: now.addingTimeInterval(-1)) == until)
+            #expect(
+                RateLimitGate(store: store, now: now.addingTimeInterval(-1))
+                    .blockedUntil(now: now.addingTimeInterval(-1)) == until)
+            #expect(gate.blockedUntil(now: now.addingTimeInterval(-301)) == nil)
+        }
     }
 
     @Suite struct UsageRequestTests {

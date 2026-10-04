@@ -190,7 +190,7 @@ extension ClaudeTests {
             #expect(await ClaudeProvider.configDirectory(at: home.path("missing")) == nil)
         }
 
-        @Test func configDirectoryCheckNeedsSettingsOrProjects() throws {
+        @Test func configDirectoryCheckNeedsSettingsOrProjects() async throws {
             let home = try TemporaryDirectory()
             defer { home.remove() }
             let empty = try home.makeDirectory("empty")
@@ -199,10 +199,10 @@ extension ClaudeTests {
             let settings = try home.write("{}", to: "withSettings/settings.json")
                 .deletingLastPathComponent()
 
-            #expect(!ClaudeProvider.isConfigDirectory(empty))
-            #expect(ClaudeProvider.isConfigDirectory(projects))
-            #expect(ClaudeProvider.isConfigDirectory(settings))
-            #expect(!ClaudeProvider.isConfigDirectory(home.path("missing")))
+            #expect(await ClaudeProvider.configDirectory(at: empty) == nil)
+            #expect(await ClaudeProvider.configDirectory(at: projects) != nil)
+            #expect(await ClaudeProvider.configDirectory(at: settings) != nil)
+            #expect(await ClaudeProvider.configDirectory(at: home.path("missing")) == nil)
         }
 
         @Test func identityFileOfTheDefaultDirIsInTheHomeFolder() {

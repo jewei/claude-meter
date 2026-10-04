@@ -178,8 +178,9 @@ little memory. The limit is 256 MiB. The result is one of three states:
    token refresh, or a Connect) can save or change anything. A Connect that started before
    a Disconnect, or before a newer Connect, stores nothing and says that the connection
    changed. `cancelManualConnect()` does the same for running Connects and keeps the stored
-   login. (Settings must call Disconnect in every mode, and `cancelManualConnect()` when it
-   abandons an attempt, for this to cover a Connect in flight.)
+   login. `ClaudeSettingsModel` calls Disconnect in every mode, deletes the manual item after
+   an automatic Connect succeeds, and calls `cancelManualConnect()` when it abandons an
+   attempt: a newer attempt, Claude turned off, or `abandonConnect()`.
 6. Keychain writes of the manual item run one at a time, in order, on a private queue,
    never on the shared `BlockingIO` threads. A write that times out before it starts is
    skipped, so it cannot land later; a Keychain call that already runs cannot be stopped. A

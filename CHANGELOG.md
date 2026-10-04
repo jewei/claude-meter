@@ -18,6 +18,10 @@ core.
 
 - Settings start fresh. After the welcome screen, connect Claude and turn on your other
   sources again, and set names, plans, and card order.
+- A manual Claude connection from 3.x must be entered again. Claude Meter deletes the old
+  Keychain item.
+- Settings lists a Claude login that has no config dir, so you can name it and set its
+  plan.
 - The popover is a native panel that resizes smoothly when you open and close cards.
 - Settings opens as a normal window with a Dock icon while it is open, and no longer floats
   above other apps.

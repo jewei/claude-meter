@@ -39,6 +39,10 @@ extension AppModel {
         if old.writesLogFile != new.writesLogFile {
             LogFile.shared.setEnabled(new.writesLogFile)
         }
+        if old.claude.isEnabled, !new.claude.isEnabled, claudeSettings?.isWorking == true {
+            // A connect that finishes after Claude was turned off must store nothing.
+            Task { await claudeSettings?.abandonConnect() }
+        }
         let configuration = Self.refreshConfiguration(new)
         if configuration != Self.refreshConfiguration(old) {
             scheduler?.update(configuration)

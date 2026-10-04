@@ -2,8 +2,8 @@ import MeterApp
 import MeterDomain
 import SwiftUI
 
-/// One Claude config dir: its name, folder, plan, and issue, with a tracking switch (not for
-/// the default account) and Remove for folders that the user added.
+/// One Claude login: its name, config dir, plan, and issue, with a tracking switch where the
+/// login can be turned off and Remove for folders that the user added.
 struct ClaudeAccountRow: View {
     let account: ClaudeSettingsModel.Account
     let name: String?
@@ -18,7 +18,13 @@ struct ClaudeAccountRow: View {
             id: account.id.rawValue, name: name, defaultName: account.defaultName, rename: rename
         ) {
             HStack(spacing: 6) {
-                PathChip(path: account.path)
+                if let path = account.path {
+                    PathChip(path: path)
+                } else {
+                    Text("Active login, no config dir")
+                        .font(MeterFont.body(11, .semibold))
+                        .foregroundStyle(Palette.inkMuted)
+                }
                 if let badge = PlanBadge(plan: account.reportedPlan) {
                     PlanBadgeView(badge: badge)
                 } else {
@@ -33,7 +39,7 @@ struct ClaudeAccountRow: View {
             }
         } controls: {
             HStack(spacing: 6) {
-                if !account.isDefault {
+                if account.canTurnOff {
                     MeterSwitch(
                         label: "Track \(name ?? account.defaultName)",
                         isOn: Binding {

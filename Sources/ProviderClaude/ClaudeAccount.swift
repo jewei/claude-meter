@@ -14,6 +14,9 @@ public struct ClaudeAccount: Sendable, Hashable, Identifiable {
     public let name: String
     /// The config dir as found or configured. Symbolic links are not resolved.
     public let directory: URL
+    /// The path with symbolic links resolved. Two dirs with the same canonical path are one
+    /// account, so Settings compares this path, never ``directory``.
+    public let canonicalPath: String
     /// The account uses the `claude` key. Claude Code's legacy Keychain item belongs to it.
     public let isDefault: Bool
     /// False when the user turned the account off. Disabled accounts are listed but not read.
@@ -23,14 +26,16 @@ public struct ClaudeAccount: Sendable, Hashable, Identifiable {
     /// not read.
     public let issue: UsageIssue?
 
-    /// Makes an account value, for example for previews and tests.
+    /// Makes an account value, for example for previews and tests. Without `canonicalPath`,
+    /// the standardized path of `directory` is used, with no file access.
     public init(
-        id: AccountID, name: String, directory: URL, isDefault: Bool, isEnabled: Bool,
-        issue: UsageIssue? = nil
+        id: AccountID, name: String, directory: URL, canonicalPath: String? = nil,
+        isDefault: Bool, isEnabled: Bool, issue: UsageIssue? = nil
     ) {
         self.id = id
         self.name = name
         self.directory = directory
+        self.canonicalPath = canonicalPath ?? directory.standardizedFileURL.path
         self.isDefault = isDefault
         self.isEnabled = isEnabled
         self.issue = issue

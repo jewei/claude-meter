@@ -84,6 +84,7 @@ enum ConfigDirectoryScanner {
             accounts.append(
                 ClaudeAccount(
                     id: candidate.id, name: name(for: candidate.id), directory: candidate.url,
+                    canonicalPath: candidate.path,
                     isDefault: candidate.id == ClaudeAccount.defaultID,
                     isEnabled: configuration.isEnabled(candidate.id), issue: candidate.issue))
         }

@@ -70,7 +70,7 @@ import Testing
     @Test func addsOnlyRealConfigDirsOnce() async throws {
         let empty = try home.makeDirectory("empty")
         #expect(await !model.addDirectory(empty))
-        #expect(model.directoryMessage?.contains("not a Claude config dir") == true)
+        #expect(model.directoryMessage == "Choose a folder that holds settings.json or projects.")
         #expect(model.message == nil)
 
         let work = try home.write("{}", to: "work/settings.json").deletingLastPathComponent()
@@ -98,6 +98,28 @@ import Testing
             ])
         usage.restore([.claude: reading])
         #expect(model.accounts.last?.reportedPlan == "Max 5x")
+    }
+
+    @Test func aLoginWithoutAConfigDirIsListedToNameButNotToTurnOff() async {
+        await model.reload()
+        let reading = ProviderUsage(
+            provider: .claude,
+            accounts: [
+                AccountUsage(id: "claude", name: "default", observedAt: Date()),
+                AccountUsage(
+                    id: "oauth-ab12cd34", name: "oauth-ab12cd34", plan: "Pro", observedAt: Date()),
+            ])
+        usage.restore([.claude: reading])
+
+        #expect(model.accounts.map(\.id) == ["claude", "oauth-ab12cd34"])
+        let unmapped = model.accounts[1]
+        #expect(unmapped.path == nil)
+        #expect(unmapped.reportedPlan == "Pro")
+        #expect(!unmapped.canTurnOff)
+        #expect(!unmapped.isRemovable)
+        #expect(model.accounts[0].canTurnOff == false)
+        model.rename("oauth-ab12cd34", to: "  Laptop ")
+        #expect(settings.settings.claude.accountNames["oauth-ab12cd34"] == "Laptop")
     }
 
     @Test func removeDirectoryClearsNamePlanSwitchAndPin() async throws {
@@ -232,4 +254,44 @@ import Testing
         #expect(credentialChanges == 1)
         #expect(!model.isWorking)
     }
+
+    // MARK: - Leftover manual logins and abandoned connects
+
+    @Test func theDefaultDirIsRefusedBeforeTheFirstReload() async {
+        let defaultDir = home.path(".claude")
+        #expect(await !model.addDirectory(defaultDir))
+        #expect(model.directoryMessage == "That config dir is already listed.")
+        #expect(settings.settings.claude.extraDirectories.isEmpty)
+    }
+
+    @Test func automaticConnectDeletesALeftoverManualLogin() async {
+        gate.open()
+        #expect(await connectManually("manual-token"))
+        #expect(manualItem != nil)
+        storeClaudeCodeLogin()
+        #expect(await model.connectAutomatically())
+        #expect(settings.settings.claude.connection == .automatic)
+        #expect(manualItem == nil)
+    }
+
+    @Test func disconnectInAutomaticModeAlsoDeletesTheManualItem() async {
+        keychain.store(
+            #"{"accessToken":"old"}"#, service: Self.manualService, account: "manual")
+        settings.update { $0.claude.connection = .automatic }
+        await model.disconnect()
+        #expect(settings.settings.claude.connection == .off)
+        #expect(manualItem == nil)
+    }
+
+    @Test func anAbandonedManualConnectStoresNothing() async {
+        let connect = Task { await connectManually("pasted") }
+        #expect(await gate.waitForArrivals())
+        await model.abandonConnect()
+        #expect(!model.isWorking)
+        gate.open()
+        #expect(await !connect.value)
+        #expect(manualItem == nil)
+        #expect(settings.settings.claude.connection == .off)
+    }
+
 }

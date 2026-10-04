@@ -12,7 +12,8 @@ public final class ClaudeSettingsModel {
         /// The provider label as the popover shows it without a display name, such as
         /// `Default` or `Work`.
         public let defaultName: String
-        public let path: String
+        /// The config dir. Nil for Claude Code's active login when no config dir matches it.
+        public let path: String?
         public let isDefault: Bool
         public let isEnabled: Bool
         /// The user added this folder, so the user can remove it.
@@ -20,10 +21,11 @@ public final class ClaudeSettingsModel {
         /// The plan that the login reports, from the latest reading.
         public let reportedPlan: String?
         public let issue: String?
-    }
 
-    /// The longest wait for a folder check when the user adds a config dir.
-    static let folderCheckLimit: Duration = .seconds(5)
+        /// The default account is always read, and a login without a config dir cannot be
+        /// turned off.
+        public var canTurnOff: Bool { !isDefault && path != nil }
+    }
 
     public private(set) var automaticStatus: SignInStatus?
     public private(set) var manualStatus: SignInStatus?
@@ -64,13 +66,15 @@ public final class ClaudeSettingsModel {
         !settings.settings.claude.hasConfirmedKeychainAccess
     }
 
-    /// The config dirs, default first. The switch state, the remove button, and the reported
-    /// plan come from the current settings and reading each time, so they never lag behind.
+    /// The config dirs, default first, then any login in the latest reading that matches no
+    /// config dir, so the user can name it and set its plan. The switch state, the remove
+    /// button, and the reported plan come from the current settings and reading each time, so
+    /// they never lag behind.
     public var accounts: [Account] {
         let claude = settings.settings.claude
         let configured = Set(claude.extraDirectories)
         let reported = usage.readings[.claude]?.value
-        return discovered.map { account in
+        let directories = discovered.map { account in
             Account(
                 id: account.id, defaultName: PresentationContext.friendlyName(account.name),
                 path: account.directory.path, isDefault: account.isDefault,
@@ -80,6 +84,14 @@ public final class ClaudeSettingsModel {
                 reportedPlan: reported?.account(account.id)?.plan,
                 issue: account.issue?.message)
         }
+        let listed = Set(discovered.map(\.id))
+        let unmapped = (reported?.accounts ?? []).filter { !listed.contains($0.id) }.map { usage in
+            Account(
+                id: usage.id, defaultName: PresentationContext.friendlyName(usage.name),
+                path: nil, isDefault: usage.id == ClaudeAccount.defaultID, isEnabled: true,
+                isRemovable: false, reportedPlan: usage.plan, issue: nil)
+        }
+        return directories + unmapped
     }
 
     /// Lists the config dirs and checks both logins without reading a secret. A reload that a
@@ -121,17 +133,17 @@ public final class ClaudeSettingsModel {
         }
     }
 
-    /// Turns the connection off. Manual mode also deletes the app's own Keychain item. A
-    /// failed delete keeps the connection.
+    /// Turns the connection off and deletes the app's own Keychain item in every mode, so no
+    /// manual login is left behind. In manual mode a failed delete keeps the connection.
     public func disconnect() async {
-        attempt += 1
+        await startAttempt()
         let current = attempt
         isWorking = true
         defer { if current == attempt { isWorking = false } }
-        if connection == .manual {
-            do {
-                try await provider.disconnectManual()
-            } catch {
+        do {
+            try await provider.disconnectManual()
+        } catch {
+            if connection == .manual {
                 if current == attempt { message = Self.text(for: error) }
                 return
             }
@@ -144,10 +156,25 @@ public final class ClaudeSettingsModel {
         await reload()
     }
 
+    /// Abandons a connect that is still running, for example when the user selects Cancel or
+    /// turns Claude off. Nothing that attempt verified is stored afterwards.
+    public func abandonConnect() async {
+        attempt += 1
+        isWorking = false
+        message = nil
+        await provider.cancelManualConnect()
+    }
+
+    /// Starts a new attempt. A connect that is still running stores nothing afterwards.
+    private func startAttempt() async {
+        if isWorking { await provider.cancelManualConnect() }
+        attempt += 1
+    }
+
     private func connect(
         to connection: ClaudeSettings.Connection, verify: @Sendable () async throws -> Void
     ) async -> Bool {
-        attempt += 1
+        await startAttempt()
         let current = attempt
         isWorking = true
         message = nil
@@ -161,6 +188,10 @@ public final class ClaudeSettingsModel {
                 settings.update { $0.claude.connection = connection }
                 message = "Connected."
                 saved = true
+                if connection == .automatic {
+                    // A manual login from an earlier connection must not stay behind.
+                    try? await provider.disconnectManual()
+                }
                 // A reconnect in the same mode keeps the setting, so refresh explicitly.
                 onCredentialsChange?()
             } else {
@@ -184,27 +215,17 @@ public final class ClaudeSettingsModel {
     // MARK: - Config dirs
 
     /// Adds a folder that holds `settings.json` or `projects`. Returns false and sets
-    /// ``directoryMessage`` when the folder is not a Claude config dir, is already listed, or
-    /// does not answer within 5 s.
+    /// ``directoryMessage`` when the folder is not a Claude config dir (or does not answer
+    /// within 5 s), or is already listed, including the default dir before the first reload.
     @discardableResult
     public func addDirectory(_ url: URL) async -> Bool {
-        let checked: URL?
-        do {
-            // Resolving links and listing the folder can block on a stuck volume.
-            checked = try await BlockingIO.run(timeout: Self.folderCheckLimit) { _ in
-                let canonical = url.standardizedFileURL.resolvingSymlinksInPath()
-                return ClaudeProvider.isConfigDirectory(canonical) ? canonical : nil
-            }
-        } catch {
-            directoryMessage = "That folder did not respond. Try again."
+        guard let canonical = await ClaudeProvider.configDirectory(at: url) else {
+            directoryMessage = "Choose a folder that holds settings.json or projects."
             return false
         }
-        guard let canonical = checked else {
-            directoryMessage =
-                "That folder is not a Claude config dir. Choose one with settings.json or projects."
-            return false
-        }
-        let listed = discovered.map(\.directory.path) + settings.settings.claude.extraDirectories
+        // A fresh discovery, so the default dir counts even before the first reload.
+        let found = await provider.accounts(for: settings.claudeConfiguration)
+        let listed = found.map(\.canonicalPath) + settings.settings.claude.extraDirectories
         guard !listed.contains(canonical.path) else {
             directoryMessage = "That config dir is already listed."
             return false

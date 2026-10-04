@@ -13,19 +13,15 @@ extension ClaudeProvider {
             }) ?? []
     }
 
-    /// Whether `url` is a directory that holds `settings.json` or `projects`. Blocks on file
-    /// calls without a deadline; Settings should use ``configDirectory(at:)`` instead.
-    public static func isConfigDirectory(_ url: URL) -> Bool {
-        ConfigDirectoryScanner.isConfigDirectory(url)
-    }
-
     /// The canonical form of `url` (standardized, symbolic links resolved) when it is a config
     /// dir: a directory that holds `settings.json` or `projects`. Nil when it is not one, or
     /// when the check takes more than 5 s, for example on a stuck network volume. The file
     /// calls run off the caller's thread, so Settings can call this from the main actor.
     public static func configDirectory(at url: URL) async -> URL? {
         let checked = try? await BlockingIO.run(timeout: ClaudeLimits().localRead) { _ in
-            let canonical = url.standardizedFileURL.resolvingSymlinksInPath()
+            // The form that discovery uses for ``ClaudeAccount/canonicalPath``.
+            let canonical = URL(
+                fileURLWithPath: ConfigDirectoryScanner.canonicalPath(url), isDirectory: true)
             return ConfigDirectoryScanner.isConfigDirectory(canonical) ? canonical : nil
         }
         return checked ?? nil

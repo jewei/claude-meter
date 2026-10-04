@@ -286,10 +286,18 @@ public final class UsageStore {
     private func runHistory(_ source: any TokenHistoryProvider, token: UUID, now date: Date) async {
         let id = source.id
         defer { finishHistory(id, token: token) }
+        let start = ContinuousClock.now
+        let limit = historyLimit
         do {
-            let limit = historyLimit
-            let history = try await withDeadline(limit) {
-                try await source.history(now: date)
+            // The same lifecycle as quota: drop a held history whose login changed at once,
+            // then read with the held history as `previous`.
+            let previous = histories[id]?.value
+            let reconciled = try await withDeadline(limit) { await source.reconcile(previous) }
+            guard isCurrentHistory(id, token) else { return }
+            if reconciled != previous { applyReconciledHistory(reconciled, for: id) }
+            let remaining = limit - (ContinuousClock.now - start)
+            let history = try await withDeadline(max(remaining, .zero)) {
+                try await source.history(now: date, previous: reconciled)
             }
             guard isCurrentHistory(id, token) else { return }
             histories[id] = .current(history, observedAt: history.observedAt)
@@ -305,6 +313,19 @@ public final class UsageStore {
             } else {
                 histories[id] = .failed(failure.issue)
             }
+        }
+    }
+
+    /// Keeps the outer state and replaces the value; nil removes the history.
+    private func applyReconciledHistory(_ history: ProviderTokenHistory?, for id: ProviderID) {
+        guard let history else {
+            histories[id] = nil
+            return
+        }
+        if case .stale(_, let observedAt, let issue) = histories[id] {
+            histories[id] = .stale(history, observedAt: observedAt, issue: issue)
+        } else {
+            histories[id] = .current(history, observedAt: history.observedAt)
         }
     }
 

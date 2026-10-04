@@ -35,7 +35,7 @@ import Testing
         _ roots: [HistoryRoot], calendar: Calendar? = nil
     ) async throws -> ProviderTokenHistory {
         try await ClaudeTokenHistory(roots: { roots }, calendar: calendar ?? self.calendar)
-            .history(now: .reference())
+            .history(now: .reference(), previous: nil)
     }
 
     private func tokens(

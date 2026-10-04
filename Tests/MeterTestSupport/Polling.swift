@@ -2,11 +2,14 @@ import Foundation
 
 /// Waits until `condition` is true, polling every millisecond. Returns false after `limit`.
 ///
-/// Use it for state that background threads change, instead of a fixed sleep that a loaded
-/// machine can miss.
+/// Use it for state that background threads or the main actor change, instead of a fixed
+/// sleep that a loaded machine can miss. It runs on the caller's actor, so `condition` can
+/// read main-actor state.
 @discardableResult
 public func waitUntil(
-    limit: Duration = .seconds(5), _ condition: @Sendable () -> Bool
+    limit: Duration = .seconds(5),
+    isolation: isolated (any Actor)? = #isolation,
+    _ condition: () -> Bool
 ) async -> Bool {
     let deadline = ContinuousClock.now + limit
     while !condition() {

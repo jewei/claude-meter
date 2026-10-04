@@ -394,9 +394,8 @@ import Testing
         await store.refresh([.claude])
         #expect(store.refreshing.isEmpty)
         #expect(store.readings[.claude]?.isStale == true)
-        #expect(
-            store.readings[.claude]?.issue?.message.contains("Claude Meter will try again soon.")
-                == true)
+        let message = store.readings[.claude]?.issue?.message ?? ""
+        #expect(message.contains("Claude Meter will try again soon."))
         gate.open()
         await Task.yield()
         #expect(store.readings[.claude]?.value == .sample(.claude))
@@ -411,9 +410,8 @@ import Testing
         }
         let store = makeStore([provider], deadline: .milliseconds(50))
         await store.refresh([.grok])
-        #expect(
-            store.readings[.grok]?.issue?.message.contains("Claude Meter will try again soon.")
-                == true)
+        let message = store.readings[.grok]?.issue?.message ?? ""
+        #expect(message.contains("Claude Meter will try again soon."))
         #expect(store.readings[.grok]?.value == nil)
         // The provider is free again: the next refresh runs and publishes.
         gate.open()
@@ -448,9 +446,8 @@ import Testing
             [FakeUsageProvider(.cursor)], history: [history], deadline: .milliseconds(50))
         await store.refresh(quota: [], history: [.cursor])
         #expect(store.refreshingHistory.isEmpty)
-        #expect(
-            store.histories[.cursor]?.issue?.message.contains("Claude Meter will try again soon.")
-                == true)
+        let message = store.histories[.cursor]?.issue?.message ?? ""
+        #expect(message.contains("Claude Meter will try again soon."))
         gate.open()
     }
 

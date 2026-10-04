@@ -20,20 +20,6 @@ final class TestClock: Sendable {
     }
 }
 
-/// Polls `condition` until it holds. Returns false after `limit`. Use it for positive checks
-/// in place of fixed sleeps, so a busy machine cannot fail a test.
-@MainActor
-func waitUntil(
-    limit: Duration = .seconds(5), _ condition: @MainActor () -> Bool
-) async -> Bool {
-    let deadline = ContinuousClock.now + limit
-    while !condition() {
-        guard ContinuousClock.now < deadline else { return false }
-        try? await Task.sleep(for: .milliseconds(1))
-    }
-    return true
-}
-
 extension ProviderTokenHistory {
     /// An empty history observed at `now` in the time zone of `calendar`.
     static func sample(

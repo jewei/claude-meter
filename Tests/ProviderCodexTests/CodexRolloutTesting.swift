@@ -60,7 +60,7 @@ extension CodexRolloutTesting {
     {
         let roots = homes.map { HistoryRoot(account: AccountID($0.key), directory: $0.value.url) }
         return try await CodexTokenHistory(roots: { roots }, calendar: calendar)
-            .history(now: .reference())
+            .history(now: .reference(), previous: nil)
     }
 
     func tokens(

@@ -27,7 +27,9 @@ public final class ClaudeTokenHistory: TokenHistoryProvider {
     public var id: ProviderID { .claude }
 
     /// Token history for today and the previous six local days, labeled as this Mac.
-    public func history(now: Date) async throws -> ProviderTokenHistory {
+    public func history(now: Date, previous _: ProviderTokenHistory?) async throws
+        -> ProviderTokenHistory
+    {
         let tally = try TokenDayTally(now: now, calendar: calendar)
         let scanRoots = await roots().map { root in
             HistoryRoot(

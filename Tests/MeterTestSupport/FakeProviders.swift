@@ -76,7 +76,9 @@ public final class FakeHistoryProvider: TokenHistoryProvider {
 
     public var callCount: Int { calls.value }
 
-    public func history(now: Date) async throws -> ProviderTokenHistory {
+    public func history(now: Date, previous _: ProviderTokenHistory?) async throws
+        -> ProviderTokenHistory
+    {
         calls.withLock { $0 += 1 }
         guard let answer = answer.value else { throw ProviderError("No scripted history.") }
         return try await answer(now)

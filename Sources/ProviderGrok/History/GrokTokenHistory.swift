@@ -30,7 +30,9 @@ public final class GrokTokenHistory: TokenHistoryProvider {
     ///
     /// Throws `CancellationError`, ``HistoryError`` for a clock outside the accepted dates, or
     /// ``ProviderError`` when a blocking read timed out or found no free thread.
-    public func history(now: Date) async throws -> ProviderTokenHistory {
+    public func history(now: Date, previous _: ProviderTokenHistory?) async throws
+        -> ProviderTokenHistory
+    {
         do {
             let tally = try TokenDayTally(now: now, calendar: calendar)
             let scanRoots = await roots().map { root in

@@ -33,7 +33,9 @@ public final class CodexTokenHistory: TokenHistoryProvider {
     public var id: ProviderID { .codex }
 
     /// Token history for today and the previous six local days, labeled as this Mac.
-    public func history(now: Date) async throws -> ProviderTokenHistory {
+    public func history(now: Date, previous _: ProviderTokenHistory?) async throws
+        -> ProviderTokenHistory
+    {
         let tally = try TokenDayTally(now: now, calendar: calendar)
         let scanRoots = try await roots().flatMap { root in
             Self.folders.map { folder in

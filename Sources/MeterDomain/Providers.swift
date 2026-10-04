@@ -28,9 +28,23 @@ extension UsageProvider {
 }
 
 /// Counts tokens from local session records or from the provider's account export.
+///
+/// History follows the same lifecycle and retention rule as quota: the app reconciles the
+/// history it holds, then reads a new one, and keeps the old one after a failure only while
+/// ``ProviderTokenHistory/belongs(to:)`` allows it.
 public protocol TokenHistoryProvider: Sendable {
     var id: ProviderID { get }
 
-    /// Reads token history for today and the previous six local days.
-    func history(now: Date) async throws -> ProviderTokenHistory
+    /// Drops a previous history whose owner is no longer signed in. Local reads only.
+    func reconcile(_ previous: ProviderTokenHistory?) async -> ProviderTokenHistory?
+
+    /// Reads token history for today and the previous six local days. `previous` is the
+    /// history that the app holds now, after ``reconcile(_:)``.
+    func history(now: Date, previous: ProviderTokenHistory?) async throws -> ProviderTokenHistory
+}
+
+extension TokenHistoryProvider {
+    public func reconcile(_ previous: ProviderTokenHistory?) async -> ProviderTokenHistory? {
+        previous
+    }
 }

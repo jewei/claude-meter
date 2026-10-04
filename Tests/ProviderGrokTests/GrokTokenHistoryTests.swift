@@ -45,7 +45,7 @@ import Testing
     private func history(_ home: TemporaryDirectory) async throws -> ProviderTokenHistory {
         try await GrokTokenHistory(
             roots: { [HistoryRoot(account: .default, directory: home.url)] }, calendar: calendar
-        ).history(now: .reference())
+        ).history(now: .reference(), previous: nil)
     }
 
     private func tokens(

@@ -110,10 +110,13 @@ public struct ProviderTokenHistory: Hashable, Sendable {
     public let observedAt: Date
     public let timeZoneID: String
     public let coverageStart: Date
+    /// The login whose usage this is, for account sources such as Cursor's export. Nil for
+    /// local history, which belongs to its folders, not to a login.
+    public let owner: AccountOwner?
 
     public init(
         provider: ProviderID, source: Source, accounts: [AccountID: TokenHistory],
-        coverageStart: Date, observedAt: Date, timeZoneID: String
+        coverageStart: Date, observedAt: Date, timeZoneID: String, owner: AccountOwner? = nil
     ) {
         self.provider = provider
         self.source = source
@@ -121,6 +124,18 @@ public struct ProviderTokenHistory: Hashable, Sendable {
         self.coverageStart = coverageStart
         self.observedAt = observedAt
         self.timeZoneID = timeZoneID
+        self.owner = owner
+    }
+
+    /// Whether this history may still be shown for the current login: the same rule as
+    /// ``AccountUsage/belongs(to:)``. Local history without an owner always belongs.
+    public func belongs(to status: OwnerStatus) -> Bool {
+        guard let owner else { return true }
+        switch status {
+        case .unknown: return true
+        case .signedOut: return false
+        case .signedIn(let current): return owner == current
+        }
     }
 
     /// The history for one card. An account without records reads as unknown, never zero.

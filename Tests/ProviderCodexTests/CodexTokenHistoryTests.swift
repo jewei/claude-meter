@@ -162,13 +162,15 @@ import Testing
                 if failing.value { throw ProviderError("The homes did not answer.") }
                 return roots
             }, calendar: calendar)
-        #expect(tokens(try await source.history(now: .reference())) == 110)
+        #expect(tokens(try await source.history(now: .reference(), previous: nil)) == 110)
 
         failing.withLock { $0 = true }
-        await #expect(throws: ProviderError.self) { try await source.history(now: .reference()) }
+        await #expect(throws: ProviderError.self) {
+            try await source.history(now: .reference(), previous: nil)
+        }
 
         failing.withLock { $0 = false }
-        #expect(tokens(try await source.history(now: .reference())) == 110)
+        #expect(tokens(try await source.history(now: .reference(), previous: nil)) == 110)
     }
 
     /// A fork without an ordinal needs valid parent counters to find its boundary.

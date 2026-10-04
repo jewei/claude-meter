@@ -50,7 +50,7 @@ import Testing
         try home.write(token: token)
         let http = FakeHTTPClient(json: Self.header)
 
-        let result = try await source(http).history(now: .reference())
+        let result = try await source(http).history(now: .reference(), previous: nil)
 
         let request = try #require(http.requests.first)
         let components = try #require(
@@ -88,9 +88,9 @@ import Testing
         let source = CursorTokenHistory(
             keychain: keychain, http: http, home: home.url, calendar: { zone.value })
 
-        let first = try await source.history(now: .reference())
+        let first = try await source.history(now: .reference(), previous: nil)
         zone.withLock { $0 = .fixed("Asia/Tokyo") }
-        let second = try await source.history(now: .reference())
+        let second = try await source.history(now: .reference(), previous: nil)
 
         let tokyo = Calendar.fixed("Asia/Tokyo")
         let range = try #require(
@@ -116,7 +116,9 @@ import Testing
         keychain.store(token, service: "cursor-access-token")
         let http = FakeHTTPClient(json: Self.header)
 
-        let error = await providerError { try await source(http).history(now: .reference()) }
+        let error = await providerError {
+            try await source(http).history(now: .reference(), previous: nil)
+        }
 
         #expect(
             error?.issue.message
@@ -134,56 +136,64 @@ import Testing
             return .json(200, Self.header)
         }
 
-        let error = await providerError { try await source(http).history(now: .reference()) }
+        let error = await providerError {
+            try await source(http).history(now: .reference(), previous: nil)
+        }
 
         #expect(error?.keepsLastReading == false)
         #expect(error?.issue == CursorFailure.signInChanged.issue)
     }
 
-    @Test func failuresKeepTheHistoryOnlyForTheSameLogin() async throws {
+    @Test func failuresKeepTheHeldHistoryOnlyForItsLogin() async throws {
         keychain.store(CursorFixture.token(), service: "cursor-access-token")
         let status = Locked(200)
         let http = FakeHTTPClient { _ in .json(status.value, Self.header) }
         let source = source(http)
-        _ = try await source.history(now: .reference())
+        let held = try await source.history(now: .reference(), previous: nil)
+        #expect(held.owner != nil)
 
         status.withLock { $0 = 500 }
-        let serverError = await providerError { try await source.history(now: .reference()) }
+        let serverError = await providerError {
+            try await source.history(now: .reference(), previous: held)
+        }
         #expect(serverError?.keepsLastReading == true)
         #expect(serverError?.issue.needsAction == false)
 
         status.withLock { $0 = 401 }
-        let rejected = await providerError { try await source.history(now: .reference()) }
+        let rejected = await providerError {
+            try await source.history(now: .reference(), previous: held)
+        }
         #expect(rejected?.keepsLastReading == true)
         #expect(rejected?.issue.needsAction == true)
 
         keychain.store(CursorFixture.token(subject: "auth0|other"), service: "cursor-access-token")
         status.withLock { $0 = 500 }
-        let otherLogin = await providerError { try await source.history(now: .reference()) }
+        let otherLogin = await providerError {
+            try await source.history(now: .reference(), previous: held)
+        }
         #expect(otherLogin?.keepsLastReading == false)
+
+        let nothingHeld = await providerError {
+            try await source.history(now: .reference(), previous: nil)
+        }
+        #expect(nothingHeld?.keepsLastReading == false)
     }
 
-    /// The app can discard a returned history, for example when a newer refresh superseded it,
-    /// and then still holds the earlier login's history. A failure of the new login must not
-    /// keep that history.
-    @Test func aDiscardedHistoryOfANewLoginNeverKeepsTheEarlierOne() async throws {
+    @Test func reconcileDropsTheHistoryOfAnotherLogin() async throws {
         keychain.store(CursorFixture.token(), service: "cursor-access-token")
-        let status = Locked(200)
-        let http = FakeHTTPClient { _ in .json(status.value, Self.header) }
-        let source = source(http)
-        _ = try await source.history(now: .reference())
+        let source = source(FakeHTTPClient(json: Self.header))
+        let held = try await source.history(now: .reference(), previous: nil)
+        #expect(await source.reconcile(held) == held)
+        #expect(await source.reconcile(nil) == nil)
 
         keychain.store(CursorFixture.token(subject: "auth0|other"), service: "cursor-access-token")
-        _ = try await source.history(now: .reference())
-        status.withLock { $0 = 500 }
-        let failure = await providerError { try await source.history(now: .reference()) }
+        #expect(await source.reconcile(held) == nil)
 
-        #expect(failure?.issue.message.contains("HTTP 500") == true)
-        #expect(failure?.keepsLastReading == false)
+        try keychain.deletePassword(service: "cursor-access-token", account: "user")
+        #expect(await source.reconcile(held) == nil)
     }
 
-    /// Retention follows the login that is signed in after the request, as for quota. A change
-    /// back to the only login with a history keeps that history.
+    /// Retention follows the login that is signed in after the request, as for quota.
     @Test func aLoginChangeKeepsOnlyTheHistoryOfTheLoginSignedInAfterIt() async throws {
         let first = CursorFixture.token()
         let other = CursorFixture.token(subject: "auth0|other")
@@ -195,17 +205,21 @@ import Testing
         }
         let source = source(http)
         keychain.store(first, service: "cursor-access-token")
-        _ = try await source.history(now: .reference())
+        let held = try await source.history(now: .reference(), previous: nil)
 
-        // The app holds the first login's history, and the other login is signed in now.
+        // The app holds the first login's history, and the other login signs in mid-request.
         switchTo.withLock { $0 = other }
-        let toOther = await providerError { try await source.history(now: .reference()) }
+        let toOther = await providerError {
+            try await source.history(now: .reference(), previous: held)
+        }
         #expect(toOther?.issue == CursorFailure.signInChanged.issue)
         #expect(toOther?.keepsLastReading == false)
 
-        // The first login is signed in again, and its history is the only one returned.
+        // The first login signs in again mid-request, and the held history is its own.
         switchTo.withLock { $0 = first }
-        let back = await providerError { try await source.history(now: .reference()) }
+        let back = await providerError {
+            try await source.history(now: .reference(), previous: held)
+        }
         #expect(back?.issue == CursorFailure.signInChanged.issue)
         #expect(back?.keepsLastReading == true)
     }
@@ -216,7 +230,9 @@ import Testing
         keychain.store(CursorFixture.token(), service: "cursor-access-token")
         let http = FakeHTTPClient { _ in throw HTTPError.responseTooLarge(limit: 8 * 1024 * 1024) }
 
-        let error = await providerError { try await source(http).history(now: .reference()) }
+        let error = await providerError {
+            try await source(http).history(now: .reference(), previous: nil)
+        }
 
         #expect(
             error?.issue.message
@@ -236,19 +252,24 @@ import Testing
         let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "120"])
         let source = source(http)
 
-        let limited = await providerError { try await source.history(now: .reference()) }
-        let held = await providerError { try await source.history(now: .reference(60)) }
+        let limited = await providerError {
+            try await source.history(now: .reference(), previous: nil)
+        }
+        let held = await providerError {
+            try await source.history(now: .reference(60), previous: nil)
+        }
 
         #expect(limited?.issue.retryAt == .reference(120))
         #expect(held?.issue.retryAt == .reference(120))
         #expect(http.requests.count == 1)
-        _ = await providerError { try await source.history(now: .reference(121)) }
+        _ = await providerError { try await source.history(now: .reference(121), previous: nil) }
         #expect(http.requests.count == 2)
     }
 
     @Test func signingOutClearsTheHistory() async throws {
         let error = await providerError {
-            try await source(FakeHTTPClient(json: Self.header)).history(now: .reference())
+            try await source(FakeHTTPClient(json: Self.header)).history(
+                now: .reference(), previous: nil)
         }
         #expect(error?.keepsLastReading == false)
         #expect(error?.issue.needsAction == true)
@@ -260,8 +281,14 @@ import Testing
         let lock = try home.lockExclusively()
         defer { home.unlock(lock) }
         let http = FakeHTTPClient(json: Self.header)
+        // The app holds this login's history; a busy database proves no other login.
+        let held = ProviderTokenHistory(
+            provider: .cursor, source: .account, accounts: [:], coverageStart: .reference(),
+            observedAt: .reference(), timeZoneID: "UTC", owner: .identity("cursor-owner"))
 
-        let error = await providerError { try await source(http).history(now: .reference()) }
+        let error = await providerError {
+            try await source(http).history(now: .reference(), previous: held)
+        }
 
         #expect(error?.keepsLastReading == true)
         #expect(error?.issue == CursorFailure.credentialsBusy.issue)
@@ -272,7 +299,9 @@ import Testing
         try home.write(token: CursorFixture.token(expiresAt: .reference(-1)))
         let http = FakeHTTPClient(json: Self.header)
 
-        let error = await providerError { try await source(http).history(now: .reference()) }
+        let error = await providerError {
+            try await source(http).history(now: .reference(), previous: nil)
+        }
 
         #expect(error?.issue == CursorFailure.sessionExpired.issue)
         #expect(http.requests.isEmpty)

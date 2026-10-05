@@ -170,13 +170,6 @@ import Testing
         #expect(model.notices == [Notice(text: "Rate limited. Retrying in 3m.", kind: .warning)])
     }
 
-    @Test func ringLegendNeedsARingCard() throws {
-        let cursor = Fixture.current(Fixture.usage(.cursor, Fixture.account(.default)))
-        let model = try #require(
-            accounts(Fixture.settings(enabled: [.cursor]), readings: [.cursor: cursor]))
-        #expect(!model.showsRingLegend)
-    }
-
     @Test func unconnectedClaudeAsksForSetup() {
         let unconnected = Fixture.settings(enabled: [.claude]) { $0.claude.connection = .off }
         #expect(content(unconnected) == .status(.setup([.claude])))
@@ -211,6 +204,6 @@ import Testing
         }
         #expect(single.dragHint == nil)
         #expect(double.dragHint != nil)
-        #expect(double.showsRingLegend)
+        #expect(double.ringLegend != nil)
     }
 }

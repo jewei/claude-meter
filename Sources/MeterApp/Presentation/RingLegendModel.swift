@@ -12,10 +12,3 @@ public struct RingLegendModel: Equatable, Sendable {
         outer: GaugeBuilder.weeklyShortTitle, inner: GaugeBuilder.sessionShortTitle,
         accessibilityLabel: "Outer ring weekly, inner ring session")
 }
-
-extension AccountsModel {
-    /// The ring legend, when any card is drawn as rings.
-    public var ringLegend: RingLegendModel? {
-        showsRingLegend ? .standard : nil
-    }
-}

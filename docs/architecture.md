@@ -127,7 +127,8 @@ hold for that account.
 Each provider also keeps the hold in memory as soon as the 429 arrives, before it reads the
 login again, for the login that sent the request. So a refresh that is cancelled after the 429,
 or a Codex home that did not finish in time after it, still holds that login, although no
-account got the issue.
+account got the issue. The memory hold belongs to the login, not to an account, so that login
+also waits when it signs in again before the retry time.
 
 A hold survives a restart only when the reading archive saves its account: an account with an
 observation and an identity owner (`ProviderUsage.persistable`, see Storage). A loaded hold

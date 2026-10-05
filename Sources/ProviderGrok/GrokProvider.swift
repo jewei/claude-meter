@@ -52,7 +52,8 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
     public var id: ProviderID { .grok }
 
     /// The Grok Build CLI's home: `GROK_HOME`, trimmed, when it is set and not blank,
-    /// otherwise `~/.grok`. A leading `~` means `home`.
+    /// otherwise `~/.grok`. Only `~` and `~/…` mean `home`; `~name/…` means the home of the
+    /// user `name`.
     ///
     /// The CLI resolves a relative `GROK_HOME` against its own working folder, which the app
     /// cannot know; the app's own working folder is `/`. A relative value is taken from `home`,

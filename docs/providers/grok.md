@@ -11,9 +11,10 @@ The billing endpoint is internal to the Grok Build CLI. It can change without no
 
 `GrokProvider.homeDirectory(environment:home:)`:
 
-1. `GROK_HOME`, trimmed, when it is set and not blank. A leading `~` means the user's home.
-   A relative value starts at the user's home: the CLI resolves it against its own working
-   folder, which the app cannot know, and the app's working folder is `/`.
+1. `GROK_HOME`, trimmed, when it is set and not blank. Only `~` and `~/…` mean the user's
+   home. `~name/…` means the home of the user `name`. A relative value starts at the user's
+   home: the CLI resolves it against its own working folder, which the app cannot know, and
+   the app's working folder is `/`.
 2. Otherwise `~/.grok`.
 
 The app sees only the environment that it was started with. An app started from Finder or at

@@ -15,6 +15,15 @@ are in the `v3.1.3` tag.
 Claude Meter 4.0 is a complete rewrite. It keeps every feature of 3.x with a new, faster
 core.
 
+### Added
+
+- Settings can disconnect Claude and remove a Claude config dir that you added. Removing a
+  folder asks first, and so does a Disconnect that deletes tokens you entered.
+- You can make the Settings window taller or shorter, and it always fits on the screen.
+- A card's context menu has **Use in Menu Bar**, also as a VoiceOver action, so you can
+  choose the menu-bar account without a drag.
+- The welcome screen offers Quit.
+
 ### Changed
 
 - Settings start fresh. After the welcome screen, connect Claude, turn on your other
@@ -25,19 +34,13 @@ core.
 - Settings always lists your Claude logins, also a single login and a login that has no
   config dir, so you can name each one and set its plan. A manual Claude connection can set
   its plan when the login does not report one.
-- Settings can disconnect Claude and remove a Claude config dir that you added. Removing a
-  folder asks first, and so does a Disconnect that deletes tokens you entered.
 - Settings opens as a normal window with a Dock icon while it is open, and no longer floats
   above other apps.
-- You can make the Settings window taller or shorter, and it always fits on the screen.
-- A card's context menu has **Use in Menu Bar**, also as a VoiceOver action, so you can
-  choose the menu-bar account without a drag.
 - The menu-bar card stays first. To use another account in the menu bar, drag its card to
   the top or use **Use in Menu Bar**. Moving the first card lower no longer changes the
   menu-bar account.
 - A dragged card changes the order and the menu-bar account when you drop it, not while it
   passes the top of the list.
-- The welcome screen offers Quit.
 - Every percentage is a whole number, everywhere.
 - Exactly 100% used now shows as out of energy in the menu bar as well as in the hero.
 - "Last updated" shows hours and days for old data.

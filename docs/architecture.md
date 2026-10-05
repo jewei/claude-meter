@@ -124,10 +124,10 @@ that did not finish in time) keeps the hold's issue, not its own, while the logi
 the same (`AccountUsage.rateLimitHold(admittedBy:now:)`). A sign-out or another login ends the
 hold for that account.
 
-Codex also keeps each hold in memory as soon as the 429 arrives, before it reads the login
-again, for the login that sent the request. So a refresh that is cancelled after the 429, or a
-home that did not finish in time after it, still holds that login, although no account got the
-issue.
+Each provider also keeps the hold in memory as soon as the 429 arrives, before it reads the
+login again, for the login that sent the request. So a refresh that is cancelled after the 429,
+or a Codex home that did not finish in time after it, still holds that login, although no
+account got the issue.
 
 A hold survives a restart only when the reading archive saves its account: an account with an
 observation and an identity owner (`ProviderUsage.persistable`, see Storage). A loaded hold

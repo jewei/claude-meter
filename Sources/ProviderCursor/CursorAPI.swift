@@ -75,7 +75,8 @@ enum CursorAPI {
     /// Sends `request` and returns the body of an HTTP 200 response.
     ///
     /// Throws `CancellationError` when the task is cancelled, and ``CursorFailure`` for every
-    /// other failure.
+    /// other failure. HTTP 429 throws its ``CursorFailure`` also when the task is cancelled after
+    /// the response, so the caller can still hold the login.
     static func send(_ request: HTTPRequest, http: any HTTPClient, now: Date) async throws -> Data {
         let response: HTTPResponse
         do {
@@ -85,7 +86,7 @@ enum CursorAPI {
             if error is CancellationError { throw error }
             throw CursorFailure(transport: error)
         }
-        try Task.checkCancellation()
+        if response.status != 429 { try Task.checkCancellation() }
         guard response.status == 200 else {
             throw CursorFailure(
                 status: response.status, retryAfter: response.header("retry-after"), now: now)

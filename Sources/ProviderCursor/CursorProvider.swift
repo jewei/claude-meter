@@ -25,11 +25,13 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
     /// When each login last sent the plan request, so a failed or empty answer is not asked
     /// for again at every refresh. Memory only; an entry older than ``planMaxAge`` goes.
     private let planAttempts = Locked<[AccountOwner: Date]>([:])
-    /// The pause after HTTP 429 on the plan request (``RateLimitHold``). The usage request of
-    /// that refresh succeeded, so no account issue carries it. A restart before the next
-    /// refresh ends it. A refresh during the hold puts the 429 issue on the account, and that
-    /// hold then survives a restart like a usage-request hold.
-    private let planHold = Locked<RateLimitHold?>(nil)
+    /// The pause after the last HTTP 429 on the usage or plan request (``RateLimitHold``), kept
+    /// as soon as Cursor answers. A 429 on the plan request has no account issue, because the
+    /// usage request of that refresh succeeded. A 429 on the usage request gets its issue only
+    /// when the refresh ends, so a cancelled refresh would lose it. A restart before the next
+    /// refresh ends this hold. A refresh during the hold puts the 429 issue on the account, and
+    /// that hold then survives a restart like a usage-request hold.
+    private let memoryHold = Locked<RateLimitHold?>(nil)
 
     /// - Parameters:
     ///   - keychain: Read only, for the access token when the state database has none.
@@ -139,6 +141,11 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
             result = .failure(failure)
         }
         recordRequest(result.map { _ in () }, at: now)
+        // The 429 belongs to the login that sent the request, even if the login changes now.
+        // Keep it at once, because a cancel during the read below drops this account.
+        if case .failure(.rateLimited(let retryAt?)) = result {
+            memoryHold.withLock { $0 = RateLimitHold(owner: owner, retryAt: retryAt) }
+        }
         // The response belongs to the login that sent it. Discard it if the login changed.
         let after = try await store.read().ownerStatus
         switch after {
@@ -157,11 +164,11 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
         }
     }
 
-    /// When `owner` may send again after HTTP 429, or nil. A 429 of the usage request is in the
-    /// account's issue; a 429 of the plan request is in ``planHold``.
+    /// When `owner` may send again after HTTP 429, or nil: from the account's issue, or from
+    /// ``memoryHold``.
     private func retryTime(for owner: AccountOwner, previous: AccountUsage?, now: Date) -> Date? {
         if let issue = previous?.rateLimitHold(for: owner, now: now) { return issue.retryAt }
-        if let hold = planHold.value, hold.holds(owner, now: now) { return hold.retryAt }
+        if let hold = memoryHold.value, hold.holds(owner, now: now) { return hold.retryAt }
         return nil
     }
 
@@ -188,7 +195,7 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
     /// login showed less than ``planMaxAge`` ago is reused without a request. The same login is
     /// asked at most once in ``planMaxAge``, also after a failed or empty answer. A failure
     /// keeps the known plan, because the plan only labels the card; HTTP 429 also holds the
-    /// login (``planHold``).
+    /// login (``memoryHold``).
     private func planName(
         token: String, owner: AccountOwner, known: AccountUsage?, now: Date
     ) async throws -> String? {
@@ -215,7 +222,7 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
                 planInfo: try await CursorAPI.send(request, http: http, now: now)) ?? knownPlan
         } catch let failure as CursorFailure {
             if case .rateLimited(let retryAt?) = failure {
-                planHold.withLock { $0 = RateLimitHold(owner: owner, retryAt: retryAt) }
+                memoryHold.withLock { $0 = RateLimitHold(owner: owner, retryAt: retryAt) }
             }
             return knownPlan
         }

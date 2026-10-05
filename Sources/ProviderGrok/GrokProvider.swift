@@ -23,6 +23,11 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
     private let usesCustomHome: Bool
     /// The outcome of the last usage request, for Diagnostics only.
     private let lastRequest = Locked<String?>(nil)
+    /// The pause after the last HTTP 429 (``RateLimitHold``), kept as soon as Grok answers. The
+    /// account gets its 429 issue only when the refresh ends, so a cancelled refresh would lose
+    /// it. A restart before the next refresh ends this hold. A refresh during the hold puts the
+    /// 429 issue on the account, and that hold then survives a restart like any usage hold.
+    private let memoryHold = Locked<RateLimitHold?>(nil)
 
     /// - Parameters:
     ///   - http: Sends the billing request.
@@ -145,8 +150,10 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
         let owner = credentials.owner
         // Grok asked this login to pause after HTTP 429. Send nothing before the retry time, so
         // the card's countdown is true. This comes first, so an expired key keeps the hold.
-        if let previous, let hold = previous.rateLimitHold(for: owner, now: now) {
-            return previous.retained(issue: hold, now: now)
+        if let retryAt = retryTime(for: owner, previous: previous, now: now) {
+            return failed(
+                .rateLimited(retryAt: retryAt), previous: previous, status: .signedIn(owner),
+                now: now)
         }
         guard !credentials.isExpired(at: now) else {
             return failed(.sessionExpired, previous: previous, status: .signedIn(owner), now: now)
@@ -159,6 +166,11 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
             result = .failure(failure)
         }
         recordRequest(result.map { _ in () }, at: now)
+        // The 429 belongs to the login that sent the request, even if the login changes now.
+        // Keep it at once, because a cancel during the read below drops this account.
+        if case .failure(.rateLimited(let retryAt?)) = result {
+            memoryHold.withLock { $0 = RateLimitHold(owner: owner, retryAt: retryAt) }
+        }
         // The response belongs to the login that sent it. Discard it if the login changed.
         let after = try await authFile.read(now: now).ownerStatus
         switch after {
@@ -177,7 +189,16 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
         }
     }
 
-    /// Throws ``GrokFailure`` or `CancellationError`.
+    /// When `owner` may send again after HTTP 429, or nil: from the account's issue, or from
+    /// ``memoryHold``.
+    private func retryTime(for owner: AccountOwner, previous: AccountUsage?, now: Date) -> Date? {
+        if let issue = previous?.rateLimitHold(for: owner, now: now) { return issue.retryAt }
+        if let hold = memoryHold.value, hold.holds(owner, now: now) { return hold.retryAt }
+        return nil
+    }
+
+    /// Throws ``GrokFailure`` or `CancellationError`. HTTP 429 throws its ``GrokFailure`` also
+    /// when the task is cancelled after the response, so the caller can still hold the login.
     private func requestBilling(bearer: String, now: Date) async throws -> GrokBillingReport {
         let request = HTTPRequest(
             .get, url: Self.billingURL,
@@ -195,7 +216,7 @@ public final class GrokProvider: UsageProvider, DiagnosticsReporting {
             if error is CancellationError { throw error }
             throw GrokFailure(transport: error)
         }
-        try Task.checkCancellation()
+        if response.status != 429 { try Task.checkCancellation() }
         guard response.isSuccess else {
             throw GrokFailure(
                 status: response.status, retryAfter: response.header("retry-after"), now: now)

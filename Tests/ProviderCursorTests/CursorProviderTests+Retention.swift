@@ -214,6 +214,34 @@ extension CursorProviderTests {
         #expect(http.requests.count == 2)
     }
 
+    /// R4-P-01: a 429 is kept as soon as Cursor answers. A refresh that is cancelled after the
+    /// response still holds the login, so the next refresh sends nothing before the retry time.
+    @Test func aRateLimitHoldsAfterTheRefreshIsCancelled() async throws {
+        try home.write(token: CursorFixture.token())
+        let gate = Gate()
+        let http = FakeHTTPClient { _ in
+            await gate.wait()
+            return .json(429, "", headers: ["Retry-After": "120"])
+        }
+        let provider = provider(http)
+        let earlier = previous()
+
+        let task = Task { try await provider.fetch(previous: earlier) }
+        #expect(await gate.waitForArrivals())
+        task.cancel()
+        gate.open()
+        await #expect(throws: CancellationError.self) { try await task.value }
+
+        advance(60)
+        let held = try await provider.fetch(previous: earlier)
+        #expect(http.requests.count == 1)
+        #expect(try account(held).isStale)
+        #expect(try account(held).issue?.retryAt == .reference(120))
+        advance(60)
+        _ = try await provider.fetch(previous: held)
+        #expect(http.requests.count == 2)
+    }
+
     /// A refresh that sends nothing does not end the hold early: an expired token keeps it, and
     /// so does the renewed token of the same login.
     @Test func anExpiredTokenKeepsTheHold() async throws {

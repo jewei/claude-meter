@@ -18,7 +18,7 @@ public struct AccountsModel: Equatable, Sendable {
             automatic.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         cards = ids.compactMap { byID[$0] }
         hero = HeroModel(meter, context: context)
-        notices = Notice.notices(context, meter: meter, cards: cards)
+        notices = Notice.notices(context, meter: meter)
         let hasRings = cards.contains { if case .rings = $0.summary { true } else { false } }
         ringLegend = hasRings ? .standard : nil
         let eligible = cards.filter { $0.id.menuBarSelection != nil }.count

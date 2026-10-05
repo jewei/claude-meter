@@ -171,15 +171,13 @@ struct CardBuilder {
     }
 
     /// The account's own issue first. Cards of providers that do not own the menu bar also
-    /// state a failed refresh or old data; the main provider shows those above the hero.
+    /// state old data; the main provider shows it above the hero. A failed refresh of any
+    /// provider is a notice (``Notice``), so the card never repeats it.
     private func status(for account: AccountUsage, provider: ProviderID) -> StatusLine? {
         if let issue = account.issue {
             return StatusLine(text: NoticeText.text(for: issue, now: context.now), isFailure: true)
         }
         guard provider != meter.provider else { return nil }
-        if context.readings[provider]?.isStale == true {
-            return StatusLine(text: "Refresh failed · showing last known data", isFailure: true)
-        }
         if account.isStale {
             return StatusLine(text: "Data may be stale", isFailure: false)
         }

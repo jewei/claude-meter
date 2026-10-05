@@ -96,10 +96,13 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    retry runs), then setup help (which asks to connect Claude when its switch is on without a
    connection).
 3. Every path into Settings from the popover finishes the welcome and starts updates.
-4. Notices above the hero state, without repeats: the main provider's failed refresh, each
-   main account's issue (prefixed with its name when there are several accounts), old data,
-   and the failure of any other enabled provider that has no card. Issues with a retry time
-   count down: `Anthropic is rate-limiting usage checks. Retrying in 3m.` Old data that no
+4. Notices above the hero state, without repeats: the failed refresh of every enabled
+   provider (prefixed with the provider's name, `Codex: …`, when it is not the main meter),
+   each main account's issue (prefixed with its name when there are several accounts), and
+   old data. A failed refresh whose issue an account carries shows only with that account,
+   so a first rate limit shows once, and a later failure of the same provider gets its own
+   notice. Issues with a retry time count down:
+   `Anthropic is rate-limiting usage checks. Retrying in 3m.` Old data that no
    failed refresh explains gets its own notice, also beside other notices:
    `Claude data may be stale.`, or `Work: Data may be stale.` when only some accounts are old.
    When the meter is unavailable, the hero states the reason and no notice repeats that issue,
@@ -117,7 +120,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 7. **Rings** cards are always open. **Bars**, Cursor, and Grok cards open and close, and
    remember their state. Details hold scoped windows, usage-limit resets, and tokens used.
 8. A card shows its account's own issue. A card of a provider that is not the main meter also
-   shows a failed refresh or old data; the main provider shows those as notices instead.
+   shows old data (`Data may be stale`); the main provider shows it as a notice instead. A
+   failed refresh is a notice for every provider (§4.4), so no card repeats it
+   (`CardBuilder`).
 9. While the popover is open, countdowns and ages update every second.
 10. When a background check finds an update that Sparkle did not show, the popover shows
     "Update available"; selecting it opens Sparkle's update window

@@ -17,12 +17,10 @@ public struct Notice: Equatable, Sendable, Identifiable {
 
     public var id: String { text }
 
-    /// Notices for the main provider, and for enabled providers that failed with no card.
+    /// Notices for the main provider, and the failed refresh of every other enabled provider.
     /// The issue that the hero states (the reason the meter is unavailable) is left out, also
     /// when a notice would prefix it with an account name.
-    static func notices(
-        _ context: PresentationContext, meter: MainMeter, cards: [CardModel]
-    ) -> [Notice] {
+    static func notices(_ context: PresentationContext, meter: MainMeter) -> [Notice] {
         var notices: [Notice] = []
         let name = meter.provider.displayName
         let several = meter.accounts.count > 1
@@ -56,12 +54,11 @@ public struct Notice: Equatable, Sendable, Identifiable {
                 }
             }
         }
-        let providersWithCards = Set(cards.map(\.provider))
+        // The same rule as the main provider's: a failed refresh that no account carries.
+        // The cards of these providers state their accounts' own issues and old data.
         for provider in ProviderID.allCases
-        where provider != meter.provider && context.isEnabled(provider)
-            && !providersWithCards.contains(provider)
-        {
-            guard let issue = context.readings[provider]?.issue else { continue }
+        where provider != meter.provider && context.isEnabled(provider) {
+            guard let issue = refreshIssue(context.readings[provider]) else { continue }
             notices.append(
                 Notice(
                     text:
@@ -73,8 +70,9 @@ public struct Notice: Equatable, Sendable, Identifiable {
     }
 
     /// The issue of a failed refresh. A failed reading whose accounts carry its issue (the
-    /// first account's issue when no account was observed) reports through their notices.
-    /// A provider error after such a reading keeps its accounts, with an issue of its own.
+    /// first account's issue when no account was observed) reports through their notices or
+    /// cards. A provider error after such a reading keeps its accounts, with an issue of its
+    /// own.
     private static func refreshIssue(_ reading: Reading<ProviderUsage>?) -> UsageIssue? {
         switch reading {
         case .stale(_, _, let issue): issue

@@ -52,6 +52,8 @@ core.
   again, at most one hour, and only for the limited login.
 - When the Codex auth file cannot be read, the Codex card says what to do, and Claude Meter
   no longer starts the Codex CLI at each refresh.
+- When a source that the menu bar does not show fails to refresh, a notice at the top of
+  the popover says why, with the source's name. Its cards only mark old data.
 - The expand arrow is always last in the header of a bar card.
 - The Grok mark has the same color as the other marks, not the color of its energy level.
 

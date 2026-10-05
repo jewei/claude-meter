@@ -247,7 +247,9 @@ import Testing
         #expect(card.details.contains { if case .usageBars = $0 { true } else { false } })
     }
 
-    @Test func otherProvidersStateTheirFailures() throws {
+    /// A card of another provider marks its old data; the failed refresh is a notice
+    /// (``NoticeTests``), and the main provider's cards leave both to the notices.
+    @Test func otherProvidersMarkTheirOldData() throws {
         let claude = Fixture.usage(.claude, Fixture.account("a"))
         let codex = Fixture.usage(.codex, Fixture.account("/h"))
         let all = cards(
@@ -255,9 +257,7 @@ import Testing
                 .claude: Fixture.current(claude),
                 .codex: .stale(codex, observedAt: .reference(), issue: UsageIssue("Offline")),
             ], enabled: [.claude, .codex])
-        #expect(
-            all.last?.status
-                == StatusLine(text: "Refresh failed · showing last known data", isFailure: true))
+        #expect(all.last?.status == StatusLine(text: "Data may be stale", isFailure: false))
         #expect(all.first?.status == nil)
     }
 

@@ -61,4 +61,47 @@ import Testing
             model.hero.subtitle == "Anthropic is rate-limiting usage checks. Retrying in 3m.")
         #expect(model.notices.map(\.text) == ["Offline.", "Home: Sign in again."])
     }
+
+    /// The same rule for a provider that is not the main meter: its cards state their
+    /// accounts' own issues, and a failed refresh that no account carries is a notice with
+    /// the provider's name. A first 429 holds the account with no observation; a provider
+    /// error after it keeps that account (review R5-A-02).
+    @Test func anotherProvidersFailedRefreshThatNoAccountCarriesGetsANotice() throws {
+        let hold = UsageIssue(
+            "Codex is rate-limiting usage checks.", retryAt: .reference(.minutes(3)))
+        let held = Fixture.usage(.codex, .unavailable(id: "/h", name: "h", issue: hold))
+        let claude = Fixture.current(Fixture.usage(.claude, Fixture.account("home")))
+        let settings = Fixture.settings(enabled: [.claude, .codex])
+
+        // The first 429: the account carries the issue, so only its card states it.
+        let first = try #require(
+            accounts(settings, readings: [.claude: claude, .codex: .failed(hold, partial: held)]))
+        #expect(first.notices.isEmpty)
+        let card = try #require(first.cards.first { $0.provider == .codex })
+        #expect(
+            card.status
+                == StatusLine(
+                    text: "Codex is rate-limiting usage checks. Retrying in 3m.", isFailure: true))
+
+        // A provider error after it: no account carries that issue.
+        let failed = try #require(
+            accounts(
+                settings, readings: [.claude: claude, .codex: .failed(offline, partial: held)]))
+        #expect(failed.notices.map(\.text) == ["Codex: Offline."])
+        #expect(failed.notices.map(\.kind) == [.warning])
+        #expect(failed.cards.first { $0.provider == .codex }?.status == card.status)
+
+        // A stale reading whose every account carries its own issue.
+        let observed = Fixture.usage(.codex, Fixture.account("/h", issue: hold))
+        let stale = try #require(
+            accounts(
+                settings,
+                readings: [
+                    .claude: claude,
+                    .codex: .stale(observed, observedAt: .reference(), issue: signIn),
+                ]))
+        #expect(stale.notices.map(\.text) == ["Codex: Sign in again."])
+        #expect(stale.notices.map(\.kind) == [.action])
+        #expect(stale.cards.first { $0.provider == .codex }?.status == card.status)
+    }
 }

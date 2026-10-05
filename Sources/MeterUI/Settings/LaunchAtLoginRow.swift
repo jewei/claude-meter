@@ -6,12 +6,12 @@ import SwiftUI
 /// The launch-at-login switch. macOS owns the state, so the row reads it when it appears,
 /// after each change, and when the user comes back to the app or the window, for example
 /// after approving the item in System Settings. An error stays until macOS reports the state
-/// that the user chose (``LaunchAtLoginError``).
+/// that the user chose, also across tabs and a closed window (``LaunchAtLoginState``).
 struct LaunchAtLoginRow: View {
-    @State private var status = LoginItem.Status.disabled
-    @State private var error = LaunchAtLoginError()
+    let state: LaunchAtLoginState
 
     var body: some View {
+        let status = state.status
         VStack(alignment: .leading, spacing: 10) {
             SettingsRow(
                 symbol: "power", tint: Palette.Tile.violet, title: "Launch at login",
@@ -44,34 +44,28 @@ struct LaunchAtLoginRow: View {
                     }
                 }
             }
-            if let error = error.text {
+            if let error = state.error.text {
                 Text(error)
                     .font(MeterFont.body(11, .bold))
                     .foregroundStyle(Palette.energyEmptyInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .onAppear(perform: readStatus)
+        .onAppear { state.read() }
         .onReceive(
             NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
-        ) { _ in readStatus() }
+        ) { _ in state.read() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) {
-            _ in readStatus()
+            _ in state.read()
         }
     }
 
     private var isOn: Binding<Bool> {
         Binding {
-            status.isOn
+            state.status.isOn
         } set: { isOn in
-            error.chose(isOn, error: LoginItem.setEnabled(isOn))
-            readStatus()
+            state.choose(isOn)
         }
-    }
-
-    private func readStatus() {
-        status = LoginItem.status
-        error.read(status)
     }
 }
 

@@ -17,6 +17,23 @@ import Testing
         window.close()
     }
 
+    /// A launch-at-login error stays when the window closes while macOS still disagrees, so
+    /// the next open shows it again (review R4-U-02).
+    @Test func theLaunchAtLoginErrorOutlivesTheWindow() throws {
+        let macOS = FakeLoginItem()
+        macOS.failure = "Claude Meter could not turn on launch at login."
+        let state = macOS.state()
+        let controller = SettingsWindowController(model: .preview(), launchAtLogin: state)
+        let window = controller.preparedWindow()
+        state.choose(true)
+        controller.windowWillClose(Notification(name: NSWindow.willCloseNotification))
+        _ = controller.preparedWindow()
+        let content = try #require(window.contentView as? NSHostingView<SettingsView>)
+        #expect(content.rootView.launchAtLogin === state)
+        #expect(state.error.text == macOS.failure)
+        window.close()
+    }
+
     @Test func aClosedWindowGetsItsContentBack() {
         let controller = SettingsWindowController(model: .preview())
         let window = controller.preparedWindow()

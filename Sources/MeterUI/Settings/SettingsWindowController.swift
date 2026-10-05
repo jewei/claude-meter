@@ -17,11 +17,15 @@ import SwiftUI
 
     private let model: AppModel
     private let navigation = SettingsNavigation()
+    /// Lives as long as the controller, so a launch-at-login error stays while the window is
+    /// closed and macOS still disagrees with the user's choice.
+    let launchAtLogin: LaunchAtLoginState
     private var window: NSWindow?
     private var observers: [any NSObjectProtocol] = []
 
-    init(model: AppModel) {
+    init(model: AppModel, launchAtLogin: LaunchAtLoginState = LaunchAtLoginState()) {
         self.model = model
+        self.launchAtLogin = launchAtLogin
         super.init()
         observers.append(
             NotificationCenter.default.addObserver(
@@ -61,7 +65,8 @@ import SwiftUI
     }
 
     /// The Settings window is closing: drop its SwiftUI content, so a closed window does not
-    /// keep rendering on every settings change. The selected tab stays in ``navigation``.
+    /// keep rendering on every settings change. The selected tab stays in ``navigation`` and
+    /// a launch-at-login error in ``launchAtLogin``.
     func windowWillClose(_ notification: Notification) {
         window?.contentView = nil
     }
@@ -87,7 +92,9 @@ import SwiftUI
     }
 
     private func makeContent() -> NSView {
-        let content = NSHostingView(rootView: SettingsView(model: model, navigation: navigation))
+        let content = NSHostingView(
+            rootView: SettingsView(
+                model: model, navigation: navigation, launchAtLogin: launchAtLogin))
         // The window owns the size; pages scroll instead of growing it.
         content.sizingOptions = []
         return content

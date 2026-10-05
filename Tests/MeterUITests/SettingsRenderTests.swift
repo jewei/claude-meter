@@ -14,7 +14,9 @@ import Testing
         let model = AppModel.preview(settings: settings)
         for tab in SettingsTab.allCases {
             Snapshot.render("settings-\(tab.title.lowercased())") {
-                SettingsView(model: model, navigation: SettingsNavigation(tab: tab))
+                SettingsView(
+                    model: model, navigation: SettingsNavigation(tab: tab),
+                    launchAtLogin: FakeLoginItem().state())
             }
         }
     }

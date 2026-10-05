@@ -10,6 +10,8 @@ struct SettingsView: View {
 
     let model: AppModel
     @Bindable var navigation: SettingsNavigation
+    /// Kept by the window controller, so a launch-at-login error outlives the page.
+    let launchAtLogin: LaunchAtLoginState
     /// Only the newest inline question or token form answers Escape.
     @State private var cancelShortcuts = CancelShortcuts()
 
@@ -30,7 +32,7 @@ struct SettingsView: View {
         switch navigation.tab {
         case .data: DataSettingsView(model: model)
         case .appearance: AppearanceSettingsView(model: model)
-        case .advanced: AdvancedSettingsView(model: model)
+        case .advanced: AdvancedSettingsView(model: model, launchAtLogin: launchAtLogin)
         case .about: AboutSettingsView()
         }
     }

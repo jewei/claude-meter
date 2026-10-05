@@ -265,8 +265,8 @@ stays still. Loading, stale, and error periods do not restart it. Reduce Motion 
 `SettingsWindowController` owns a titled window, "Claude Meter Settings", 580 pt wide and
 700 pt tall when the screen allows it. The height can change (at least 420 pt), and the
 window never reaches past the visible frame (`SettingsWindowPlacement`, pure); pages scroll.
-It remembers its place and its tab (`SettingsNavigation`); while it is closed its SwiftUI
-content is gone, so nothing renders. To open, the app switches to the regular activation
+It remembers its place, its tab (`SettingsNavigation`), and a launch-at-login error
+(`LaunchAtLoginState`); while it is closed its SwiftUI content is gone, so nothing renders. To open, the app switches to the regular activation
 policy (Dock icon, menu bar, Command-Tab), activates, and then orders the window to the
 front, asking once more on the next turn because activation is cooperative. It returns to
 accessory when the last titled window closes, so Sparkle's window keeps the Dock icon
@@ -322,7 +322,8 @@ the app is regular; "About Claude Meter" opens the About tab.
 - **Advanced**: Fetch usage, Launch at login (`LoginItem`, with approval and error text; the
   state is read again when the app or the window becomes active; an hourglass while waiting
   for approval, a warning symbol when macOS cannot start this copy; an error stays until
-  macOS reports the state that the user chose, `LaunchAtLoginError`), automatic update checks
+  macOS reports the state that the user chose, also after a tab change or a closed window,
+  `LaunchAtLoginError`), automatic update checks
   with "Check for Updates…" and the last check (renders every minute; the status line's tone
   comes from `UpdateCheckText.statusLine`, so an unknown version is muted, not green),
   Diagnostics (a sheet with a Copy button; Escape closes it), and "Write a log file" with

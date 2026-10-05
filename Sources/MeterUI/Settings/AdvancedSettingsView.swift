@@ -6,6 +6,7 @@ import SwiftUI
 /// Settings > Advanced: fetching and launch at login, updates, and diagnostics.
 struct AdvancedSettingsView: View {
     let model: AppModel
+    let launchAtLogin: LaunchAtLoginState
 
     @State private var showsDiagnostics = false
 
@@ -30,7 +31,7 @@ struct AdvancedSettingsView: View {
                         })
                 }
                 CardDivider()
-                LaunchAtLoginRow()
+                LaunchAtLoginRow(state: launchAtLogin)
             }
             SectionHeading(text: "Updates")
             UpdatesCard(updater: model.updater)

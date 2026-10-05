@@ -44,8 +44,11 @@ actor ManualLogin {
     /// Connections whose Connect wrote its tokens to the item without storing them: the
     /// Connect has not decided yet, it was abandoned, or its save failed and may still land.
     /// The item can hold their tokens until the old item is written back, so ``current()``
-    /// never uses them. A stored Connect or a Disconnect starts over.
+    /// never uses them, and repairs the item when the write-back failed. A stored Connect or a
+    /// Disconnect starts over. Only memory holds this, so a relaunch forgets it.
     private var unsettledConnections: Set<String> = []
+    /// A repair of the item waits or runs; see ``queueRepair()``.
+    private var isRepairQueued = false
 
     init(
         vault: ManualCredentialVault, refresher: TokenRefresher, now: @escaping @Sendable () -> Date
@@ -58,7 +61,8 @@ actor ManualLogin {
     /// The stored login, or a newer in-memory rotation of the same connection. A locked
     /// Keychain falls back to the in-memory credential, and so do tokens that a Connect saved
     /// but did not store: they are never the login, and without a credential in memory they
-    /// throw ``Failure/changed``. Throws ``Failure``.
+    /// throw ``Failure/changed``. When the item holds such tokens, the credential in memory is
+    /// written back over them (``queueRepair()``). Throws ``Failure``.
     func current() async throws -> ManualCredential {
         guard !isDisconnected else { throw Failure.missing }
         let startGeneration = generation
@@ -74,6 +78,7 @@ actor ManualLogin {
             guard !unsettledConnections.contains(stored.connectionID) else {
                 // A Connect saved these tokens but did not store them; the old item comes back.
                 guard let latest else { throw Failure.changed }
+                queueRepair()
                 return latest
             }
             latest = stored
@@ -127,8 +132,9 @@ actor ManualLogin {
     /// again after the save, under the lock; the ticket is also checked when the lock is
     /// taken. A Connect abandoned during the save writes the old item back (or deletes the new
     /// one when there was none). Until the Connect is stored, ``current()`` never uses its
-    /// tokens. When the save fails, the old login and its in-flight refreshes stay as they
-    /// were; a save that timed out may still land, so the old item is queued to follow it.
+    /// tokens, and writes the login in memory back when they are still in the item. When the
+    /// save fails, the old login and its in-flight refreshes stay as they were; a save that
+    /// timed out may still land, so the old item is queued to follow it.
     /// Throws the Keychain error when the old item cannot be read, before anything is written.
     func connect(
         _ credential: ManualCredential, ticket: Ticket, isWanted: @Sendable () async -> Bool
@@ -155,7 +161,8 @@ actor ManualLogin {
         guard await mayStore(ticket, isWanted) else {
             // After a Disconnect, its delete runs after this save anyway. The connection stays
             // unsettled, so a read that returns these tokens, also one that started before the
-            // write-back or one after a write-back that failed, uses the old login. A new
+            // write-back or one after a write-back that failed, uses the old login and repairs
+            // the item. A new
             // generation is not needed for that, and would drop a rotation of the old login
             // that is in flight.
             if ticket.generation == generation { await restore(previous) }
@@ -189,6 +196,38 @@ actor ManualLogin {
     {
         guard ticket == currentTicket, await isWanted() else { return false }
         return ticket == currentTicket
+    }
+
+    /// Writes ``latest`` back over tokens of an unsettled Connect that the item holds: their
+    /// write-back failed, or has not landed yet. Only memory knows that they are not the
+    /// login, so without this they would be the login after a relaunch. Returns at once; the
+    /// repair runs after the writes before it, and one at a time.
+    private func queueRepair() {
+        guard !isRepairQueued else { return }
+        isRepairQueued = true
+        let expected = generation
+        Task { await repair(generation: expected) }
+    }
+
+    private func repair(generation expected: UInt64) async {
+        await lockWrites()
+        defer {
+            unlockWrites()
+            isRepairQueued = false
+        }
+        guard generation == expected, !isDisconnected, let latest else { return }
+        // Read after the writes before it, so a write-back that landed meanwhile is kept.
+        guard let value = try? await vault.storedValue(),
+            let stored = try? JSONDecoder.meter.decode(ManualCredential.self, from: value),
+            unsettledConnections.contains(stored.connectionID)
+        else { return }
+        writeSequence += 1
+        do {
+            try await vault.save(latest, sequence: writeSequence)
+            log.notice("Wrote the manual Claude login back over the tokens of an unsaved Connect")
+        } catch {
+            log.error("Could not write the manual Claude login back after a Connect", error)
+        }
     }
 
     /// Writes back the item that a Connect replaced. Call with the write lock held.

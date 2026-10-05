@@ -124,6 +124,47 @@ extension ClaudeTests {
             #expect(harness.manualItem()?.accessToken == "old-access")
         }
 
+        @Test func aFetchRepairsAnItemWhoseWriteBackFailed() async throws {
+            let harness = try ClaudeHarness.manual(expiresAt: .reference(7200))
+            let failures = Locked(1)
+            let keychain = ScriptedKeychain(base: harness.keychain) {
+                (password: Data?) throws(KeychainError) in
+                let token = password.flatMap {
+                    try? JSONDecoder.meter.decode(ManualCredential.self, from: $0)
+                }?.accessToken
+                let fails = failures.withLock { count -> Bool in
+                    guard token == "old-access", count > 0 else { return false }
+                    count -= 1
+                    return true
+                }
+                if fails { throw KeychainError.failure(status: -34) }
+            }
+            let http = usageServer([
+                "old-access": ClaudeFixtures.usage(session: 10), "pasted": "{}",
+            ])
+            let provider = harness.provider(http, keychain: keychain)
+            let first = try await provider.fetch(previous: nil)
+            let answers = Locked([true, false])
+
+            // The Connect is abandoned after its save, and the write-back of the old item fails.
+            await #expect(throws: ProviderError.self) {
+                try await provider.connectManually(
+                    accessToken: "pasted", refreshToken: nil, expiresAt: nil,
+                    isWanted: { answers.withLock { $0.removeFirst() } })
+            }
+            #expect(harness.manualItem()?.accessToken == "pasted")
+
+            // The next fetch uses the old login and writes it back over the abandoned tokens.
+            let second = try await provider.fetch(previous: first)
+            #expect(second.accounts[0].windows.first?.usedPercent == 10)
+            #expect(await waitUntil { keychain.writes == ["pasted", "old-access"] })
+            #expect(harness.manualItem()?.accessToken == "old-access")
+
+            // A relaunch forgets the abandoned Connect; the old login is still the login.
+            _ = try await harness.provider(http).fetch(previous: second)
+            #expect(http.usageTokens == ["old-access", "pasted", "old-access", "old-access"])
+        }
+
         @Test func aFailedConnectSaveKeepsTheOldLoginAndItsRotation() async throws {
             let harness = try ClaudeHarness(.manual)
             try harness.storeManual(expiresAt: .reference(10))

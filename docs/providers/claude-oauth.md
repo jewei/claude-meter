@@ -216,7 +216,12 @@ little memory. The limit is 256 MiB. The result is one of three states:
    login, even when a fetch reads them from the Keychain: the fetch uses the old login from
    memory, or says that the connection changed, so it never shows their quota or refreshes
    them. This also holds after the Connect was abandoned or its save failed, until the next
-   stored Connect or Disconnect.
+   stored Connect or Disconnect, or until the app quits: only memory knows these tokens. So
+   the item is repaired in the same launch. When a fetch reads such tokens and has the old
+   login in memory, it writes the old login back over them, after the writes before it, unless
+   a write-back landed meanwhile. One repair runs at a time; a repair that fails is tried again
+   at the next fetch. When the app quits before a repair, or has no old login in memory, the
+   tokens stay in the item and are the login after the next launch.
 7. `ClaudeSettingsModel` runs one attempt at a time; a newer attempt overtakes an older one.
    Its `isWanted` is true while the Connect is the newest attempt, the user did not abandon
    it (Cancel, or Claude turned off), and Claude is on. A manual Connect that the provider
@@ -237,7 +242,8 @@ little memory. The limit is 256 MiB. The result is one of three states:
 9. A Connect whose save fails leaves the old login as it was, and a rotation of the old
    login that arrives meanwhile is still saved. When the save times out while its Keychain
    call runs, the call can still land, so Connect queues a write-back of the old item behind
-   it. The write-back has no deadline and is never skipped.
+   it. The write-back has no deadline and is never skipped. When a write-back fails, the
+   repair of rule 6 writes the old login back.
 10. A refresh token rejected with `invalid_grant` is not sent again. When the server also
     rejects the refreshed token (HTTP 401 or 403), or a 401 cannot be refreshed, the
     connection gets no more requests. Both marks last until the next Connect or app launch,

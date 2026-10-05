@@ -11,8 +11,10 @@ extension ClaudeProvider {
     /// the 429 gate is closed, because it spends the pasted refresh token. Tokens that a refresh
     /// got are kept for a retry with the same pasted tokens, also after a Connect of other
     /// tokens, until a Connect is stored, a Disconnect starts, or the server rejects them; only
-    /// the last four pasted refresh tokens keep theirs. A failure leaves an existing manual
-    /// login unchanged, and a Disconnect that starts meanwhile wins.
+    /// the last four pasted refresh tokens keep theirs. Connect looks for them again just
+    /// before it would refresh, so a Connect that overlaps the one that got them uses them too.
+    /// A failure leaves an existing manual login unchanged, and a Disconnect that starts
+    /// meanwhile wins.
     ///
     /// - Parameter isWanted: Asked before the Keychain write lock is taken, and again after
     ///   the save, under the lock. When it returns false, nothing stays stored and the Connect
@@ -51,7 +53,10 @@ extension ClaudeProvider {
             candidate = try await refreshedForConnect(candidate, pasted: pasted)
             try await checkRefreshed(candidate, pasted: pasted)
         } catch is UsageFailure {
-            if isRefreshed, let pasted { await manualLogin.discardPendingRotation(for: pasted) }
+            if isRefreshed, let pasted {
+                await manualLogin.discardPendingRotation(
+                    for: pasted, rejectedAccessToken: candidate.accessToken)
+            }
             throw Self.tokensRejected
         }
         do {
@@ -131,7 +136,10 @@ extension ClaudeProvider {
         do {
             try await checkUsage(accessToken: candidate.accessToken)
         } catch is UsageFailure {
-            if let pasted { await manualLogin.discardPendingRotation(for: pasted) }
+            if let pasted {
+                await manualLogin.discardPendingRotation(
+                    for: pasted, rejectedAccessToken: candidate.accessToken)
+            }
             throw Self.tokensRejected
         }
     }

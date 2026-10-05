@@ -67,9 +67,9 @@ extension ClaudeTests {
             #expect(item.refreshToken == "new-refresh")
         }
 
-        /// Rotates each refresh token once, as Anthropic does: a spent one gets `invalid_grant`.
-        /// `spent` records the refresh tokens sent, in order. Usage checks fail with HTTP 503,
-        /// which keeps a rotation, while `failing` is true.
+        /// Rotates each refresh token once (``ClaudeFixtures/rotation(of:spent:)``). `spent`
+        /// records the refresh tokens sent, in order. Usage checks fail with HTTP 503, which
+        /// keeps a rotation, while `failing` is true.
         private func rotatingServer(spent: Locked<[String]>, failing: Locked<Bool>)
             -> FakeHTTPClient
         {
@@ -77,19 +77,7 @@ extension ClaudeTests {
                 guard request.url == TokenRefresher.url else {
                     return failing.value ? .json(503, "{}") : .json(200, "{}")
                 }
-                let body = request.body.flatMap {
-                    try? JSONDecoder().decode([String: String].self, from: $0)
-                }
-                let token = body?["refresh_token"] ?? ""
-                let isSpent = spent.withLock { sent -> Bool in
-                    defer { sent.append(token) }
-                    return sent.contains(token)
-                }
-                guard !isSpent else { return .json(400, #"{"error": "invalid_grant"}"#) }
-                return .json(
-                    200,
-                    #"{"access_token": "access-\#(token)", "refresh_token": "next-\#(token)", "#
-                        + #""expires_in": 3600}"#)
+                return ClaudeFixtures.rotation(of: request, spent: spent)
             }
         }
 

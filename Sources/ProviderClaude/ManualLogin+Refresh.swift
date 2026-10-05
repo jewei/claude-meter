@@ -53,16 +53,20 @@ extension ManualLogin {
         refreshState.pendingRotations.first { $0.pasted == pastedRefreshToken }?.credential
     }
 
-    /// Forgets the pending rotation of `pastedRefreshToken`, after the server rejected it.
-    func discardPendingRotation(for pastedRefreshToken: String) {
-        refreshState.pendingRotations.removeAll { $0.pasted == pastedRefreshToken }
+    /// Forgets the pending rotation of `pastedRefreshToken` after a usage check rejected
+    /// `rejectedAccessToken`, only when the rotation still holds that access token. A newer
+    /// rotation that another Connect kept meanwhile stays.
+    func discardPendingRotation(for pastedRefreshToken: String, rejectedAccessToken: String) {
+        refreshState.pendingRotations.removeAll {
+            $0.pasted == pastedRefreshToken && $0.credential.accessToken == rejectedAccessToken
+        }
     }
 
     /// Keeps `credential` as the newest pending rotation of `pastedRefreshToken`, in place of
     /// an older one, and forgets the oldest beyond ``pendingRotationLimit``.
     private func keepPendingRotation(_ credential: ManualCredential, for pastedRefreshToken: String)
     {
-        discardPendingRotation(for: pastedRefreshToken)
+        refreshState.pendingRotations.removeAll { $0.pasted == pastedRefreshToken }
         refreshState.pendingRotations.append((pastedRefreshToken, credential))
         let excess = refreshState.pendingRotations.count - Self.pendingRotationLimit
         if excess > 0 { refreshState.pendingRotations.removeFirst(excess) }
@@ -73,12 +77,26 @@ extension ManualLogin {
     /// keeps the rotation for `pastedRefreshToken` until a Connect is stored (see
     /// ``RefreshState/pendingRotations``). A Disconnect or a stored Connect during the request
     /// forgets the rotation and throws ``Failure/changed``.
+    ///
+    /// Looks for the pending rotation of `pastedRefreshToken` again first: another Connect can
+    /// have spent the pasted refresh token after the caller looked. A pending rotation that
+    /// does not expire within 60 s is returned without a request; an expired one is refreshed
+    /// with its own refresh token. `invalid_grant` forgets the pending rotation only when it
+    /// holds the refresh token that the server rejected.
     func refreshedCandidate(_ candidate: ManualCredential, pastedRefreshToken: String)
         async throws -> ManualCredential
     {
-        guard let refreshToken = candidate.refreshToken else { throw Failure.expired }
+        // No suspension from this lookup to the start or join of the request, so every
+        // Connect of the same pasted tokens sees the same rotation, or joins the same request.
+        var source = candidate
+        if var pending = pendingRotation(for: pastedRefreshToken) {
+            pending.connectionID = candidate.connectionID
+            guard pending.isExpired(at: now()) else { return pending }
+            source = pending
+        }
+        guard let refreshToken = source.refreshToken else { throw Failure.expired }
         let startGeneration = generation
-        switch await sharedRefresh(candidate, refreshToken: refreshToken).result {
+        switch await sharedRefresh(source, refreshToken: refreshToken).result {
         case .success(var fresh):
             guard generation == startGeneration else { throw Failure.changed }
             // The shared request may have started for the stored connection.
@@ -86,7 +104,11 @@ extension ManualLogin {
             keepPendingRotation(fresh, for: pastedRefreshToken)
             return fresh
         case .failure(Failure.rejected):
-            discardPendingRotation(for: pastedRefreshToken)
+            // Only a rotation that holds the rejected refresh token is dead. A newer one, which
+            // a Connect after a Disconnect can keep meanwhile, still works.
+            refreshState.pendingRotations.removeAll {
+                $0.pasted == pastedRefreshToken && $0.credential.refreshToken == refreshToken
+            }
             throw Failure.rejected
         case .failure(let error):
             throw error

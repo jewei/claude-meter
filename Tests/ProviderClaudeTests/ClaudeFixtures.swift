@@ -35,6 +35,26 @@ enum ClaudeFixtures {
     static let rotated =
         #"{"access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 3600}"#
 
+    /// The answer of a token endpoint that rotates each refresh token once, as Anthropic does:
+    /// refresh token `token` gets `access-<token>` and `next-<token>` for one hour, and a
+    /// refresh token that `spent` holds already gets `invalid_grant`. Adds the refresh token of
+    /// `request` to `spent`.
+    static func rotation(of request: HTTPRequest, spent: Locked<[String]>) -> HTTPResponse {
+        let body = request.body.flatMap {
+            try? JSONDecoder().decode([String: String].self, from: $0)
+        }
+        let token = body?["refresh_token"] ?? ""
+        let isSpent = spent.withLock { sent -> Bool in
+            defer { sent.append(token) }
+            return sent.contains(token)
+        }
+        guard !isSpent else { return .json(400, #"{"error": "invalid_grant"}"#) }
+        return .json(
+            200,
+            #"{"access_token": "access-\#(token)", "refresh_token": "next-\#(token)", "#
+                + #""expires_in": 3600}"#)
+    }
+
     /// The card text of manual tokens that no longer work.
     static let manualConnectAgain = UsageIssue(
         "The saved Claude tokens no longer work. Connect again in Settings with new tokens.",

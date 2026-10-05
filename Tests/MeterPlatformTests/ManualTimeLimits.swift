@@ -27,7 +27,7 @@ final class ManualTimeLimits: Sendable {
         for call in due { call.expire() }
     }
 
-    /// Whether a call with `key` started its time limit, which it does after it handed its
+    /// Whether a call with `key` started its time limit, which it does before it hands its
     /// work to the queue, and the test has not ended that limit yet.
     func isWaiting(_ key: String) -> Bool {
         pending.value.contains { $0.key == key }

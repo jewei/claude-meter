@@ -54,7 +54,7 @@ public final class BlockingIO: Sendable {
         label: "com.jewei.claudemeter.blocking-io.timers", qos: .utility)
 
     /// Starts the time limit of one call: `expire` runs after `limit`. `key` is the key of
-    /// the call, or nil.
+    /// the call, or nil. A call starts its limit before its work can start.
     typealias TimeLimit =
         @Sendable (
             _ limit: Duration, _ key: String?, _ expire: @escaping @Sendable () -> Void
@@ -156,15 +156,18 @@ public final class BlockingIO: Sendable {
             try await withCheckedThrowingContinuation { continuation in
                 // A caller cancelled before this point already has its error. Nothing runs.
                 guard outcome.install(continuation) else { return }
+                // The limit starts before the work can start, so the work never runs without
+                // it. A limit that ends before the work starts abandons the work, which then
+                // skips and releases itself.
+                timeLimit(timeout, key) { [self] in
+                    giveUp(outcome, cancellation, stuckKey: key, TimeoutError(limit: timeout))
+                }
                 queue.async { [self] in
                     // The caller gave up before the work started: skip it.
                     let result: Result<Value, any Error> =
                         cancellation.isCancelled
                         ? .failure(CancellationError()) : Result { try work(cancellation) }
                     outcome.end(with: result, release: release)
-                }
-                timeLimit(timeout, key) { [self] in
-                    giveUp(outcome, cancellation, stuckKey: key, TimeoutError(limit: timeout))
                 }
             }
         } onCancel: {

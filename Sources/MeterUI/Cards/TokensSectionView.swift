@@ -35,8 +35,10 @@ struct TokensSectionView: View {
                 .accessibilityValue(row.accessibilityValue)
             }
             if let note = tokens.note {
+                // A rate-limit note counts down ("Retrying in 3m").
                 Text(note)
                     .font(MeterFont.body(10, .semibold))
+                    .monospacedDigit()
                     .foregroundStyle(Palette.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }

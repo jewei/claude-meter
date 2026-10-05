@@ -101,7 +101,8 @@ bar uses the system rounded font.
 | Pill | Nunito ExtraBold | 10 | "Menu bar" |
 
 Every changing number uses `.monospacedDigit()`, also in text that can hold one: the hero
-subtitle, notices, status lines and screens, and the last update check.
+subtitle, notices, status lines and screens, the notes under tokens used and usage-limit
+resets, and the last update check.
 
 ## Components (`Design/`)
 

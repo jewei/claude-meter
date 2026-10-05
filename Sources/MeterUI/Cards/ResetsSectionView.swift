@@ -31,8 +31,10 @@ struct ResetsSectionView: View {
                 .accessibilityHint(row.help)
             }
             if let note = resets.note {
+                // The note can count resets ("shown for 2 of 3 resets").
                 Text(note)
                     .font(MeterFont.body(10, .semibold))
+                    .monospacedDigit()
                     .foregroundStyle(Palette.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }

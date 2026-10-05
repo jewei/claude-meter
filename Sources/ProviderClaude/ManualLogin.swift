@@ -10,7 +10,8 @@ import MeterPlatform
 ///   earlier (a fetch, a refresh, or a Connect) can send its tokens, store, or change anything.
 /// - Keychain writes run one at a time, in order, so a late save never follows a delete.
 /// - ``ManualRefreshPolicy`` decides which refreshes and requests may go out after failures.
-/// - A rotation that Connect got but could not store yet is kept for a retry of Connect.
+/// - The rotations that Connects got but did not store are kept for a retry of Connect with
+///   the same pasted tokens, for the last few pasted refresh tokens.
 actor ManualLogin {
     /// Identifies one Connect. A Disconnect, a newer Connect, or ``cancelConnects()`` makes it
     /// stale.
@@ -200,7 +201,7 @@ actor ManualLogin {
         }
     }
 
-    /// Forgets the token requests in flight, the refresh failures, the rotation that a Connect
+    /// Forgets the token requests in flight, the refresh failures, the rotations that Connects
     /// got, and the unsettled connections: a Connect was stored, or a Disconnect started.
     private func startGeneration() {
         generation &+= 1

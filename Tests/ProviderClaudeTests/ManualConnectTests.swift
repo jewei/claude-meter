@@ -67,6 +67,82 @@ extension ClaudeTests {
             #expect(item.refreshToken == "new-refresh")
         }
 
+        /// Rotates each refresh token once, as Anthropic does: a spent one gets `invalid_grant`.
+        /// `spent` records the refresh tokens sent, in order. Usage checks fail with HTTP 503,
+        /// which keeps a rotation, while `failing` is true.
+        private func rotatingServer(spent: Locked<[String]>, failing: Locked<Bool>)
+            -> FakeHTTPClient
+        {
+            FakeHTTPClient { request in
+                guard request.url == TokenRefresher.url else {
+                    return failing.value ? .json(503, "{}") : .json(200, "{}")
+                }
+                let body = request.body.flatMap {
+                    try? JSONDecoder().decode([String: String].self, from: $0)
+                }
+                let token = body?["refresh_token"] ?? ""
+                let isSpent = spent.withLock { sent -> Bool in
+                    defer { sent.append(token) }
+                    return sent.contains(token)
+                }
+                guard !isSpent else { return .json(400, #"{"error": "invalid_grant"}"#) }
+                return .json(
+                    200,
+                    #"{"access_token": "access-\#(token)", "refresh_token": "next-\#(token)", "#
+                        + #""expires_in": 3600}"#)
+            }
+        }
+
+        @Test func eachPastedRefreshTokenKeepsItsOwnRotation() async throws {
+            let harness = try ClaudeHarness(.off)
+            let spent = Locked<[String]>([])
+            let failing = Locked(true)
+            let provider = harness.provider(rotatingServer(spent: spent, failing: failing))
+            func connect(_ tokens: String) async throws {
+                try await provider.connectManually(
+                    accessToken: "expired-\(tokens)", refreshToken: "pasted-\(tokens)",
+                    expiresAt: .reference(-10))
+            }
+
+            // Each Connect spends its pasted refresh token, then its usage check fails.
+            await #expect(throws: ProviderError.self) { try await connect("one") }
+            await #expect(throws: ProviderError.self) { try await connect("two") }
+            failing.withLock { $0 = false }
+            try await connect("one")
+
+            // The retry of tokens one used their rotation, so the spent token went out once.
+            #expect(spent.value == ["pasted-one", "pasted-two"])
+            let item = try #require(harness.manualItem())
+            #expect(item.accessToken == "access-pasted-one")
+            #expect(item.refreshToken == "next-pasted-one")
+        }
+
+        @Test func onlyTheLastFourPastedRefreshTokensKeepTheirRotation() async throws {
+            let harness = try ClaudeHarness(.off)
+            let spent = Locked<[String]>([])
+            let failing = Locked(true)
+            let provider = harness.provider(rotatingServer(spent: spent, failing: failing))
+            func connect(_ tokens: String) async throws {
+                try await provider.connectManually(
+                    accessToken: "expired-\(tokens)", refreshToken: "pasted-\(tokens)",
+                    expiresAt: .reference(-10))
+            }
+            let names = ["one", "two", "three", "four", "five"]
+            for tokens in names {
+                await #expect(throws: ProviderError.self) { try await connect(tokens) }
+            }
+            failing.withLock { $0 = false }
+
+            // Tokens one lost their rotation to newer ones, so their spent token goes out again.
+            let error = await #expect(throws: ProviderError.self) { try await connect("one") }
+            #expect(
+                error?.issue.message == "Anthropic rejected the refresh token. Enter new tokens.")
+            try await connect("two")
+
+            #expect(spent.value == names.map { "pasted-\($0)" } + ["pasted-one"])
+            #expect(harness.manualItem()?.accessToken == "access-pasted-two")
+        }
+
         @Test func rejectedRotatedTokensAreForgotten() async throws {
             let harness = try ClaudeHarness(.off)
             let http = usageServer([:], tokenResponse: .json(200, ClaudeFixtures.rotated))

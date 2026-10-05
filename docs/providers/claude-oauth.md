@@ -189,9 +189,10 @@ little memory. The limit is 256 MiB. The result is one of three states:
    the request is sent again. A failure leaves the old manual login unchanged.
 3. A refresh spends the pasted refresh token, so Connect never sends one while the 429 gate
    is closed; it says when to try again. The tokens that a Connect refresh got stay in
-   memory until a Connect saves them, so a retry with the same pasted tokens uses them and
-   sends no new token request. HTTP 401 or 403 for them, `invalid_grant`, Disconnect, or
-   quitting the app forgets them.
+   memory, by pasted refresh token, so a retry with the same pasted tokens uses them and
+   sends no new token request, also after a Connect of other tokens. The last 4 pasted
+   refresh tokens keep theirs; a newer one forgets the oldest. HTTP 401 or 403 for them,
+   `invalid_grant`, a stored Connect, Disconnect, or quitting the app forgets them.
 4. A stored token is refreshed when it expires within 60 s, and once after HTTP 401. HTTP
    403 is not refreshed: a refresh does not change the scopes. Callers with the same refresh
    token share one token request, and each caller keeps the connection ID of its own login.

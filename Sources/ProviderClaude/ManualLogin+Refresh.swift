@@ -11,11 +11,17 @@ extension ManualLogin {
         /// Token requests in flight, by the refresh token that they spend.
         fileprivate var running: [String: Task<ManualCredential, any Error>] = [:]
         fileprivate var policy = ManualRefreshPolicy()
-        /// Tokens that a Connect got from the token endpoint but has not stored, by the
-        /// refresh token that the user pasted. The server spent that token when it rotated
-        /// it, so a retry of Connect with the same pasted tokens must use these instead.
-        fileprivate var pendingRotation: (pasted: String, credential: ManualCredential)?
+        /// Tokens that Connects got from the token endpoint but did not store, by the refresh
+        /// token that the user pasted, oldest first. The server spent each pasted token when it
+        /// rotated it, so a retry of Connect with the same pasted tokens must use these
+        /// instead, also after a Connect of other tokens. At most
+        /// ``ManualLogin/pendingRotationLimit`` are kept.
+        fileprivate var pendingRotations: [(pasted: String, credential: ManualCredential)] = []
     }
+
+    /// How many pasted refresh tokens keep their pending rotation. A few cover a user who
+    /// switches between pasted tokens; the oldest is forgotten first.
+    static let pendingRotationLimit = 4
 
     /// A credential that does not expire within 60 s, refreshed first when needed. Throws
     /// ``Failure/rejected`` without a request for a connection that the server rejected, and
@@ -44,22 +50,29 @@ extension ManualLogin {
 
     /// The rotation that an earlier Connect got for the refresh token the user pasted.
     func pendingRotation(for pastedRefreshToken: String) -> ManualCredential? {
-        guard let pending = refreshState.pendingRotation, pending.pasted == pastedRefreshToken
-        else { return nil }
-        return pending.credential
+        refreshState.pendingRotations.first { $0.pasted == pastedRefreshToken }?.credential
     }
 
     /// Forgets the pending rotation of `pastedRefreshToken`, after the server rejected it.
     func discardPendingRotation(for pastedRefreshToken: String) {
-        if refreshState.pendingRotation?.pasted == pastedRefreshToken {
-            refreshState.pendingRotation = nil
-        }
+        refreshState.pendingRotations.removeAll { $0.pasted == pastedRefreshToken }
+    }
+
+    /// Keeps `credential` as the newest pending rotation of `pastedRefreshToken`, in place of
+    /// an older one, and forgets the oldest beyond ``pendingRotationLimit``.
+    private func keepPendingRotation(_ credential: ManualCredential, for pastedRefreshToken: String)
+    {
+        discardPendingRotation(for: pastedRefreshToken)
+        refreshState.pendingRotations.append((pastedRefreshToken, credential))
+        let excess = refreshState.pendingRotations.count - Self.pendingRotationLimit
+        if excess > 0 { refreshState.pendingRotations.removeFirst(excess) }
     }
 
     /// Refreshes tokens that are not stored yet, during Connect. Shares an in-flight request
     /// for the same refresh token and ignores the backoff. Stores nothing in the Keychain, but
-    /// keeps the rotation for `pastedRefreshToken` until a Connect stores it. A Disconnect or a
-    /// stored Connect during the request forgets the rotation and throws ``Failure/changed``.
+    /// keeps the rotation for `pastedRefreshToken` until a Connect is stored (see
+    /// ``RefreshState/pendingRotations``). A Disconnect or a stored Connect during the request
+    /// forgets the rotation and throws ``Failure/changed``.
     func refreshedCandidate(_ candidate: ManualCredential, pastedRefreshToken: String)
         async throws -> ManualCredential
     {
@@ -70,7 +83,7 @@ extension ManualLogin {
             guard generation == startGeneration else { throw Failure.changed }
             // The shared request may have started for the stored connection.
             fresh.connectionID = candidate.connectionID
-            refreshState.pendingRotation = (pastedRefreshToken, fresh)
+            keepPendingRotation(fresh, for: pastedRefreshToken)
             return fresh
         case .failure(Failure.rejected):
             discardPendingRotation(for: pastedRefreshToken)

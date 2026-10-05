@@ -9,8 +9,10 @@ extension ClaudeProvider {
     /// Tokens that expire within 60 s are refreshed first. When the request gets HTTP 401 and
     /// no refresh happened yet, the refresh token is tried once. A refresh never goes out while
     /// the 429 gate is closed, because it spends the pasted refresh token. Tokens that a refresh
-    /// got are kept for a retry of Connect until they are stored or rejected. A failure leaves
-    /// an existing manual login unchanged, and a Disconnect that starts meanwhile wins.
+    /// got are kept for a retry with the same pasted tokens, also after a Connect of other
+    /// tokens, until a Connect is stored, a Disconnect starts, or the server rejects them; only
+    /// the last four pasted refresh tokens keep theirs. A failure leaves an existing manual
+    /// login unchanged, and a Disconnect that starts meanwhile wins.
     ///
     /// - Parameter isWanted: Asked before the Keychain write lock is taken, and again after
     ///   the save, under the lock. When it returns false, nothing stays stored and the Connect

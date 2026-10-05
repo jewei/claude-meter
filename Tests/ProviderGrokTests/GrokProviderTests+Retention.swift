@@ -184,6 +184,31 @@ extension GrokProviderTests {
         #expect(http.requests.count == 2)
     }
 
+    /// R5-P-02: the hold stays with its login. A 429 for another login in between does not end
+    /// it, so the first login waits when it signs in again before its retry time.
+    @Test func aRateLimitOfAnotherLoginKeepsTheFirstHold() async throws {
+        try signIn()
+        let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "120"])
+        let provider = provider(http)
+        let first = try await provider.fetch(previous: previous())
+        try signIn(JWTFixture.token(["sub": "user-2"]))
+        advance(10)
+        let second = try await provider.fetch(previous: first)
+        #expect(http.requests.count == 2)
+        #expect(try account(second).issue?.retryAt == .reference(130))
+
+        try signIn()
+        advance(10)
+        let back = try account(try await provider.fetch(previous: second))
+
+        #expect(http.requests.count == 2)
+        #expect(back.issue?.retryAt == .reference(120))
+        #expect(back.owner == owner)
+        advance(100)
+        _ = try await provider.fetch(previous: ProviderUsage(provider: .grok, accounts: [back]))
+        #expect(http.requests.count == 3)
+    }
+
     /// A wrong `Retry-After` cannot stop requests for more than one hour.
     @Test func aRateLimitHoldsAtMostOneHour() async throws {
         try signIn()

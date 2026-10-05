@@ -133,10 +133,12 @@ never reaches a reading, a log, or the disk.
     hold comes before the expiry check, and a file that cannot be read keeps it, so a refresh
     that sends nothing never ends it early. The provider keeps each 429 in memory as soon as
     Grok answers, before it reads the login again, so a refresh that is cancelled after the
-    response still holds the login. A restart before the next refresh ends that memory hold.
-    A refresh during the hold puts the 429 issue on the account. Only the hold of an observed
-    account with an identity owner (a `sub`, an account ID, or an email) survives a restart
-    (`docs/architecture.md`).
+    response still holds the login. Memory keeps one hold for each login (`RateLimitHolds`),
+    so a 429 for another login never ends it: after a 429 for login A, then one for login B,
+    A still waits when it signs in again before its retry time. A restart before the next
+    refresh ends the memory holds. A refresh during the hold puts the 429 issue on the
+    account. Only the hold of an observed account with an identity owner (a `sub`, an account
+    ID, or an email) survives a restart (`docs/architecture.md`).
 13. If the owner after the response differs from the owner before it, discard the response.
 14. `reconcile` drops the reading when the owner changed or the user signed out. It reads local
     files only.

@@ -115,8 +115,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    Claude extra usage, the other main-capable provider, Cursor, then Grok. The extra-usage
    card shows only while Claude is the main meter, for its selected account, when that
    account reports extra usage (`CardBuilder`).
-7. **Rings** cards are always open. **Bars**, Cursor, and Grok cards open and close, and
-   remember their state. Details hold scoped windows, usage-limit resets, and tokens used.
+7. Account cards (rings, bars, Cursor, and Grok) open and close from their header, and
+   remember their state. They start closed. The extra-usage card is always open. Details
+   hold usage-limit resets and tokens used, and in bar cards also scoped windows.
 8. A card shows its account's own issue. A card of a provider that is not the main meter also
    shows old data (`Data may be stale`); the main provider shows it as a notice instead. A
    failed refresh is a notice for every provider (§4.4), so no card repeats it

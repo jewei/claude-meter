@@ -17,6 +17,8 @@ are in the `v3.1.3` tag.
 - The drag hint above the cards is now a tooltip on an info icon beside **ACCOUNTS**, and
   the **Menu bar** pill above the first card is gone, so the popover is two lines shorter.
   The top Claude or Codex card still sets the menu bar.
+- Ring cards now open and close from their header, like bar cards, so usage-limit resets and
+  tokens used can stay hidden. They start closed.
 
 ## [4.0.0] - 2026-10-05
 

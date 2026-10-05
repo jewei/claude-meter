@@ -205,7 +205,7 @@ that the drop accepts, and a drop in place pins it. The dragged card lifts (102%
 calls `AppModel.moveCard(_:to:visible:)` once, with the place that the preview shows; a
 cancelled drag, or a refresh that changes the cards, puts them back. No pasteboard, no drops
 from outside, and a hidden popover does not reorder. The release that ends a drag does not
-toggle the bar card under the pointer, and the header does not show as pressed during the
+toggle the card under the pointer, and the header does not show as pressed during the
 drag.
 
 Dragging is not the only way to choose the menu-bar meter: a Claude or Codex card that is
@@ -219,10 +219,12 @@ header's value is its headline and whether it is expanded.
 
 All cards: padding 14×13, `chunkyCard()`, full width.
 
-- **Ring card** (`RingCardView`): the name (Fredoka SemiBold 15) with badges at the trailing
-  edge, or below the name when they do not fit. Then rings and rows, 14 pt apart. Each row
+- **Ring card** (`RingCardView`): a header button (the name in Fredoka SemiBold 15 with
+  badges at the trailing edge, or below the name when they do not fit, then the chevron;
+  28 pt minimum height) that calls `toggleCard`. Then rings and rows, 14 pt apart. Each row
   (`RingMetricRow`): dot, short title, value in severity ink, caption, and "Resets in …"
-  below, indented 15 pt. Details and the status line follow; ring cards are always open.
+  below, indented 15 pt. Expanded details, then the status line, follow. Details reveal
+  from the top with the card height; the card clips its content.
 - **Bar card** (`BarCardView`): a header button (provider mark, name, badges, headline
   value, chevron; 28 pt minimum height) that calls `toggleCard`. One 12 pt `BarRow` per
   window with "Session · 60% left" and the reset, unless `BarsModel.showsBarLabels` is false

@@ -20,7 +20,7 @@ countdown shows when each limit resets.
 - A menu-bar bolt with a severity dot and the energy left in your session or weekly
   window.
 - A hero that names the limit closest to running out and when it resets.
-- One card per account: several Claude config dirs and Codex homes, with your own names and
+- One card per account: several Claude and Codex config dirs, with your own names and
   plan badges. Drag a Claude or Codex card to the top to choose the menu-bar account.
 - Cursor billing usage and Grok credits on their own cards.
 - Tokens used today, yesterday, and in the last seven days, from local sessions on this Mac

@@ -19,6 +19,7 @@ are in the `v3.1.3` tag.
   The top Claude or Codex card still sets the menu bar.
 - Ring cards now open and close from their header, like bar cards, so usage-limit resets and
   tokens used can stay hidden. They start closed.
+- Settings calls a Codex home a "config dir", the same as for Claude: **Add config dir…**.
 
 ## [4.0.0] - 2026-10-05
 

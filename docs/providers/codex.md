@@ -8,6 +8,7 @@
 ### Homes
 
 - A Codex home is a Codex config directory (`CODEX_HOME`). Each home is one account.
+  Settings calls it a "config dir", the same as for Claude.
 - The implicit home is `$CODEX_HOME` when the variable is not empty after trimming, else
   `~/.codex`. Extra homes come from `CodexConfiguration.extraHomes`.
 - The account ID is the canonical home path: standardized, with symbolic links resolved.

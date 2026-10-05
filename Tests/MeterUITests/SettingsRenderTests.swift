@@ -74,7 +74,7 @@ import Testing
                 ) {
                     CodexHomesList(
                         homes: homes, names: [:], isLoading: false,
-                        error: "That Codex home is already listed.", rename: { _, _ in },
+                        error: "That config dir is already listed.", rename: { _, _ in },
                         remove: { _ in }, add: {})
                 }
             }

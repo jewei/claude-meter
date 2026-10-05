@@ -7,7 +7,6 @@ import Testing
 
 extension HistoryScans {
     /// Reads that block, as on a stuck volume. Each test uses its own pool.
-    /// Reads that block, as on a stuck volume. Each test uses its own pool.
     ///
     /// No step depends on time: a stuck read waits at a gate that opens only when the test
     /// says, its time limit ends only when the test says (``ManualTimeLimits``), and every

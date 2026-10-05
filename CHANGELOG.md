@@ -8,7 +8,7 @@ are in the `v3.1.3` tag.
 <!-- Every user-visible change has an entry under [Unreleased] (AGENTS.md). scripts/release.sh
      turns the heading into the release version and uses the section as the release notes,
      so keep entries user-facing. Each entry describes a change against the last release
-     (3.1.3, the v3.1.3 tag), never a fix of code that was not released. -->
+     (the newest `v*` tag), never a fix of code that was not released. -->
 
 ## [Unreleased]
 

@@ -203,6 +203,23 @@ import Testing
         #expect(model.accounts.map(\.id) == ["claude"])
     }
 
+    /// Turning tracking off is a choice about that account, so its pin goes and the meter
+    /// follows the automatic selection. Another account's pin, and turning one on, keep the
+    /// pin (review R5-A-01).
+    @Test func turningTrackingOffClearsOnlyThatAccountsPin() {
+        settings.update { $0.menuBar.pinnedAccounts = [.claude: "claude-work", .codex: "/h"] }
+        model.setEnabled("claude-lab", false)
+        model.setEnabled("claude-lab", true)
+        #expect(settings.settings.menuBar.pinnedAccounts == [.claude: "claude-work", .codex: "/h"])
+
+        model.setEnabled("claude-work", false)
+        #expect(settings.settings.claude.disabledAccounts == ["claude-work"])
+        #expect(settings.settings.menuBar.pinnedAccounts == [.codex: "/h"])
+        model.setEnabled("claude-work", true)
+        #expect(settings.settings.claude.disabledAccounts.isEmpty)
+        #expect(settings.settings.menuBar.pinnedAccounts == [.codex: "/h"])
+    }
+
     @Test func renameAndPlanStoreTrimmedText() async {
         await model.reload()
         model.rename("claude", to: "  Home  ")

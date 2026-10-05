@@ -53,6 +53,14 @@ public struct Settings: Codable, Equatable, Sendable {
         return name?.isEmpty == false ? name : nil
     }
 
+    /// The user turned off tracking of `account` in Settings > Data. Only a Claude config dir
+    /// can be turned off, and only automatic mode lists config dirs. The provider never turns
+    /// off the default account, so callers check this only for an account that it did not list.
+    func isUntracked(_ account: AccountID, of provider: ProviderID) -> Bool {
+        provider == .claude && claude.connection == .automatic
+            && claude.disabledAccounts.contains(account)
+    }
+
     /// Removes everything stored for an account that the user removed: its display name, plan
     /// badge, off switch, pin, saved card position, and open state.
     mutating func forgetAccount(_ account: AccountID, of provider: ProviderID) {

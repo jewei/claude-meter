@@ -46,7 +46,10 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    the provider's first reading, a pin is not missing: the reason is `Claude has no usage
    reading yet.`, which is not a failure. The same applies while the reading is still the one
    saved by the last launch (`UsageStore.restored`), which keeps only accounts with an
-   identity owner: a pin that it lacks waits for the first refresh to publish or fail.
+   identity owner: a pin that it lacks waits for the first refresh to publish or fail. A pin on
+   a Claude config dir whose tracking switch is off is not missing either: the reason is `The
+   selected Claude account is not tracked. Turn it on in Settings > Data.`, which is not a
+   failure. Turning tracking off clears that pin (§6.1), so only a stored pin shows this.
 6. The menu-bar dot shows the highest severity of the pinned account, or of every account of
    the provider without a pin.
 7. Dragging a Claude or Codex card to the top of the list pins it and makes its provider
@@ -135,7 +138,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 1. **Data**: one switch per source, then each provider's accounts: Claude config dirs and
    connection, Codex homes, display names, and plan badges for logins that report none. Removing a
    config dir or a Codex home also removes its name, pin, and card state, and for a config dir
-   its plan badge and switch (`Settings.forgetAccount`). Only the newest Connect or
+   its plan badge and switch (`Settings.forgetAccount`). Turning off a config dir's tracking
+   switch clears its pin, so the main meter follows the automatic selection
+   (`ClaudeSettingsModel.setEnabled`). Only the newest Connect or
    Disconnect applies its result. A Connect that is saved, and a Disconnect, refresh Claude, also when the connection mode stays
    the same. A Connect that fails, is abandoned, or is replaced saves nothing and refreshes
    nothing (`ClaudeSettingsModel`). Claude Code's active login with no config

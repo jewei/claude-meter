@@ -78,7 +78,10 @@ extension ClaudeSettingsModel {
         }
     }
 
-    /// The default account can never be turned off.
+    /// Turns tracking of a config dir on or off. The default account can never be turned off.
+    /// Turning an account off also clears its menu-bar pin: the provider gives it no slot, so
+    /// a kept pin would leave the meter without an account although nothing failed. The meter
+    /// then follows the automatic selection.
     public func setEnabled(_ id: AccountID, _ isEnabled: Bool) {
         guard id != ClaudeAccount.defaultID else { return }
         settings.update { settings in
@@ -86,6 +89,9 @@ extension ClaudeSettingsModel {
                 settings.claude.disabledAccounts.remove(id)
             } else {
                 settings.claude.disabledAccounts.insert(id)
+                if settings.menuBar.pinnedAccounts[.claude] == id {
+                    settings.menuBar.pinnedAccounts[.claude] = nil
+                }
             }
         }
     }

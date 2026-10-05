@@ -18,8 +18,8 @@ public struct MainMeter: Equatable, Sendable {
     public let issue: UsageIssue?
     /// The issue is a failure: a failed refresh, an account's own issue, or a missing pinned
     /// account. False when nothing was read yet (also with a pin, and with a pin that only the
-    /// reading saved by an earlier launch lacks) or no main-capable provider is in use, which
-    /// are not errors.
+    /// reading saved by an earlier launch lacks), when the pinned account is one that the user
+    /// does not track, or when no main-capable provider is in use, which are not errors.
     public let hasFailure: Bool
     /// The highest severity of the pinned account, or of every account without a pin.
     public let severity: Severity
@@ -66,11 +66,13 @@ public struct MainMeter: Equatable, Sendable {
         self.accounts = accounts
         // The archive saves only accounts with an identity owner, so a saved reading that
         // lacks the pinned account cannot show that it is gone. The pin waits for the first
-        // refresh, as before any reading.
-        let awaitsPin =
-            pin.map { pin in
-                context.restored.contains(provider) && !accounts.contains { $0.id == pin }
-            } ?? false
+        // refresh, as before any reading. A pin on an account that the user turned off never
+        // gets a slot, so nothing waits for it. Turning an account off clears its pin, but
+        // stored settings can still hold one.
+        let missingPin = pin.flatMap { pin in accounts.contains { $0.id == pin } ? nil : pin }
+        let isUntracked =
+            missingPin.map { context.settings.isUntracked($0, of: provider) } ?? false
+        let awaitsPin = missingPin != nil && !isUntracked && context.restored.contains(provider)
         isLoadingFirstReading =
             context.isLoadingFirstReading(provider) || (awaitsPin && isRefreshing)
 
@@ -87,7 +89,7 @@ public struct MainMeter: Equatable, Sendable {
         } else {
             let (reason, isFailure) = Self.reason(
                 provider: provider, accounts: accounts, pin: pin, reading: reading,
-                awaitsPin: awaitsPin)
+                awaitsPin: awaitsPin, isUntracked: isUntracked)
             selection = .unavailable(reason)
             issue = reason
             hasFailure = isFailure
@@ -97,7 +99,7 @@ public struct MainMeter: Equatable, Sendable {
     /// Why no account is selected, and whether that is a failure.
     private static func reason(
         provider: ProviderID, accounts: [AccountUsage], pin: AccountID?,
-        reading: Reading<ProviderUsage>?, awaitsPin: Bool
+        reading: Reading<ProviderUsage>?, awaitsPin: Bool, isUntracked: Bool
     ) -> (UsageIssue, Bool) {
         let name = provider.displayName
         let noReading = UsageIssue("\(name) has no usage reading yet.")
@@ -105,6 +107,13 @@ public struct MainMeter: Equatable, Sendable {
         // reconnect), a pin cannot be missing yet: nothing was read to look for it in. A
         // reading saved by an earlier launch that lacks the pin cannot show it either.
         guard let reading, !awaitsPin else { return (noReading, false) }
+        // The user's choice, not a failure. A failed refresh still shows as a notice.
+        if isUntracked {
+            let untracked = UsageIssue(
+                "The selected \(name) account is not tracked. Turn it on in Settings > Data.",
+                needsAction: true)
+            return (untracked, false)
+        }
         if let pin {
             guard let pinned = accounts.first(where: { $0.id == pin }) else {
                 let missing = UsageIssue("The selected \(name) account is no longer configured.")

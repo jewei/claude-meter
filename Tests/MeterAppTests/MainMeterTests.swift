@@ -43,6 +43,60 @@ import Testing
         #expect(meter.issue?.message == "The selected Claude account is no longer configured.")
     }
 
+    /// A stored pin on a config dir whose tracking is off: the provider gives it no slot, but
+    /// nothing failed. The meter asks the user to turn it on, with no warning bolt, also when
+    /// the restored reading lacks it, and a failed refresh still gets its notice
+    /// (review R5-A-01).
+    @Test func pinOnAnUntrackedAccountIsNotAFailure() {
+        let untracked = "The selected Claude account is not tracked. Turn it on in Settings > Data."
+        let usage = Fixture.usage(.claude, Fixture.account("claude"))
+        let settings = Fixture.settings {
+            $0.claude.disabledAccounts = ["claude-work"]
+            $0.menuBar.pinnedAccounts[.claude] = "claude-work"
+        }
+        for restored: Set<ProviderID> in [[], [.claude]] {
+            let context = Fixture.context(
+                settings, readings: [.claude: Fixture.current(usage)], refreshing: restored,
+                restored: restored)
+            let meter = MainMeter(context)
+            #expect(meter.selected == nil)
+            #expect(meter.issue?.message == untracked)
+            #expect(!meter.hasFailure)
+            #expect(!meter.isLoadingFirstReading)
+            #expect(meter.severity == .unknown)
+            #expect(MenuBarModel(context).icon == .bolt(.none))
+        }
+
+        let failed = Fixture.context(
+            settings,
+            readings: [
+                .claude: .stale(usage, observedAt: .reference(), issue: UsageIssue("Offline."))
+            ])
+        #expect(MainMeter(failed).issue?.message == untracked)
+        #expect(!MainMeter(failed).hasFailure)
+        guard case .accounts(let accounts) = PopoverModel(failed).content else {
+            Issue.record("Expected accounts")
+            return
+        }
+        #expect(accounts.hero.subtitle == untracked)
+        #expect(accounts.notices.map(\.text) == ["Offline."])
+
+        // Turning tracking on again lets the pin select its account, and in manual mode the
+        // config dirs are not listed, so the pin is only missing.
+        var tracked = settings
+        tracked.claude.disabledAccounts = []
+        let both = Fixture.usage(.claude, Fixture.account("claude"), Fixture.account("claude-work"))
+        #expect(
+            MainMeter(Fixture.context(tracked, readings: [.claude: Fixture.current(both)]))
+                .selected?.id == "claude-work")
+        var manual = settings
+        manual.claude.connection = .manual
+        let missing = MainMeter(
+            Fixture.context(manual, readings: [.claude: Fixture.current(usage)]))
+        #expect(missing.issue?.message == "The selected Claude account is no longer configured.")
+        #expect(missing.hasFailure)
+    }
+
     /// The first refresh after a launch without a saved reading, a source switch, or a
     /// reconnect: the pin cannot be missing before anything was read.
     @Test func pinWithoutAReadingIsNotAFailure() {

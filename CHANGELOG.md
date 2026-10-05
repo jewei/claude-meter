@@ -58,6 +58,8 @@ core.
 ### Fixed
 
 - Codex usage with a fractional percentage no longer fails to load.
+- Turning off a Claude config dir that the menu bar uses no longer shows a warning. The
+  menu bar then shows your other Claude accounts.
 - A failed manual Claude reconnection keeps the earlier working connection.
 - Manual Claude tokens refresh before they expire, not only after a rejected request.
 - Two people in the same Claude team are no longer marked as the same login.

@@ -1,10 +1,10 @@
 import Foundation
 import MeterDomain
-import MeterPlatform
 import MeterTestSupport
 import Testing
 
 @testable import MeterApp
+@testable import MeterPlatform
 
 @MainActor
 @Suite(.timeLimit(.minutes(1))) final class AppModelTests {
@@ -59,6 +59,20 @@ import Testing
         #expect(logFile.isEnabled)
         model.settings.update { $0.writesLogFile = false }
         #expect(!logFile.isEnabled)
+    }
+
+    /// The log file turns on before the archive loads, so it also gets the warning of a saved
+    /// file that does not load (review R4-A-05).
+    @Test func theLogFileGetsTheWarningOfABadArchive() async throws {
+        var settings = active()
+        settings.isPaused = true
+        settings.writesLogFile = true
+        let model = makeModel(settings)
+        let file = try directory.write("{broken", to: "readings.json")
+        await model.start(archive: ReadingArchive(file: file, logFile: logFile))
+        logFile.flush()
+        let text = try String(contentsOf: logFile.current, encoding: .utf8)
+        #expect(text.contains("[warning] app: Ignored the saved readings:"))
     }
 
     @Test func completingOnboardingStartsRefreshing() async {
@@ -185,7 +199,7 @@ import Testing
         return received
     }
 
-    @Test func startShowsTheSavedReadingUntilARefresh() async throws {
+    @Test func startWhilePausedShowsTheSavedReading() async throws {
         let saved = ProviderUsage.sample(.claude, account: "claude")
         var settings = active()
         settings.isPaused = true

@@ -13,7 +13,7 @@ public final class ReadingArchive: Sendable {
     public let file: URL
     private let state = Locked(State())
     private let queue = DispatchQueue(label: "com.jewei.claudemeter.reading-archive", qos: .utility)
-    private let log = Log(.app)
+    private let log: Log
 
     private struct State: Sendable {
         var readings: [ProviderID: ProviderUsage] = [:]
@@ -23,8 +23,11 @@ public final class ReadingArchive: Sendable {
         var isWriteScheduled = false
     }
 
-    public init(file: URL) {
+    /// - Parameter logFile: Also receives the warnings of a load or a write. The app passes the
+    ///   file that the log setting turns on, which it turns on before the first load.
+    public init(file: URL, logFile: LogFile = .shared) {
         self.file = file
+        self.log = Log(.app, file: logFile)
     }
 
     /// `~/Library/Application Support/ClaudeMeter/readings.json` (`ClaudeMeter Debug` for a

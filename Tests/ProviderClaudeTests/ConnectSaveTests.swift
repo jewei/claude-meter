@@ -53,7 +53,8 @@ extension ClaudeTests {
                 defer { isFetched.withLock { $0 = true } }
                 return try await provider.fetch(previous: first)
             }
-            #expect(await waitUntil { isFetched.value })
+            // A whole fetch, so an ample limit; it ends as soon as the fetch does.
+            #expect(await waitUntil(limit: .seconds(30)) { isFetched.value })
             deciding.open()
             let during = try await fetch.value
             if isStored {

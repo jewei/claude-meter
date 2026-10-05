@@ -103,7 +103,6 @@ bar uses the system rounded font.
 | Caption | Nunito SemiBold | 11 | "Resets in 3h 12m" |
 | Section label | Nunito ExtraBold | 11, tracking 0.99, uppercase, `inkMuted` | "ACCOUNTS", Settings section headings |
 | Note | Nunito SemiBold | 10 | "Token usage unavailable" |
-| Pill | Nunito ExtraBold | 10 | "Menu bar" |
 
 No changing number may change width. Nunito's digits all have one width, as do the menu
 bar's (system rounded with `.monospacedDigit()`). So every changing number in Nunito uses
@@ -175,7 +174,6 @@ inactive (`allowsToolTipsWhenApplicationIsInactive`).
 │ ┌ notices ─────────────────────────────────┐ │  body: padding 15, top 2, bottom 16
 │ ┌ hero ────────────────────────────────────┐ │  spacing 12
 │  ACCOUNTS (i)                 ◌ week ● 5-hr  │  (i): drag hint tooltip
-│  (▭ Menu bar)                                 │  pill above the main card
 │ ┌ card ────────────────────────────────────┐ │  card list spacing 10
 └──────────────────────────────────────────────┘
 ```
@@ -202,9 +200,8 @@ a neighbor's midpoint; a pointer above or below the list counts as its first or 
 During the drag the list shows a preview from view state only
 (`AccountsModel.dragPreview`, `CardDragPreview`): it starts in the card's own place, it
 skips places that the drop would refuse (Cursor, Grok, or extra usage first; the main card
-off the top), and the pill moves to the card that the drop makes the main meter. So a first
-card that is not the main card gets the pill when the drag starts, and a drop in place pins
-it. The dragged card lifts (102%, a soft shadow; no scale under Reduce Motion). The drop
+off the top). So a drag of a first card that is not the main card starts with a preview
+that the drop accepts, and a drop in place pins it. The dragged card lifts (102%, a soft shadow; no scale under Reduce Motion). The drop
 calls `AppModel.moveCard(_:to:visible:)` once, with the place that the preview shows; a
 cancelled drag, or a refresh that changes the cards, puts them back. No pasteboard, no drops
 from outside, and a hidden popover does not reorder. The release that ends a drag does not

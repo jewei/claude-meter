@@ -6,8 +6,7 @@ import SwiftUI
 /// The drag is local: no pasteboard, no drop from outside. While the card moves, the list
 /// shows a preview from view state only (``CardDragPreview``): the card takes a new place when
 /// the pointer crosses a neighbor's midpoint (``CardReorder``), never a place that the drop
-/// would refuse, and the Menu bar pill goes to the card that the drop makes the main meter,
-/// from the start of the drag for a first card that is not the main card.
+/// would refuse.
 /// The settings change once, on the drop (`AppModel.moveCard`), so a card that passes over the
 /// top and comes back changes nothing. The dragged card lifts, a cancelled drag puts the cards
 /// back, and a hidden popover does not reorder. A drag never also opens or closes a bar card.
@@ -39,37 +38,36 @@ struct CardList: View {
             ForEach(shown) { card in
                 let isDragged = drag?.card == card.id
                 let index = ids.firstIndex(of: card.id) ?? 0
-                VStack(alignment: .leading, spacing: 6) {
-                    if accounts.showsMenuBarPill(card.id, during: preview) { MenuBarPill() }
-                    CardView(card: card, model: model)
-                }
-                .scaleEffect(isDragged && !reduceMotion ? 1.02 : 1)
-                .shadow(color: .black.opacity(isDragged ? 0.12 : 0), radius: 8, y: 4)
-                .zIndex(isDragged ? 1 : 0)
-                .onGeometryChange(for: CGRect.self) { proxy in
-                    proxy.frame(in: .named(Self.space))
-                } action: { frame in
-                    frames[card.id] = frame
-                }
-                .simultaneousGesture(dragGesture(for: card.id), including: isVisible ? .all : .none)
-                .contextMenu {
-                    if card.canUseInMenuBar {
-                        Button("Use in Menu Bar") { move(card.id, to: 0) }
+                CardView(card: card, model: model)
+                    .scaleEffect(isDragged && !reduceMotion ? 1.02 : 1)
+                    .shadow(color: .black.opacity(isDragged ? 0.12 : 0), radius: 8, y: 4)
+                    .zIndex(isDragged ? 1 : 0)
+                    .onGeometryChange(for: CGRect.self) { proxy in
+                        proxy.frame(in: .named(Self.space))
+                    } action: { frame in
+                        frames[card.id] = frame
                     }
-                }
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel(card.spokenTitle)
-                .accessibilityActions {
-                    if card.canUseInMenuBar {
-                        Button("Use in Menu Bar") { move(card.id, to: 0) }
+                    .simultaneousGesture(
+                        dragGesture(for: card.id), including: isVisible ? .all : .none
+                    )
+                    .contextMenu {
+                        if card.canUseInMenuBar {
+                            Button("Use in Menu Bar") { move(card.id, to: 0) }
+                        }
                     }
-                    if accounts.canMove(card.id, by: -1) {
-                        Button("Move up") { move(card.id, to: index - 1) }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel(card.spokenTitle)
+                    .accessibilityActions {
+                        if card.canUseInMenuBar {
+                            Button("Use in Menu Bar") { move(card.id, to: 0) }
+                        }
+                        if accounts.canMove(card.id, by: -1) {
+                            Button("Move up") { move(card.id, to: index - 1) }
+                        }
+                        if accounts.canMove(card.id, by: 1) {
+                            Button("Move down") { move(card.id, to: index + 1) }
+                        }
                     }
-                    if accounts.canMove(card.id, by: 1) {
-                        Button("Move down") { move(card.id, to: index + 1) }
-                    }
-                }
             }
         }
         .environment(\.isReorderingCards, isReordering)

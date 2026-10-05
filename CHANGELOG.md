@@ -14,8 +14,9 @@ are in the `v3.1.3` tag.
 
 ### Changed
 
-- The drag hint above the cards is now a tooltip on an info icon beside **ACCOUNTS**, so the
-  popover is one line shorter.
+- The drag hint above the cards is now a tooltip on an info icon beside **ACCOUNTS**, and
+  the **Menu bar** pill above the first card is gone, so the popover is two lines shorter.
+  The top Claude or Codex card still sets the menu bar.
 
 ## [4.0.0] - 2026-10-05
 

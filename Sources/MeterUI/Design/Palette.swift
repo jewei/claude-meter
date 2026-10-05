@@ -3,8 +3,10 @@ import SwiftUI
 
 /// The color tokens of the design system (`docs/design.md`).
 ///
-/// Every token is an `NSColor` with a dynamic provider, so one value serves light and dark
-/// appearance in SwiftUI, in AppKit chrome, and in the menu bar.
+/// Most tokens are backed by an `NSColor` with a dynamic provider, so one value serves light
+/// and dark appearance in SwiftUI, in AppKit chrome, and in the menu bar. The action and
+/// destructive fills, `aboutBoltTop`, and the ``Tile`` fills are fixed, the same in both
+/// appearances; ``energyUnknown`` is derived from ``inkMuted``.
 enum Palette {
     // MARK: Surfaces
 

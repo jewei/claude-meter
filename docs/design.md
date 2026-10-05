@@ -14,8 +14,12 @@ menu-bar-only when the last titled window (Settings or Sparkle's update window) 
 
 ## Color tokens
 
-All tokens are in `Design/Palette.swift`. Each is an `NSColor` with a dynamic provider, so one
-value serves SwiftUI, AppKit chrome, and the menu bar in both appearances.
+All tokens are in `Design/Palette.swift`. Most are backed by an `NSColor` with a dynamic
+provider (`NSColor.adaptive`), so one value serves SwiftUI, AppKit chrome, and the menu bar in
+both appearances. These are fixed, the same in both appearances: `action`, `actionShadow`,
+`destructive`, `destructiveShadow`, `aboutBoltTop`, and every `Palette.Tile` fill.
+`energyUnknown` is derived (`inkMuted` at 45% opacity), and `accent`, `sectionLabel`, and the
+neutral hero colors reuse other tokens, so they follow the appearance as those do.
 
 ### Surfaces and text
 

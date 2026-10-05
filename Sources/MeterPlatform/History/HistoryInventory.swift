@@ -10,7 +10,8 @@ struct HistoryInventory: Sendable {
     var sweep: DiscoverySweep?
     /// Found files: the last complete sweep plus the files of the current sweep so far.
     private(set) var files: [String: DiscoveredFile] = [:]
-    /// Files were dropped at the file limit since the last complete sweep.
+    /// Files were dropped at the file limit by the last complete sweep or since it, so the
+    /// inventory can miss files until a complete sweep finds them all within the limit.
     private(set) var overflowed = false
     /// Roots that the last complete sweep could not list completely. Nil before the first
     /// complete sweep, when no inventory covers any root yet.
@@ -37,7 +38,11 @@ struct HistoryInventory: Sendable {
         let moved = files.filter { path, file in
             found[path] == nil && changed.contains(file.folder) && wasRead(path)
         }
-        overflowed = DiscoveredFile.merge(moved, into: &found, limit: limit)
+        // The merge runs first, so the moved files stay even when the sweep itself overflowed.
+        let movedOverflowed = DiscoveredFile.merge(moved, into: &found, limit: limit)
+        // The files that this sweep dropped stay missing until a later sweep completes within
+        // the limit, so the early pages of that sweep still read as partial.
+        overflowed = sweep.exceededFileLimit || movedOverflowed
         files = found
         lastSweepFailedRoots = sweep.cursor.failedRoots
         self.sweep = nil

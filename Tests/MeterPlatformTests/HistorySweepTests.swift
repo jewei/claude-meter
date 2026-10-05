@@ -97,6 +97,24 @@ extension HistoryScans {
             #expect(!result.files.contains { $0.path.hasSuffix("/a.jsonl") })
         }
 
+        /// A sweep that dropped a file at the file limit keeps history partial in the next
+        /// sweep, whose first page finds only the kept files (review R4-D-01).
+        @Test func theFileLimitKeepsHistoryPartialInTheNextSweep() async throws {
+            let home = try TemporaryDirectory()
+            defer { home.remove() }
+            // Discovery lists names in order, and `c`, the oldest file, is dropped.
+            for (index, name) in ["a", "b", "c"].enumerated() {
+                try home.write(line(name, 1), to: "\(name).jsonl")
+                try home.touch("\(name).jsonl", at: .reference(-.hours(Double(index))))
+            }
+            let scanner = CountingScanner(match: jsonl, limits: HistoryLimits(files: 2))
+            for _ in 0..<6 {
+                let result = try await scanner.scan([home.root()], since: rangeStart)
+                #expect(result.isPartial())
+                #expect(result.total() == 2)
+            }
+        }
+
         /// Lists `order` in chunks of 2 entries. A new version is a changed folder.
         private static func listing(
             _ order: Locked<(names: [String], version: Int)>

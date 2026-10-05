@@ -39,14 +39,31 @@ final class ManualCredentialVault: Sendable {
         label: "com.jewei.claudemeter.claude-oauth-writes", qos: .utility)
     /// The sequence of the newest write that ran or was abandoned.
     private let newestWrite = Locked<UInt64>(0)
+    private let timeLimit: TimeLimit
+
+    /// Starts the time limit of one call on the write queue: `expire` runs after `limit`.
+    typealias TimeLimit =
+        @Sendable (_ limit: Duration, _ expire: @escaping @Sendable () -> Void) -> Void
+
+    /// The time limit of the app: a timer on a global queue.
+    static let realTime: TimeLimit = { limit, expire in
+        DispatchQueue.global(qos: .utility).asyncAfter(
+            deadline: .now() + limit.timeInterval, execute: expire)
+    }
 
     /// - Parameters:
     ///   - timeout: The limit of a read.
     ///   - writeTimeout: The limit of a write; `timeout` when nil.
-    init(keychain: any Keychain, timeout: Duration, writeTimeout: Duration? = nil) {
+    ///   - timeLimit: Starts the limit of each call on the write queue. A test can pass one
+    ///     that ends a limit only when the test says, so load on the machine cannot end it.
+    init(
+        keychain: any Keychain, timeout: Duration, writeTimeout: Duration? = nil,
+        timeLimit: @escaping TimeLimit = realTime
+    ) {
         self.keychain = keychain
         self.timeout = timeout
         self.writeTimeout = writeTimeout ?? timeout
+        self.timeLimit = timeLimit
     }
 
     /// Reads the item. Throws only `CancellationError`.
@@ -198,13 +215,13 @@ final class ManualCredentialVault: Sendable {
     ) async throws -> Value {
         try await withCheckedThrowingContinuation { continuation in
             let outcome = Outcome(continuation)
-            writes.async { outcome.finish(work()) }
-            DispatchQueue.global(qos: .utility).asyncAfter(
-                deadline: .now() + timeout.timeInterval
-            ) {
+            // The limit starts first, so it covers the whole wait, and it has started when the
+            // work starts.
+            timeLimit(timeout) {
                 onTimeout()
                 outcome.finish(.failure(TimeoutError(limit: timeout)))
             }
+            writes.async { outcome.finish(work()) }
         }
     }
 

@@ -176,18 +176,20 @@ extension ClaudeTests {
                 saving.raise()
                 release.block()
             }
-            // The save hangs in the Keychain past its limit, so Connect reports a failure. Reads
-            // keep their ample limit.
-            var limits = ClaudeLimits()
-            limits.keychainWrite = .milliseconds(100)
+            let limits = HeldTimeLimits()
             let http = usageServer(["pasted": "{}", "old-access": "{}"])
-            let provider = harness.provider(http, keychain: keychain, limits: limits)
+            let provider = harness.provider(
+                http, keychain: keychain, keychainTimeLimit: limits.timeLimit)
 
-            let error = await #expect(throws: ProviderError.self) {
+            let connect = Task {
                 try await provider.connectManually(
                     accessToken: "pasted", refreshToken: nil, expiresAt: nil)
             }
-            #expect(saving.isRaised)
+            // The save hangs in the Keychain, and only then does its limit end, so Connect
+            // reports a failure while the Keychain call still runs.
+            #expect(await saving.wait())
+            limits.expire()
+            let error = await #expect(throws: ProviderError.self) { try await connect.value }
             #expect(
                 error?.issue.message.hasPrefix(
                     "Could not save the tokens in the Keychain. Timed out after") == true)

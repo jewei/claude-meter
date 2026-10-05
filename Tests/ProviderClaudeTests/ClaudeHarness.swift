@@ -45,7 +45,9 @@ final class ClaudeHarness: Sendable {
         _ http: any HTTPClient, keychain: (any Keychain)? = nil,
         limits: ClaudeLimits = ClaudeLimits(),
         scan: @escaping AutomaticRefresh.Scan = ConfigDirectoryScanner.discover(
-            home:configuration:)
+            home:configuration:),
+        keychainTimeLimit: @escaping ManualCredentialVault.TimeLimit =
+            ManualCredentialVault.realTime
     ) -> ClaudeProvider {
         let clock = clock
         let uptime = uptime
@@ -53,7 +55,8 @@ final class ClaudeHarness: Sendable {
         return ClaudeProvider(
             configuration: { settings.value }, keychain: keychain ?? self.keychain, http: http,
             store: store, home: home.url, now: { clock.value }, keychainUser: Self.user,
-            limits: limits, scan: scan, uptime: { uptime.value })
+            limits: limits, scan: scan, uptime: { uptime.value },
+            keychainTimeLimit: keychainTimeLimit)
     }
 
     /// Creates a config dir with `settings.json` and, when `account` is set, an identity file.
@@ -154,6 +157,26 @@ final class ScriptedKeychain: Keychain {
         try beforeWrite(nil)
         try base.deletePassword(service: service, account: account)
         log.withLock { $0.append("delete") }
+    }
+}
+
+/// Time limits of the manual item's write queue that end only when a test says so, so load on
+/// the machine can never end one.
+final class HeldTimeLimits: Sendable {
+    private let pending = Locked<[@Sendable () -> Void]>([])
+
+    /// Records each limit; it ends at ``expire()``.
+    var timeLimit: ManualCredentialVault.TimeLimit {
+        { [pending] _, expire in pending.withLock { $0.append(expire) } }
+    }
+
+    /// Ends every limit that started before now. A limit of a call that ended does nothing.
+    func expire() {
+        let started = pending.withLock { pending in
+            defer { pending = [] }
+            return pending
+        }
+        for expire in started { expire() }
     }
 }
 

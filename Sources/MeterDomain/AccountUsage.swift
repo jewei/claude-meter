@@ -141,26 +141,6 @@ public struct AccountUsage: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
-/// What a provider knows about the current login of one account, for retention checks.
-public enum OwnerStatus: Hashable, Sendable {
-    case signedIn(AccountOwner)
-    /// The credential is gone: the user signed out.
-    case signedOut
-    /// The credential could not be read right now, for example while the Keychain is locked.
-    case unknown
-
-    /// The single ownership rule: a value of `owner` may stay while that owner is signed in.
-    /// A temporary read failure proves nothing, so `unknown` keeps it. A value without an
-    /// owner belongs to no login, so only `unknown` keeps it.
-    public func admits(_ owner: AccountOwner?) -> Bool {
-        switch self {
-        case .unknown: true
-        case .signedOut: false
-        case .signedIn(let current): owner == current
-        }
-    }
-}
-
 extension AccountUsage {
     /// Whether this observation may still be shown for the current login.
     ///
@@ -170,23 +150,5 @@ extension AccountUsage {
     public func belongs(to status: OwnerStatus) -> Bool {
         guard hasObservation else { return true }
         return status.admits(owner)
-    }
-}
-
-/// Proof that a reading belongs to the login that is signed in now.
-///
-/// Providers compute an owner from local credentials. A reading survives a failed refresh only
-/// while its owner still matches. Both cases hold a SHA-256 hex digest, never the raw value.
-public enum AccountOwner: Codable, Hashable, Sendable {
-    /// Derived from stable account identifiers, such as user and organization IDs.
-    /// Survives token renewal and can be stored on disk.
-    case identity(String)
-    /// Derived from the credential itself because no identity is known. Changes on token
-    /// renewal and never leaves memory.
-    case credential(String)
-
-    public var isPersistable: Bool {
-        if case .identity = self { return true }
-        return false
     }
 }

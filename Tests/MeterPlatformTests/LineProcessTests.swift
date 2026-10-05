@@ -120,7 +120,7 @@ import Testing
     @Test func limitsTheUnreadBacklogUntilLinesAreConsumed() async throws {
         let process = LineProcess(
             executable: URL(fileURLWithPath: "/bin/cat"), arguments: [], environment: [:],
-            maxLineBytes: 8, maxBacklogBytes: 10)
+            maxLineBytes: 8, maxBacklogBytes: 12)
         try process.start()
         var iterator = process.lines.makeAsyncIterator()
         try process.send(Data("12345".utf8))
@@ -130,9 +130,9 @@ import Testing
         try process.send(Data("67890".utf8))
         _ = try await iterator.next()
         _ = try await iterator.next()
-        // 10 unread bytes are within the limit; one more line is not.
+        // 12 unread bytes, newlines included, are within the limit; one more line is not.
         try process.send(Data("x".utf8))
-        await #expect(throws: LineProcess.ProcessError.backlogTooLarge(limit: 10)) {
+        await #expect(throws: LineProcess.ProcessError.backlogTooLarge(limit: 12)) {
             _ = try await iterator.next()
         }
         await process.stop()
@@ -150,6 +150,36 @@ import Testing
         for try await _ in process.lines {}
         await process.stop()
         #expect(process.lastErrorLine == "token [redacted] failed for [redacted]")
+    }
+
+    /// The kept 2 KiB start inside the token, so its end is left out (review R3-D-04).
+    @Test func aTokenThatTheErrorTailCutIsLeftOut() async throws {
+        let script = """
+            printf 'error: sk-ant-oat01-%s %s\\n' \
+              "$(head -c 100 /dev/zero | tr '\\0' Q)" "$(head -c 2000 /dev/zero | tr '\\0' y)" >&2
+            """
+        let process = LineProcess(
+            executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", script],
+            environment: [:])
+        try process.start()
+        for try await _ in process.lines {}
+        await process.stop()
+        #expect(process.lastErrorLine == String(repeating: "y", count: 2_000))
+    }
+
+    /// Empty lines count against the backlog, so a child that writes only line breaks stops.
+    @Test func emptyLinesFillTheBacklog() async throws {
+        let process = LineProcess(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "head -c 100000 /dev/zero | tr '\\0' '\\n'; sleep 5"],
+            environment: [:], maxBacklogBytes: 1_000)
+        try process.start()
+        var count = 0
+        await #expect(throws: LineProcess.ProcessError.backlogTooLarge(limit: 1_000)) {
+            for try await _ in process.lines { count += 1 }
+        }
+        #expect(count <= 1_000)
+        await process.stop()
     }
 
     @Test func keepsOnlyTheEndOfALongErrorOutput() async throws {

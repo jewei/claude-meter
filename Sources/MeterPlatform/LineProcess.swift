@@ -1,6 +1,5 @@
 import Darwin
 import Foundation
-import MeterDomain
 
 /// A short-lived child process that exchanges newline-delimited messages on stdin and stdout.
 ///
@@ -8,8 +7,8 @@ import MeterDomain
 /// child's process group, waits a short grace period, sends SIGKILL, and waits a bounded time
 /// for the reap. ``stop()`` returns at once for a process that never launched. A write never
 /// blocks and never raises SIGPIPE: it throws when the child does not read. Lines and the
-/// unread backlog are bounded, and a truncated line is never delivered. The last 2 KiB of
-/// stderr are kept for ``lastErrorLine``.
+/// unread backlog are bounded (``LineBuffer``), and a truncated line is never delivered. The
+/// last 2 KiB of stderr are kept for ``lastErrorLine`` (``ErrorTail``).
 ///
 /// `@unchecked Sendable`: `state` is guarded by its lock, `lines` is a thread-safe stream, and
 /// stderr reads run on the serial queue `errorReads`. `process` is used only by the one task
@@ -56,18 +55,15 @@ public final class LineProcess: @unchecked Sendable {
     private let input = Pipe()
     private let output = Pipe()
     private let errors = Pipe()
-    private let maxLineBytes: Int
-    private let maxBacklogBytes: Int
     private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
-    private let state = Locked(State())
+    private let state: Locked<State>
     /// Keeps stderr bytes in order when a handler and ``stop()`` read at the same time, without
     /// holding the lock of `state` during `read(2)`.
     private let errorReads = DispatchQueue(label: "com.jewei.claudemeter.line-process.stderr")
 
     private struct State: Sendable {
-        var buffer = Data()
-        var backlogBytes = 0
-        var errorTail = Data()
+        var lines: LineBuffer
+        var errorTail = ErrorTail(limit: LineProcess.errorTailBytes)
         var hasLaunched = false
         /// The child leads its own process group, so signals can reach its children too.
         var leadsGroup = false
@@ -80,8 +76,8 @@ public final class LineProcess: @unchecked Sendable {
         executable: URL, arguments: [String], environment: [String: String],
         maxLineBytes: Int = 1024 * 1024, maxBacklogBytes: Int = 8 * 1024 * 1024
     ) {
-        self.maxLineBytes = maxLineBytes
-        self.maxBacklogBytes = maxBacklogBytes
+        state = Locked(
+            State(lines: LineBuffer(maxLineBytes: maxLineBytes, maxBacklogBytes: maxBacklogBytes)))
         (lines, continuation) = AsyncThrowingStream.makeStream(of: Data.self)
         process.executableURL = executable
         process.arguments = arguments
@@ -94,13 +90,10 @@ public final class LineProcess: @unchecked Sendable {
     public var processIdentifier: Int32 { process.processIdentifier }
 
     /// The last non-empty line that the child wrote to stderr, redacted, or nil. Read it after
-    /// ``stop()`` for everything that the child wrote before it ended.
+    /// ``stop()`` for everything that the child wrote before it ended. When the kept 2 KiB
+    /// start inside a word, that word is left out: it can be the end of a token.
     public var lastErrorLine: String? {
-        let text = String(decoding: state.value.errorTail, as: UTF8.self)
-        let line = text.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .last { !$0.isEmpty }
-        return line.map(Redactor.redact)
+        state.value.errorTail.lastLine
     }
 
     public func start() throws {
@@ -167,7 +160,7 @@ public final class LineProcess: @unchecked Sendable {
 
     /// Call after reading a line from ``lines``, so the backlog limit counts unread data only.
     public func didConsume(_ line: Data) {
-        state.withLock { $0.backlogBytes = max(0, $0.backlogBytes - line.count) }
+        state.withLock { $0.lines.consume(line) }
     }
 
     /// Stops the process group and waits until the child is reaped, at most ``reapLimit``
@@ -232,19 +225,13 @@ public final class LineProcess: @unchecked Sendable {
     /// on `errorReads`, so the bytes stay in order when ``stop()`` reads too, and only the
     /// append takes the lock of `state`.
     private func readErrors(_ descriptor: Int32) {
-        let limit = Self.errorTailBytes
         let isAtEnd = errorReads.sync { () -> Bool in
             var buffer = [UInt8](repeating: 0, count: 4 * 1024)
             while true {
                 let count = read(descriptor, &buffer, buffer.count)
                 if count > 0 {
                     let bytes = Data(buffer[0..<count])
-                    state.withLock { state in
-                        state.errorTail.append(bytes)
-                        if state.errorTail.count > limit {
-                            state.errorTail = Data(state.errorTail.suffix(limit))
-                        }
-                    }
+                    state.withLock { $0.errorTail.append(bytes) }
                 } else if count < 0, errno == EINTR {
                     continue
                 } else {
@@ -256,26 +243,7 @@ public final class LineProcess: @unchecked Sendable {
     }
 
     private func receive(_ chunk: Data) {
-        let result = state.withLock { state -> Result<[Data], ProcessError> in
-            state.buffer.append(chunk)
-            var lines: [Data] = []
-            while let newline = state.buffer.firstIndex(of: 0x0A) {
-                let line = state.buffer[state.buffer.startIndex..<newline]
-                state.buffer.removeSubrange(state.buffer.startIndex...newline)
-                guard line.count <= maxLineBytes else {
-                    return .failure(.lineTooLong(limit: maxLineBytes))
-                }
-                state.backlogBytes += line.count
-                lines.append(Data(line))
-            }
-            if state.buffer.count > maxLineBytes {
-                return .failure(.lineTooLong(limit: maxLineBytes))
-            }
-            if state.backlogBytes > maxBacklogBytes {
-                return .failure(.backlogTooLarge(limit: maxBacklogBytes))
-            }
-            return .success(lines)
-        }
+        let result = state.withLock { $0.lines.receive(chunk) }
         switch result {
         case .success(let lines):
             for line in lines { continuation.yield(line) }

@@ -70,16 +70,19 @@ struct CodexAccountRefresh: Sendable {
     /// Where a 429 goes as soon as Codex answers, for every home of the provider.
     let rateLimitHolds: CodexRateLimitHolds
 
-    /// Refreshes `home`. `holds` are the rate-limit holds of every home: while one holds the
+    /// Refreshes `home`. `issued` are the holds in the issues of the previous accounts of
+    /// every home. While one of them, or a hold in ``rateLimitHolds`` at this check, holds the
     /// login of this home (``RateLimitHold``), nothing is sent, not even recovery. A login
     /// that stops (``CodexLogin/Route/stop(_:status:)``) sends nothing either. HTTP 429 with a
     /// retry time goes into ``rateLimitHolds`` before the owner is read again. Throws only
     /// `CancellationError`.
-    func run(_ home: CodexHome, holds: [RateLimitHold]) async throws -> Outcome {
+    func run(_ home: CodexHome, issued: RateLimitHolds) async throws -> Outcome {
         let before = try await CodexLogin.read(home, timeout: fileReadLimit)
         let now = now()
+        // Memory is read here, not at the start of the fetch, so a 429 that another home of
+        // this login got since then holds this home too.
         if let owner = before.owner,
-            let retryAt = holds.filter({ $0.holds(owner, now: now) }).map(\.retryAt).max()
+            let retryAt = rateLimitHolds.retryAt(for: owner, issued: issued, now: now)
         {
             return Outcome(
                 kind: .failed(.rateLimited(retryAt: retryAt), status: .signedIn(owner)),

@@ -149,8 +149,9 @@ extension CodexTests {
             #expect(bed.recovery.calls == 0)
         }
 
-        /// R3-P-05: the limit belongs to the login, so another home with the same login waits
-        /// too. A home with another login sends.
+        /// R3-P-05 and R5-P-01: the limit belongs to the login, so another home with the same
+        /// login waits too, also one that starts after the 429 in the same fetch. A home with
+        /// another login sends.
         @Test func aRateLimitHoldsEveryHomeOfTheSameLogin() async throws {
             let calls = Locked(0)
             let http = FakeHTTPClient { _ in
@@ -171,19 +172,27 @@ extension CodexTests {
             try bed.writeAuth(
                 CodexFixtures.authJSON(accessToken: CodexFixtures.accessToken(user: "user-2")),
                 home: "other")
+            // One home at a time: `work` starts after the 429 of the first home.
             let first = try await bed.provider.fetch(previous: nil)
-            #expect(first.accounts.map { $0.issue?.retryAt } == [.reference(120), nil, nil])
-            #expect(http.requests.count == 3)
+            #expect(http.requests.count == 2)
+            #expect(
+                first.accounts.map { $0.issue?.retryAt } == [.reference(120), .reference(120), nil])
+            let limited = try #require(first.accounts.first)
+            let work = try #require(first.accounts.dropFirst().first)
+            #expect(!work.hasObservation)
+            #expect(work.issue == limited.issue)
+            #expect(work.owner == limited.owner)
+            #expect(work.owner != nil)
+            #expect(first.accounts.last?.hasObservation == true)
 
             let held = try await bed.provider(limits: limits, now: .reference(60))
                 .fetch(previous: first)
 
-            #expect(http.requests.count == 4)
-            let work = try #require(held.accounts.dropFirst().first)
-            #expect(work.isStale)
-            #expect(work.observedAt == .reference())
-            #expect(work.issue?.retryAt == .reference(120))
-            #expect(held.accounts.last?.issue == nil)
+            #expect(http.requests.count == 3)
+            #expect(
+                held.accounts.map { $0.issue?.retryAt } == [.reference(120), .reference(120), nil])
+            #expect(held.accounts.dropFirst().first?.owner == limited.owner)
+            #expect(held.accounts.last?.hasObservation == true)
         }
 
         /// R4-P-01: a 429 is kept as soon as Codex answers. A fetch that is cancelled after it,

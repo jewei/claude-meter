@@ -172,9 +172,9 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
             Self.log.error("Codex homes could not be resolved", error)
             throw Self.homesUnresolved
         }
-        let current = holds.current(previous: previous, now: now())
+        let issued = CodexRateLimitHolds.issued(by: previous, now: now())
         // Each 429 is already in `holds`, so a cancel here loses no hold.
-        let attempts = await refreshAll(homes, holds: current, until: deadline)
+        let attempts = await refreshAll(homes, issued: issued, until: deadline)
         try Task.checkCancellation()
         lastAttempts.withLock { $0 = attempts }
         let accounts = attempts.map { attempt in
@@ -206,9 +206,11 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
 
     /// Runs at most ``CodexLimits/concurrentHomes`` homes at once. A free slot starts the next
     /// home while time is left; after the deadline or a cancel, the homes that did not start
-    /// time out without a task. Results keep the configured order.
+    /// time out without a task. Results keep the configured order. `issued` are the holds in
+    /// the issues of the previous accounts. Each home also reads the memory holds before it
+    /// sends (``CodexAccountRefresh/run(_:issued:)``).
     private func refreshAll(
-        _ homes: [CodexHome], holds: [RateLimitHold], until deadline: ContinuousClock.Instant
+        _ homes: [CodexHome], issued: RateLimitHolds, until deadline: ContinuousClock.Instant
     ) async -> [CodexAttempt] {
         let refresh = self.refresh
         let now = self.now
@@ -217,7 +219,7 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
             var outcome = CodexAccountRefresh.Outcome.timedOut
             if remaining > .zero,
                 let finished = try? await withDeadline(
-                    remaining, { try await refresh.run(home, holds: holds) })
+                    remaining, { try await refresh.run(home, issued: issued) })
             {
                 outcome = finished
             }

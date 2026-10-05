@@ -82,6 +82,9 @@ import Testing
         "Your password must change.",
         "https://example.com/usage?state=1&page=2#key",
         "The task-runner-configuration-file changed.",
+        // An empty identity line keeps the next line (review R4-D-02).
+        "Email:\nRate limited. Try again in 5m.",
+        "Organization: \t\nCwd:",
         "",
     ])
     func leavesOrdinaryTextAlone(text: String) {

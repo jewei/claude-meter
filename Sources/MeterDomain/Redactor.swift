@@ -133,8 +133,11 @@ public enum Redactor {
         // Home directories reveal the macOS user name. `/Users/Shared` is no user, and a
         // command shown on a card must keep a path in it. The name ends the match.
         Rule(#"/Users/(?!Shared(?![^/\s"']))[^/\s"']+"#, "/Users/\(placeholder)"),
-        // Identity lines printed by command-line tools. Starts only at a line start.
+        // Identity lines printed by command-line tools. Starts only at a line start. The spaces
+        // after the label never include a line break, so an empty value keeps the next line;
+        // they are possessive, so a value of only spaces stays as it is.
         Rule(
-            #"(?mi)^(Session name|Organization|Cwd|Email|Session id):\s*.+$"#, "$1: \(placeholder)"),
+            #"(?mi)^(Session name|Organization|Cwd|Email|Session id):[ \t]*+.+$"#,
+            "$1: \(placeholder)"),
     ]
 }

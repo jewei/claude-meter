@@ -58,6 +58,9 @@ public final class ClaudeProvider: UsageProvider, DiagnosticsReporting {
         scan: @escaping AutomaticRefresh.Scan = ConfigDirectoryScanner.discover(
             home:configuration:),
         uptime: @escaping @Sendable () -> ContinuousClock.Instant = { .now },
+        sleepUntil: @escaping @Sendable (ContinuousClock.Instant) async throws -> Void = {
+            try await Task.sleep(until: $0)
+        },
         keychainTimeLimit: @escaping ManualCredentialVault.TimeLimit =
             ManualCredentialVault.realTime
     ) {
@@ -77,7 +80,7 @@ public final class ClaudeProvider: UsageProvider, DiagnosticsReporting {
         automatic = AutomaticRefresh(
             home: home, keychain: self.keychain,
             logins: LoginReader(keychain: self.keychain, fileTimeout: limits.localRead), api: api,
-            now: now, limits: limits, scan: scan, uptime: uptime)
+            now: now, limits: limits, scan: scan, uptime: uptime, sleepUntil: sleepUntil)
         manual = ManualRefresh(login: manualLogin, api: api, now: now)
     }
 

@@ -13,9 +13,8 @@ final class ClaudeHarness: Sendable {
     let keychain = FakeKeychain()
     let store = MemoryStore()
     private let clock = Locked(Date.reference())
-    /// The clock of the automatic refresh budget. It moves only in ``elapse(_:)``, so a busy
-    /// machine can never end a budget.
-    private let uptime = Locked(ContinuousClock.now)
+    /// The clock of the automatic refresh budget and of the limit of each account.
+    private let budget = BudgetClock()
     private let settings: Locked<ClaudeConfiguration>
 
     init(_ connection: ClaudeConfiguration.Connection = .automatic) throws {
@@ -36,9 +35,10 @@ final class ClaudeHarness: Sendable {
         clock.withLock { $0 = $0.addingTimeInterval(seconds) }
     }
 
-    /// Uses up `duration` of the refresh budget that runs now.
+    /// Uses up `duration` of the refresh budget that runs now, and of the limit of the account
+    /// that is read now.
     func elapse(_ duration: Duration) {
-        uptime.withLock { $0 += duration }
+        budget.elapse(duration)
     }
 
     func provider(
@@ -50,12 +50,13 @@ final class ClaudeHarness: Sendable {
             ManualCredentialVault.realTime
     ) -> ClaudeProvider {
         let clock = clock
-        let uptime = uptime
+        let budget = budget
         let settings = settings
         return ClaudeProvider(
             configuration: { settings.value }, keychain: keychain ?? self.keychain, http: http,
             store: store, home: home.url, now: { clock.value }, keychainUser: Self.user,
-            limits: limits, scan: scan, uptime: { uptime.value },
+            limits: limits, scan: scan, uptime: { budget.now },
+            sleepUntil: { try await budget.sleep(until: $0) },
             keychainTimeLimit: keychainTimeLimit)
     }
 

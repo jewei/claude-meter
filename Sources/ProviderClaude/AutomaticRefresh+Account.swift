@@ -19,8 +19,13 @@ extension AutomaticRefresh {
         _ slot: LoginSlot, prior: AccountUsage?, isActive: Bool, limit: Duration
     ) async throws -> AccountOutcome {
         let isRequested = Locked(false)
+        // The limit ends at a fixed point of the budget clock, so it covers the local reads too.
+        let end = uptime() + limit
+        let timer: @Sendable () async throws -> Void = { [sleepUntil] in
+            try await sleepUntil(end)
+        }
         do {
-            var outcome = try await withDeadline(limit) { [self] in
+            var outcome = try await withDeadline(limit, timer: timer) { [self] in
                 try await readAccount(
                     slot, prior: prior, isActive: isActive, isRequested: isRequested)
             }

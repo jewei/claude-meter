@@ -193,8 +193,9 @@ extension ClaudeTests {
             #expect(http.requests.isEmpty)
         }
 
-        /// The budget clock moves only when a test says so, and the slow request never answers,
-        /// so the outcome does not depend on how busy the machine is.
+        /// The budget clock moves only when a test says so, and it also ends the limit of each
+        /// account. The slow request never answers. So the outcome does not depend on how busy
+        /// the machine is, also when the local reads before a request are slow.
         @Test func oneSlowAccountKeepsTheResultsOfTheOthers() async throws {
             let harness = try ClaudeHarness()
             let main = try harness.directory(".claude", account: "acc-1")
@@ -203,21 +204,24 @@ extension ClaudeTests {
             harness.signIn(main, token: "main", legacy: true)
             harness.signIn(team, token: "team")
             harness.signIn(work, token: "work")
+            // Each account may use the whole budget, so only the budget limits the last one.
+            let limits = ClaudeLimits(account: ClaudeLimits().refresh)
             let held = Gate()
             let http = FakeHTTPClient { request in
                 switch bearer(request) {
                 case "team":
                     // The last account gets only what is left of the budget.
-                    harness.elapse(ClaudeLimits().refresh - .milliseconds(100))
+                    harness.elapse(limits.refresh - .milliseconds(100))
                 case "work":
-                    // The work account never answers; the end of the budget stops the wait.
+                    // The work account never answers. Its request uses more than what was left,
+                    // which ends its limit.
                     harness.elapse(.seconds(1))
                     await held.wait()
                 default: break
                 }
                 return .json(200, ClaudeFixtures.usage(session: 3))
             }
-            let provider = harness.provider(http)
+            let provider = harness.provider(http, limits: limits)
 
             let usage = try await provider.fetch(previous: nil)
 
@@ -237,6 +241,8 @@ extension ClaudeTests {
             harness.signIn(main, token: "main", legacy: true)
             harness.signIn(team, token: "team")
             harness.signIn(work, token: "work")
+            // Each account may use the whole budget, so only the budget limits team.
+            let limits = ClaudeLimits(account: ClaudeLimits().refresh)
             let slow = Locked(false)
             let held = Gate()
             let http = FakeHTTPClient { request in
@@ -244,16 +250,17 @@ extension ClaudeTests {
                 switch bearer(request) {
                 case "main":
                     // Team gets only what is left of the budget.
-                    harness.elapse(ClaudeLimits().refresh - .milliseconds(100))
+                    harness.elapse(limits.refresh - .milliseconds(100))
                 case "team":
-                    // Team never answers, and uses up the rest of the budget.
+                    // Team never answers, and uses up the rest of the budget, which ends its
+                    // limit.
                     harness.elapse(.seconds(1))
                     await held.wait()
                 default: break
                 }
                 return .json(200, ClaudeFixtures.usage(session: 3))
             }
-            let provider = harness.provider(http)
+            let provider = harness.provider(http, limits: limits)
             let first = try await provider.fetch(previous: nil)
 
             harness.advance(300)

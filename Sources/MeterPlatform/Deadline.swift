@@ -24,6 +24,17 @@ public func withDeadline<Value: Sendable>(
     _ limit: Duration,
     _ operation: @escaping @Sendable () async throws -> Value
 ) async throws -> Value {
+    try await withDeadline(limit, timer: { try await Task.sleep(for: limit) }, operation)
+}
+
+/// Like ``withDeadline(_:_:)``, but `timer` decides when the limit has passed: it returns
+/// then, and throws when it is cancelled. Tests pass one that returns at a known point, so
+/// load on the machine cannot end the limit. `limit` only names the limit in the error.
+public func withDeadline<Value: Sendable>(
+    _ limit: Duration,
+    timer: @escaping @Sendable () async throws -> Void,
+    _ operation: @escaping @Sendable () async throws -> Value
+) async throws -> Value {
     try Task.checkCancellation()
     let race = DeadlineRace<Value>()
     return try await withTaskCancellationHandler {
@@ -41,7 +52,7 @@ public func withDeadline<Value: Sendable>(
             race.attach(
                 Task {
                     do {
-                        try await Task.sleep(for: limit)
+                        try await timer()
                     } catch {
                         return  // Cancelled: the race finished first.
                     }

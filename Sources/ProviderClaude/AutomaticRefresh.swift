@@ -40,13 +40,19 @@ struct AutomaticRefresh: Sendable {
     /// The clock of the refresh budget. Tests move it, so that the budget ends at a known
     /// point and not after real time that a busy machine can use up.
     let uptime: @Sendable () -> ContinuousClock.Instant
+    /// Returns when ``uptime`` reaches an instant: the end of the limit of one account. Tests
+    /// end it when they move their clock, so load on the machine cannot end it.
+    let sleepUntil: @Sendable (ContinuousClock.Instant) async throws -> Void
     let log = Log(.claude)
 
     init(
         home: URL, keychain: ClaudeCodeKeychain, logins: LoginReader, api: UsageAPI,
         now: @escaping @Sendable () -> Date, limits: ClaudeLimits,
         scan: @escaping Scan = ConfigDirectoryScanner.discover(home:configuration:),
-        uptime: @escaping @Sendable () -> ContinuousClock.Instant = { .now }
+        uptime: @escaping @Sendable () -> ContinuousClock.Instant = { .now },
+        sleepUntil: @escaping @Sendable (ContinuousClock.Instant) async throws -> Void = {
+            try await Task.sleep(until: $0)
+        }
     ) {
         self.home = home
         self.keychain = keychain
@@ -56,6 +62,7 @@ struct AutomaticRefresh: Sendable {
         self.limits = limits
         self.scan = scan
         self.uptime = uptime
+        self.sleepUntil = sleepUntil
     }
 
     func fetch(_ configuration: ClaudeConfiguration, previous: ProviderUsage?) async throws

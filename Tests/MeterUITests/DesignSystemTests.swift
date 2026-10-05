@@ -1,0 +1,106 @@
+import AppKit
+import MeterPlatform
+import SwiftUI
+import Testing
+
+@testable import MeterUI
+
+@MainActor @Suite struct DesignSystemTests {
+    @Test func bundledFacesRegister() {
+        MeterFont.registerBundledFonts()
+        #expect(
+            MeterFont.availableFaces == [
+                "Fredoka-SemiBold", "Fredoka-Bold", "Nunito-SemiBold",
+                "Nunito-Bold", "Nunito-ExtraBold",
+            ])
+    }
+
+    /// `.monospacedDigit()` keeps a number at one width only in a face whose digits are all
+    /// as wide: every Nunito face, and the menu bar's system rounded font. Fredoka has
+    /// neither, so its changing numbers take a fixed width (review R5-U-01,
+    /// ``FixedNumberWidthTests``).
+    @Test func onlyFacesWithEqualDigitsUseMonospacedDigits() throws {
+        MeterFont.registerBundledFonts()
+        func widths(_ font: NSFont) -> Set<CGFloat> {
+            Set(
+                "0123456789".map { digit in
+                    NSAttributedString(string: String(digit), attributes: [.font: font]).size()
+                        .width
+                })
+        }
+        for weight in [MeterFont.BodyWeight.semibold, .bold, .extraBold] {
+            let font = try #require(NSFont(name: weight.face, size: 11))
+            #expect(widths(font).count == 1, "\(weight.face)")
+        }
+        let system = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .bold)
+        let rounded = try #require(
+            system.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: 12) })
+        #expect(widths(rounded).count == 1)
+        for weight in [MeterFont.DisplayWeight.semibold, .bold] {
+            let font = try #require(NSFont(name: weight.face, size: 14))
+            #expect(widths(font).count > 1, "\(weight.face) has tabular digits now")
+        }
+    }
+
+    @Test func paletteAdaptsToTheAppearance() throws {
+        let color = Palette.popoverBackground
+        let light = try #require(NSAppearance(named: .aqua))
+        let dark = try #require(NSAppearance(named: .darkAqua))
+        var lightColor: NSColor?
+        var darkColor: NSColor?
+        light.performAsCurrentDrawingAppearance { lightColor = color.usingColorSpace(.sRGB) }
+        dark.performAsCurrentDrawingAppearance { darkColor = color.usingColorSpace(.sRGB) }
+        #expect(lightColor == NSColor(hex: 0xFBF9F2).usingColorSpace(.sRGB))
+        #expect(darkColor == NSColor(hex: 0x201E18).usingColorSpace(.sRGB))
+    }
+
+    @Test func energyBarHidesItsHighlightOnTinyFills() {
+        #expect(EnergyBar.fillWidth(fraction: 0.5, in: 200) == 100)
+        #expect(EnergyBar.fillWidth(fraction: 1.4, in: 200) == 200)
+        #expect(EnergyBar.fillWidth(fraction: -1, in: 200) == 0)
+        #expect(EnergyBar.fillWidth(fraction: .nan, in: 200) == 0)
+        #expect(!EnergyBar.showsHighlight(fillWidth: 6))
+        #expect(EnergyBar.showsHighlight(fillWidth: 6.5))
+    }
+
+    @Test func thresholdSliderSnapsAndSteps() {
+        let range = 50.0...90.0
+        #expect(ThresholdSlider.snapped(72.4, in: range, step: 5) == 70)
+        #expect(ThresholdSlider.snapped(73, in: range, step: 5) == 75)
+        #expect(ThresholdSlider.snapped(120, in: range, step: 5) == 90)
+        #expect(ThresholdSlider.stepped(90, up: true, in: range, step: 5) == 90)
+        #expect(ThresholdSlider.stepped(80, up: false, in: range, step: 5) == 75)
+        #expect(ThresholdSlider.stepped(.nan, up: true, in: range, step: 5) == 55)
+        #expect(ThresholdSlider.fraction(for: 70, in: range) == 0.5)
+        #expect(ThresholdSlider.fraction(for: 70, in: 70...70) == 0)
+    }
+
+    @Test func avatarColorIsStablePerAccount() {
+        let index = AccountAvatar.paletteIndex(for: "claude-work")
+        #expect(index == AccountAvatar.paletteIndex(for: "claude-work"))
+        #expect(AccountAvatar.palette.indices.contains(index))
+    }
+
+    @Test func secondClockTicksOnWholeSecondsOnlyWhileRunning() {
+        let start = Date(timeIntervalSinceReferenceDate: 100.4)
+        let running = Array(
+            SecondClock(isPaused: false).entries(from: start, mode: .normal).prefix(3))
+        #expect(running.map(\.timeIntervalSinceReferenceDate) == [100.4, 101, 102])
+        let paused = Array(
+            SecondClock(isPaused: true).entries(from: start, mode: .normal).prefix(3))
+        #expect(paused == [start])
+    }
+
+    /// "Cannot start this copy" is a warning, not a wait (review UI-51).
+    @Test func loginItemNotesHaveTheirOwnSymbol() {
+        #expect(LoginItem.Status.requiresApproval.noteSymbol == "hourglass")
+        #expect(LoginItem.Status.unavailable.noteSymbol == "exclamationmark.triangle.fill")
+        #expect(LoginItem.Status.enabled.noteSymbol == nil)
+    }
+
+    @Test func statusMessagesRenderInlineCode() {
+        let message = StatusScreenView.message("Run `codex login` first.")
+        #expect(String(message.characters) == "Run codex login first.")
+        #expect(message.runs.contains { $0.inlinePresentationIntent?.contains(.code) == true })
+    }
+}

@@ -4,34 +4,49 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
-# A new push to the same branch supersedes the run in flight.
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request cancels the run in progress.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  verify:
-    name: Tests + Debug/Release build
-    runs-on: macos-26
+  check:
+    name: make check
+    # The Xcode 27 image (macOS 27) is a public preview on GitHub. Move to the macOS 27 image
+    # when it is generally available.
+    runs-on: xcode-27
     timeout-minutes: 20
 
     steps:
-      - name: Checkout
+      - name: Check out
         uses: actions/checkout@v7
 
-      # Echoed so a runner-image bump that changes the toolchain is obvious in
-      # the log rather than showing up as a mystery compile error.
-      - name: Toolchain versions
+      # One pinned Xcode, so CI does not change compiler or formatter when the runner image
+      # changes. docs/development.md names the same version; change both together.
+      - name: Select Xcode
+        id: xcode
+        env:
+          XCODE_APP: /Applications/Xcode_27.0.app
         run: |
+          sudo xcode-select --switch "$XCODE_APP"
           xcodebuild -version
           swift --version
           sw_vers
+          xcode="$(xcodebuild -version | awk 'NR == 1 { v = $2 } NR == 2 { print v "-" $3 }')"
+          echo "cache_prefix=swift-$RUNNER_OS-$RUNNER_ARCH-xcode-$xcode" >> "$GITHUB_OUTPUT"
 
-      # The same gate developers run locally — deliberately invoked as a script
-      # rather than restated here, so CI and `verify-local.sh` cannot drift.
-      # The script uses unsigned builds.
-      - name: Verify
-        run: ./scripts/verify-local.sh
+      # Only the resolved Sparkle package is worth caching. A fresh checkout gives every
+      # source a new timestamp, so a cached .build would be recompiled anyway.
+      - name: Cache the Sparkle package
+        uses: actions/cache@v6
+        with:
+          path: build/SourcePackages
+          key: ${{ steps.xcode.outputs.cache_prefix }}-${{ hashFiles('ClaudeMeter.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+
+      - name: make check
+        run: make check

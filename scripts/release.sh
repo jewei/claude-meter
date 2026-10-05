@@ -1,365 +1,364 @@
 #!/usr/bin/env bash
-# Usage: scripts/release.sh [version] [build] [--prepare-only]
-#   version  e.g. 1.1   (default: reads MARKETING_VERSION from project)
-#   build    e.g. 2     (default: git commit count — `git rev-list --count HEAD`)
-#   --prepare-only     Build and validate privately; do not commit or publish.
+# Build, sign, notarize, and publish a Claude Meter release. See docs/releasing.md.
 #
-# Prerequisites:
-#   • Xcode with a valid Developer ID signing identity
-#   • xcrun notarytool credentials stored: notarytool store-credentials "notarytool"
-#   • gh CLI authenticated: gh auth login
-#   • Project must build cleanly (Sparkle SPM package resolved)
+# Usage: scripts/release.sh VERSION BUILD [--prepare-only]
+#   VERSION         Marketing version, for example 4.0.0.
+#   BUILD           CFBundleVersion. Step 1 checks the rules in "The build number" in
+#                   docs/releasing.md.
+#   --prepare-only  Build and validate a candidate in build/release. Change no tracked file,
+#                   publish nothing, and allow any branch.
+#
+# Environment:
+#   NOTARY_PROFILE    notarytool Keychain profile (default: notarytool)
+#   NOTARY_KEYCHAIN   Keychain that holds the profile (default: the Keychain search list)
+#   SIGNING_IDENTITY  Developer ID identity or its SHA-1, for the DMG (default: the release one)
+#   IGNORE_SKIPPED_UPGRADES_BELOW
+#                     Optional build. A 3.x user who skipped a 4.x build lower than this sees
+#                     this release again in scheduled checks. See docs/releasing.md.
 
-set -euo pipefail
+set -Eeuo pipefail
+# Use the macOS tools first. GNU coreutils in PATH change the options of stat, sed, and date.
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
-# ── Config ────────────────────────────────────────────────────────────────────
+readonly REPO=jewei/claude-meter TEAM_ID=4L4SS26L9J APP_NAME=ClaudeMeter
+# Every 4.x item hides from installs below build 295 (3.0). Those 2.x installs update to the
+# newest 3.x item first, which runs the 2.x migrations, and see 4.x on their next check.
+readonly MINIMUM_UPDATE_BUILD=295
+# 4.0 starts with fresh settings, so every 3.x install sees the update window and its notes
+# instead of a silent automatic install. 4.x installs keep silent updates.
+readonly MAJOR_START_BUILD=400
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PROJECT="$PROJECT_DIR/ClaudeMeter.xcodeproj"
-SCHEME="ClaudeMeter"
-APP_NAME="ClaudeMeter"
-TEAM_ID="${TEAM_ID:-4L4SS26L9J}"
-APPLE_ID="${APPLE_ID:-jewei.mak@gmail.com}"
-KEYCHAIN_PROFILE="${KEYCHAIN_PROFILE:-notarytool}"
-NOTARY_KEYCHAIN="${NOTARY_KEYCHAIN:-}"
-GITHUB_REPO="jewei/claude-meter"
-MIN_MACOS="14.0"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly ROOT WORK="$ROOT/build/release"
+readonly ARCHIVE="$WORK/$APP_NAME.xcarchive" APP="$WORK/export/$APP_NAME.app"
+readonly SOURCE_PACKAGES="$ROOT/build/SourcePackages"
+readonly SIGN_UPDATE="$SOURCE_PACKAGES/artifacts/sparkle/Sparkle/bin/sign_update"
+SIGNING_IDENTITY="${SIGNING_IDENTITY:-Developer ID Application: Jewei Mak ($TEAM_ID)}"
+NOTARY_ARGS=(--keychain-profile "${NOTARY_PROFILE:-notarytool}")
+if [[ -n "${NOTARY_KEYCHAIN:-}" ]]; then NOTARY_ARGS+=(--keychain "$NOTARY_KEYCHAIN"); fi
+STEP="start"
+PHASE="local"
+FAILED_COMMAND=""
 
-# xcpretty is optional; without it the archive still succeeds.
-run_xcodebuild() {
-    if command -v xcpretty >/dev/null 2>&1; then
-        xcodebuild "$@" | xcpretty --quiet
-    else
-        xcodebuild "$@"
+step() { STEP="$1"; printf '\n==> %s\n' "$1"; }
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+# True when $1 is a mount point: its device differs from the device of its parent.
+is_mount_point() {
+    local here parent
+    [[ -d "$1" ]] && here="$(stat -f %d "$1")" && parent="$(stat -f %d "$1/..")" || return 1
+    [[ "$here" != "$parent" ]]
+}
+
+# Detaches the DMG that check_dmg_contents mounted, if it is still mounted. Ctrl-C during the
+# check, or two failed detach commands, can leave it mounted, and a mounted volume makes the
+# next run's `rm -rf build/release` fail.
+detach_dmg() {
+    local mount="$WORK/mount"
+    is_mount_point "$mount" || return 0
+    hdiutil detach -quiet "$mount" 2>/dev/null || hdiutil detach -quiet -force "$mount" ||
+        printf 'The DMG is still mounted. Run: hdiutil detach -force "%s"\n' "$mount" >&2
+}
+
+# Runs on every exit. It detaches a DMG left mounted. After a failure it names the step and
+# says what is already public.
+finish() {
+    local status=$?
+    detach_dmg
+    if ((status == 0)); then return; fi
+    printf '\nThe release stopped in step "%s" (exit %s).\n' "$STEP" "$status" >&2
+    if [[ -n "$FAILED_COMMAND" ]]; then printf 'Failed: %s\n' "$FAILED_COMMAND" >&2; fi
+    case "$PHASE" in
+        local) echo "Nothing was published. Correct the cause and run the script again." ;;
+        committing) echo "Tracked files, and maybe a local commit, changed. Run:" \
+            "git tag -d $TAG 2>/dev/null; git reset --hard origin/main" ;;
+        committed) echo "Commit and tag $TAG exist only on this Mac. See docs/releasing.md." ;;
+        tagged) echo "Tag $TAG is on GitHub. The release and feed are not. See docs/releasing.md." ;;
+        *) echo "The GitHub release is public, but the feed is not. Run: git push origin HEAD:main" \
+            "(if main moved: git pull --no-rebase origin main, then push)" ;;
+    esac >&2
+}
+
+require_clean_tree() {
+    local changes
+    changes="$(git status --porcelain --untracked-files=all)"
+    [[ -z "$changes" ]] || die "The working tree has changes. Commit or remove them first."
+}
+
+plist_value() { /usr/libexec/PlistBuddy -c "Print :$1" "$APP/Contents/Info.plist"; }
+
+# Prints the sorted "UUID (arch)" pairs of a binary or a dSYM.
+debug_uuids() { xcrun dwarfdump --uuid "$1" | awk '{ print $2, $3 }' | sort; }
+
+# Prints the body of the [Unreleased] section of CHANGELOG.md, without leading blank lines.
+unreleased_notes() {
+    awk '/^## \[Unreleased\]/ { on = 1; next }
+        /^## \[/ && on { exit }
+        on && (started || NF) { started = 1; print }' CHANGELOG.md
+}
+
+# Promotes [Unreleased] in CHANGELOG.md to VERSION and updates the compare links.
+promote_changelog() {
+    local base="https://github.com/$REPO/compare"
+    awk -v heading="## [$VERSION] - $(date -u +%Y-%m-%d)" \
+        -v links="[Unreleased]: $base/$TAG...HEAD\n[$VERSION]: $base/v$PREVIOUS_VERSION...$TAG" '
+        /^## \[Unreleased\]/ && !promoted { print; print ""; print heading; promoted = 1; next }
+        /^\[Unreleased\]:/ { print links; linked = 1; next }
+        { print }
+        END { if (!linked) print "\n" links }' CHANGELOG.md >"$WORK/CHANGELOG.md"
+    mv "$WORK/CHANGELOG.md" CHANGELOG.md
+}
+
+# Mounts the DMG read-only and checks the copy that users install. Every check runs, and the
+# DMG is detached before the script stops. If the detach fails, finish() tries again.
+check_dmg_contents() {
+    local mount="$WORK/mount" app="$WORK/mount/$APP_NAME.app" failed=""
+    mkdir -p "$mount"
+    hdiutil attach -quiet -nobrowse -readonly -mountpoint "$mount" "$DMG"
+    [[ -L "$mount/Applications" ]] || failed+=" Applications-link"
+    codesign --verify --deep --strict "$app" || failed+=" codesign"
+    xcrun stapler validate "$app" || failed+=" stapler"
+    spctl --assess --type execute "$app" || failed+=" spctl"
+    hdiutil detach -quiet "$mount" || hdiutil detach -quiet -force "$mount"
+    [[ -z "$failed" ]] || die "The DMG failed these checks:$failed."
+}
+
+# Submits a file to Apple and waits. On rejection, prints Apple's log and stops.
+notarize() {
+    local result="$WORK/notary.json" status id
+    xcrun notarytool submit "$1" "${NOTARY_ARGS[@]}" --wait --output-format json \
+        >"$result" || true
+    status="$(plutil -extract status raw "$result" 2>/dev/null || echo "no response")"
+    if [[ "$status" != "Accepted" ]]; then
+        id="$(plutil -extract id raw "$result" 2>/dev/null || true)"
+        if [[ -n "$id" ]]; then xcrun notarytool log "$id" "${NOTARY_ARGS[@]}" >&2 || true; fi
+        die "Apple did not accept ${1##*/} (status: $status)."
     fi
 }
 
-# ── Version ───────────────────────────────────────────────────────────────────
-
-read_build_setting() {
-    xcodebuild -project "$PROJECT" -scheme "$SCHEME" \
-        -configuration Release -showBuildSettings 2>/dev/null \
-        | awk -v key="$1" '$1 == key { print $3; exit }'
-}
-
-VERSION="${1:-$(read_build_setting MARKETING_VERSION)}"
-# Build number defaults to the git commit count — monotonic by construction
-# (the release commit guarantees it grows between releases) and reproducible.
-# Sparkle compares this (CFBundleVersion → sparkle:version) to detect updates,
-# so it must always increase. Pass an explicit arg to override.
-BUILD="${2:-$(git -C "$PROJECT_DIR" rev-list --count HEAD)}"
-
-if [[ -z "$VERSION" || -z "$BUILD" ]]; then
-    echo "error: could not read version from project. Pass them as arguments." >&2
-    exit 1
-fi
-
-if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}$ || ! "$BUILD" =~ ^[1-9][0-9]*$ ]]; then
-    echo "error: releases require a numeric version and a positive integer build." >&2
-    exit 1
-fi
-
-PREPARE_ONLY=0
-if [[ "${3:-}" == "--prepare-only" && $# -eq 3 ]]; then
-    PREPARE_ONLY=1
-elif [[ $# -gt 2 ]]; then
-    echo "error: usage: release.sh [version] [build] [--prepare-only]" >&2
-    exit 2
-fi
-
-DMG_NAME="$APP_NAME-$VERSION.dmg"
-TAG="v$VERSION"
-
-echo "▶ Releasing $APP_NAME $VERSION (build $BUILD)"
-
-# ── Source identity ──────────────────────────────────────────────────────────
-# Only committed source may enter a signed artifact. Recheck after the build so
-# edits or checkout changes during signing cannot enter an unrelated release tag.
-require_release_source() {
-    local source_status source_head
-    source_status="$(git -C "$PROJECT_DIR" status --porcelain --untracked-files=all)"
-    source_head="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
-    if [[ -n "$source_status" ]]; then
-        echo "error: release requires a clean worktree, including untracked files." >&2
-        exit 1
+main() {
+    if [[ $# -lt 2 || $# -gt 3 || (${3:-} != "" && $3 != "--prepare-only") ]]; then
+        die "usage: scripts/release.sh VERSION BUILD [--prepare-only]"
     fi
-    if [[ "$source_head" != "$SOURCE_COMMIT" ]]; then
-        echo "error: release source HEAD changed during preparation." >&2
-        exit 1
+    readonly VERSION="$1" BUILD="$2" PREPARE_ONLY="${3:+yes}" TAG="v$1"
+    readonly DMG="$WORK/$APP_NAME-$1.dmg" DSYMS="$WORK/$APP_NAME-$1-$2.dSYMs.zip"
+    trap 'FAILED_COMMAND="line $LINENO: $BASH_COMMAND"' ERR
+    trap finish EXIT
+    # Without these, bash runs the EXIT trap with status 0 after Ctrl-C, and finish() would not
+    # say what is already public.
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    cd "$ROOT"
+
+    step "Check preconditions"
+    [[ "$VERSION" =~ ^4\.[0-9]+(\.[0-9]+)?$ ]] ||
+        die "VERSION must be 4.x, such as 4.0.0. Decide the minimumUpdateVersion for a new major."
+    [[ "$BUILD" =~ ^[1-9][0-9]*$ ]] || die "BUILD must be a positive integer."
+    ((BUILD >= MAJOR_START_BUILD)) || die "BUILD must be $MAJOR_START_BUILD or greater for 4.x."
+    # Every skipped 4.x build is MAJOR_START_BUILD or greater, so a lower value changes nothing.
+    local ignore_below="${IGNORE_SKIPPED_UPGRADES_BELOW:-}"
+    if [[ -n "$ignore_below" ]]; then
+        [[ "$ignore_below" =~ ^[1-9][0-9]*$ ]] &&
+            ((ignore_below > MAJOR_START_BUILD && ignore_below <= BUILD)) ||
+            die "IGNORE_SKIPPED_UPGRADES_BELOW must be a build from $((MAJOR_START_BUILD + 1))" \
+                "to $BUILD."
     fi
-}
-SOURCE_COMMIT="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
-require_release_source
+    require_clean_tree
+    if [[ -z "$PREPARE_ONLY" ]]; then
+        [[ "$(git branch --show-current)" == "main" ]] || die "Publish from the main branch."
+        git fetch --quiet origin main
+        [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/main)" ]] ||
+            die "HEAD is not origin/main. Pull or push first."
+        git rev-parse -q --verify "refs/tags/$TAG" >/dev/null &&
+            die "Tag $TAG already exists on this Mac."
+        local remote_status=0
+        git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null || remote_status=$?
+        # 2 means "no such tag". Anything else is a network or login error, not an answer.
+        ((remote_status == 2)) || {
+            ((remote_status == 0)) && die "Tag $TAG already exists on GitHub."
+            die "Could not ask GitHub for tag $TAG (git ls-remote exit $remote_status)."
+        }
+        gh auth status >/dev/null 2>&1 || die "Log in to GitHub first: gh auth login"
+    fi
+    local latest_build identities
+    latest_build="$(sed -n 's|.*<sparkle:version>\([0-9]*\)</sparkle:version>.*|\1|p' appcast.xml |
+        sort -n | tail -n 1)"
+    ((BUILD > ${latest_build:-0})) ||
+        die "BUILD $BUILD must be greater than $latest_build, the newest build in appcast.xml."
+    # The release commit writes the released build into Config/Version.xcconfig. When the tag of
+    # that version exists, the build was published and is never used again, even after a bad
+    # item leaves the feed. Before the first release of 4.x, the file has 400, still unused.
+    local project_version project_build minimum_build
+    project_version="$(sed -n 's/^MARKETING_VERSION = //p' Config/Version.xcconfig)"
+    project_build="$(sed -n 's/^CURRENT_PROJECT_VERSION = \([0-9][0-9]*\)$/\1/p' \
+        Config/Version.xcconfig)"
+    [[ -n "$project_build" ]] || die "Config/Version.xcconfig has no CURRENT_PROJECT_VERSION."
+    minimum_build="$project_build"
+    if git rev-parse -q --verify "refs/tags/v$project_version" >/dev/null; then
+        minimum_build=$((project_build + 1))
+    fi
+    ((BUILD >= minimum_build)) || die "BUILD must be $minimum_build or greater:" \
+        "Config/Version.xcconfig has build $project_build of version $project_version."
+    # The newest release tag is the base of the CHANGELOG compare link. The feed can lose a
+    # bad item, but tags keep the history.
+    PREVIOUS_VERSION="$(git describe --tags --abbrev=0 --match 'v*')"
+    PREVIOUS_VERSION="${PREVIOUS_VERSION#v}"
+    SOURCE_COMMIT="$(git rev-parse HEAD)"
+    if [[ ! -f CHANGELOG.md ]] || ! grep -q '^## \[Unreleased\]' CHANGELOG.md; then
+        die "CHANGELOG.md needs a '## [Unreleased]' section with the release notes."
+    fi
+    NOTES="$(unreleased_notes)"
+    [[ -n "${NOTES//[[:space:]]/}" ]] || die "The [Unreleased] section of CHANGELOG.md is empty."
+    [[ "$NOTES" != *"]]>"* ]] || die "The release notes must not contain ']]>'."
+    # Step 7 checks the app against this requirement. Compile it now, so a bad text stops the
+    # release before the build and notarization, not after them.
+    local requirement
+    requirement="$(/usr/libexec/PlistBuddy -c "Print :ClaudeMeterUpdateRequirement" App/Info.plist)" ||
+        die "App/Info.plist has no ClaudeMeterUpdateRequirement."
+    csreq -r="$requirement" -t >/dev/null ||
+        die "ClaudeMeterUpdateRequirement in App/Info.plist is not a valid code requirement."
+    identities="$(security find-identity -v -p codesigning)"
+    [[ "$identities" == *"$SIGNING_IDENTITY"* ]] ||
+        die "The signing identity '$SIGNING_IDENTITY' is not in the Keychain."
+    xcrun notarytool history "${NOTARY_ARGS[@]}" >/dev/null ||
+        die "notarytool cannot use its stored credentials. See docs/releasing.md."
+    security find-generic-password -s "https://sparkle-project.org" -a ed25519 >/dev/null 2>&1 ||
+        die "The Sparkle EdDSA private key is not in the login Keychain."
+    echo "Releasing Claude Meter $VERSION (build $BUILD) after build $latest_build."
 
-# ── Changelog notes ───────────────────────────────────────────────────────────
-# Capture the [Unreleased] section body now and fail fast if it's empty — no
-# point building for ten minutes only to discover there are no release notes.
-# The file itself is promoted to the new version only after the GitHub release
-# succeeds (see "Promote changelog" below), matching the commit-last philosophy.
+    step "Run make check"
+    make check
+    [[ -x "$SIGN_UPDATE" ]] || die "Sparkle's sign_update is missing at $SIGN_UPDATE."
 
-CHANGELOG="$PROJECT_DIR/CHANGELOG.md"
-RELEASE_NOTES="$(awk '
-    /^## \[Unreleased\]/ { capture = 1; next }
-    /^## \[/ && capture  { exit }
-    capture {
-        if (!started && $0 ~ /^[[:space:]]*$/) next  # drop leading blank lines
-        started = 1
-        print
-    }
-' "$CHANGELOG")"
+    step "Archive and export with Developer ID"
+    rm -rf "$WORK"
+    mkdir -p "$WORK"
+    xcodebuild archive -project ClaudeMeter.xcodeproj -scheme ClaudeMeter -configuration Release \
+        -destination "generic/platform=macOS" -archivePath "$ARCHIVE" \
+        -derivedDataPath "$WORK/DerivedData" -clonedSourcePackagesDirPath "$SOURCE_PACKAGES" \
+        -onlyUsePackageVersionsFromResolvedFile -quiet \
+        MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD"
+    xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportPath "$WORK/export" \
+        -exportOptionsPlist scripts/ExportOptions.plist -quiet
 
-if [[ -z "${RELEASE_NOTES//[[:space:]]/}" ]]; then
-    echo "error: CHANGELOG.md [Unreleased] section is empty — add release notes first." >&2
-    exit 1
-fi
+    step "Notarize and staple the app"
+    ditto -c -k --keepParent "$APP" "$WORK/$APP_NAME.zip"
+    notarize "$WORK/$APP_NAME.zip"
+    xcrun stapler staple "$APP"
 
-# Use the currently advertised public version. After a failed release, the newest
-# GitHub tag can be newer than the recovered feed that installed clients use.
-git -C "$PROJECT_DIR" fetch origin main
-PREVIOUS_FEED_COMMIT="$(git -C "$PROJECT_DIR" rev-parse FETCH_HEAD)"
-if [[ "$PREPARE_ONLY" == "0" && "$SOURCE_COMMIT" != "$PREVIOUS_FEED_COMMIT" ]]; then
-    echo "error: publishing requires HEAD to equal fetched origin/main." >&2
-    exit 1
-fi
-PREVIOUS_FEED_XML="$(git -C "$PROJECT_DIR" show "$PREVIOUS_FEED_COMMIT:appcast.xml")"
-PREV_VERSION="$(printf '%s' "$PREVIOUS_FEED_XML" | xmllint --xpath "string(//*[local-name()='shortVersionString'])" -)"
-PREV_BUILD="$(printf '%s' "$PREVIOUS_FEED_XML" | xmllint --xpath "string(//*[local-name()='version'])" -)"
-PREV_TAG="v$PREV_VERSION"
-if [[ ! "$PREV_VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}$ || ! "$PREV_BUILD" =~ ^[1-9][0-9]*$ ]]; then
-    echo "error: the previous published feed has invalid version metadata." >&2
-    exit 1
-fi
-[[ "$(gh release view "$PREV_TAG" --repo "$GITHUB_REPO" --json isDraft --jq .isDraft)" == "false" ]] || {
-    echo "error: the previous feed must name a public release." >&2
-    exit 1
-}
-python3 - "$BUILD" "$PREV_BUILD" <<'PYBUILD'
-import sys
-if int(sys.argv[1]) <= int(sys.argv[2]):
-    sys.exit("error: the new build must be greater than the advertised build")
-PYBUILD
+    step "Create, sign, notarize, and staple the DMG"
+    mkdir -p "$WORK/dmg"
+    ditto "$APP" "$WORK/dmg/$APP_NAME.app"
+    ln -s /Applications "$WORK/dmg/Applications"
+    hdiutil create -quiet -volname "Claude Meter" -srcfolder "$WORK/dmg" -format UDZO "$DMG"
+    codesign --sign "$SIGNING_IDENTITY" --timestamp "$DMG"
+    notarize "$DMG"
+    xcrun stapler staple "$DMG"
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
+    step "Sign the DMG for Sparkle"
+    local attributes signature length
+    attributes="$("$SIGN_UPDATE" "$DMG")"
+    signature="$(sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p' <<<"$attributes")"
+    length="$(sed -n 's/.*length="\([0-9]*\)".*/\1/p' <<<"$attributes")"
+    [[ -n "$signature" && -n "$length" ]] || die "sign_update printed no signature: $attributes"
 
-BUILD_DIR="$PROJECT_DIR/build"
-ARCHIVE_PATH="$BUILD_DIR/$APP_NAME.xcarchive"
-EXPORT_DIR="$BUILD_DIR/export"
-APP_PATH="$EXPORT_DIR/$APP_NAME.app"
-ZIP_PATH="$BUILD_DIR/$APP_NAME-notarize.zip"
-DMG_PATH="$BUILD_DIR/$DMG_NAME"
-SYMBOLS_PATH="$BUILD_DIR/$APP_NAME-$VERSION-$BUILD.dSYMs.zip"
-EXPORT_OPTIONS="$BUILD_DIR/ExportOptions.plist"
-APPCAST_PATH="$BUILD_DIR/appcast.xml"
+    step "Validate the artifacts"
+    local details binary_uuids symbol_uuids
+    codesign --verify --deep --strict --verbose=2 "$APP"
+    # The app updates itself only when it meets this requirement (App/Sources/ReleaseSignature).
+    # In `-R=text` the "=" marks inline text; another "=" would be a requirement syntax error.
+    codesign --verify --strict -R="$(plist_value ClaudeMeterUpdateRequirement)" "$APP" ||
+        die "The app does not meet its own update requirement, so it would never update."
+    details="$(codesign -dv "$APP" 2>&1)"
+    [[ "$details" == *"TeamIdentifier=$TEAM_ID"* ]] || die "The app is not signed by $TEAM_ID."
+    spctl --assess --type execute --verbose=2 "$APP"
+    xcrun stapler validate "$APP"
+    codesign --verify --strict --verbose=2 "$DMG"
+    spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
+    xcrun stapler validate "$DMG"
+    "$SIGN_UPDATE" --verify "$DMG" "$signature"
+    [[ "$(stat -f %z "$DMG")" == "$length" ]] || die "The DMG changed after the Sparkle signature."
+    [[ "$(plist_value CFBundleShortVersionString) $(plist_value CFBundleVersion)" == \
+        "$VERSION $BUILD" ]] || die "The app does not have version $VERSION ($BUILD)."
+    binary_uuids="$(debug_uuids "$APP/Contents/MacOS/$APP_NAME")"
+    symbol_uuids="$(debug_uuids "$ARCHIVE/dSYMs/$APP_NAME.app.dSYM")"
+    [[ -n "$binary_uuids" && "$binary_uuids" == "$symbol_uuids" ]] ||
+        die "The dSYM UUIDs do not match the app binary."
+    check_dmg_contents
+    ditto -c -k --keepParent "$ARCHIVE/dSYMs" "$DSYMS"
 
-rm -rf "$BUILD_DIR"
-mkdir -p "$BUILD_DIR"
-
-# ── Locate sign_update ────────────────────────────────────────────────────────
-
-SIGN_UPDATE=$(find ~/Library/Developer/Xcode/DerivedData -path "*/Sparkle/bin/sign_update" -not -path "*/old_dsa/*" -print -quit 2>/dev/null)
-if [[ -z "$SIGN_UPDATE" ]]; then
-    echo "error: Sparkle sign_update not found in DerivedData." >&2
-    echo "       Build the project in Xcode at least once to resolve SPM packages." >&2
-    exit 1
-fi
-
-# ── Archive ───────────────────────────────────────────────────────────────────
-
-echo "▶ Archiving…"
-require_release_source
-run_xcodebuild archive \
-    -project "$PROJECT" \
-    -scheme "$SCHEME" \
-    -configuration Release \
-    -archivePath "$ARCHIVE_PATH" \
-    -destination "generic/platform=macOS" \
-    MARKETING_VERSION="$VERSION" \
-    CURRENT_PROJECT_VERSION="$BUILD" \
-    ONLY_ACTIVE_ARCH=NO
-
-if [[ ! -d "$ARCHIVE_PATH" ]]; then
-    echo "error: archive failed — run with 'set -x' or check Xcode for details." >&2
-    exit 1
-fi
-
-# ── Export ────────────────────────────────────────────────────────────────────
-
-echo "▶ Exporting…"
-cat > "$EXPORT_OPTIONS" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>method</key>
-    <string>developer-id</string>
-    <key>teamID</key>
-    <string>$TEAM_ID</string>
-    <key>signingStyle</key>
-    <string>automatic</string>
-</dict>
-</plist>
-PLIST
-
-run_xcodebuild -exportArchive \
-    -archivePath "$ARCHIVE_PATH" \
-    -exportPath "$EXPORT_DIR" \
-    -exportOptionsPlist "$EXPORT_OPTIONS"
-
-if [[ ! -d "$APP_PATH" ]]; then
-    echo "error: export failed." >&2
-    exit 1
-fi
-
-# ── Notarize ──────────────────────────────────────────────────────────────────
-
-echo "▶ Zipping for notarization…"
-ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
-
-echo "▶ Submitting to Apple notary service…"
-NOTARY_ARGS=(--apple-id "$APPLE_ID" --team-id "$TEAM_ID" --keychain-profile "$KEYCHAIN_PROFILE")
-if [[ -n "$NOTARY_KEYCHAIN" ]]; then
-    NOTARY_ARGS+=(--keychain "$NOTARY_KEYCHAIN")
-fi
-xcrun notarytool submit "$ZIP_PATH" "${NOTARY_ARGS[@]}" --wait
-
-echo "▶ Stapling…"
-xcrun stapler staple "$APP_PATH"
-
-# ── DMG ───────────────────────────────────────────────────────────────────────
-
-echo "▶ Creating DMG…"
-hdiutil create \
-    -volname "Claude Meter" \
-    -srcfolder "$APP_PATH" \
-    -ov -format UDZO \
-    "$DMG_PATH"
-
-# The user downloads the disk image. Sign and notarize that container as well as
-# the app inside it. Use the exported app's identity, then staple before Sparkle
-# signs the final bytes.
-echo "▶ Signing and notarizing DMG…"
-codesign -d --extract-certificates="$BUILD_DIR/signing-cert-" "$APP_PATH"
-SIGNING_IDENTITY="$(shasum -a 1 "$BUILD_DIR/signing-cert-0" | awk '{print $1}')"
-codesign --sign "$SIGNING_IDENTITY" --timestamp "$DMG_PATH"
-xcrun notarytool submit "$DMG_PATH" "${NOTARY_ARGS[@]}" --wait
-xcrun stapler staple "$DMG_PATH"
-
-# ── Sign for Sparkle ──────────────────────────────────────────────────────────
-
-echo "▶ Signing DMG for Sparkle…"
-SIGN_OUTPUT=$("$SIGN_UPDATE" "$DMG_PATH")
-SIGNATURE=$(echo "$SIGN_OUTPUT" | grep -o 'sparkle:edSignature="[^"]*"' | cut -d'"' -f2)
-LENGTH=$(echo "$SIGN_OUTPUT"    | grep -o 'length="[^"]*"'              | cut -d'"' -f2)
-
-echo "   edSignature: $SIGNATURE"
-echo "   length:      $LENGTH"
-
-# ── Update appcast.xml ────────────────────────────────────────────────────────
-
-echo "▶ Updating appcast.xml…"
-PUBDATE=$(date -u '+%a, %d %b %Y %H:%M:%S +0000')
-DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/$TAG/$DMG_NAME"
-
-cat > "$APPCAST_PATH" <<XML
-<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <channel>
-        <title>Claude Meter</title>
-        <link>https://raw.githubusercontent.com/$GITHUB_REPO/main/appcast.xml</link>
-        <description>Claude Meter release feed</description>
-        <language>en</language>
+    step "Write the candidate feed"
+    local description minimum_system ignore_skipped=""
+    description="$(awk -f scripts/changelog-to-html.awk <<<"$NOTES")"
+    minimum_system="$(plist_value LSMinimumSystemVersion)"
+    if [[ -n "$ignore_below" ]]; then
+        printf -v ignore_skipped '\n            %s%s%s' "<sparkle:ignoreSkippedUpgradesBelowVersion>" \
+            "$ignore_below" "</sparkle:ignoreSkippedUpgradesBelowVersion>"
+    fi
+    cat >"$WORK/item.xml" <<EOF
         <item>
             <title>Version $VERSION</title>
-            <pubDate>$PUBDATE</pubDate>
+            <pubDate>$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S +0000')</pubDate>
             <sparkle:version>$BUILD</sparkle:version>
             <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>$MIN_MACOS</sparkle:minimumSystemVersion>
+            <sparkle:minimumSystemVersion>$minimum_system</sparkle:minimumSystemVersion>
+            <sparkle:minimumUpdateVersion>$MINIMUM_UPDATE_BUILD</sparkle:minimumUpdateVersion>
+            <sparkle:minimumAutoupdateVersion>$MAJOR_START_BUILD</sparkle:minimumAutoupdateVersion>$ignore_skipped
+            <description><![CDATA[
+$description
+            ]]></description>
             <enclosure
-                url="$DOWNLOAD_URL"
-                sparkle:edSignature="$SIGNATURE"
-                length="$LENGTH"
+                url="https://github.com/$REPO/releases/download/$TAG/$APP_NAME-$VERSION.dmg"
+                sparkle:edSignature="$signature"
+                length="$length"
                 type="application/octet-stream"
             />
         </item>
-    </channel>
-</rss>
-XML
+EOF
+    # Insert the new item above the newest item. Keep every existing item.
+    awk -v item="$WORK/item.xml" '
+        !done && (/^[[:space:]]*<item>/ || /<\/channel>/) {
+            while ((getline line < item) > 0) print line
+            done = 1
+        }
+        { print }' appcast.xml >"$WORK/appcast.xml"
+    xmllint --noout "$WORK/appcast.xml"
+    (($(grep -c '<item>' "$WORK/appcast.xml") == $(grep -c '<item>' appcast.xml) + 1)) ||
+        die "The candidate feed does not have exactly one new item."
+    require_clean_tree
 
-# Fail before changing git state or publishing anything if the signed artifacts,
-# mounted DMG, or appcast metadata do not agree.
-"$SCRIPT_DIR/release-symbols.sh" package "$APP_PATH" "$ARCHIVE_PATH/dSYMs" "$SYMBOLS_PATH"
-"$SCRIPT_DIR/validate-release.sh" "$APP_PATH" "$DMG_PATH" "$APPCAST_PATH" "$SYMBOLS_PATH"
-require_release_source
+    if [[ -n "$PREPARE_ONLY" ]]; then
+        echo "Candidate ready in build/release (DMG, dSYMs, appcast.xml). Nothing was published."
+        return
+    fi
 
-# ── Stop after private preparation ───────────────────────────────────────────
-if [[ "$PREPARE_ONLY" == "1" ]]; then
-    echo "✓ Private candidate validated in $BUILD_DIR. No publication performed."
-    exit 0
-fi
+    step "Commit and tag the release"
+    [[ "$(git rev-parse HEAD)" == "$SOURCE_COMMIT" ]] ||
+        die "HEAD changed during the build. The DMG does not contain the new commit."
+    PHASE="committing"
+    cp "$WORK/appcast.xml" appcast.xml
+    promote_changelog
+    sed -i '' -E "s/^(MARKETING_VERSION = ).*/\1$VERSION/;s/^(CURRENT_PROJECT_VERSION = ).*/\1$BUILD/" \
+        Config/Version.xcconfig
+    git add appcast.xml CHANGELOG.md Config/Version.xcconfig
+    git commit --quiet -m "Release $TAG"
+    git tag -a "$TAG" -m "Claude Meter $VERSION"
+    PHASE="committed"
 
-# ── Persist version + promote changelog + commit ──────────────────────────────
-# Bump project.pbxproj only after a successful build. Commit before creating the
-# GitHub release so the tag points at the release commit (appcast + changelog).
+    step "Publish the GitHub release"
+    git push --quiet origin "refs/tags/$TAG"
+    PHASE="tagged"
+    printf '%s\n\n---\nDownload **%s**, open it, and drag Claude Meter to Applications.\n' \
+        "$NOTES" "${DMG##*/}" >"$WORK/release-notes.md"
+    gh release create "$TAG" "$DMG" "$DSYMS" --repo "$REPO" --verify-tag \
+        --title "Claude Meter $VERSION" --notes-file "$WORK/release-notes.md"
+    PHASE="released"
 
-PBXPROJ="$PROJECT/project.pbxproj"
-cp "$APPCAST_PATH" "$PROJECT_DIR/appcast.xml"
-echo "▶ Promoting CHANGELOG.md…"
-TODAY="$(date -u '+%Y-%m-%d')"
-if [[ -n "$PREV_TAG" ]]; then
-    VERSION_LINK="[$VERSION]: https://github.com/$GITHUB_REPO/compare/$PREV_TAG...$TAG"
-else
-    VERSION_LINK="[$VERSION]: https://github.com/$GITHUB_REPO/releases/tag/$TAG"
-fi
+    # The feed goes live last, so no installed app sees an item whose DMG does not exist yet.
+    step "Publish the feed"
+    git push --quiet origin HEAD:main
+    PHASE="done"
+    echo "Released Claude Meter $VERSION: https://github.com/$REPO/releases/tag/$TAG"
+}
 
-UNREL_LINK="[Unreleased]: https://github.com/$GITHUB_REPO/compare/$TAG...HEAD"
-CHANGELOG_TMP="$(mktemp)"
-awk -v ver="$VERSION" -v date="$TODAY" -v unrel="$UNREL_LINK" -v verlink="$VERSION_LINK" '
-    /^## \[Unreleased\]$/ { print; print ""; print "## [" ver "] - " date; next }
-    /^\[Unreleased\]:/    { print unrel; print verlink; next }
-                          { print }
-' "$CHANGELOG" > "$CHANGELOG_TMP" && mv "$CHANGELOG_TMP" "$CHANGELOG"
-
-sed -i '' -E "s/(MARKETING_VERSION = )[^;]*;/\1$VERSION;/g" "$PBXPROJ"
-sed -i '' -E "s/(CURRENT_PROJECT_VERSION = )[^;]*;/\1$BUILD;/g" "$PBXPROJ"
-
-echo "▶ Committing version bump + changelog + appcast.xml…"
-git -C "$PROJECT_DIR" add appcast.xml CHANGELOG.md ClaudeMeter.xcodeproj/project.pbxproj
-git -C "$PROJECT_DIR" commit -m "Release $TAG"
-RELEASE_COMMIT="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
-
-# ── Stage release commit ──────────────────────────────────────────────────────
-# GitHub can only target a commit it already knows. Push the release commit to a
-# temporary branch first, leaving `main` on the old appcast until the signed DMG
-# is published. This prevents an updater from ever seeing a feed whose asset does
-# not exist yet.
-
-STAGING_BRANCH="release-staging/$TAG"
-echo "▶ Staging release commit on origin/${STAGING_BRANCH}…"
-git -C "$PROJECT_DIR" push origin "${RELEASE_COMMIT}:refs/heads/${STAGING_BRANCH}"
-
-# ── GitHub Release ────────────────────────────────────────────────────────────
-# Publish the signed asset before updating `main`. The tag points at the release
-# commit (including its matching appcast/changelog), not the pre-build HEAD.
-
-echo "▶ Creating GitHub release ${TAG}…"
-RELEASE_NOTES_PATH="$BUILD_DIR/release-notes.md"
-printf '%s\n\n---\nDownload and open **%s** to install.\n' \
-    "$RELEASE_NOTES" "$DMG_NAME" > "$RELEASE_NOTES_PATH"
-gh release create "$TAG" "$DMG_PATH" "$SYMBOLS_PATH" \
-    --repo "$GITHUB_REPO" \
-    --target "$RELEASE_COMMIT" \
-    --title "Claude Meter $VERSION" \
-    --notes-file "$RELEASE_NOTES_PATH"
-
-# Only now expose the new appcast. If this push fails, users remain on the prior
-# valid feed while the new release is still available for a safe manual retry.
-echo "▶ Publishing release commit to main…"
-git -C "$PROJECT_DIR" push origin HEAD:main
-
-echo "▶ Removing release staging branch…"
-git -C "$PROJECT_DIR" push origin --delete "$STAGING_BRANCH"
-
-echo ""
-echo "✓ Released Claude Meter $VERSION"
-echo "  https://github.com/$GITHUB_REPO/releases/tag/$TAG"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi

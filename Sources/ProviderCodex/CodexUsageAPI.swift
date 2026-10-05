@@ -1,0 +1,110 @@
+import Foundation
+import MeterDomain
+import MeterPlatform
+
+/// The two read-only ChatGPT endpoints that report Codex quota.
+struct CodexUsageAPI: Sendable {
+    static let usageURL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
+    static let resetCreditsURL = URL(
+        string: "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits")!
+
+    let http: any HTTPClient
+    /// The limit for the usage request.
+    let usageLimit: Duration
+    /// The limit for the optional reset-credit details request.
+    let resetDetailsLimit: Duration
+
+    /// Sends `GET wham/usage` once. HTTP 401 and 403 throw ``CodexError/loginRequired``, and
+    /// HTTP 429 throws ``CodexError/rateLimited(retryAt:)``.
+    /// When the response reports reset credits, one more request reads their details. HTTP 429
+    /// on that request sets ``CodexQuota/resetDetailsRetryAt``.
+    /// Throws ``CodexError``, or `CancellationError` only when this refresh was cancelled.
+    func quota(with credentials: CodexCredentials, now: Date) async throws -> CodexQuota {
+        let request = HTTPRequest(
+            .get, url: Self.usageURL, headers: Self.headers(for: credentials), retry: .never,
+            deadline: usageLimit)
+        let response: HTTPResponse
+        do {
+            response = try await http.send(request)
+        } catch is CancellationError where Task.isCancelled {
+            throw CancellationError()
+        } catch is CancellationError {
+            // The transport cancelled the request on its own, for example after a
+            // `URLError.cancelled` that this refresh did not cause.
+            throw CodexError.network("The request was cancelled.")
+        } catch let error as HTTPError {
+            switch error {
+            // The server answered, but not with a usage response.
+            case .redirectRejected, .responseTooLarge:
+                throw CodexError.unexpectedResponse
+            case .offline, .connectionLost, .timedOut, .transport:
+                throw CodexError.network(error.localizedDescription)
+            }
+        } catch {
+            throw CodexError.network(error.localizedDescription)
+        }
+        switch response.status {
+        case 200..<300:
+            break
+        case 401, 403:
+            throw CodexError.loginRequired
+        case 429:
+            let delay = RetryAfter.delay(response.header("retry-after"), now: now)
+            throw CodexError.rateLimited(retryAt: RateLimitHold.retryAt(delay: delay, now: now))
+        default:
+            throw CodexError.httpStatus(response.status)
+        }
+        var quota = try CodexUsageResponse.quota(from: response.body)
+        if let count = quota.resetCount, count > 0 {
+            let details = try await resetDetails(
+                with: credentials, expectedCount: count, now: now)
+            quota.resets = details.resets
+            quota.resetDetailsRetryAt = details.retryAt
+        }
+        return quota
+    }
+
+    /// Reads reset-credit details once, with no retries, within ``resetDetailsLimit``.
+    ///
+    /// Any failure returns no rows: the quota and the count stay, and recovery never starts.
+    /// HTTP 429 with a usable `Retry-After` also returns its retry time, so the provider holds
+    /// the login. Only cancellation of the caller throws.
+    private func resetDetails(
+        with credentials: CodexCredentials, expectedCount: Int, now: Date
+    ) async throws -> (resets: [ResetAllowance.Reset], retryAt: Date?) {
+        var headers = Self.headers(for: credentials)
+        headers["OpenAI-Beta"] = "codex-1"
+        headers["originator"] = "Codex Desktop"
+        let request = HTTPRequest(
+            .get, url: Self.resetCreditsURL, headers: headers, retry: .never,
+            deadline: resetDetailsLimit)
+        do {
+            let response = try await withDeadline(resetDetailsLimit) { [http] in
+                try await http.send(request)
+            }
+            if response.status == 429 {
+                let delay = RetryAfter.delay(response.header("retry-after"), now: now)
+                return ([], RateLimitHold.retryAt(delay: delay, now: now))
+            }
+            guard response.isSuccess else { return ([], nil) }
+            let resets = CodexUsageResponse.resets(
+                from: response.body, expectedCount: expectedCount, now: now)
+            return (resets ?? [], nil)
+        } catch {
+            try Task.checkCancellation()
+            return ([], nil)
+        }
+    }
+
+    static func headers(for credentials: CodexCredentials) -> [String: String] {
+        var headers = [
+            "Authorization": "Bearer \(credentials.accessToken)",
+            "Accept": "application/json",
+            "User-Agent": "ClaudeMeter",
+        ]
+        if let accountID = credentials.accountID {
+            headers["ChatGPT-Account-Id"] = accountID
+        }
+        return headers
+    }
+}

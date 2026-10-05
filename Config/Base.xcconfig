@@ -1,0 +1,35 @@
+// Build settings for the ClaudeMeter app target in every configuration.
+// Debug.xcconfig and Release.xcconfig include this file. The project file sets no build
+// settings of its own: change settings here.
+
+#include "Version.xcconfig"
+
+// Identity. Do not change these values. Installed copies, Sparkle, the Keychain, and user
+// defaults identify the app by its bundle identifier and its Developer ID team.
+PRODUCT_NAME = ClaudeMeter
+PRODUCT_BUNDLE_IDENTIFIER = com.jewei.claudemeter
+DEVELOPMENT_TEAM = 4L4SS26L9J
+INFOPLIST_FILE = App/Info.plist
+GENERATE_INFOPLIST_FILE = NO
+CODE_SIGN_ENTITLEMENTS = App/ClaudeMeter.entitlements
+
+// Platform
+SDKROOT = macosx
+MACOSX_DEPLOYMENT_TARGET = 14.0
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/../Frameworks
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
+COMBINE_HIDPI_IMAGES = YES
+
+// Swift: the same language mode and upcoming features as the package (Package.swift).
+SWIFT_VERSION = 6.0
+SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY = YES
+SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES
+SWIFT_TREAT_WARNINGS_AS_ERRORS = YES
+
+// Build hygiene
+DEAD_CODE_STRIPPING = YES
+// Sparkle's binaries are signed; stripping them on copy only prints warnings.
+COPY_PHASE_STRIP = NO
+ENABLE_USER_SCRIPT_SANDBOXING = YES
+ENABLE_STRICT_OBJC_MSGSEND = YES
+ALWAYS_SEARCH_USER_PATHS = NO

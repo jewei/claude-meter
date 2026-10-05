@@ -1,0 +1,20 @@
+// Development builds. `make app` builds this configuration without a signature.
+// The DEBUG condition makes the app use DisabledUpdater, so a development build never
+// updates itself.
+
+#include "Base.xcconfig"
+
+// A separate identity, so a development build never reads or writes the settings, saved
+// readings, or update state of an installed copy.
+PRODUCT_BUNDLE_IDENTIFIER = com.jewei.claudemeter.debug
+
+// Xcode signs with the team's Apple Development certificate when you run from Xcode.
+CODE_SIGN_STYLE = Automatic
+
+ONLY_ACTIVE_ARCH = YES
+DEBUG_INFORMATION_FORMAT = dwarf
+ENABLE_TESTABILITY = YES
+GCC_OPTIMIZATION_LEVEL = 0
+GCC_PREPROCESSOR_DEFINITIONS = DEBUG=1 $(inherited)
+SWIFT_OPTIMIZATION_LEVEL = -Onone
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG $(inherited)

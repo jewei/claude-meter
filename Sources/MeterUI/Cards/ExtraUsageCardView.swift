@@ -1,0 +1,54 @@
+import MeterApp
+import SwiftUI
+
+/// Claude extra usage for the selected account: the amount spent of the monthly limit, and,
+/// when the share is known, the budget as an energy bar in the severity color with its share
+/// in words (``ExtraUsageModel``).
+struct ExtraUsageCardView: View {
+    let card: CardModel
+    let extra: ExtraUsageModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Text("💳").font(.system(size: 13)).accessibilityHidden(true)
+                Text(card.title)
+                    .font(MeterFont.display(14, .semibold))
+                    .foregroundStyle(Palette.ink)
+                if extra.isPaused { ChipView(text: "paused") }
+                Spacer(minLength: 4)
+                amount
+            }
+            .frame(minHeight: 22)
+            if let fraction = extra.fraction {
+                VStack(alignment: .leading, spacing: 4) {
+                    EnergyBar(fraction: fraction, color: extra.severity.fill, height: 12)
+                    if let share = extra.shareText {
+                        Text(share)
+                            .font(MeterFont.body(11, .semibold))
+                            .foregroundStyle(Palette.inkMuted)
+                            .monospacedDigit()
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .chunkyCard()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(card.title)
+        .accessibilityValue(extra.accessibilityValue)
+    }
+
+    /// `$12.50 / $50.00`. An amount has no widest value, so it keeps one width while it has
+    /// as many digits (``FixedNumberWidth/template(_:weight:)``).
+    var amount: some View {
+        Text(extra.amountText)
+            .font(MeterFont.display(14, .bold))
+            .foregroundStyle(Palette.ink)
+            .fixedNumberWidth(
+                fitting: FixedNumberWidth.template(extra.amountText, weight: .bold),
+                font: MeterFont.display(14, .bold))
+    }
+}

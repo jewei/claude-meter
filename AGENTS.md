@@ -1,97 +1,184 @@
-# Claude Meter development rules
+# Claude Meter
 
-Report in ASD-STE100 Simplified Technical English.
+A macOS 14+ menu-bar app that shows coding quota for Claude, Codex, Cursor, and Grok as
+energy left. Swift 6, SwiftUI hosted in AppKit, Sparkle updates. No Dock icon, except after
+Settings opens: the app returns to menu-bar-only when the last titled window (Settings or
+Sparkle's update window) closes.
 
-## Maintain the documents
+Read this file before you change anything. It is short on purpose: every rule here is one
+that a change has broken before.
 
-- [SPECS.md](SPECS.md) defines behavior, settings, persistence, and system boundaries.
-  It is also the glossary and decision record. There is no `CONTEXT.md` or ADR
-  directory.
-- [DESIGN.md](DESIGN.md) defines the UI system.
-- [docs/releases.md](docs/releases.md) defines release and artifact checks.
-- [Issue workflow](docs/agents/issue-tracker.md) defines GitHub issue and triage
-  conventions.
-- Before you change code in these directories, read their rules:
-  [app](ClaudeMeter/AGENTS.md),
-  [providers](ClaudeMeterCore/Sources/ClaudeMeterProviders/AGENTS.md).
+## Commands
 
-For behavior changes, update `SPECS.md` in the same change. For visual changes, update
-`DESIGN.md` in the same change. Keep shared rules here. Keep area rules beside the code.
-Use the existing terms: account key, config dir, limit window, energy left, OAuth, and
-reading state. State a conflict with a recorded decision before you change it.
+| Command | What it does |
+| --- | --- |
+| `make check` | The gate. Format lint, all tests with warnings as errors, unsigned Debug and Release app builds. CI runs exactly this. |
+| `make test` | Build with warnings as errors, then run every test. Prints a short summary for each test product, and each failure with file and line. Fast; no Xcode project involved. |
+| `make test VERBOSE=1` | The same, and lists every test. Use it to find the test that crashed. |
+| `make format` | Format every Swift file with `swift format` and `.swift-format`. |
+| `make app` / `make run` | Build the unsigned Debug app / build and launch it. |
+| `make release VERSION=… BUILD=…` | Signed, notarized release. Maintainer only. See `docs/releasing.md`. |
+| `make release-candidate VERSION=… BUILD=…` | Signed candidate. It uploads to Apple notarization with the maintainer's identity. Maintainer only. |
 
-Prefer deleting a requirement to adding an abstraction. Four known providers need no
-plugin framework or speculative flexibility.
+Agents never run `make release`, `make release-candidate`, or `scripts/release.sh`.
 
-## Build and test
+A change is done when `make check` passes and the docs that describe the behavior are
+updated in the same commit. A user-visible change also has an entry under
+`## [Unreleased]` in `CHANGELOG.md`. Entries describe changes against the last release (the
+newest `v*` tag), never fixes of unreleased code. A fix of a defect that no release had gets
+no entry, but update any `[Unreleased]` entry that the fix makes false.
 
-```bash
-xcodebuild -scheme ClaudeMeter -configuration Debug CODE_SIGNING_ALLOWED=NO
-swift test --package-path ClaudeMeterCore
-./scripts/verify-local.sh
-```
+## Map
 
-`verify-local.sh` runs the full local and CI checks. Add checks there. CI invokes the
-script directly. Tests use isolated files, defaults, and clocks, with no live user data.
+All code is one Swift package (`Package.swift`). A module imports only modules above it.
 
-`project.pbxproj` is maintained by hand. A new target source or resource file needs
-matching `PBXFileReference`, `PBXBuildFile`, group, and build-phase entries with
-24-character hex IDs. Exclude instruction Markdown files from Swift package targets.
+| Module | Owns | Never |
+| --- | --- | --- |
+| `MeterDomain` | Value types and pure rules: `ProviderUsage`, `AccountUsage`, `QuotaWindow`, `Reading`, `Severity`, `AccountSelection`, `Countdown`, `TokenHistory`, `Redactor`, provider protocols | I/O of any kind |
+| `MeterPlatform` | OS adapters: `HTTPClient`, `Keychain`, `LocalFile`, `BlockingIO`, `SQLiteReader`, `LineProcess`, `Log`, `KeyValueStore`, `JWTClaims`, `DateParsing`, history scanning | Provider knowledge |
+| `ProviderClaude`, `ProviderCodex`, `ProviderCursor`, `ProviderGrok` | One provider each: credentials, wire formats, mapping to the domain model | Another provider, `MeterApp`, UI |
+| `MeterApp` | `Settings`, `UsageStore` (the only owner of readings), `RefreshScheduler`, the reading archive, presentation models | SwiftUI views, wire formats |
+| `MeterUI` | SwiftUI views, design tokens, status item, popover panel, Settings window | Business rules (put them in `MeterApp` with a test) |
+| `App/` | Xcode app target: entry point, Sparkle, Info.plist, icon | Logic of any kind |
 
-## Keep each responsibility with its owner
+Tests mirror the modules in `Tests/`. Shared fakes (`FakeHTTPClient`, `FakeKeychain`,
+`TemporaryDirectory`, `JWTFixture`, `.reference()` dates) are in `Tests/MeterTestSupport`.
 
-- The app owns presentation, settings, and scheduling. `AppState` is `@MainActor`. Core
-  owns normalized models, storage, and policy, with Swift 6 strict concurrency and no
-  AppKit, SwiftUI, or provider I/O. Providers owns HTTP, credentials, and the four
-  adapters, and depends only on Core. Provider tests go in `ClaudeMeterProvidersTests`.
-- `UsageStore` is the single owner of provider readings. `ReadingState` keeps value,
-  timestamp, error, and freshness together. `AppState.normalizedSnapshots` is a computed
-  view. `AppState` holds no copy of a reading. Cursor and Grok have no disk persistence.
-- Providers return data only, never publication callbacks or acceptance closures.
-  MainActor acceptance updates memory and enqueues writes, with no blocking I/O.
-  Accepted writes stay ordered per provider and survive caller cancellation.
-  Cancellation keeps existing readings. Disable clears them and rejects late work.
-- `MeterSettings` owns app settings in standard defaults. The selected Claude or Codex
-  meter owns the hero, first card, menu bar, and header time. Dragging an account card
-  to the top is the only way to select it. The other cards keep the user's saved order.
-  Missing selected data or a missing pinned account stays unavailable. Show no other
-  provider or account.
-- `RefreshScheduler` owns timing, pending requests, and display sleep and wake. It
-  receives `RefreshConfiguration` from AppState and never reads UserDefaults. The
-  refresh policy is in `SPECS.md`. Keep one global cadence. Add no battery,
-  reachability, or per-provider timer.
-- Claude Meter writes only its own manual Claude OAuth credentials. Claude Code, Codex,
-  and Cursor own their credential rotation and storage. Identify an account from its
-  credentials and config, never from local activity.
+Docs, each the single source for its topic:
 
-## Preserve data and validate time
+| Doc | Topic |
+| --- | --- |
+| `docs/architecture.md` | Layers, data flow, provider contract, refresh lifecycle, retention, storage, time limits |
+| `docs/product.md` | Every user-visible rule and the code that owns it |
+| `docs/design.md` | Visual tokens, type, components, layout, animation, accessibility |
+| `docs/providers/*.md` | Each provider's external contracts and rules (Claude: `claude-oauth.md`) |
+| `docs/token-history.md` | Local token history: files, counting rules, limits |
+| `docs/development.md` | Requirements, commands, the Xcode project, where things live |
+| `docs/releasing.md` | Signing, notarization, the update feed, recovery |
+| `CHANGELOG.md` | User-visible changes. `## [Unreleased]` becomes the next release notes. |
 
-- Keep a legacy artifact until every migration that consumes it completes. Cleanup is
-  retryable, uses exact owned paths, and runs off MainActor.
-- `SnapshotStore` uses dedicated threads, time limits, and a circuit breaker per store.
-  After a timeout, fail that store at once so polls cannot leave more blocked threads.
-- Validate every persisted date with `PersistedDateBounds`. A larger finite `Date` can
-  make Foundation ISO-8601 encoding trap.
-- Resolve rolling windows with `resolved(asOf:isStale:)` before display or policy. An
-  expired current window is 0% used with no reset. An expired stale window is unknown.
-- Advance `lastPolledAt` only on success. Snapshot age comes from each account's
-  `observedAt`. Selected-meter displays use `mainMeterIsStale`.
-- Format reset text with Core's `ResetPhrase`, from the provider reset time minus now.
-  Rolling windows use no calendar dates or per-view date formatters.
+## Rules
 
-## Keep background work and diagnostics safe
+### Architecture
 
-- Run heavy provider and disk work off-main. Detached tasks capture only `Sendable`
-  values. Publish UI state on `@MainActor`.
-- An async wrapper on a serial queue calls queue-local helpers. `queue.sync` from that
-  same queue deadlocks.
-- Formatters are not `Sendable`. Create them per call, or use an immutable
-  `nonisolated(unsafe) static let` where thread safety is established, as `ProviderDate`
-  does.
-- Call `DiagnosticsSanitizer.sanitize` before you copy or persist diagnostics. Keep
-  redaction of emails, home paths, UUIDs, provider tokens, JWTs, bearer values,
-  `sessionKey=`, labeled access and refresh tokens, and sensitive CLI identity fields.
-- Log only through `MeterLog.logger(_:)`. It sanitizes messages, so pass raw text at
-  call sites. Log a fault, a policy decision, or a state change, not a per-poll success.
-  Put the log line beside the existing `writeLastError` or `SourceAttempt` record, not
-  in its place.
+1. **One model.** Providers map their wire formats to `ProviderUsage` inside their module.
+   Wire types never leave it.
+2. **One owner of readings.** `UsageStore` holds every `Reading`. Providers hold no usage
+   cache; each refresh hands them the `previous` value.
+3. **One retention rule.** A failed account keeps its last observation, marked stale, only
+   while `AccountUsage.belongs(to:)` says its owner is still signed in.
+4. **One settings value.** All preferences live in `Settings` (one Codable struct). Add a
+   property with a default; decoding fills missing keys from defaults.
+5. **Views render, models decide.** Anything with an `if` about data (ordering, copy,
+   severity, staleness) is a pure function in `MeterApp/Presentation` with a test. The one
+   exception is view-only state: animation timing, pointer geometry, window placement and
+   behavior, and keyboard focus. `MeterUI` may decide these from values that a model already
+   decided, for example `CriticalPulse` (the menu-bar dot, `docs/product.md` §3.6),
+   `CardReorder`, `PanelLayout`, `PopoverDismissal`, `SettingsWindowPlacement`,
+   `DockIconPolicy`, and `CancelShortcuts`. Keep each in its own pure type with its own test
+   in `Tests/MeterUITests`.
+6. **Only Claude and Codex can own the menu bar** (`ProviderID.canOwnMenuBar`). A missing
+   selection shows as unavailable: it never falls back to another account, and a provider
+   in use never yields to the other provider (`docs/product.md` §2).
+
+### Concurrency
+
+- Swift 6 language mode with complete checking. No `@unchecked Sendable` without a comment
+  that names the lock or queue.
+- UI state is `@MainActor`. Providers are actors or immutable `Sendable` types.
+- Every wait on the outside world has a deadline: `withDeadline` for async work,
+  `BlockingIO.run(timeout:)` for blocking calls (files, SQLite, Keychain).
+- Never `Data(contentsOf:)` for a file that another app owns. Use `LocalFile.read`.
+
+### Security and privacy
+
+- The app never writes, refreshes, or deletes another app's credentials. The only
+  credential it owns is the manual Claude OAuth item.
+- Text that reaches the UI, a log, or the disk goes through `Redactor`. `UsageIssue`,
+  `DiagnosticFact`, and `Log` do it for you; do not bypass them.
+- Log only through `Log`. Log faults and state changes, not routine success.
+- Only `AccountOwner.identity` owners may be written to disk.
+- Tests never touch the network, the real Keychain, the real home directory, or
+  `UserDefaults.standard`. Inject fakes.
+
+### Release invariants
+
+Every installed copy depends on these. Never change them without the maintainer:
+
+- `appcast.xml` is the live update feed. Only `scripts/release.sh` edits it, and it keeps
+  every item. The one exception is the maintainer's bad-release procedure
+  (`docs/releasing.md`, "Recovery").
+- The bundle identifier, team, `SUFeedURL`, `SUPublicEDKey`, `ClaudeMeterUpdateRequirement`,
+  and the Sparkle version pin.
+- `CURRENT_PROJECT_VERSION` only grows, and is never lower than the newest build in
+  `appcast.xml`. The release commit sets it (`docs/releasing.md`, "The build number").
+
+### Style
+
+`make check` enforces formatting and warnings. Reviews enforce the rest:
+
+- Name things for what they are. No `Manager`, `Helper`, `Utils`, or abbreviations.
+- Prefer one main type per file, named after it, and files under ~300 lines.
+- Comments explain why, not what. Give API that other modules call a doc comment.
+- No force unwrap or `try!` in `Sources/` unless the value is a compile-time literal.
+- Errors that users see are short sentences that say what to do.
+- `swift format` owns formatting. Do not fight it.
+
+## Recipes
+
+**Add a setting.** Add a property with a default to the right group in
+`Sources/MeterApp/Settings/Settings.swift`. Bind it in the Settings view. Add a test if it
+changes a decision.
+
+**Change what a card shows.** Change the model builder in `Sources/MeterApp/Presentation`,
+add a test, then render the new field in `Sources/MeterUI`.
+
+**Change a provider request.** Update the provider module, its tests with a recorded
+fixture, and its doc in `docs/providers/` in the same commit. (Claude's is
+`claude-oauth.md`: a file named `claude.md` would load as a `CLAUDE.md` memory file.)
+
+**Add a provider.** Do every step in one change. After step 1 the compiler names each
+`switch` over `ProviderID` that needs the new case. It does not find a step marked
+**(no compiler check)**: if you miss one, the app builds and the tests pass, but the provider
+is missing from that place.
+
+1. `Sources/MeterDomain/ProviderID.swift`: add the case. Keep `canOwnMenuBar` false
+   (rule 6). Then add the case to every `switch` that the compiler names.
+2. `Package.swift`: add the `Provider<Name>` target and add its name to `providers`. Add the
+   `Provider<Name>Tests` test target **(no compiler check)**.
+3. `Sources/Provider<Name>/`: implement `UsageProvider` and `DiagnosticsReporting`, and
+   `TokenHistoryProvider` if the provider reports token history (local files, or an account
+   API like Cursor). Wire types stay in the module.
+4. `Sources/MeterDomain/Redactor.swift`: add a rule for each token format of the provider,
+   with a case in `Tests/MeterDomainTests/RedactorTests.swift` **(no compiler check)**. Start
+   the rule at a fixed word or at the left edge of a run (`(?<![A-Za-z0-9_-])`), and make a
+   run that can fail after it possessive (`++`) or bounded, so the rule stays linear. Add the
+   rule's start word (for example `newp-`) to `adversarialUnits` in `RedactorTests`:
+   `longRunsRedactQuickly` tests only the units in that list.
+5. `Sources/MeterApp/Composition/LiveProviders.swift`: build the provider, then add it to
+   `usageProviders`, `historyProviders`, and `diagnostics` **(no compiler check)**.
+6. `Sources/MeterApp/Settings/Settings.swift`: add a source property with a default. The
+   compiler names the case in `isInUse(_:)`.
+7. Settings > Data: add a `DataSourceCard` in
+   `Sources/MeterUI/Settings/Data/DataSettingsView.swift`, with its subtitle in
+   `Sources/MeterApp/Presentation/DataSourceText.swift` **(no compiler check)**.
+8. Popover: the automatic order in `CardBuilder.cards()` takes every provider, and the
+   compiler names the sign-in hint in `StatusScreen.signInHint(_:)`. Add card tests in
+   `Tests/MeterAppTests/CardTests.swift`.
+9. Logo: add `Sources/MeterUI/Resources/Images/<name>.png` and name it in
+   `ProviderMark.image(for:)`. Without the file, the mark falls back to a symbol
+   **(no compiler check)**.
+10. Docs **(no compiler check)**. `git grep -n -E "Cursor,? (and )?Grok"` finds most of the
+    places that list the providers:
+    - `docs/providers/<name>.md`, and the rules in `docs/product.md`;
+    - `docs/design.md`: the drag rule in "Card list and reordering", the bar-card caption
+      rule in "Cards", and the `ProviderMark` row;
+    - `AGENTS.md`: the first line, and the provider row of the Map;
+    - `README.md`: the first paragraph, the features, the privacy paragraph, and the
+      affiliation line;
+    - `docs/architecture.md`: the data-flow diagram, and the rate-limit section when the
+      provider uses `RateLimitHold`;
+    - `docs/development.md`: the note on the provider credentials that a development build
+      reads;
+    - `docs/token-history.md`, when the provider has local history;
+    - a `CHANGELOG.md` entry.

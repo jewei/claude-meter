@@ -1,0 +1,73 @@
+import Foundation
+import MeterDomain
+
+/// What one fetch did for one home: the outcome and when it finished.
+struct CodexAttempt: Sendable {
+    let home: CodexHome
+    let outcome: CodexAccountRefresh.Outcome
+    let attemptedAt: Date
+
+    /// The account for this attempt.
+    ///
+    /// A failure keeps `previous` as stale only while it belongs to the current owner status
+    /// (``AccountUsage/belongs(to:)``). Otherwise the account is unavailable with the issue and
+    /// the signed-in owner, so a rate limit holds the next request even without an observation.
+    /// A running rate-limit hold of `previous` stays while the status can still be its login
+    /// (``AccountUsage/rateLimitHold(admittedBy:now:)``): nothing was sent for that login.
+    func account(previous: AccountUsage?) -> AccountUsage {
+        switch outcome.kind {
+        case .observed(let quota, let owner):
+            return quota.usage(for: home, observedAt: attemptedAt, owner: owner)
+        case .failed(let error, let status):
+            if let previous, let hold = previous.rateLimitHold(admittedBy: status, now: attemptedAt)
+            {
+                var kept = previous.retained(issue: hold, now: attemptedAt)
+                kept.name = home.name
+                return kept
+            }
+            if let previous, previous.hasObservation, previous.belongs(to: status) {
+                var kept = previous.retained(issue: error.issue, now: attemptedAt)
+                kept.name = home.name
+                return kept
+            }
+            var owner: AccountOwner?
+            if case .signedIn(let current) = status { owner = current }
+            return .unavailable(
+                id: home.id, name: home.name, issue: error.issue, attemptedAt: attemptedAt,
+                owner: owner)
+        }
+    }
+
+    /// Sets ``AccountUsage/sharesLogin`` on observed accounts whose owner appears more than once.
+    static func markingSharedLogins(_ accounts: [AccountUsage]) -> [AccountUsage] {
+        let owners = accounts.filter(\.hasObservation).compactMap(\.owner)
+        let counts = Dictionary(owners.map { ($0, 1) }, uniquingKeysWith: +)
+        return accounts.map { account in
+            var copy = account
+            copy.sharesLogin =
+                account.hasObservation && account.owner.map { counts[$0, default: 0] > 1 } == true
+            return copy
+        }
+    }
+
+    /// Diagnostics for this attempt. Memory only.
+    var facts: [DiagnosticFact] {
+        let label = home.label
+        let result: String =
+            switch outcome.kind {
+            case .observed: "Updated"
+            case .failed(let error, _): error.localizedDescription
+            }
+        var facts = [
+            DiagnosticFact("\(label) home", home.directory.path),
+            DiagnosticFact("\(label) auth file", outcome.login ?? "Not read"),
+            DiagnosticFact("\(label) source", outcome.source?.rawValue ?? "None"),
+            DiagnosticFact("\(label) last attempt", attemptedAt.formatted(.iso8601)),
+            DiagnosticFact("\(label) result", result),
+        ]
+        if case .failed(let error, _) = outcome.kind, let reasons = error.reasons {
+            facts.append(DiagnosticFact("\(label) reasons", reasons))
+        }
+        return facts
+    }
+}

@@ -1,0 +1,109 @@
+import Foundation
+import MeterDomain
+import MeterPlatform
+
+extension AutomaticRefresh {
+    struct AccountOutcome: Sendable {
+        var usage: AccountUsage
+        let identity: LocalIdentity?
+        let failure: AccountFailure?
+        /// The usage request went out. A failure before it, such as an expired token, an
+        /// item that cannot be read, or a 429 gate that another request closed meanwhile, sent
+        /// nothing.
+        var isRequested = false
+    }
+
+    /// Reads one account within `limit`. An account that runs out of time keeps its previous
+    /// value, marked stale, and the refresh goes on with the next account.
+    func fetchAccount(
+        _ slot: LoginSlot, prior: AccountUsage?, isActive: Bool, limit: Duration
+    ) async throws -> AccountOutcome {
+        let isRequested = Locked(false)
+        // The limit ends at a fixed point of the budget clock, so it covers the local reads too.
+        let end = uptime() + limit
+        let timer: @Sendable () async throws -> Void = { [sleepUntil] in
+            try await sleepUntil(end)
+        }
+        do {
+            var outcome = try await withDeadline(limit, timer: timer) { [self] in
+                try await readAccount(
+                    slot, prior: prior, isActive: isActive, isRequested: isRequested)
+            }
+            outcome.isRequested = isRequested.value
+            return outcome
+        } catch is TimeoutError {
+            try Task.checkCancellation()
+            log.warning("Claude usage check for \(slot.id) timed out")
+            var outcome = failed(
+                .timedOut, .unknown, nil, slot: slot, prior: prior, isActive: isActive)
+            outcome.isRequested = isRequested.value
+            return outcome
+        }
+    }
+
+    /// Credential, one usage request, then the owner again. A response that arrives after the
+    /// login changed is discarded. Claude Code's credentials are never refreshed; an expired
+    /// token waits for Claude Code to renew it. `isRequested` is set when the request goes out.
+    private func readAccount(
+        _ slot: LoginSlot, prior: AccountUsage?, isActive: Bool, isRequested: Locked<Bool>
+    ) async throws -> AccountOutcome {
+        func failed(_ failure: AccountFailure, _ status: OwnerStatus, _ identity: LocalIdentity?)
+            -> AccountOutcome
+        {
+            self.failed(failure, status, identity, slot: slot, prior: prior, isActive: isActive)
+        }
+
+        let credential: ClaudeCredential
+        let owner: AccountOwner
+        let identity: LocalIdentity?
+        switch try await logins.read(slot) {
+        case .failed(let failure, let status):
+            return failed(failure, status, nil)
+        case .ownerUnknown:
+            // Without an owner the response could not be kept safely, so nothing is sent.
+            return failed(.identityUnavailable, .unknown, nil)
+        case .signedIn(let readCredential, let readOwner, let readIdentity):
+            (credential, owner, identity) = (readCredential, readOwner, readIdentity)
+        }
+        guard !credential.isExpired(at: now()) else {
+            return failed(.credentialsExpired, .signedIn(owner), identity)
+        }
+
+        let response: UsageResponse
+        do {
+            response = try await api.usage(
+                accessToken: credential.accessToken,
+                onSend: { isRequested.withLock { $0 = true } })
+        } catch let failure as UsageFailure {
+            return failed(AccountFailure(failure), .signedIn(owner), identity)
+        }
+
+        let after = try await logins.read(slot).status
+        if after != .unknown, after != .signedIn(owner) {
+            log.notice("Claude login changed during the usage check for \(slot.id)")
+            return failed(
+                after == .signedOut ? .credentialsMissing : .loginChanged, after, identity)
+        }
+        let observedAt = now()
+        let usage = AccountUsage(
+            id: slot.id, name: slot.name,
+            plan: ClaudePlan.name(
+                subscriptionType: credential.subscriptionType,
+                rateLimitTier: credential.rateLimitTier ?? identity?.rateLimitTier),
+            windows: UsageMapper.windows(response),
+            balances: UsageMapper.balances(response),
+            resetAllowance: UsageMapper.resetAllowance(response),
+            observedAt: observedAt, attemptedAt: observedAt, owner: owner)
+        return AccountOutcome(usage: usage, identity: identity, failure: nil)
+    }
+
+    private func failed(
+        _ failure: AccountFailure, _ status: OwnerStatus, _ identity: LocalIdentity?,
+        slot: LoginSlot, prior: AccountUsage?, isActive: Bool
+    ) -> AccountOutcome {
+        let usage = failure.account(
+            id: slot.id, name: slot.name, prior: prior, status: status,
+            audience: isActive ? .activeLogin : slot.audience, now: now())
+        return AccountOutcome(usage: usage, identity: identity, failure: failure)
+    }
+}

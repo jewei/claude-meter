@@ -229,17 +229,25 @@ already public. Find the last step that started, then do the related procedure.
 was published. Correct the cause and run the script again. If notarization failed, the
 script prints Apple's log above the error.
 
-**Step 9, "Commit and tag the release".** Tracked files, the commit, and the tag exist only
-on this Mac. Remove them, then run the script again:
+**Step 9, "Commit and tag the release".** Read the last line of the script's output.
 
-```bash
-git tag -d vVERSION
-git reset --hard origin/main
-```
+- **"Nothing was published."** `HEAD` changed during the build, so the script stopped before
+  it changed a file. Do not reset: a reset removes the commits that moved `HEAD`. Check out
+  `main` at the commit to release, then run the script again. Step 1 requires that `main`
+  equals `origin/main`, so push new commits first and make sure that CI passes.
+- **Any other message.** Tracked files, and maybe the release commit and the tag, exist only
+  on this Mac. Remove them with the step 9 reset, then run the script again:
 
-The tree was clean before the script started, so this removes only the release commit.
+  ```bash
+  git tag -d vVERSION
+  git reset --hard origin/main
+  ```
 
-**Step 10, "Publish the GitHub release".** If the tag push failed, do the step 9 procedure.
+  When the script started, the tree was clean and `HEAD` was equal to `origin/main`. The
+  script makes the release commit only when `HEAD` has not changed since then, so this
+  removes only the release commit and its file changes.
+
+**Step 10, "Publish the GitHub release".** If the tag push failed, do the step 9 reset.
 If the tag is on GitHub, first check whether GitHub made the release or a draft:
 
 ```bash
@@ -257,8 +265,8 @@ gh release create vVERSION build/release/ClaudeMeter-VERSION.dmg \
 git push origin HEAD:main
 ```
 
-To cancel the release instead, remove the tag on GitHub and on this Mac, then do the step 9
-procedure:
+To cancel the release instead, remove the tag on GitHub, then do the step 9 reset, which
+also removes the tag on this Mac:
 
 ```bash
 git push origin :refs/tags/vVERSION

@@ -126,11 +126,15 @@ hold for that account.
 
 A hold survives a restart only when the reading archive saves its account: an account with an
 observation and an identity owner (`ProviderUsage.persistable`, see Storage). A loaded hold
-still ends within 1 hour. These holds end at a restart: a 429 on an account without an
-observation (a first 429), a 429 for a login known only by its credential, and every hold that
-a provider keeps in memory because no account issue carries it. Those are the hold of Cursor
-token history, the hold after a 429 on the Cursor plan request, and the holds after a 429 on
-the Codex reset-credit details request.
+still ends within 1 hour. The hold after a 429 on an account without an observation (a first
+429), and after a 429 for a login known only by its credential, ends at a restart. The hold of
+Cursor token history lives only in memory, so a restart ends it.
+
+A provider keeps in memory the holds that no account issue carries: the hold after a 429 on
+the Cursor plan request, and the holds after a 429 on the Codex reset-credit details request.
+The usage request of that refresh succeeded, so the account has no issue. A restart before the
+next refresh ends such a hold. A refresh during the hold puts the 429 issue on the account, and
+that hold then survives a restart like a usage-request hold.
 
 Claude has its own gate, because one Claude limit covers every account and the Settings check
 (`docs/providers/claude-oauth.md`).

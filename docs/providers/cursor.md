@@ -188,12 +188,14 @@ The email is never part of the reading.
 19. After HTTP 429 with a usable `Retry-After` on the usage or plan request, the shared
     rate-limit hold applies (`docs/architecture.md`): no request for the same login before the
     retry time, at most 1 hour after the 429, so the card's countdown is true. Another login
-    sends at once. The usage request of a refresh whose plan request got the 429 succeeded, so
-    no account issue carries that hold: the provider keeps it in memory, and a restart ends
-    it. While it holds, the card shows the last reading as stale with the countdown. The
-    hold comes before the expiry check, and a login that cannot be read keeps it, so a refresh
-    that sends nothing never ends it early. Only the hold of an observed account whose token
-    names a user (`sub`) survives a restart (`docs/architecture.md`).
+    sends at once. While it holds, the card shows the last reading as stale with the
+    countdown. The hold comes before the expiry check, and a login that cannot be read keeps
+    it, so a refresh that sends nothing never ends it early. Only the hold of an observed
+    account whose token names a user (`sub`) survives a restart (`docs/architecture.md`). The
+    usage request of a refresh whose plan request got the 429 succeeded, so no account issue
+    carries that hold: the provider keeps it in memory. A restart before the next refresh ends
+    it. A refresh during the hold puts the 429 issue on the account, and that hold then
+    survives a restart like a usage-request hold.
 20. `"enabled": false`: drop the last observation, because it no longer describes the account.
 21. If the owner after the response differs from the owner before it, discard the response.
 22. `reconcile` drops the reading when the owner changed or the user signed out. It reads local

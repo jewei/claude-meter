@@ -26,7 +26,9 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
     /// for again at every refresh. Memory only; an entry older than ``planMaxAge`` goes.
     private let planAttempts = Locked<[AccountOwner: Date]>([:])
     /// The pause after HTTP 429 on the plan request (``RateLimitHold``). The usage request of
-    /// that refresh succeeded, so no account issue carries it. Memory only: a restart ends it.
+    /// that refresh succeeded, so no account issue carries it. A restart before the next
+    /// refresh ends it. A refresh during the hold puts the 429 issue on the account, and that
+    /// hold then survives a restart like a usage-request hold.
     private let planHold = Locked<RateLimitHold?>(nil)
 
     /// - Parameters:

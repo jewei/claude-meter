@@ -223,7 +223,9 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
     count, shows no rows, and never starts recovery. Only cancellation of the refresh stops it.
     After HTTP 429 with a usable `Retry-After`, the hold of rule 31 starts for the login. The
     usage request of that refresh succeeded, so no account issue carries the hold: the
-    provider keeps it in memory, and a restart ends it.
+    provider keeps it in memory. A restart before the next refresh ends it. A refresh during
+    the hold puts the 429 issue on the account, and that hold then survives a restart like a
+    usage-request hold.
 24. Codex lists only available credits in recovery rows. A row with another `status` and an
     expired row are dropped. A row without a status stays.
 

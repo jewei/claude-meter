@@ -53,6 +53,21 @@ public final class BlockingIO: Sendable {
     private static let timers = DispatchQueue(
         label: "com.jewei.claudemeter.blocking-io.timers", qos: .utility)
 
+    /// Starts the time limit of one call: `expire` runs after `limit`. `key` is the key of
+    /// the call, or nil.
+    typealias TimeLimit =
+        @Sendable (
+            _ limit: Duration, _ key: String?, _ expire: @escaping @Sendable () -> Void
+        ) -> Void
+
+    /// The time limit of the app: a timer on a serial queue, which gets a thread even when
+    /// blocked work fills the global pool.
+    static let realTime: TimeLimit = { limit, _, expire in
+        BlockingIO.timers.asyncAfter(deadline: .now() + limit.timeInterval, execute: expire)
+    }
+
+    private let timeLimit: TimeLimit
+
     private struct Abandoned: Sendable {
         var count = 0
         /// Keys of work that passed its time limit and still runs, with how many operations
@@ -61,10 +76,14 @@ public final class BlockingIO: Sendable {
     }
 
     /// Tests pass a serial queue to hold work back deterministically.
+    /// `timeLimit` starts the time limit of each call. A test can pass one that ends a wait
+    /// only when the test says, so load on the machine cannot make a call time out.
     init(
-        label: String, capacity: Int = 16, attributes: DispatchQueue.Attributes = .concurrent
+        label: String, capacity: Int = 16, attributes: DispatchQueue.Attributes = .concurrent,
+        timeLimit: @escaping TimeLimit = BlockingIO.realTime
     ) {
         self.capacity = capacity
+        self.timeLimit = timeLimit
         queue = DispatchQueue(
             label: "com.jewei.claudemeter.blocking-io.\(label)", qos: .utility,
             attributes: attributes)
@@ -131,7 +150,7 @@ public final class BlockingIO: Sendable {
                         ? .failure(CancellationError()) : Result { try work(cancellation) }
                     outcome.end(with: result, release: release)
                 }
-                Self.timers.asyncAfter(deadline: .now() + timeout.timeInterval) { [self] in
+                timeLimit(timeout, key) { [self] in
                     giveUp(outcome, cancellation, stuckKey: key, TimeoutError(limit: timeout))
                 }
             }

@@ -48,10 +48,11 @@ enum BlockedLines {
         state.value.arrived.contains(id)
     }
 
-    /// Blocks the reading thread until `id` is open, at most 10 s.
+    /// Blocks the reading thread until `id` is open. The limit of 300 s only frees the thread
+    /// of a test that failed before it opened the gate; no test waits for it.
     static func wait(_ id: String) {
         state.withLock { _ = $0.arrived.insert(id) }
-        let deadline = Date().addingTimeInterval(10)
+        let deadline = Date().addingTimeInterval(300)
         while !state.value.open.contains(id), Date() < deadline { usleep(1_000) }
     }
 }

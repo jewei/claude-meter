@@ -21,7 +21,7 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
     private typealias Cursor = FileCursor<Parser>
 
     private let match: HistoryFileMatch
-    private var limits: HistoryLimits
+    private let limits: HistoryLimits
     private let pool: BlockingIO
     private let listing: DirectoryListing.Function
     private let queue = ScanQueue()
@@ -53,12 +53,6 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
         let id = UUID().uuidString
         rootsKey = "history-scanner/\(id)/roots"
         discoveryKey = "history-scanner/\(id)/discovery"
-    }
-
-    /// Tests shorten the time limit only while a read that they block must time out, so no
-    /// other read can pass the limit on a loaded machine.
-    func setBlockingTimeout(_ timeout: Duration) {
-        limits.blockingTimeout = timeout
     }
 
     /// Scans `roots` for files modified at or after `start`.

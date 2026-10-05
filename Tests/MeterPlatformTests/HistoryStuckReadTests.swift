@@ -7,8 +7,15 @@ import Testing
 
 extension HistoryScans {
     /// Reads that block, as on a stuck volume. Each test uses its own pool.
+    /// Reads that block, as on a stuck volume. Each test uses its own pool.
+    ///
+    /// No step depends on time: a stuck read waits at a gate that opens only when the test
+    /// says, its time limit ends only when the test says (``ManualTimeLimits``), and every
+    /// other call has a limit far above what a loaded machine needs.
     @Suite struct StuckReads {
         private let jsonl = HistoryFileMatch.fileExtension("jsonl")
+        /// For the pools with real time limits.
+        private let patient = HistoryLimits(blockingTimeout: .seconds(120))
 
         @Test func aFileWhoseReadIsStuckIsSkippedUntilTheReadEnds() async throws {
             let home = try TemporaryDirectory()
@@ -18,23 +25,18 @@ extension HistoryScans {
             try home.write(line("ok", 10), to: "ok.jsonl")
             try home.touch("stuck.jsonl", at: .reference())
             try home.touch("ok.jsonl", at: .reference(-.hours(1)))
-            let pool = BlockingIO(label: "test")
+            let timeLimits = ManualTimeLimits()
+            let pool = BlockingIO(label: "test", timeLimit: timeLimits.timeLimit)
             let scanner = CountingScanner(match: jsonl, limits: HistoryLimits(), pool: pool)
 
-            // The newest file blocks. Its read times out, and reading stops for this scan. The
-            // time limit is short only until the read arrives: on a loaded machine another
-            // read can pass it too, and the scan then tries again.
-            await scanner.setBlockingTimeout(.milliseconds(100))
-            var first = try await scanner.scan([home.root()], since: rangeStart)
-            for _ in 0..<50 where !BlockedLines.hasArrived(blocked) {
-                first = try await scanner.scan([home.root()], since: rangeStart)
-            }
-            #expect(BlockedLines.hasArrived(blocked))
+            // The newest file blocks. When its read times out, reading stops for this scan.
+            let scan = Task { try await scanner.scan([home.root()], since: rangeStart) }
+            #expect(await waitUntil(limit: .seconds(60)) { BlockedLines.hasArrived(blocked) })
+            timeLimits.expire { $0.hasSuffix("/stuck.jsonl") }
+            let first = try await scan.value
             #expect(first.isPartial())
             #expect(first.total() == 0)
-            // Reads abandoned by earlier tries end at once; the stuck read stays.
-            #expect(await waitUntil { pool.abandonedCount == 1 })
-            await scanner.setBlockingTimeout(.seconds(30))
+            #expect(pool.abandonedCount == 1)
 
             // The stuck file is skipped, the other file counts, and no thread is abandoned.
             for _ in 0..<3 {
@@ -45,7 +47,7 @@ extension HistoryScans {
             }
 
             BlockedLines.open(blocked)
-            #expect(await waitUntil { pool.abandonedCount == 0 })
+            #expect(await waitUntil(limit: .seconds(60)) { pool.abandonedCount == 0 })
             let recovered = try await scanner.scan([home.root()], since: rangeStart)
             #expect(!recovered.isPartial())
             #expect(recovered.total() == 11)
@@ -64,21 +66,19 @@ extension HistoryScans {
                 if path.hasSuffix("/a-slow") { BlockedLines.wait(blocked) }
                 return try DirectoryListing.standard(path, position, cancellation)
             }
-            let pool = BlockingIO(label: "test")
+            let timeLimits = ManualTimeLimits()
+            let pool = BlockingIO(label: "test", timeLimit: timeLimits.timeLimit)
             let scanner = CountingScanner(
                 match: jsonl, limits: HistoryLimits(), pool: pool, listing: listing)
 
-            // Only the page that waits for the slow folder may time out. The time limit is
-            // short only until the listing arrives: on a loaded machine another read can pass
-            // it too, and the scan then tries again.
-            await scanner.setBlockingTimeout(.milliseconds(100))
-            for _ in 0..<50 where !BlockedLines.hasArrived(blocked) {
-                _ = try await scanner.scan([home.root()], since: rangeStart)
-            }
-            #expect(BlockedLines.hasArrived(blocked))
-            await scanner.setBlockingTimeout(.seconds(30))
+            // The page that waits for the slow folder times out while it waits there.
+            let scan = Task { try await scanner.scan([home.root()], since: rangeStart) }
+            #expect(await waitUntil(limit: .seconds(60)) { BlockedLines.hasArrived(blocked) })
+            timeLimits.expire { $0.hasSuffix("/discovery") }
+            let first = try await scan.value
+            #expect(first.isPartial())
             BlockedLines.open(blocked)
-            #expect(await waitUntil { pool.abandonedCount == 0 })
+            #expect(await waitUntil(limit: .seconds(60)) { pool.abandonedCount == 0 })
 
             // The sweep goes on past the slow folder, which stays partial until a sweep lists
             // it. Before the fix, every page waited for the same folder again.
@@ -96,7 +96,9 @@ extension HistoryScans {
             for index in 0..<7 { try home.write(line("\(index)", 10), to: "\(index).jsonl") }
             try home.write(line("deep", 100), to: "sub/deep.jsonl")
             let scanner = CountingScanner(
-                match: jsonl, limits: HistoryLimits(directoryEntries: 3), pool: .history,
+                match: jsonl,
+                limits: HistoryLimits(directoryEntries: 3, blockingTimeout: .seconds(120)),
+                pool: .history,
                 listing: DirectoryListing.chunks(of: 2))
             let result = try await scanner.scanUntilComplete([home.root()])
             #expect(!result.isPartial())
@@ -108,9 +110,9 @@ extension HistoryScans {
             defer { home.remove() }
             let blocked = BlockedLines.make()
             try home.write(line("first", 1) + line(blocked, 2), to: "live.jsonl")
-            let scanner = CountingScanner(match: jsonl)
+            let scanner = CountingScanner(match: jsonl, limits: patient)
             let task = Task { try await scanner.scan([home.root()], since: rangeStart) }
-            #expect(await waitUntil { BlockedLines.hasArrived(blocked) })
+            #expect(await waitUntil(limit: .seconds(60)) { BlockedLines.hasArrived(blocked) })
             // The session appends while the scan reads.
             try home.append(line("appended", 4), to: "live.jsonl")
             BlockedLines.open(blocked)
@@ -127,7 +129,7 @@ extension HistoryScans {
             let home = try TemporaryDirectory()
             defer { home.remove() }
             try home.write(line("done", 5) + #"{"id":"open","count":9}"#, to: "open.jsonl")
-            let scanner = CountingScanner(match: jsonl)
+            let scanner = CountingScanner(match: jsonl, limits: patient)
             for _ in 0..<3 {
                 let result = try await scanner.scan([home.root()], since: rangeStart)
                 #expect(result.isPartial())
@@ -141,16 +143,17 @@ extension HistoryScans {
             defer { home.remove() }
             try home.write(line("a", 10), to: "a.jsonl")
             let pool = BlockingIO(label: "test", capacity: 1)
-            let scanner = CountingScanner(match: jsonl, limits: HistoryLimits(), pool: pool)
+            let scanner = CountingScanner(match: jsonl, limits: patient, pool: pool)
             let roots = [home.root("one"), home.root("two", "missing")]
             let first = try await scanner.scan(roots, since: rangeStart)
             #expect(first.partialAccounts.isEmpty)
 
-            // One stuck read fills the pool, so the root check finds no thread.
+            // One stuck read fills the pool, so the root check finds no thread. The read waits
+            // until the test releases it, however long the scans take.
             let release = DispatchSemaphore(value: 0)
             await #expect(throws: TimeoutError.self) {
                 try await pool.run(timeout: .milliseconds(20)) { _ in
-                    _ = release.wait(timeout: .now() + 10)
+                    _ = release.wait(timeout: .now() + 600)
                 }
             }
             let full = try await scanner.scan(roots, since: rangeStart)
@@ -165,10 +168,33 @@ extension HistoryScans {
             #expect(other.partialAccounts == ["three"])
 
             release.signal()
-            #expect(await waitUntil { pool.abandonedCount == 0 })
+            #expect(await waitUntil(limit: .seconds(60)) { pool.abandonedCount == 0 })
             let recovered = try await scanner.scan(roots, since: rangeStart)
             #expect(recovered.partialAccounts.isEmpty)
             #expect(recovered.total("one") == 10)
         }
+    }
+}
+
+/// Time limits that end only when a test says, so load on the machine cannot make a call
+/// time out.
+final class ManualTimeLimits: Sendable {
+    private let pending = Locked<[(key: String?, expire: @Sendable () -> Void)]>([])
+
+    var timeLimit: BlockingIO.TimeLimit {
+        { [pending] _, key, expire in pending.withLock { $0.append((key, expire)) } }
+    }
+
+    /// Ends the waits of the calls whose key matches, as if their time limit passed. A call
+    /// that already ended is not changed.
+    func expire(where matches: (String) -> Bool) {
+        let all = pending.withLock { pending in
+            defer { pending = [] }
+            return pending
+        }
+        let due = all.filter { $0.key.map(matches) ?? false }
+        let rest = all.filter { !($0.key.map(matches) ?? false) }
+        pending.withLock { $0 += rest }
+        for call in due { call.expire() }
     }
 }

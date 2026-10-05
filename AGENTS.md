@@ -70,9 +70,12 @@ Docs, each the single source for its topic:
    property with a default; decoding fills missing keys from defaults.
 5. **Views render, models decide.** Anything with an `if` about data (ordering, copy,
    severity, staleness) is a pure function in `MeterApp/Presentation` with a test. The one
-   exception is view-only animation state: `MeterUI` may decide when an animation runs from
-   a value that a model already decided, such as `CriticalPulse` for the menu-bar dot
-   (`docs/product.md` §3.6). Keep it in its own type with a test in `Tests/MeterUITests`.
+   exception is view-only state: animation timing, pointer geometry, window placement and
+   behavior, and keyboard focus. `MeterUI` may decide these from values that a model already
+   decided, for example `CriticalPulse` (the menu-bar dot, `docs/product.md` §3.6),
+   `CardReorder`, `PanelLayout`, `PopoverDismissal`, `SettingsWindowPlacement`,
+   `DockIconPolicy`, and `CancelShortcuts`. Keep each in its own pure type with its own test
+   in `Tests/MeterUITests`.
 6. **Only Claude and Codex can own the menu bar** (`ProviderID.canOwnMenuBar`). A missing
    selection shows as unavailable: it never falls back to another account, and a provider
    in use never yields to the other provider (`docs/product.md` §2).

@@ -18,9 +18,10 @@ enum CodexLogin: Sendable, Equatable {
     case missing
     /// The home folder does not exist, so Codex has no login there.
     case noHome
-    /// The file is JSON without usable tokens. `fileDigest` is the SHA-256 of its bytes.
+    /// The file is a JSON object, not in API-key mode, without usable tokens. `fileDigest` is
+    /// the SHA-256 of its bytes.
     case noTokens(fileDigest: String)
-    /// The file is not JSON. Codex can be in the middle of rewriting it.
+    /// The file is not a JSON object. Codex can be in the middle of rewriting it.
     case invalid
     /// The system refused the read, for example because of the file's permissions. Only the
     /// user can change that.
@@ -90,9 +91,9 @@ enum CodexLogin: Sendable, Equatable {
     /// The owner status that the file alone proves, for ``AccountUsage/belongs(to:)``.
     ///
     /// A missing file is unknown, because Codex can keep the login in the keyring. A file
-    /// that is not JSON is unknown, because Codex can be rewriting it. A file that cannot be
-    /// read proves nothing. Only API-key auth and a home folder that does not exist are signed
-    /// out.
+    /// that is not a JSON object is unknown, because Codex can be rewriting it. A file that
+    /// cannot be read proves nothing. Only API-key auth and a home folder that does not exist
+    /// are signed out.
     var ownerStatus: OwnerStatus {
         switch self {
         case .chatGPT, .noTokens: owner.map(OwnerStatus.signedIn) ?? .unknown

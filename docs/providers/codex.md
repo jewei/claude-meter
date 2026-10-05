@@ -159,12 +159,12 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
 
 ### Recovery
 
-6. Recovery starts only when `auth.json` is missing, has no tokens, or is not valid JSON;
-   when the access token expires within 60 s; or when the usage request returns HTTP 401 or
-   403. A home folder that does not exist starts no recovery: Codex has no login there, and
-   the child could create files in it. A file that cannot be read now, and a read that does
-   not finish in time, start no recovery and send nothing: the file names no owner, so the
-   answer could never be verified (rule 28). The status is unknown (rule 26).
+6. Recovery starts only when `auth.json` is missing, has no tokens, or is not a JSON
+   object; when the access token expires within 60 s; or when the usage request returns HTTP
+   401 or 403. A home folder that does not exist starts no recovery: Codex has no login there,
+   and the child could create files in it. A file that cannot be read now, and a read that
+   does not finish in time, start no recovery and send nothing: the file names no owner, so
+   the answer could never be verified (rule 28). The status is unknown (rule 26).
 7. Network errors, timeouts, other HTTP statuses, unknown response formats, and API-key auth
    never start recovery. The original error shows. A redirect to another site and a response
    over the size limit are unknown response formats, not network errors: the server answered.
@@ -232,35 +232,38 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
 ### Ownership and retention
 
 25. The owner is `identity(sha256("codex", member, workspace))` when the tokens name both.
-    Otherwise it is `credential(sha256(access token))`. Valid JSON without usable tokens has
-    the owner `credential(sha256(file bytes))`. A login without `auth.json` (Codex can keep it
-    in the keyring) has the owner `credential(sha256("codex-app-server", email))` from the
-    ChatGPT email that `account/read` reports. A file that is not JSON names no owner.
+    Otherwise it is `credential(sha256(access token))`. A JSON object that is not in API-key
+    mode (rule 4) and has no usable tokens has the owner `credential(sha256(file bytes))`. A
+    login without `auth.json` (Codex can keep it in the keyring) has the owner
+    `credential(sha256("codex-app-server", email))` from the ChatGPT email that
+    `account/read` reports. A file that is not a JSON object names no owner.
 26. The owner status from the file: tokens are signed in with their owner. API-key auth and
     a home folder that does not exist are signed out. A missing file is unknown (only Codex
-    knows a keyring login). A file that is not JSON is unknown (Codex can be rewriting it). A
-    file that cannot be read now is unknown. A read that times out or finds no free
-    blocking-read thread is temporary: `Reading the Codex auth file took too long. Claude Meter
-    will try again soon.` A path that is not a regular file, such as a folder, and a file over
-    4 MiB say ``Codex auth file is not a normal file, or is larger than 4 MiB. Remove it, then
-    run `codex login`.`` A refused read, and any other read failure, says `Could not read Codex
-    auth file. Check that your user can read it.` Only the user can fix these two, so they ask
-    the user to act. None of these sends a request or starts recovery (rule 6), so the home
-    keeps its previous observation as stale.
+    knows a keyring login). A file that is not a JSON object is unknown (Codex can be
+    rewriting it). A file that cannot be read now is unknown. A read that times out or finds
+    no free blocking-read thread is temporary: `Reading the Codex auth file took too long.
+    Claude Meter will try again soon.` A path that is not a regular file, such as a folder,
+    and a file over 4 MiB say ``Codex auth file is not a normal file, or is larger than 4 MiB.
+    Remove it, then run `codex login`.`` A refused read, and any other read failure, says
+    `Could not read Codex auth file. Check that your user can read it.` Only the user can fix
+    these two, so they ask the user to act. None of these sends a request or starts recovery
+    (rule 6), so the home keeps its previous observation as stale.
 27. After a direct request, the owner must be the same, or the response is discarded with
-    `Codex sign-in changed or could not be verified. Refresh again.` A failure belongs to the
-    login that sent the request: when the status after it (rule 29) names another signed-in
-    login, the failure shows the same text and that login is its owner, so a 429 of the old
-    login never holds the new one. A login that cannot be read after it proves nothing, and the
-    failure stays.
+    `Codex sign-in changed or could not be verified. Refresh again.` When the auth file cannot
+    be read after the request (a read that does not finish in time, a path that is not a
+    usable file, or a refused read), the response is discarded with the text of rule 26 for
+    that read instead. A failure belongs to the login that sent the request: when the status
+    after it (rule 29) names another signed-in login, the failure shows the sign-in text
+    above and that login is its owner, so a 429 of the old login never holds the new one. A
+    login that cannot be read after it proves nothing, and the failure stays.
 28. After recovery, a ChatGPT identity must stay the same. Without an identity before, the
     response is accepted with the owner that the file has after recovery, because Codex can
     rewrite the file while it renews the tokens. Without a file before and after, the response
     is accepted with the owner from `account/read`. Every other case, including a file that
-    cannot be read or parsed after recovery, names no owner, and the response is discarded.
-    An observation always has an owner. For the same reason, a failed recovery from a login
-    without an identity is never a sign-in change: it shows its own failure, with the owner
-    that the file has after it.
+    cannot be read or parsed after recovery, names no owner, and the response is discarded
+    with the text of rule 27. An observation always has an owner. For the same reason, a
+    failed recovery from a login without an identity is never a sign-in change: it shows its
+    own failure, with the owner that the file has after it.
 29. A failed home keeps its previous observation as stale while `AccountUsage.belongs(to:)`
     accepts the current owner status. An unknown status keeps it. Otherwise the home is
     unavailable with the issue and the attempt time. The status after a failure: API-key auth,

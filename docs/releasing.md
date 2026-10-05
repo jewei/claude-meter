@@ -69,13 +69,9 @@ Do these steps once on each Mac that makes releases.
    `### Changed`, `### Fixed`, and `### Removed` headings and `- ` list items. The notes
    become the GitHub release text and the HTML text in the Sparkle update window. Each
    entry describes a change against the last release, never a fix of unreleased code.
-2. **TODO before 4.0.0:** the screenshots in `README.md`
-   (`docs/images/claude-meter-light-mode.png` and `docs/images/claude-meter-dark-mode.png`)
-   show the 2.x popover. Capture the 4.0 popover in light mode and in dark mode, replace the
-   two files, and remove this step.
-3. Commit and push everything to `main`. Make sure that CI passes.
-4. Select the version and the build number (see [The build number](#the-build-number)).
-5. Optional: make a private candidate first. It uploads to Apple notarization, but publishes
+2. Commit and push everything to `main`. Make sure that CI passes.
+3. Select the version and the build number (see [The build number](#the-build-number)).
+4. Optional: make a private candidate first. It uploads to Apple notarization, but publishes
    nothing. This works on any branch:
 
    ```bash
@@ -92,7 +88,7 @@ Do these steps once on each Mac that makes releases.
    and it saves 4.x settings that a later install also reads. Quit the installed app first.
    If the 3.x data must stay, test the candidate in a separate macOS user account.
 
-6. Publish:
+5. Publish:
 
    ```bash
    make release VERSION=4.0.0 BUILD=400

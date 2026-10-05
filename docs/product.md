@@ -132,16 +132,17 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 
 1. **Data**: one switch per source, then each provider's accounts: Claude config dirs and
    connection, Codex homes, display names, and plan badges for logins that report none. Removing a
-   config dir or a Codex home also removes its name, plan badge, switch, pin, and card state
-   (`Settings.forgetAccount`). Only the newest Connect or Disconnect applies its result. A
-   Connect that is saved, and a Disconnect, refresh Claude, also when the connection mode stays
+   config dir or a Codex home also removes its name, pin, and card state, and for a config dir
+   its plan badge and switch (`Settings.forgetAccount`). Only the newest Connect or
+   Disconnect applies its result. A Connect that is saved, and a Disconnect, refresh Claude, also when the connection mode stays
    the same. A Connect that fails, is abandoned, or is replaced saves nothing and refreshes
    nothing (`ClaudeSettingsModel`). Claude Code's active login with no config
    dir (`oauth-…`) is listed too, to name it and set its plan; it has no switch and no Remove. In
    manual mode, Settings shows the plan badge of the manual login, which reports no plan
    (`ClaudeSettingsModel.manualPlan`). A config dir is listed once by its canonical path. Removing a
    folder, and a Disconnect that would delete tokens that the user entered, ask first, inside the
-   page (`DataSourceText.removeConfirmation`, `.disconnectConfirmation`). The implicit Codex home
+   page (`DataSourceText.removeConfirmation`, `.disconnectConfirmation`). The removal question
+   lists what its provider forgets. The implicit Codex home
    (`$CODEX_HOME` or `~/.codex`) has no Remove and cannot be added again, also before the list
    loads. A name edit for a Codex home that is no longer listed is dropped (`CodexSettingsModel`).
    A Codex home is listed once by its canonical path. Remove deletes every saved path of it,

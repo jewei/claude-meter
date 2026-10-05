@@ -12,8 +12,8 @@ struct CodexHomeRow: View {
 
     var body: some View {
         FolderRow(
-            id: home.id.rawValue, name: name, defaultName: home.defaultName, rename: rename,
-            remove: home.isImplicit ? nil : remove
+            id: home.id.rawValue, provider: .codex, name: name, defaultName: home.defaultName,
+            rename: rename, remove: home.isImplicit ? nil : remove
         ) {
             PathChip(path: home.path)
             SignInStatusLine(status: DataSourceText.codexHome(home.status))

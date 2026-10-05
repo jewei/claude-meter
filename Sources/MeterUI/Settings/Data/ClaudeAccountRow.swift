@@ -16,7 +16,8 @@ struct ClaudeAccountRow: View {
 
     var body: some View {
         FolderRow(
-            id: account.id.rawValue, name: name, defaultName: account.defaultName,
+            id: account.id.rawValue, provider: .claude, name: name,
+            defaultName: account.defaultName,
             isTracked: account.isEnabled, rename: rename,
             remove: account.isRemovable ? remove : nil
         ) {

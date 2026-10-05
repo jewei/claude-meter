@@ -68,14 +68,29 @@ public enum DataSourceText {
             confirmTitle: "Disconnect and Delete Tokens")
     }
 
-    /// Asks first before a config dir or Codex home leaves the list with its settings.
-    public static func removeConfirmation(name: String) -> Confirmation {
-        Confirmation(
+    /// Asks first before a config dir or Codex home leaves the list with its settings. The
+    /// message names what `Settings.forgetAccount` removes for the provider.
+    public static func removeConfirmation(name: String, provider: ProviderID) -> Confirmation {
+        let forgotten =
+            switch provider {
+            case .claude:
+                ["name", "plan badge", "tracking switch", "menu-bar pin", "card settings"]
+            case .codex: ["name", "menu-bar pin", "card settings"]
+            case .cursor, .grok: ["card settings"]
+            }
+        return Confirmation(
             title: "Remove \(name)?",
             message:
-                "Claude Meter forgets its name, plan badge, and card settings. "
-                + "The folder stays on disk.",
+                "Claude Meter forgets its \(Self.list(forgotten)). The folder stays on disk.",
             confirmTitle: "Remove")
+    }
+
+    /// `a`, `a and b`, or `a, b, and c`.
+    private static func list(_ items: [String]) -> String {
+        guard let last = items.last, items.count > 1 else { return items.first ?? "" }
+        let rest = items.dropLast()
+        return rest.count == 1
+            ? "\(rest[0]) and \(last)" : "\(rest.joined(separator: ", ")), and \(last)"
     }
 
     /// The chip on a login that the user stopped tracking, so the row says it in words and

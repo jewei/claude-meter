@@ -95,11 +95,24 @@ import Testing
         #expect(DataSourceText.disconnectConfirmation(connection: .off, manualStatus: nil) == nil)
     }
 
+    /// The message lists what each provider forgets: Codex has no plan badge or tracking
+    /// switch, and both lose the menu-bar pin (review R4-A-03).
     @Test func removalNamesTheFolderAndWhatGoes() {
-        let confirmation = DataSourceText.removeConfirmation(name: "Work")
-        #expect(confirmation.title == "Remove Work?")
-        #expect(confirmation.message.contains("The folder stays on disk."))
-        #expect(confirmation.confirmTitle == "Remove")
+        let claude = DataSourceText.removeConfirmation(name: "Work", provider: .claude)
+        #expect(claude.title == "Remove Work?")
+        #expect(
+            claude.message
+                == "Claude Meter forgets its name, plan badge, tracking switch, menu-bar pin, "
+                + "and card settings. The folder stays on disk.")
+        #expect(claude.confirmTitle == "Remove")
+        let codex = DataSourceText.removeConfirmation(name: "Work", provider: .codex)
+        #expect(
+            codex.message
+                == "Claude Meter forgets its name, menu-bar pin, and card settings. "
+                + "The folder stays on disk.")
+        let cursor = DataSourceText.removeConfirmation(name: "Work", provider: .cursor)
+        #expect(
+            cursor.message == "Claude Meter forgets its card settings. The folder stays on disk.")
     }
 
     @Test func untrackedLoginsSayItInWords() {

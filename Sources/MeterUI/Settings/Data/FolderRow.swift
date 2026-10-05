@@ -1,14 +1,17 @@
 import MeterApp
+import MeterDomain
 import SwiftUI
 
 /// The shared layout of a config-dir or Codex-home row: avatar, name field, details, and
 /// trailing controls on a soft rounded surface.
 ///
 /// A row that can be removed ends with a trash button that asks in the row first
-/// (``InlineConfirmation``), because removal also forgets the name, plan badge, and card
-/// settings. A login that is not tracked dims only its avatar; its text keeps full contrast.
+/// (``InlineConfirmation``), because removal also forgets the settings of the account, which
+/// the question lists for its provider. A login that is not tracked dims only its avatar; its
+/// text keeps full contrast.
 struct FolderRow<Details: View, Controls: View>: View {
     let id: String
+    let provider: ProviderID
     let name: String?
     let defaultName: String
     var isTracked = true
@@ -21,12 +24,14 @@ struct FolderRow<Details: View, Controls: View>: View {
     @State private var confirmsRemoval: Bool
 
     init(
-        id: String, name: String?, defaultName: String, isTracked: Bool = true,
+        id: String, provider: ProviderID, name: String?, defaultName: String,
+        isTracked: Bool = true,
         rename: @escaping (String) -> Void, remove: (() -> Void)? = nil,
         confirmsRemoval: Bool = false, @ViewBuilder details: () -> Details,
         @ViewBuilder controls: () -> Controls
     ) {
         self.id = id
+        self.provider = provider
         self.name = name
         self.defaultName = defaultName
         self.isTracked = isTracked
@@ -59,7 +64,8 @@ struct FolderRow<Details: View, Controls: View>: View {
             }
             if confirmsRemoval, let remove {
                 InlineConfirmation(
-                    confirmation: DataSourceText.removeConfirmation(name: shownName)
+                    confirmation: DataSourceText.removeConfirmation(
+                        name: shownName, provider: provider)
                 ) {
                     confirmsRemoval = false
                     remove()

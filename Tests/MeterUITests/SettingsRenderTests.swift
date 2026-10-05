@@ -107,8 +107,8 @@ import Testing
     @Test func folderRemovalAsksFirst() {
         Snapshot.render("settings-folder-remove") {
             FolderRow(
-                id: "/Users/me/work/.codex", name: "Work", defaultName: ".codex", rename: { _ in },
-                remove: {}, confirmsRemoval: true
+                id: "/Users/me/work/.codex", provider: .codex, name: "Work",
+                defaultName: ".codex", rename: { _ in }, remove: {}, confirmsRemoval: true
             ) {
                 PathChip(path: "/Users/me/work/.codex")
             } controls: {

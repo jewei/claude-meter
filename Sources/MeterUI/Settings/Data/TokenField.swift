@@ -1,9 +1,10 @@
 import SwiftUI
 
 /// A labeled token field: a secure field while hidden, a plain field when shown. While it is
-/// empty it says "Paste here" in `inkMuted` (`fieldPlaceholder`).
+/// empty it says "Paste here" in `inkMuted` (`fieldPlaceholder`); VoiceOver hears ``hint``.
 struct TokenField: View {
     static let placeholder = "Paste here"
+    static let hint = "Paste the token here."
 
     let title: String
     @Binding var text: String
@@ -35,6 +36,8 @@ struct TokenField: View {
                         isFocused ? Palette.accent : Palette.cardBorder, lineWidth: 1.5)
                 )
                 .accessibilityLabel(title)
+                // The drawn placeholder is hidden from VoiceOver (`fieldPlaceholder`).
+                .accessibilityHint(Self.hint)
         }
     }
 

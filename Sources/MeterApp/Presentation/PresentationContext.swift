@@ -17,6 +17,9 @@ public struct PresentationContext: Sendable {
     public var histories: [ProviderID: Reading<ProviderTokenHistory>]
     public var refreshing: Set<ProviderID>
     public var refreshingHistory: Set<ProviderID>
+    /// Providers whose reading is still the one saved by an earlier launch
+    /// (``UsageStore/restored``). It can lack accounts that are still configured.
+    public var restored: Set<ProviderID>
     public var now: Date
     public var calendar: Calendar
     public var isUpdateAvailable: Bool
@@ -27,6 +30,7 @@ public struct PresentationContext: Sendable {
         histories: [ProviderID: Reading<ProviderTokenHistory>] = [:],
         refreshing: Set<ProviderID> = [],
         refreshingHistory: Set<ProviderID> = [],
+        restored: Set<ProviderID> = [],
         now: Date,
         calendar: Calendar = .current,
         isUpdateAvailable: Bool = false
@@ -36,6 +40,7 @@ public struct PresentationContext: Sendable {
         self.histories = histories
         self.refreshing = refreshing
         self.refreshingHistory = refreshingHistory
+        self.restored = restored
         self.now = now
         self.calendar = calendar
         self.isUpdateAvailable = isUpdateAvailable

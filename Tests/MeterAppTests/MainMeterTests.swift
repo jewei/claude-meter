@@ -57,6 +57,53 @@ import Testing
         }
     }
 
+    /// The archive saves only accounts with an identity owner, so the reading that a launch
+    /// restores can lack the pinned account. Until the first refresh publishes, the pin is not
+    /// missing, while paused and while the refresh runs (review R4-A-01).
+    @Test func pinMissingFromARestoredReadingIsNotAFailure() {
+        let codex = Fixture.current(Fixture.usage(.codex, Fixture.account("/h")))
+        for paused in [true, false] {
+            let settings = Fixture.settings(enabled: [.codex], main: .codex) {
+                $0.menuBar.pinnedAccounts[.codex] = "/work"
+                $0.isPaused = paused
+            }
+            let refreshing: Set<ProviderID> = paused ? [] : [.codex]
+            let context = Fixture.context(
+                settings, readings: [.codex: codex], refreshing: refreshing, restored: [.codex])
+            let meter = MainMeter(context)
+            #expect(meter.selected == nil)
+            #expect(meter.issue?.message == "Codex has no usage reading yet.")
+            #expect(!meter.hasFailure)
+            #expect(meter.isLoadingFirstReading == !paused)
+            #expect(MenuBarModel(context).icon == (paused ? .bolt(.none) : .loading))
+            guard case .accounts(let accounts) = PopoverModel(context).content else {
+                Issue.record("Expected accounts")
+                continue
+            }
+            #expect(accounts.hero.subtitle == "Codex has no usage reading yet.")
+            #expect(accounts.notices.isEmpty)
+        }
+    }
+
+    /// A restored reading that holds the pinned account selects it, and after the first
+    /// refresh a pin that the reading lacks is missing.
+    @Test func restoredReadingStillSelectsThePinAndOnlyItsLackWaits() {
+        let usage = Fixture.usage(.codex, Fixture.account("/h"), Fixture.account("/work"))
+        let settings = Fixture.settings(enabled: [.codex], main: .codex) {
+            $0.menuBar.pinnedAccounts[.codex] = "/work"
+        }
+        let restored = MainMeter(
+            Fixture.context(
+                settings, readings: [.codex: Fixture.current(usage)], restored: [.codex]))
+        #expect(restored.selected?.id == "/work")
+        let refreshed = MainMeter(
+            Fixture.context(
+                settings,
+                readings: [.codex: Fixture.current(Fixture.usage(.codex, Fixture.account("/h")))]))
+        #expect(refreshed.issue?.message == "The selected Codex account is no longer configured.")
+        #expect(refreshed.hasFailure)
+    }
+
     @Test func pinnedAccountWithoutReadingExplainsItself() {
         let meter = meter([Fixture.account("home", observedAt: nil)], pin: "home")
         #expect(meter.issue?.message == "The selected Claude account has no usage reading.")

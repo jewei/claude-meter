@@ -160,6 +160,11 @@ account or credential change still runs that provider's `reconcile` alone
 a removed account or a changed login disappears at once. At launch, saved readings are
 reconciled the same way when no request may go out, also with the display asleep.
 
+A saved reading holds only identity-owned accounts (see Storage), so it can lack an account
+that is still configured. `UsageStore.restored` marks it until the first publish or failure,
+or a reconcile that removes it; a reconcile that keeps a value only drops saved accounts, so
+the mark stays. While it is marked, a pin that it lacks is not missing (`MainMeter`).
+
 There is one global cadence. No battery, network, or per-provider timers.
 
 ## Storage

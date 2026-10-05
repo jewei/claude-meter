@@ -52,8 +52,8 @@ public final class AppModel {
     public func context(at now: Date) -> PresentationContext {
         PresentationContext(
             settings: settings.settings, readings: usage.readings, histories: usage.histories,
-            refreshing: usage.refreshing, refreshingHistory: usage.refreshingHistory, now: now,
-            calendar: .current,
+            refreshing: usage.refreshing, refreshingHistory: usage.refreshingHistory,
+            restored: usage.restored, now: now, calendar: .current,
             isUpdateAvailable: updater.isUpdateAvailable)
     }
 

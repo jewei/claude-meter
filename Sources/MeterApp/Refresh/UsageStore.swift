@@ -23,6 +23,12 @@ public final class UsageStore {
     public internal(set) var histories: [ProviderID: Reading<ProviderTokenHistory>] = [:]
     public private(set) var refreshing: Set<ProviderID> = []
     public internal(set) var refreshingHistory: Set<ProviderID> = []
+    /// Providers whose reading is still the one that ``restore(_:)`` showed from an earlier
+    /// launch. The archive saves only accounts with an identity owner, so such a reading can
+    /// lack an account that is still configured. The mark ends at the first publish or
+    /// failure, and when a reconcile removes the reading. A reconcile that keeps a value keeps
+    /// the mark: it only drops accounts from the saved ones.
+    public private(set) var restored: Set<ProviderID> = []
 
     @ObservationIgnored private let providers: [ProviderID: any UsageProvider]
     @ObservationIgnored let historyProviders: [ProviderID: any TokenHistoryProvider]
@@ -73,11 +79,13 @@ public final class UsageStore {
         self.calendar = calendar
     }
 
-    /// Shows readings saved by an earlier launch until the first refresh replaces them.
+    /// Shows readings saved by an earlier launch until the first refresh replaces them, and
+    /// marks them as ``restored``.
     public func restore(_ saved: [ProviderID: ProviderUsage]) {
         for (id, usage) in saved where readings[id] == nil {
             guard let observedAt = usage.observedAt else { continue }
             readings[id] = .current(usage, observedAt: observedAt)
+            restored.insert(id)
         }
     }
 
@@ -88,6 +96,7 @@ public final class UsageStore {
         for id in removed {
             cancel([id])
             readings[id] = nil
+            restored.remove(id)
             histories[id] = nil
             historyAttempts[id] = nil
             archive?.record(nil, for: id)
@@ -223,10 +232,12 @@ public final class UsageStore {
             readings[id] = .current(usage, observedAt: observedAt)
         default:
             readings[id] = nil
+            restored.remove(id)
         }
     }
 
     private func publish(_ usage: ProviderUsage, for id: ProviderID) {
+        restored.remove(id)
         if let observedAt = usage.observedAt {
             readings[id] = .current(usage, observedAt: observedAt)
         } else {
@@ -243,6 +254,7 @@ public final class UsageStore {
     /// issues, such as the hold of a first HTTP 429, which the next fetch receives as
     /// `previous`.
     private func recordFailure(_ failure: ProviderError, for id: ProviderID) {
+        restored.remove(id)
         switch (failure.keepsLastReading, readings[id]) {
         case (true, .current(let value, let observedAt)?),
             (true, .stale(let value, let observedAt, _)?):

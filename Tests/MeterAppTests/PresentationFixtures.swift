@@ -59,10 +59,11 @@ enum Fixture {
 
     static func context(
         _ settings: Settings, readings: [ProviderID: Reading<ProviderUsage>],
-        refreshing: Set<ProviderID> = [], now: Date = .reference()
+        refreshing: Set<ProviderID> = [], restored: Set<ProviderID> = [],
+        now: Date = .reference()
     ) -> PresentationContext {
         PresentationContext(
-            settings: settings, readings: readings, refreshing: refreshing, now: now,
-            calendar: .fixed())
+            settings: settings, readings: readings, refreshing: refreshing, restored: restored,
+            now: now, calendar: .fixed())
     }
 }

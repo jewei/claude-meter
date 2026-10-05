@@ -670,13 +670,6 @@ import Testing
         await refresh.value
         #expect(store.readings[.codex] == .current(homes("/a"), observedAt: .reference()))
     }
-
-    @Test func restoredReadingsShowUntilTheFirstRefresh() async {
-        let provider = FakeUsageProvider(.claude)
-        let store = makeStore([provider])
-        store.restore([.claude: .sample(.claude, used: 12)])
-        #expect(store.readings[.claude]?.value == .sample(.claude, used: 12))
-    }
 }
 
 @Suite struct UsageStoreFailureTextTests {

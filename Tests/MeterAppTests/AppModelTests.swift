@@ -199,6 +199,27 @@ import Testing
         #expect(meter.selected?.id == "claude")
     }
 
+    /// The archive left out the pinned account, because its owner came from a credential.
+    /// While paused, the saved reading shows and the pin waits; the first refresh decides
+    /// (review R4-A-01).
+    @Test func aPinThatTheSavedReadingLacksWaitsForTheFirstRefresh() async throws {
+        var settings = active()
+        settings.isPaused = true
+        settings.menuBar.pinnedAccounts[.claude] = "work"
+        let model = makeModel(settings)
+        await model.start(archive: archive(.sample(.claude, account: "claude")))
+        let paused = MainMeter(model.context(at: .reference()))
+        #expect(paused.issue?.message == "Claude has no usage reading yet.")
+        #expect(!paused.hasFailure)
+
+        model.settings.update { $0.isPaused = false }
+        await model.scheduler?.waitForWork()
+        #expect(claude.fetchCount == 1)
+        let refreshed = MainMeter(model.context(at: Date()))
+        #expect(refreshed.issue?.message == "The selected Claude account is no longer configured.")
+        #expect(refreshed.hasFailure)
+    }
+
     /// The first refresh starts from the saved reading, so a provider can keep it as stale
     /// when the request fails.
     @Test func theFirstRefreshReconcilesTheSavedReading() async throws {

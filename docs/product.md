@@ -44,7 +44,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    main-capable provider in use shows as unavailable with a reason. It never falls back to
    another account of the same provider, and a pin never falls back (`MainMeter`). Before
    the provider's first reading, a pin is not missing: the reason is `Claude has no usage
-   reading yet.`, which is not a failure.
+   reading yet.`, which is not a failure. The same applies while the reading is still the one
+   saved by the last launch (`UsageStore.restored`), which keeps only accounts with an
+   identity owner: a pin that it lacks waits for the first refresh to publish or fail.
 6. The menu-bar dot shows the highest severity of the pinned account, or of every account of
    the provider without a pin.
 7. Dragging a Claude or Codex card to the top of the list pins it and makes its provider
@@ -64,7 +66,8 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 ## 3. Menu bar (`MenuBarModel`)
 
 1. The icon is the bolt with a badge: a severity dot, a gray dot when stale, or a red `0`
-   pill when exhausted. A spinner replaces it while the first reading loads; a warning bolt
+   pill when exhausted. A spinner replaces it while the first reading loads, also of a pinned
+   account that the saved reading lacks (`MainMeter.isLoadingFirstReading`); a warning bolt
    shows when there is no reading because something failed (`MainMeter.hasFailure`), also
    while a retry runs (`PresentationContext.isLoadingFirstReading`). Before
    setup, while paused, and before the first reading, the bolt has no badge.

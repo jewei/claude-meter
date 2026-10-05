@@ -41,7 +41,7 @@ import Testing
         ("aws_secret_access_key=abc123", "aws_secret_access_key=[redacted]"),
         (
             #"{"private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQ+/x\n-----END PRIVATE KEY-----\n"}"#,
-            #"{"private_key": "[redacted]\n"}"#
+            #"{"private_key": "[redacted]"}"#
         ),
         ("-----BEGIN RSA PRIVATE KEY-----\nMIIEvQ cut", "[redacted]"),
         (
@@ -104,17 +104,33 @@ import Testing
         #expect("\(reason)" == reason.text)
     }
 
-    /// A long run without separators took 10 s for 16 KiB when two rules backtracked over the
-    /// whole text (review R3-D). Every rule is linear now; the limit leaves a wide margin.
-    @Test(arguments: ["a", "aB3", "a_", "a@"])
+    /// Runs that made rules backtrack before: 10 s for 16 KiB of letters (review R3-D), and
+    /// then 1 s for a run of `eyJ` and 2.4 s for runs of 64 letters and `_` (review R3-D-01).
+    private static let adversarialUnits = [
+        "a", "aB3", "a_", "a@", "a.", "a-", "eyJ", "eyJ.", String(repeating: "a", count: 64) + "_",
+        "Bearer ", #""key":""#, #"\"key\":\""#, "sk-", "/Users/", "Basic ", "password=\"",
+        "Email: ", "-----BEGIN ",
+    ]
+
+    /// The CPU time of this thread, so other work on a busy machine does not count. The best
+    /// of three runs, so one interruption does not count either.
+    private static func cpuTime(_ text: String) -> UInt64 {
+        (0..<3).map { _ in
+            let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+            _ = Redactor.redact(text)
+            return clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start
+        }.min() ?? 0
+    }
+
+    /// Twice the text takes about twice the time, never four times, and 16 KiB stays far below
+    /// the old seconds. Each shape needs about 1 to 30 ms for 16 KiB in a debug build.
+    @Test(arguments: adversarialUnits)
     func longRunsRedactQuickly(unit: String) {
-        let text = String(repeating: unit, count: Redactor.maximumLength / unit.count)
-        // CPU time of this thread, so a busy machine cannot fail the test. The old rules
-        // needed about 10 s; the bounded ones need a few milliseconds.
-        let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
-        _ = Redactor.redact(text)
-        let elapsed = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start
-        #expect(elapsed < 1_000_000_000)
+        _ = Redactor.redact("warm up \(unit)")
+        let half = Self.cpuTime(String(repeating: unit, count: 8_192 / unit.utf16.count))
+        let full = Self.cpuTime(String(repeating: unit, count: 16_384 / unit.utf16.count))
+        #expect(full < 3 * half + 5_000_000, "8 KiB: \(half) ns, 16 KiB: \(full) ns")
+        #expect(full < 300_000_000, "16 KiB: \(full) ns")
     }
 
     @Test func longTextIsCutWithoutAPartialSecret() {
@@ -124,13 +140,81 @@ import Testing
         #expect(result.hasSuffix(" …"))
         #expect(!result.contains("sk-ant"))
         #expect(!result.contains("xxx"))
-        #expect(result.count <= Redactor.maximumLength + 2)
+        #expect(result.utf16.count <= Redactor.maximumLength + 2)
         #expect(Redactor.redact(String(repeating: "x", count: 50_000)) == "…")
     }
 
-    @Test func boundedRulesStillFindPrefixedKeysAndEmails() {
-        #expect(Redactor.redact("my_app_access_token=abc123") == "my_app_access_token=[redacted]")
-        #expect(Redactor.redact("contact first.last+tag@example.co.uk") == "contact [redacted]")
+    /// The cut counts UTF-16 code units: one letter with many combining marks is one character
+    /// but many units, and it is cut too.
+    @Test func theCutCountsCodeUnitsNotCharacters() {
+        let marks = String(repeating: "\u{301}", count: 100_000)
+        #expect(Redactor.redact("a" + marks) == "…")
+        let result = Redactor.redact("word a" + marks)
+        #expect(result == "word …")
+        let long = Redactor.redact(String(repeating: "é ", count: 20_000))
+        #expect(long.utf16.count <= Redactor.maximumLength + 2)
+        #expect(long.hasSuffix(" …"))
     }
 
+    /// The cut can remove the closing quote of a secret. The value then goes to the end of the
+    /// cut text, and the ellipsis comes after the redaction.
+    @Test(arguments: [#"{"secret": ""#, #"{"password": ""#, #"{\"token\":\""#])
+    func aQuotedSecretThatTheCutEndedIsRedacted(prefix: String) {
+        let words = String(repeating: "alpha bravo ", count: 2_000)
+        let result = Redactor.redact(prefix + words)
+        #expect(!result.contains("alpha"))
+        #expect(!result.contains("bravo"))
+        #expect(result.hasSuffix("[redacted] …"))
+    }
+
+    @Test(arguments: [
+        (
+            #"{"password": "correct horse battery staple"}"#,
+            #"{"password": "[redacted]"}"#
+        ),
+        (
+            #"{"client_secret": "two words", "name": "ok"}"#,
+            #"{"client_secret": "[redacted]", "name": "ok"}"#
+        ),
+        (
+            #"{\"password\":\"correct horse\",\"name\":\"ok\"}"#,
+            #"{\"password\":\"[redacted]\",\"name\":\"ok\"}"#
+        ),
+        ("password='correct horse' next", "password='[redacted]' next"),
+        (#"{"password": "a\"b c"}"#, #"{"password": "[redacted]"}"#),
+        (#"{"password": ""}"#, #"{"password": ""}"#),
+        (#"{"secret": "alpha bravo"}"#, #"{"secret": "[redacted]"}"#),
+    ])
+    func quotedSecretsAreRedactedToTheirClosingQuote(input: String, expected: String) {
+        #expect(Redactor.redact(input) == expected)
+    }
+
+    /// The labeled rule has no left edge, so a prefix before the label stays as it is.
+    @Test(arguments: [
+        ("my_app_access_token=abc123", "my_app_access_token=[redacted]"),
+        ("OPENAI_API_KEY=sk-x", "OPENAI_API_KEY=[redacted]"),
+        ("aws-secret-access-key: abc", "aws-secret-access-key: [redacted]"),
+        (
+            "a_b_c_d_e_f_g_h_i_j_k_session_token=abc",
+            "a_b_c_d_e_f_g_h_i_j_k_session_token=[redacted]"
+        ),
+        (
+            String(repeating: "p", count: 100) + "_refresh_token=abc",
+            String(repeating: "p", count: 100) + "_refresh_token=[redacted]"
+        ),
+        ("access_token_refresh_token=abc", "access_token_refresh_token=[redacted]"),
+        ("x-refresh_secret=abc", "x-refresh_secret=[redacted]"),
+        ("contact first.last+tag@example.co.uk", "contact [redacted]"),
+        (String(repeating: "u", count: 80) + "@example.com", "[redacted]"),
+    ])
+    func prefixedKeysAndEmailsAreFound(input: String, expected: String) {
+        #expect(Redactor.redact(input) == expected)
+    }
+
+    /// A JWT starts at the left edge of a run, so a word that only contains `eyJ` stays.
+    @Test func aTokenStartsAtTheEdgeOfARun() {
+        #expect(Redactor.redact("t=eyJhbGciOi.eyJzdWIiOi.c2ln end") == "t=[redacted] end")
+        #expect(Redactor.redact(#"{"id":"eyJhbGciOi.eyJzdWIiOi.c2ln"}"#) == #"{"id":"[redacted]"}"#)
+        #expect(Redactor.redact("keyJar.eyJ.x") == "keyJar.eyJ.x")
+    }
 }

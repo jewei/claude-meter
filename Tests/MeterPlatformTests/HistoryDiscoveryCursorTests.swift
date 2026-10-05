@@ -99,6 +99,19 @@ import Testing
         #expect(walk(&cursor, chunk: 1) == ["/a/2.jsonl", "/a/sub", "/a/sub/3.jsonl"])
         #expect(cursor.isComplete)
     }
+
+    @Test func aFolderThatChangedDuringItsListingIsRecorded() {
+        var cursor = DiscoveryCursor(roots: ["/a", "/b"])
+        let listing: DiscoveryCursor.Listing = {
+            location, position throws(DirectoryListing.ListingError) in
+            var chunk = try Self.listing(chunk: 1)(location, position)
+            chunk.changed = location.directory == "/a" && position != nil
+            return chunk
+        }
+        while cursor.next(listing: listing) != nil {}
+        #expect(cursor.isComplete)
+        #expect(cursor.changedFolders == ["/a"])
+    }
 }
 
 /// Chunks of a real folder.
@@ -130,17 +143,28 @@ import Testing
         #expect(listed.calls >= 4)
     }
 
-    @Test func aFolderThatChangedBetweenChunksIsReadAgainFromTheStart() throws {
+    /// A changed folder goes on from its position: starting again would never end in a large
+    /// folder that changes more often than its listing takes (review R3-D-03).
+    @Test func aFolderThatChangedBetweenChunksGoesOnFromItsPosition() throws {
         let home = try TemporaryDirectory()
         defer { home.remove() }
-        for index in 0..<4 { try home.write("", to: "\(index).jsonl") }
+        for index in 0..<6 { try home.write("", to: "\(index).jsonl") }
         let first = try DirectoryListing.chunk(
-            of: home.url.path, from: nil, maxEntries: 3, cancellation: BlockingIO.Cancellation())
+            of: home.url.path, from: nil, maxEntries: 4, cancellation: BlockingIO.Cancellation())
+        #expect(!first.changed)
         let position = try #require(first.next)
         try home.write("", to: "new.jsonl")
-        // The saved offset can point anywhere now, so the listing starts again and misses nothing.
+        let second = try DirectoryListing.chunk(
+            of: home.url.path, from: position, maxEntries: 1,
+            cancellation: BlockingIO.Cancellation())
+        #expect(second.changed)
+        #expect(second.next?.offset == position.offset + 1)
+        // The rest has at most the 5 raw entries after the position, not all 7 files again. A
+        // new entry moves the others after the position, so no earlier entry is missed.
         let rest = try names(of: home.url, chunk: 3, from: position)
-        #expect(Set(rest.names) == ["0.jsonl", "1.jsonl", "2.jsonl", "3.jsonl", "new.jsonl"])
+        #expect(rest.names.count <= 5)
+        let listed = Set(first.entries.map(\.name) + rest.names)
+        #expect(listed.isSuperset(of: (0..<6).map { "\($0).jsonl" }))
     }
 
     @Test func aCancelledListingStopsInsideTheFolder() throws {

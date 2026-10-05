@@ -49,7 +49,8 @@ struct DiscoverySweep: Sendable {
             let modified = DirectoryListing.modificationDate(ofRegularFile: entry.path)
             activity.withLock { $0 = nil }
             guard let modified, modified >= start else { continue }
-            let found = DiscoveredFile(modified: modified, root: entry.root)
+            let found = DiscoveredFile(
+                modified: modified, root: entry.root, folder: entry.location.directory)
             page.files[entry.path] = page.files[entry.path]?.merged(with: found) ?? found
         }
         return page
@@ -58,11 +59,6 @@ struct DiscoverySweep: Sendable {
     /// Skips the rest of a directory whose listing took too long. Its root reads as partial.
     mutating func skip(_ location: DiscoveryCursor.Location) {
         cursor.skip(location)
-    }
-
-    /// Forgets the files modified before `start`, after the range start moved later.
-    mutating func dropFiles(modifiedBefore start: Date) {
-        files = files.filter { $0.value.modified >= start }
     }
 
     /// Adds the files of one page, keeping the newest `limit` files.

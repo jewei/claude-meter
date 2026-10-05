@@ -48,6 +48,9 @@ enum DirectoryListing {
         var entries: [Entry]
         /// Where the next part starts, or nil at the end of the directory.
         var next: Position?
+        /// The directory changed since its listing started. The listing went on from its
+        /// position, so an entry that the change moved before the position is not in it.
+        var changed = false
     }
 
     /// Lists one chunk of the directory at a path, from a position (nil for the start).
@@ -68,9 +71,12 @@ enum DirectoryListing {
     /// symbolic link at `path` is not followed.
     ///
     /// The position counts entries in the order of the file system. When the directory changed
-    /// since the listing started, an offset can point anywhere, so the listing starts again;
-    /// entries that come twice are merged by path. The read stops with
-    /// ``ListingError/cancelled`` as soon as `cancellation` is set.
+    /// since the listing started, the listing still goes on from the same offset, and the chunk
+    /// says so (``Chunk/changed``). A new entry can then move an entry after the position,
+    /// which comes twice and is merged by path, and a removed entry can move one before it,
+    /// which the sweep keeps from its earlier inventory. Starting again instead would never
+    /// end in a large folder that changes more often than its listing takes. The read stops
+    /// with ``ListingError/cancelled`` as soon as `cancellation` is set.
     static func chunk(
         of path: String, from position: Position?, maxEntries: Int,
         cancellation: BlockingIO.Cancellation
@@ -96,10 +102,13 @@ enum DirectoryListing {
             device: info.st_dev, inode: info.st_ino, seconds: info.st_mtimespec.tv_sec,
             nanoseconds: info.st_mtimespec.tv_nsec)
         var offset = 0
-        if let position, position.stamp == stamp {
+        let changed = position?.stamp.map { $0 != stamp } ?? false
+        if let position {
             while offset < position.offset {
                 guard !cancellation.isCancelled else { throw .cancelled }
-                guard try next(in: directory) != nil else { return Chunk(entries: [], next: nil) }
+                guard try next(in: directory) != nil else {
+                    return Chunk(entries: [], next: nil, changed: changed)
+                }
                 offset += 1
             }
         }
@@ -109,7 +118,8 @@ enum DirectoryListing {
         while offset < end {
             guard !cancellation.isCancelled else { throw .cancelled }
             guard let entry = try next(in: directory) else {
-                return Chunk(entries: entries.sorted { $0.name < $1.name }, next: nil)
+                return Chunk(
+                    entries: entries.sorted { $0.name < $1.name }, next: nil, changed: changed)
             }
             offset += 1
             let name = withUnsafeBytes(of: entry.pointee.d_name) { bytes in
@@ -127,7 +137,7 @@ enum DirectoryListing {
         }
         return Chunk(
             entries: entries.sorted { $0.name < $1.name },
-            next: Position(offset: offset, stamp: stamp))
+            next: Position(offset: offset, stamp: stamp), changed: changed)
     }
 
     /// The next raw entry, or nil at the end of the directory.

@@ -7,11 +7,14 @@ struct DiscoveredFile: Hashable, Sendable {
     /// enumerated path can differ from the configured root path, so a path prefix cannot
     /// identify the owner.
     let root: Int
+    /// The directory that listed the file, as the walk names it.
+    let folder: String
 
     /// Two sightings of one path: the newer date, and the root that comes first in the
     /// configuration, so nested roots give the file to the earlier root.
     func merged(with newer: DiscoveredFile) -> DiscoveredFile {
-        DiscoveredFile(modified: newer.modified, root: min(root, newer.root))
+        let first = newer.root < root ? newer : self
+        return DiscoveredFile(modified: newer.modified, root: first.root, folder: first.folder)
     }
 
     /// Adds `page` to `files` and keeps the newest `limit` files. Returns true when files were

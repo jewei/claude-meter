@@ -33,15 +33,7 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
     private var configured: [HistoryRoot] = []
     private var roots: [RootIdentity] = []
     private var start: Date?
-    /// The sweep in progress. Nil after a sweep completes, so the next scan starts a new one.
-    private var sweep: DiscoverySweep?
-    /// Found files: the last complete sweep plus the files of the current sweep so far.
-    private var inventory: [String: DiscoveredFile] = [:]
-    /// The inventory dropped files at the file limit since the last complete sweep.
-    private var inventoryOverflowed = false
-    /// Roots that the last complete sweep could not list completely. Nil before the first
-    /// complete sweep, when no inventory covers any root yet.
-    private var lastSweepFailedRoots: Set<Int>?
+    private var inventory = HistoryInventory()
     private var cursors: [String: Cursor] = [:]
 
     public init(match: HistoryFileMatch, limits: HistoryLimits = HistoryLimits()) {
@@ -72,8 +64,10 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
     /// Scans `roots` for files modified at or after `start`.
     ///
     /// A change of the roots or of a root folder on disk, or an earlier `start`, discards all
-    /// saved state first. A later `start`, as at each local midnight, keeps the saved state and
-    /// drops only the files modified before it. Scans run one at a time.
+    /// saved state first. A later `start`, as at each local midnight, keeps the saved state,
+    /// files modified before it included: a saved date can be older than the file, which a
+    /// resumed session can have changed since. Their records before `start` do not count, and
+    /// the next complete sweep leaves them out. Scans run one at a time.
     public func scan(_ roots: [HistoryRoot], since start: Date) async throws -> HistoryScan<Parser>
     {
         try await queue.enter()
@@ -96,34 +90,25 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
         if identities != roots || !(self.start.map { start >= $0 } ?? false) {
             // An earlier start needs files that discovery skipped as too old.
             roots = identities
-            self.start = start
-            sweep = nil
-            inventory = [:]
-            inventoryOverflowed = false
-            lastSweepFailedRoots = nil
+            inventory = HistoryInventory()
             cursors = [:]
-        } else if let saved = self.start, start > saved {
-            // A later start only narrows the range. A file modified before it holds no record
-            // in the range, so the other files keep their cursors and are not read again.
-            self.start = start
-            inventory = inventory.filter { $0.value.modified >= start }
-            sweep?.dropFiles(modifiedBefore: start)
         }
+        // A later start only narrows the range, so every file keeps its cursor.
+        self.start = start
         self.configured = configured
         var work = HistoryScan<Parser>.Work()
         let discovery = try await discover(since: start, work: &work)
         let unreadRoots = try await readFiles(work: &work)
 
-        var partialRoots = unreadRoots.union(undiscoveredRoots(discovery))
-        if discovery.exceededFileLimit || inventoryOverflowed {
+        var partialRoots = unreadRoots.union(
+            inventory.undiscoveredRoots(discovery, roots: roots.indices))
+        if discovery.exceededFileLimit || inventory.overflowed {
             partialRoots.formUnion(roots.indices)
         }
         work.cachedFiles = cursors.count
         work.cachedRecords = cursors.values.reduce(0) { $0 + $1.parser.recordCount }
-        var accounts: [AccountID] = []
-        for root in roots where !accounts.contains(root.account) { accounts.append(root.account) }
         return HistoryScan(
-            accounts: accounts, files: countedFiles(),
+            accounts: roots.map(\.account), files: countedFiles(),
             partialAccounts: Set(partialRoots.map { roots[$0].account }), work: work)
     }
 
@@ -141,25 +126,10 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
     /// The result of a scan whose roots could not be checked: the files of the last scan when
     /// it had the same roots and the same or an earlier start, and every account partial.
     private func unresolved(_ configured: [HistoryRoot], since start: Date) -> HistoryScan<Parser> {
-        var accounts: [AccountID] = []
-        for root in configured where !accounts.contains(root.account) {
-            accounts.append(root.account)
-        }
         let isSaved = configured == self.configured && (self.start.map { start >= $0 } ?? false)
         return HistoryScan(
-            accounts: accounts, files: isSaved ? countedFiles() : [],
-            partialAccounts: Set(accounts), work: HistoryScan<Parser>.Work())
-    }
-
-    /// Roots whose files the inventory can miss: a folder could not be listed, or the root
-    /// was not walked to its end by the current sweep or by a complete earlier sweep.
-    private func undiscoveredRoots(_ current: DiscoverySweep) -> Set<Int> {
-        var partial = current.cursor.failedRoots
-        for index in roots.indices where !current.cursor.isFinished(root: index) {
-            if let failed = lastSweepFailedRoots, !failed.contains(index) { continue }
-            partial.insert(index)
-        }
-        return partial
+            accounts: configured.map(\.account), files: isSaved ? countedFiles() : [],
+            partialAccounts: Set(configured.map(\.account)), work: HistoryScan<Parser>.Work())
     }
 
     /// Advances discovery within this scan's entry and file budgets, one blocking call per
@@ -167,8 +137,8 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
     private func discover(
         since start: Date, work: inout HistoryScan<Parser>.Work
     ) async throws -> DiscoverySweep {
-        var current = sweep ?? DiscoverySweep(roots: roots.map(\.path))
-        sweep = current
+        var current = inventory.sweep ?? DiscoverySweep(roots: roots.map(\.path))
+        inventory.sweep = current
         while !current.isComplete, work.directoryEntries < limits.directoryEntries,
             work.discoveredFiles < limits.files
         {
@@ -195,7 +165,7 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
                 // page goes on past it instead of waiting for the same folder again.
                 if let stuck = activity.value {
                     current.skip(stuck)
-                    sweep = current
+                    inventory.sweep = current
                 }
                 break
             } catch is BlockingIO.BusyError {
@@ -204,22 +174,16 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
             let (after, page) = result
             current = after
             current.record(page.files, limit: limits.files)
-            // An incomplete page is no evidence that an earlier file was deleted, so pages
-            // only add to the inventory until the sweep completes.
-            if DiscoveredFile.merge(page.files, into: &inventory, limit: limits.files) {
-                inventoryOverflowed = true
-            }
-            sweep = current
+            inventory.add(page.files, limit: limits.files)
+            inventory.sweep = current
             work.directoryEntries += page.entries
             work.discoveredFiles += page.files.count
         }
         if current.isComplete {
-            inventory = current.files
-            inventoryOverflowed = false
-            lastSweepFailedRoots = current.cursor.failedRoots
-            sweep = nil
+            let cursors = self.cursors
+            inventory.complete(current, limit: limits.files) { cursors[$0] != nil }
         }
-        cursors = cursors.filter { inventory[$0.key] != nil }
+        cursors = cursors.filter { inventory.files[$0.key] != nil }
         return current
     }
 
@@ -229,7 +193,7 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
         var unreadRoots = Set<Int>()
         var records = 0
         var isReadingStopped = false
-        for (path, file) in DiscoveredFile.newestFirst(inventory) {
+        for (path, file) in DiscoveredFile.newestFirst(inventory.files) {
             try Task.checkCancellation()
             if records > limits.records {
                 // The record limit keeps the newest files. Older files are not read at all.
@@ -312,20 +276,14 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
     private func blocking<Value: Sendable>(
         key: String, _ work: @escaping @Sendable (BlockingIO.Cancellation) throws -> Value
     ) async throws -> Value {
-        var attempts = 0
-        while true {
-            do {
-                return try await pool.run(timeout: limits.blockingTimeout, key: key, work)
-            } catch is BlockingIO.BusyError where attempts < HistoryLimits.busyRetries {
-                attempts += 1
-                try await Task.sleep(for: HistoryLimits.busyRetryDelay)
-            }
-        }
+        try await pool.run(
+            timeout: limits.blockingTimeout, key: key, busyRetries: HistoryLimits.busyRetries,
+            retryDelay: HistoryLimits.busyRetryDelay, work)
     }
 
     /// Cached files in root order, then path order, with each hard-linked file once.
     private func countedFiles() -> [HistoryScan<Parser>.File] {
-        let ordered = inventory.compactMap { path, file -> (String, Int, Cursor)? in
+        let ordered = inventory.files.compactMap { path, file -> (String, Int, Cursor)? in
             cursors[path].map { (path, file.root, $0) }
         }.sorted { $0.1 == $1.1 ? $0.0 < $1.0 : $0.1 < $1.1 }
         var seen = Set<FileStamp.FileID>()

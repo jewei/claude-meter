@@ -56,6 +56,9 @@ struct DiscoveryCursor: Sendable {
     private(set) var failedRoots: Set<Int> = []
     /// Directories that this sweep skips because their listing took too long.
     private var skipped: Set<Location> = []
+    /// Directories that changed while this sweep listed them, so the sweep can miss an entry
+    /// that the change moved (``DirectoryListing/Chunk/changed``).
+    private(set) var changedFolders: Set<String> = []
 
     init(roots: [String]) {
         walks = roots.map { Walk(directories: [$0]) }
@@ -136,6 +139,7 @@ struct DiscoveryCursor: Sendable {
             walks[root].chunk = chunk.entries
             walks[root].position = chunk.next
             walks[root].hasMore = chunk.next != nil
+            if chunk.changed { changedFolders.insert(location.directory) }
             for entry in chunk.entries where entry.kind == .directory {
                 walks[root].children.insert(
                     DirectoryListing.child(named: entry.name, in: location.directory))

@@ -34,6 +34,18 @@ public struct HistoryScan<Parser: HistoryFileParser>: Sendable {
     public let partialAccounts: Set<AccountID>
     public let work: Work
 
+    /// `accounts` in root order; an account that several roots share comes once.
+    init(
+        accounts: [AccountID], files: [File], partialAccounts: Set<AccountID>, work: Work
+    ) {
+        var unique: [AccountID] = []
+        for account in accounts where !unique.contains(account) { unique.append(account) }
+        self.accounts = unique
+        self.files = files
+        self.partialAccounts = partialAccounts
+        self.work = work
+    }
+
     /// The files of one account, in root order and then in path order.
     public func files(of account: AccountID) -> [File] {
         files.filter { $0.account == account }

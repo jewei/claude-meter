@@ -225,17 +225,24 @@ Other spellings: `update` and `_meta` can also be at the top level. The top-leve
     others.
 55. Discovery continues on the next scan after the entry or file budget of a scan. It reads
     a folder in chunks of 1,024 entries and keeps its position, so a large folder takes
-    several short reads. When the folder changed between two chunks, its listing starts
-    again, so no entry is missed.
-56. A completed sweep replaces the file list, so deleted files disappear. The next scan
-    starts a new sweep, which finds new files. Until the new sweep completes, the list of
-    the last complete sweep keeps its folders complete.
+    several short reads. When the folder changed between two chunks, its listing goes on
+    from the same position, so a large folder that changes often still reaches its end. A
+    new entry can then move another entry after the position: it is listed twice and counts
+    once. A removed entry can move another entry before the position, where the sweep does
+    not see it: the completed sweep keeps the files of that folder from the earlier list when
+    a read found them. A new file that the sweep did not see is found by the next sweep.
+56. A completed sweep replaces the file list (except as rule 55 says), so deleted files
+    disappear. The next scan starts a new sweep, which finds new files. Until the new sweep
+    completes, the list of the last complete sweep keeps its folders complete.
 57. An incomplete sweep only adds files. It never removes files that an earlier sweep found.
 58. An unreadable folder does not stop the sweep. The other folders of the root are read.
 59. A change of the roots, of a root folder on disk (path, existence, device, or inode), or
     of an account, or a move of the first covered day to an earlier day, discards all scan
     state. When the first covered day moves later (at local midnight), the scan state stays,
-    and only the files last modified before the new first day are dropped.
+    and the file list stays too: the date that discovery saved for a file can be older than
+    the file, because a resumed session can have written to it since. Records before the new
+    first day do not count. A sweep that starts after the move does not find the files last
+    modified before the new first day, so its completion removes them.
 60. A discovery page that times out ends discovery for that scan. The files found by
     earlier pages still count. The sweep skips the folder that the page waited for and makes
     its account partial, so the next page goes on past it; a later sweep lists the folder

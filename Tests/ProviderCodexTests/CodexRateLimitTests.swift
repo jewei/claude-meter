@@ -149,9 +149,6 @@ extension CodexTests {
             #expect(bed.recovery.calls == 0)
         }
 
-        /// R3-P-05 and R5-P-01: the limit belongs to the login, so another home with the same
-        /// login waits too, also one that starts after the 429 in the same fetch. A home with
-        /// another login sends.
         /// A capped retry time and the check that keeps it read one clock, so a one-hour 429
         /// is kept even though a real clock moves between reads (review F-R-01).
         @Test(arguments: ["3600", "86400"])
@@ -177,6 +174,9 @@ extension CodexTests {
             #expect(usage.accounts.allSatisfy { $0.issue?.retryAt != nil })
         }
 
+        /// R3-P-05 and R5-P-01: the limit belongs to the login, so another home with the same
+        /// login waits too, also one that starts after the 429 in the same fetch. A home with
+        /// another login sends.
         @Test func aRateLimitHoldsEveryHomeOfTheSameLogin() async throws {
             let calls = Locked(0)
             let http = FakeHTTPClient { _ in

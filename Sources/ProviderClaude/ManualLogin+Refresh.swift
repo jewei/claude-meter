@@ -72,22 +72,25 @@ extension ManualLogin {
         if excess > 0 { refreshState.pendingRotations.removeFirst(excess) }
     }
 
-    /// Refreshes tokens that are not stored yet, during Connect. Shares an in-flight request
-    /// for the same refresh token and ignores the backoff. Stores nothing in the Keychain, but
-    /// keeps the rotation for `pastedRefreshToken` until a Connect is stored (see
-    /// ``RefreshState/pendingRotations``). A Disconnect or a stored Connect during the request
-    /// forgets the rotation and throws ``Failure/changed``.
+    /// Refreshes tokens that are not stored yet, during the Connect of `ticket`. Shares an
+    /// in-flight request for the same refresh token and ignores the backoff. Stores nothing in
+    /// the Keychain, but keeps the rotation for `pastedRefreshToken` until a Connect is stored
+    /// (see ``RefreshState/pendingRotations``). A Disconnect or a stored Connect after `ticket`
+    /// forgets the rotation and throws ``Failure/changed``: before the request, because the
+    /// server can have spent the pasted refresh token already, and after it.
     ///
     /// Looks for the pending rotation of `pastedRefreshToken` again first: another Connect can
     /// have spent the pasted refresh token after the caller looked. A pending rotation that
     /// does not expire within 60 s is returned without a request; an expired one is refreshed
     /// with its own refresh token. `invalid_grant` forgets the pending rotation only when it
     /// holds the refresh token that the server rejected.
-    func refreshedCandidate(_ candidate: ManualCredential, pastedRefreshToken: String)
-        async throws -> ManualCredential
-    {
-        // No suspension from this lookup to the start or join of the request, so every
-        // Connect of the same pasted tokens sees the same rotation, or joins the same request.
+    func refreshedCandidate(
+        _ candidate: ManualCredential, pastedRefreshToken: String, ticket: Ticket
+    ) async throws -> ManualCredential {
+        // No suspension from this check and lookup to the start or join of the request, so
+        // every Connect of the same pasted tokens sees the same rotation, or joins the same
+        // request, and none sends a refresh token after the rotations were forgotten.
+        try ensureSameGeneration(ticket)
         var source = candidate
         if var pending = pendingRotation(for: pastedRefreshToken) {
             pending.connectionID = candidate.connectionID
@@ -95,10 +98,9 @@ extension ManualLogin {
             source = pending
         }
         guard let refreshToken = source.refreshToken else { throw Failure.expired }
-        let startGeneration = generation
         switch await sharedRefresh(source, refreshToken: refreshToken).result {
         case .success(var fresh):
-            guard generation == startGeneration else { throw Failure.changed }
+            try ensureSameGeneration(ticket)
             // The shared request may have started for the stored connection.
             fresh.connectionID = candidate.connectionID
             keepPendingRotation(fresh, for: pastedRefreshToken)

@@ -10,7 +10,8 @@ extension ClaudeTests {
     /// Connects of the same pasted tokens that overlap. The server spends a refresh token when
     /// it rotates it, so a Connect must use the rotation that another Connect got, also when
     /// that Connect looked for one before the rotation arrived, and a rejection forgets only
-    /// the rotation that the server rejected.
+    /// the rotation that the server rejected. A Connect that a stored Connect or a Disconnect
+    /// overtook sends no refresh token: those forget the rotations.
     @Suite struct OverlappingConnectTests {
         /// The pasted tokens. The server answers their access token with HTTP 401.
         private func connect(_ provider: ClaudeProvider) async throws {
@@ -103,6 +104,63 @@ extension ClaudeTests {
             let item = try #require(harness.manualItem())
             #expect(item.accessToken == "access-next-pasted")
             #expect(item.refreshToken == "next-next-pasted")
+        }
+
+        /// The first check of the pasted tokens waits at `checking`. Every check of them gets
+        /// HTTP 401, and every rotation works.
+        private func slowFirstCheck(spent: Locked<[String]>, checking: Gate) -> FakeHTTPClient {
+            server(spent: spent) { token, number in
+                guard token == "stale" else { return .json(200, "{}") }
+                if number == 1 { await checking.wait() }
+                return .json(401, "{}")
+            }
+        }
+
+        @Test func aConnectThatAStoredConnectOvertookSendsNoRefreshToken() async throws {
+            let harness = try ClaudeHarness(.off)
+            let spent = Locked<[String]>([])
+            let checking = Gate()
+            let provider = harness.provider(slowFirstCheck(spent: spent, checking: checking))
+
+            // A Connect checks the pasted tokens slowly, and the user cancels it. A new Connect
+            // of the same tokens spends the pasted refresh token and is stored, which forgets
+            // its rotation.
+            let slow = Task { try await connect(provider) }
+            #expect(await checking.waitForArrivals())
+            await provider.cancelManualConnect()
+            try await connect(provider)
+            // Then the slow Connect gets HTTP 401.
+            checking.open()
+
+            let error = await #expect(throws: ProviderError.self) { try await slow.value }
+            #expect(
+                error?.issue.message
+                    == "The Claude connection changed while the tokens were checked. Try again.")
+            #expect(spent.value == ["pasted"])
+            #expect(harness.manualItem()?.accessToken == "access-pasted")
+        }
+
+        @Test func aConnectThatADisconnectOvertookSendsNoRefreshToken() async throws {
+            let harness = try ClaudeHarness(.off)
+            let spent = Locked<[String]>([])
+            let checking = Gate()
+            let provider = harness.provider(slowFirstCheck(spent: spent, checking: checking))
+
+            // A Connect checks the pasted tokens slowly, a Disconnect starts, and then the
+            // Connect gets HTTP 401.
+            let slow = Task { try await connect(provider) }
+            #expect(await checking.waitForArrivals())
+            try await provider.disconnectManual()
+            checking.open()
+
+            let error = await #expect(throws: ProviderError.self) { try await slow.value }
+            #expect(
+                error?.issue.message
+                    == "The Claude connection changed while the tokens were checked. Try again.")
+            // No refresh token went out after the Disconnect, and no rotation is kept.
+            #expect(spent.value.isEmpty)
+            #expect(await provider.manualLogin.pendingRotation(for: "pasted") == nil)
+            #expect(harness.manualItem() == nil)
         }
 
         @Test func aRejectedRefreshTokenKeepsANewerRotation() async throws {

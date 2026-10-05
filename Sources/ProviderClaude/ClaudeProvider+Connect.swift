@@ -13,8 +13,9 @@ extension ClaudeProvider {
     /// tokens, until a Connect is stored, a Disconnect starts, or the server rejects them; only
     /// the last four pasted refresh tokens keep theirs. Connect looks for them again just
     /// before it would refresh, so a Connect that overlaps the one that got them uses them too.
-    /// A failure leaves an existing manual login unchanged, and a Disconnect that starts
-    /// meanwhile wins.
+    /// A Connect that a stored Connect or a Disconnect overtook sends no refresh token, because
+    /// they forgot the tokens that the pasted one got. A failure leaves an existing manual login
+    /// unchanged, and a Disconnect that starts meanwhile wins.
     ///
     /// - Parameter isWanted: Asked before the Keychain write lock is taken, and again after
     ///   the save, under the lock. When it returns false, nothing stays stored and the Connect
@@ -42,7 +43,7 @@ extension ClaudeProvider {
             isRefreshed = true
         }
         if candidate.isExpired(at: now()) {
-            candidate = try await refreshedForConnect(candidate, pasted: pasted)
+            candidate = try await refreshedForConnect(candidate, pasted: pasted, ticket: ticket)
             isRefreshed = true
         }
         do {
@@ -50,7 +51,7 @@ extension ClaudeProvider {
         } catch UsageFailure.unauthorized where !isRefreshed && pasted != nil {
             // The access token is stale although no expiry said so. The refresh token can
             // still work.
-            candidate = try await refreshedForConnect(candidate, pasted: pasted)
+            candidate = try await refreshedForConnect(candidate, pasted: pasted, ticket: ticket)
             try await checkRefreshed(candidate, pasted: pasted)
         } catch is UsageFailure {
             if isRefreshed, let pasted {
@@ -104,9 +105,9 @@ extension ClaudeProvider {
     private static let connectionChanged = ProviderError(
         "The Claude connection changed while the tokens were checked. Try again.")
 
-    private func refreshedForConnect(_ candidate: ManualCredential, pasted: String?)
-        async throws -> ManualCredential
-    {
+    private func refreshedForConnect(
+        _ candidate: ManualCredential, pasted: String?, ticket: ManualLogin.Ticket
+    ) async throws -> ManualCredential {
         guard let pasted else {
             throw ProviderError(
                 "The access token has expired. Enter a new one, or add a refresh token.",
@@ -116,7 +117,8 @@ extension ClaudeProvider {
         // refresh would spend the pasted token for nothing.
         if let until = gate.blockedUntil(now: now()) { throw rateLimited(until: until) }
         do {
-            return try await manualLogin.refreshedCandidate(candidate, pastedRefreshToken: pasted)
+            return try await manualLogin.refreshedCandidate(
+                candidate, pastedRefreshToken: pasted, ticket: ticket)
         } catch ManualLogin.Failure.rejected {
             throw ProviderError(
                 "Anthropic rejected the refresh token. Enter new tokens.", needsAction: true)

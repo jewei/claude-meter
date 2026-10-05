@@ -124,6 +124,14 @@ actor ManualLogin {
         connectAttempts += 1
     }
 
+    /// Throws ``Failure/changed`` when a Connect was stored or a Disconnect started after
+    /// `ticket`: they forgot the rotations that Connects got. A newer Connect or
+    /// ``cancelConnects()`` does not count, so a Connect that they overtook can still get a
+    /// rotation for the newer one.
+    func ensureSameGeneration(_ ticket: Ticket) throws {
+        guard ticket.generation == generation else { throw Failure.changed }
+    }
+
     /// Stores a verified login in place of the old one.
     ///
     /// Throws ``Failure/changed`` and leaves the old item as it was when the Connect is no

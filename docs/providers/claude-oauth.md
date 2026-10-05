@@ -193,10 +193,14 @@ little memory. The limit is 256 MiB. The result is one of three states:
    sends no new token request, also after a Connect of other tokens. Connect looks for them
    when it starts, and again just before it would refresh, so a Connect that overlaps the one
    that got them uses them too; when they expire within 60 s, it refreshes them with their own
-   refresh token, never with the spent pasted one. The last 4 pasted refresh tokens keep
-   theirs; a newer one forgets the oldest. HTTP 401 or 403 for their access token,
-   `invalid_grant` for their refresh token, a stored Connect, Disconnect, or quitting the app
-   forgets them. A rejection of other tokens, such as the spent pasted ones, keeps them.
+   refresh token, never with the spent pasted one. A Connect sends no refresh token after a
+   Connect was stored or a Disconnect started since it began, because those forget the tokens;
+   it says that the connection changed. A newer Connect, or a cancel, does not stop its
+   refresh: a newer Connect of the same pasted tokens can use the tokens that it gets. The last
+   4 pasted refresh tokens keep theirs; a newer one forgets the oldest. HTTP 401 or 403 for
+   their access token, `invalid_grant` for their refresh token, a stored Connect, Disconnect,
+   or quitting the app forgets them. A rejection of other tokens, such as the spent pasted
+   ones, keeps them.
 4. A stored token is refreshed when it expires within 60 s, and once after HTTP 401. HTTP
    403 is not refreshed: a refresh does not change the scopes. Callers with the same refresh
    token share one token request, and each caller keeps the connection ID of its own login.

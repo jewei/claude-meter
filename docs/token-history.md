@@ -274,5 +274,6 @@ Other spellings: `update` and `_meta` can also be at the top level. The top-leve
       counted yet and does not make history partial, and the next read counts it;
     - Codex: an unresolved fork, invalid ownership fields, a file without session metadata,
       counters that do not agree, or copies that disagree.
-65. The file limit makes every account partial.
+65. The file limit makes every account partial. History stays partial until a sweep
+    completes without reaching the limit, also during the early pages of the next sweep.
 66. No limit makes history read as a complete zero.

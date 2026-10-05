@@ -8,16 +8,20 @@ import Testing
 @Suite struct SettingsTextTests {
     @Test func claudeSubtitleFollowsTheConnection() {
         #expect(
-            DataSourceText.claudeSubtitle(connection: .off, isEnabled: true)
+            DataSourceText.claudeSubtitle(
+                connection: .off, isEnabled: true, connectWasNotSaved: false)
                 == "Not connected. Choose a connection below.")
         #expect(
-            DataSourceText.claudeSubtitle(connection: .off, isEnabled: false)
+            DataSourceText.claudeSubtitle(
+                connection: .off, isEnabled: false, connectWasNotSaved: false)
                 == "Not connected. Turn on this source to set it up.")
         #expect(
-            DataSourceText.claudeSubtitle(connection: .automatic, isEnabled: true)
+            DataSourceText.claudeSubtitle(
+                connection: .automatic, isEnabled: true, connectWasNotSaved: false)
                 == "Connected. Reads Claude Code's login from the Keychain.")
         #expect(
-            DataSourceText.claudeSubtitle(connection: .manual, isEnabled: false)
+            DataSourceText.claudeSubtitle(
+                connection: .manual, isEnabled: false, connectWasNotSaved: false)
                 == "Connected. This source is off.")
     }
 

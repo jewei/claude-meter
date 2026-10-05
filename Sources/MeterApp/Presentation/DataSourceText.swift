@@ -108,7 +108,7 @@ public enum DataSourceText {
     /// when turning Claude off kept a Connect from being saved
     /// (`ClaudeSettingsModel.connectWasNotSaved`): the connection controls are hidden then.
     public static func claudeSubtitle(
-        connection: ClaudeSettings.Connection, isEnabled: Bool, connectWasNotSaved: Bool = false
+        connection: ClaudeSettings.Connection, isEnabled: Bool, connectWasNotSaved: Bool
     ) -> String {
         if !isEnabled, connectWasNotSaved {
             return connection == .off

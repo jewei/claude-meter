@@ -56,7 +56,7 @@ import Testing
                 DataSourceCard(
                     symbol: "key.fill", tint: Palette.Tile.gold, title: "Claude",
                     subtitle: DataSourceText.claudeSubtitle(
-                        connection: .automatic, isEnabled: true),
+                        connection: .automatic, isEnabled: true, connectWasNotSaved: false),
                     isEnabled: .constant(true)
                 ) {
                     ClaudeConnectionView(snapshot: connected, actions: actions)

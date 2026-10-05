@@ -6,6 +6,68 @@
         <description>Claude Meter release feed</description>
         <language>en</language>
         <item>
+            <title>Version 4.0.0</title>
+            <pubDate>Mon, 05 Oct 2026 12:21:24 +0000</pubDate>
+            <sparkle:version>400</sparkle:version>
+            <sparkle:shortVersionString>4.0.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:minimumUpdateVersion>295</sparkle:minimumUpdateVersion>
+            <sparkle:minimumAutoupdateVersion>400</sparkle:minimumAutoupdateVersion>
+            <description><![CDATA[
+<p>Claude Meter 4.0 is a complete rewrite. It keeps every feature of 3.x with a new, faster core.</p>
+<h3>Added</h3>
+<ul>
+<li>Settings can disconnect Claude and remove a Claude config dir that you added. Removing a folder asks first, and so does a Disconnect that deletes tokens you entered.</li>
+<li>You can make the Settings window taller or shorter, and it always fits on the screen.</li>
+<li>A card's context menu has <strong>Use in Menu Bar</strong>, also as a VoiceOver action, so you can choose the menu-bar account without a drag.</li>
+<li>The welcome screen offers Quit.</li>
+</ul>
+<h3>Changed</h3>
+<ul>
+<li>Settings start fresh. After the welcome screen, connect Claude, turn on your other sources, and set your added folders, names, plans, appearance, and card order again. Launch at login and automatic update checks keep their setting.</li>
+<li>A manual Claude connection from 3.x must be entered again. When you connect Claude, Claude Meter deletes the old Keychain item.</li>
+<li>Settings always lists your Claude logins, also a single login and a login that has no config dir, so you can name each one and set its plan. A manual Claude connection can set its plan when the login does not report one.</li>
+<li>Settings opens as a normal window with a Dock icon while it is open, and no longer floats above other apps.</li>
+<li>The menu-bar card stays first. To use another account in the menu bar, drag its card to the top or use <strong>Use in Menu Bar</strong>. Moving the first card lower no longer changes the menu-bar account.</li>
+<li>A dragged card changes the order and the menu-bar account when you drop it, not while it passes the top of the list.</li>
+<li>Every percentage is a whole number, everywhere.</li>
+<li>Exactly 100% used now shows as out of energy in the menu bar as well as in the hero.</li>
+<li>"Last updated" shows hours and days for old data.</li>
+<li>The menu bar shows a passed reset and old data within 30 seconds, not only after a refresh.</li>
+<li>Cursor and Grok keep showing the last reading, marked stale, when the sign-in expires, until you sign in again. Signing out removes it.</li>
+<li>After a rate limit, Codex, Cursor, and Grok wait for the retry time before they ask again, at most one hour, and only for the limited login.</li>
+<li>When the Codex auth file cannot be read, the Codex card says what to do, and Claude Meter no longer starts the Codex CLI at each refresh.</li>
+<li>When a source that the menu bar does not show fails to refresh for a reason that no account of it shows, a notice at the top of the popover says why, with the source's name. Its cards show their accounts' own problems and mark old data, and no text shows twice.</li>
+<li>The expand arrow is always last in the header of a bar card.</li>
+<li>The Grok mark has the same color as the other marks, not the color of its energy level.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>Codex usage with a fractional percentage no longer fails to load.</li>
+<li>Turning off a Claude config dir that the menu bar uses no longer shows a warning. The menu bar then shows your other Claude accounts.</li>
+<li>Percentages on cards and in Appearance settings, and the extra-usage amount, keep their width when the value changes, so the text next to them stays in place.</li>
+<li>A failed manual Claude reconnection keeps the earlier working connection.</li>
+<li>Manual Claude tokens refresh before they expire, not only after a rejected request.</li>
+<li>Two people in the same Claude team are no longer marked as the same login.</li>
+<li>Cursor and Grok accept numbers sent as text, and a valid Grok sign-in of the same account is used when an expired one comes first.</li>
+<li>Reset countdowns from 12 to 48 hours round the hours down, so 47h 40m shows "47h", not "48h".</li>
+<li>The loading indicator in the menu bar spins, and it shows only before the first reading. During a later refresh, the bolt stays.</li>
+<li>Releasing a dragged card no longer opens or closes it.</li>
+<li>The popover fits on short screens.</li>
+<li>Text in light mode has enough contrast, also on hover and press.</li>
+<li>A saved card order no longer keeps Cursor, Grok, or extra usage first while a Claude or Codex card shows.</li>
+<li>A retry after a failed refresh keeps the error in the menu bar and the popover, instead of a spinner.</li>
+<li>When Codex keeps its sign-in outside <code>auth.json</code>, a Codex CLI that cannot start its usage service asks you to update it.</li>
+</ul>
+            ]]></description>
+            <enclosure
+                url="https://github.com/jewei/claude-meter/releases/download/v4.0.0/ClaudeMeter-4.0.0.dmg"
+                sparkle:edSignature="4jYCtk9quK3KVRrGuhheVUoQmwJykeMoTbxQ8b33QfFzmDf4ti0easPsm7FQwljKJ5q6gwhWONgFoRj/CJP9Ag=="
+                length="5070388"
+                type="application/octet-stream"
+            />
+        </item>
+        <item>
             <title>Version 3.1.3</title>
             <pubDate>Sun, 04 Oct 2026 08:17:49 +0000</pubDate>
             <sparkle:version>337</sparkle:version>

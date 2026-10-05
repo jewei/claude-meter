@@ -12,6 +12,8 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-10-05
+
 Claude Meter 4.0 is a complete rewrite. It keeps every feature of 3.x with a new, faster
 core.
 
@@ -83,3 +85,6 @@ core.
   of a spinner.
 - When Codex keeps its sign-in outside `auth.json`, a Codex CLI that cannot start its
   usage service asks you to update it.
+
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v4.0.0...HEAD
+[4.0.0]: https://github.com/jewei/claude-meter/compare/v3.1.3...v4.0.0

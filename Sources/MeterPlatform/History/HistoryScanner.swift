@@ -12,11 +12,12 @@ import MeterDomain
 ///
 /// Blocking reads run in the ``BlockingIO/history`` pool, so stuck history folders never make
 /// quota reads fail. A blocking read that times out ends that phase of the scan, and the
-/// result is partial: a stuck root check returns the files of the last scan with every
-/// account partial, a stuck directory page ends discovery and makes the sweep skip the folder
-/// that it waited for, and a stuck file ends reading. A root check, discovery, or file whose
-/// earlier read is still stuck is skipped until that read ends, so repeated scans do not
-/// abandon one more thread each.
+/// result is partial: a stuck root check makes every account partial and returns the files of
+/// the last scan only while the roots and the first day allow it (rule 60 of
+/// `docs/token-history.md`), a stuck directory page ends discovery and makes the sweep skip
+/// the folder that it waited for, and a stuck file ends reading. A root check, discovery, or
+/// file whose earlier read is still stuck is skipped until that read ends, so repeated scans
+/// do not abandon one more thread each.
 public actor HistoryScanner<Parser: HistoryFileParser> {
     private typealias Cursor = FileCursor<Parser>
 

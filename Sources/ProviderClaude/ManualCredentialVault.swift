@@ -30,16 +30,23 @@ final class ManualCredentialVault: Sendable {
         AppIdentity.isDevelopmentBuild ? nil : ("com.jewei.claudemeter-oauth", "oauthManual")
 
     private let keychain: any Keychain
+    /// The limit of a read.
     private let timeout: Duration
+    /// The limit of a write.
+    private let writeTimeout: Duration
     private let log = Log(.claude)
     private let writes = DispatchQueue(
         label: "com.jewei.claudemeter.claude-oauth-writes", qos: .utility)
     /// The sequence of the newest write that ran or was abandoned.
     private let newestWrite = Locked<UInt64>(0)
 
-    init(keychain: any Keychain, timeout: Duration) {
+    /// - Parameters:
+    ///   - timeout: The limit of a read.
+    ///   - writeTimeout: The limit of a write; `timeout` when nil.
+    init(keychain: any Keychain, timeout: Duration, writeTimeout: Duration? = nil) {
         self.keychain = keychain
         self.timeout = timeout
+        self.writeTimeout = writeTimeout ?? timeout
     }
 
     /// Reads the item. Throws only `CancellationError`.
@@ -79,35 +86,36 @@ final class ManualCredentialVault: Sendable {
     /// The item's value as stored, or nil when there is no item. It is read on the write
     /// queue, after every write sent before it, so a write-back of it undoes exactly the writes
     /// sent after it. Throws the Keychain error, or `TimeoutError` when the read does not end
-    /// within the limit, for example behind a write that hangs.
-    func storedValue() async throws -> Data? {
+    /// within the limit, for example behind a write that hangs. `timeout` replaces the
+    /// vault's read limit.
+    func storedValue(timeout: Duration? = nil) async throws -> Data? {
         let keychain = keychain
-        return try await queued(timeout: timeout) {
+        return try await queued(timeout: timeout ?? self.timeout) {
             Result<Data?, any Error> {
                 try keychain.password(service: Self.service, account: Self.account)
             }
         }
     }
 
-    /// Writes `credential`. `timeout` replaces the vault's limit for this write.
+    /// Writes `credential`. `timeout` replaces the vault's write limit for this write.
     func save(_ credential: ManualCredential, sequence: UInt64, timeout: Duration? = nil)
         async throws
     {
         let data = try JSONEncoder.meter.encode(credential)
-        try await write(sequence: sequence, timeout: timeout ?? self.timeout) { keychain in
+        try await write(sequence: sequence, timeout: timeout ?? writeTimeout) { keychain in
             try keychain.setPassword(data, service: Self.service, account: Self.account)
         }
     }
 
     func delete(sequence: UInt64) async throws {
-        try await write(sequence: sequence, timeout: timeout) { keychain in
+        try await write(sequence: sequence, timeout: writeTimeout) { keychain in
             try keychain.deletePassword(service: Self.service, account: Self.account)
         }
     }
 
     /// Writes back a value from ``storedValue()``, or deletes the item when it was nil.
     func restore(_ value: Data?, sequence: UInt64) async throws {
-        try await write(sequence: sequence, timeout: timeout) { keychain in
+        try await write(sequence: sequence, timeout: writeTimeout) { keychain in
             try Self.restore(value, in: keychain)
         }
     }

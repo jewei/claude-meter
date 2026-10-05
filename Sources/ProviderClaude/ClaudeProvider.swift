@@ -56,7 +56,8 @@ public final class ClaudeProvider: UsageProvider, DiagnosticsReporting {
         keychainUser: String,
         limits: ClaudeLimits,
         scan: @escaping AutomaticRefresh.Scan = ConfigDirectoryScanner.discover(
-            home:configuration:)
+            home:configuration:),
+        uptime: @escaping @Sendable () -> ContinuousClock.Instant = { .now }
     ) {
         self.configuration = configuration
         self.home = home
@@ -65,14 +66,15 @@ public final class ClaudeProvider: UsageProvider, DiagnosticsReporting {
         gate = RateLimitGate(store: store, now: now())
         self.keychain = ClaudeCodeKeychain(
             keychain: keychain, user: keychainUser, timeout: limits.localRead)
-        vault = ManualCredentialVault(keychain: keychain, timeout: limits.localRead)
+        vault = ManualCredentialVault(
+            keychain: keychain, timeout: limits.localRead, writeTimeout: limits.keychainWrite)
         manualLogin = ManualLogin(
             vault: vault, refresher: TokenRefresher(http: http, now: now), now: now)
         api = UsageAPI(http: http, gate: gate, now: now)
         automatic = AutomaticRefresh(
             home: home, keychain: self.keychain,
             logins: LoginReader(keychain: self.keychain, fileTimeout: limits.localRead), api: api,
-            now: now, limits: limits, scan: scan)
+            now: now, limits: limits, scan: scan, uptime: uptime)
         manual = ManualRefresh(login: manualLogin, api: api, now: now)
     }
 

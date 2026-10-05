@@ -193,6 +193,8 @@ extension ClaudeTests {
             #expect(http.requests.isEmpty)
         }
 
+        /// The budget clock moves only when a test says so, and the slow request never answers,
+        /// so the outcome does not depend on how busy the machine is.
         @Test func oneSlowAccountKeepsTheResultsOfTheOthers() async throws {
             let harness = try ClaudeHarness()
             let main = try harness.directory(".claude", account: "acc-1")
@@ -201,24 +203,30 @@ extension ClaudeTests {
             harness.signIn(main, token: "main", legacy: true)
             harness.signIn(team, token: "team")
             harness.signIn(work, token: "work")
+            let held = Gate()
             let http = FakeHTTPClient { request in
-                // The team account never answers; its deadline cancels the wait.
-                if bearer(request) == "team" { try await Task.sleep(for: .seconds(3_600)) }
+                switch bearer(request) {
+                case "team":
+                    // The last account gets only what is left of the budget.
+                    harness.elapse(ClaudeLimits().refresh - .milliseconds(100))
+                case "work":
+                    // The work account never answers; the end of the budget stops the wait.
+                    harness.elapse(.seconds(1))
+                    await held.wait()
+                default: break
+                }
                 return .json(200, ClaudeFixtures.usage(session: 3))
             }
-            // Ample time for the accounts that answer, even on a busy machine.
-            var limits = ClaudeLimits()
-            limits.account = .seconds(2)
-            let provider = harness.provider(http, limits: limits)
+            let provider = harness.provider(http)
 
             let usage = try await provider.fetch(previous: nil)
 
             #expect(http.usageTokens == ["main", "team", "work"])
             #expect(usage.accounts.map(\.id) == ["claude", "claude-team", "claude-work"])
-            #expect(usage.accounts[0].hasObservation && usage.accounts[2].hasObservation)
-            #expect(!usage.accounts[1].hasObservation)
-            #expect(usage.accounts[1].issue?.message == "The Claude usage check timed out.")
-            #expect(usage.accounts[1].attemptedAt == .reference())
+            #expect(usage.accounts[0].hasObservation && usage.accounts[1].hasObservation)
+            #expect(!usage.accounts[2].hasObservation)
+            #expect(usage.accounts[2].issue?.message == "The Claude usage check timed out.")
+            #expect(usage.accounts[2].attemptedAt == .reference())
         }
 
         @Test func theEndOfTheBudgetKeepsAccountsThatDidNotStart() async throws {
@@ -230,17 +238,22 @@ extension ClaudeTests {
             harness.signIn(team, token: "team")
             harness.signIn(work, token: "work")
             let slow = Locked(false)
+            let held = Gate()
             let http = FakeHTTPClient { request in
-                // Once slow, the team account never answers; the budget cancels the wait.
-                if slow.value, bearer(request) == "team" {
-                    try await Task.sleep(for: .seconds(3_600))
+                guard slow.value else { return .json(200, ClaudeFixtures.usage(session: 3)) }
+                switch bearer(request) {
+                case "main":
+                    // Team gets only what is left of the budget.
+                    harness.elapse(ClaudeLimits().refresh - .milliseconds(100))
+                case "team":
+                    // Team never answers, and uses up the rest of the budget.
+                    harness.elapse(.seconds(1))
+                    await held.wait()
+                default: break
                 }
                 return .json(200, ClaudeFixtures.usage(session: 3))
             }
-            // Ample time for a refresh in which every account answers, even on a busy machine.
-            var limits = ClaudeLimits()
-            limits.refresh = .seconds(3)
-            let provider = harness.provider(http, limits: limits)
+            let provider = harness.provider(http)
             let first = try await provider.fetch(previous: nil)
 
             harness.advance(300)

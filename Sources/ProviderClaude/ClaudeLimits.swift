@@ -12,6 +12,8 @@ struct ClaudeLimits: Sendable {
     var account: Duration = .seconds(20)
     /// One Keychain or file read.
     var localRead: Duration = .seconds(5)
+    /// One write of the manual Keychain item.
+    var keychainWrite: Duration = .seconds(5)
 
     /// The deadline around a whole automatic refresh. The work inside is bounded already, so
     /// this only stops a defect from holding the refresh forever.

@@ -37,12 +37,16 @@ struct AutomaticRefresh: Sendable {
     let now: @Sendable () -> Date
     let limits: ClaudeLimits
     let scan: Scan
+    /// The clock of the refresh budget. Tests move it, so that the budget ends at a known
+    /// point and not after real time that a busy machine can use up.
+    let uptime: @Sendable () -> ContinuousClock.Instant
     let log = Log(.claude)
 
     init(
         home: URL, keychain: ClaudeCodeKeychain, logins: LoginReader, api: UsageAPI,
         now: @escaping @Sendable () -> Date, limits: ClaudeLimits,
-        scan: @escaping Scan = ConfigDirectoryScanner.discover(home:configuration:)
+        scan: @escaping Scan = ConfigDirectoryScanner.discover(home:configuration:),
+        uptime: @escaping @Sendable () -> ContinuousClock.Instant = { .now }
     ) {
         self.home = home
         self.keychain = keychain
@@ -51,6 +55,7 @@ struct AutomaticRefresh: Sendable {
         self.now = now
         self.limits = limits
         self.scan = scan
+        self.uptime = uptime
     }
 
     func fetch(_ configuration: ClaudeConfiguration, previous: ProviderUsage?) async throws
@@ -59,7 +64,7 @@ struct AutomaticRefresh: Sendable {
         // Each attempted account records this time, so the due check of the next refresh
         // compares the starts of two refreshes, not the end of a slow request.
         let startedAt = now()
-        let deadline = ContinuousClock.now + limits.refresh
+        let deadline = uptime() + limits.refresh
         let plan = try await plan(configuration)
         if let until = api.gate.blockedUntil(now: now()) {
             throw ProviderError(AccountFailure.rateLimited(until: until).issue(for: .activeLogin))
@@ -100,7 +105,7 @@ struct AutomaticRefresh: Sendable {
             let isActive = slot.id == plan.activeID
             guard stop == nil, slot.id == plan.alwaysReadID || isDue(prior, at: startedAt)
             else { continue }
-            let remaining = deadline - ContinuousClock.now
+            let remaining = deadline - uptime()
             guard remaining > .zero else {
                 log.warning("Claude refresh ran out of time before \(slot.id)")
                 stop = .timedOut
@@ -118,7 +123,7 @@ struct AutomaticRefresh: Sendable {
             if case .rateLimited = outcome.failure { stop = outcome.failure }
         }
         for slot in plan.slots where identities[slot.id] == nil && slot.issue == nil {
-            let remaining = deadline - ContinuousClock.now
+            let remaining = deadline - uptime()
             guard remaining > .zero else { break }
             let read = try await logins.identity(
                 slot.identityFile, timeout: min(limits.localRead, remaining))

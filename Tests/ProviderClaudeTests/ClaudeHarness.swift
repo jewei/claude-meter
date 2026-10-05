@@ -13,6 +13,9 @@ final class ClaudeHarness: Sendable {
     let keychain = FakeKeychain()
     let store = MemoryStore()
     private let clock = Locked(Date.reference())
+    /// The clock of the automatic refresh budget. It moves only in ``elapse(_:)``, so a busy
+    /// machine can never end a budget.
+    private let uptime = Locked(ContinuousClock.now)
     private let settings: Locked<ClaudeConfiguration>
 
     init(_ connection: ClaudeConfiguration.Connection = .automatic) throws {
@@ -33,6 +36,11 @@ final class ClaudeHarness: Sendable {
         clock.withLock { $0 = $0.addingTimeInterval(seconds) }
     }
 
+    /// Uses up `duration` of the refresh budget that runs now.
+    func elapse(_ duration: Duration) {
+        uptime.withLock { $0 += duration }
+    }
+
     func provider(
         _ http: any HTTPClient, keychain: (any Keychain)? = nil,
         limits: ClaudeLimits = ClaudeLimits(),
@@ -40,11 +48,12 @@ final class ClaudeHarness: Sendable {
             home:configuration:)
     ) -> ClaudeProvider {
         let clock = clock
+        let uptime = uptime
         let settings = settings
         return ClaudeProvider(
             configuration: { settings.value }, keychain: keychain ?? self.keychain, http: http,
             store: store, home: home.url, now: { clock.value }, keychainUser: Self.user,
-            limits: limits, scan: scan)
+            limits: limits, scan: scan, uptime: { uptime.value })
     }
 
     /// Creates a config dir with `settings.json` and, when `account` is set, an identity file.

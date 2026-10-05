@@ -175,9 +175,10 @@ extension ClaudeTests {
                 saving.raise()
                 release.block()
             }
-            // The save hangs in the Keychain past its limit, so Connect reports a failure.
+            // The save hangs in the Keychain past its limit, so Connect reports a failure. Reads
+            // keep their ample limit.
             var limits = ClaudeLimits()
-            limits.localRead = .milliseconds(250)
+            limits.keychainWrite = .milliseconds(100)
             let http = usageServer(["pasted": "{}", "old-access": "{}"])
             let provider = harness.provider(http, keychain: keychain, limits: limits)
 
@@ -214,7 +215,9 @@ extension ClaudeTests {
                 hung.raise()
                 release.block()
             }
-            let vault = ManualCredentialVault(keychain: keychain, timeout: .milliseconds(100))
+            // Only the writes and reads that wait behind the hung write use a short limit.
+            let vault = ManualCredentialVault(
+                keychain: keychain, timeout: .seconds(5), writeTimeout: .milliseconds(100))
             func credential(_ token: String) -> ManualCredential {
                 ManualCredential(
                     accessToken: token, refreshToken: nil, expiresAt: nil, connectionID: "c")
@@ -230,7 +233,9 @@ extension ClaudeTests {
                 try await vault.save(credential("second"), sequence: 2)
             }
             // The old item of a Connect is read after the writes before it, not around them.
-            await #expect(throws: TimeoutError.self) { try await vault.storedValue() }
+            await #expect(throws: TimeoutError.self) {
+                try await vault.storedValue(timeout: .milliseconds(100))
+            }
             release.raise()
             try await first.value
             // Queued behind both, so it proves that the second never ran.

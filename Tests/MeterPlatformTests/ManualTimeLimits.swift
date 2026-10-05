@@ -27,14 +27,21 @@ final class ManualTimeLimits: Sendable {
         for call in due { call.expire() }
     }
 
+    /// Whether a call with `key` started its time limit, which it does after it handed its
+    /// work to the queue, and the test has not ended that limit yet.
+    func isWaiting(_ key: String) -> Bool {
+        pending.value.contains { $0.key == key }
+    }
+
     /// Starts a read in `pool`, whose time limits these are, and ends its time limit after it
     /// started, so it is abandoned and holds its thread until the test signals the returned
     /// semaphore. A real time limit could end before the read started, and the pool would
     /// then skip the read instead of holding a thread.
-    func makeStuckRead(in pool: BlockingIO) async -> DispatchSemaphore {
+    func makeStuckRead(
+        in pool: BlockingIO, key: String = "stuck-\(UUID().uuidString)"
+    ) async -> DispatchSemaphore {
         let release = DispatchSemaphore(value: 0)
         let started = Locked(false)
-        let key = "stuck-\(UUID().uuidString)"
         let read = Task {
             try await pool.run(timeout: .seconds(5), key: key) { _ in
                 started.withLock { $0 = true }

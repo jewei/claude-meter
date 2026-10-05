@@ -94,14 +94,21 @@ private enum DeadlineProbe {
 
 /// Every test that leaves blocked or abandoned work uses its own pool, so the shared pools
 /// that other suites use in parallel never fill up.
+///
+/// No outcome depends on time. Blocked work waits until the test releases it. A pool with
+/// ``ManualTimeLimits`` ends a time limit only when the test says, after the work started: a
+/// real limit can end first on a loaded machine, and the pool then skips the work. The test
+/// of the real timers lets its work block far longer than the test may take, and every other
+/// wait has a limit far above what a loaded machine needs.
 @Suite(.serialized) struct BlockingIOTests {
     @Test func returnsTheResult() async throws {
-        let value = try await BlockingIO.run(timeout: .seconds(5)) { _ in "done" }
+        let value = try await BlockingIO.run(timeout: .seconds(60)) { _ in "done" }
         #expect(value == "done")
     }
 
     @Test func manyConcurrentReadsNeverCountAsAbandoned() async throws {
-        let pool = BlockingIO(label: "test")
+        let timeLimits = ManualTimeLimits()
+        let pool = BlockingIO(label: "test", timeLimit: timeLimits.timeLimit)
         try await withThrowingTaskGroup(of: Int.self) { group in
             for index in 0..<64 {
                 group.addTask {
@@ -121,142 +128,150 @@ private enum DeadlineProbe {
     @Test func rethrowsWorkErrors() async {
         struct Failure: Error {}
         await #expect(throws: Failure.self) {
-            try await BlockingIO.run(timeout: .seconds(5)) { _ -> Int in throw Failure() }
+            try await BlockingIO.run(timeout: .seconds(60)) { _ -> Int in throw Failure() }
         }
     }
 
     @Test func abandonsBlockedWorkAtTheLimit() async {
-        let pool = BlockingIO(label: "test")
+        let timeLimits = ManualTimeLimits()
+        let pool = BlockingIO(label: "test", timeLimit: timeLimits.timeLimit)
         let release = DispatchSemaphore(value: 0)
-        let sawCancellation = Locked(false)
-        await #expect(throws: TimeoutError.self) {
-            try await pool.run(timeout: .milliseconds(50)) { cancellation in
-                _ = release.wait(timeout: .now() + 5)
+        let (started, sawCancellation) = (Locked(false), Locked(false))
+        let call = Task {
+            try await pool.run(timeout: .seconds(5), key: "blocked") { cancellation in
+                started.withLock { $0 = true }
+                _ = release.wait(timeout: .now() + 600)
                 sawCancellation.withLock { $0 = cancellation.isCancelled }
             }
         }
+        #expect(await waitUntil(limit: .seconds(60)) { started.value })
+        timeLimits.expire { $0 == "blocked" }
+        await #expect(throws: TimeoutError.self) { try await call.value }
         #expect(pool.abandonedCount == 1)
         release.signal()
-        #expect(await waitUntil { sawCancellation.value })
-        #expect(await waitUntil { pool.abandonedCount == 0 })
+        #expect(await waitUntil(limit: .seconds(60)) { sawCancellation.value })
+        #expect(await waitUntil(limit: .seconds(60)) { pool.abandonedCount == 0 })
     }
 
+    /// The call returns while its work still blocks, so it did not wait for the work.
     @Test func callerCancellationReturnsAtOnce() async {
-        let pool = BlockingIO(label: "test")
+        let timeLimits = ManualTimeLimits()
+        let pool = BlockingIO(label: "test", timeLimit: timeLimits.timeLimit)
         let release = DispatchSemaphore(value: 0)
         let started = Locked(false)
         let task = Task {
-            try await pool.run(timeout: .seconds(30)) { _ in
+            try await pool.run(timeout: .seconds(5)) { _ in
                 started.withLock { $0 = true }
-                _ = release.wait(timeout: .now() + 5)
+                _ = release.wait(timeout: .now() + 600)
             }
         }
-        #expect(await waitUntil { started.value })
-        let clock = ContinuousClock()
-        let start = clock.now
+        #expect(await waitUntil(limit: .seconds(60)) { started.value })
         task.cancel()
-        await #expect(throws: CancellationError.self) { try await task.value }
-        #expect(clock.now - start < .seconds(1))
+        await #expect(throws: CancellationError.self) {
+            try await withDeadline(.seconds(60)) { try await task.value }
+        }
+        #expect(pool.abandonedCount == 1)
         release.signal()
-        #expect(await waitUntil { pool.abandonedCount == 0 })
+        #expect(await waitUntil(limit: .seconds(60)) { pool.abandonedCount == 0 })
     }
 
+    /// The work blocks far longer than the test may take, so each call ends only by its real
+    /// time limit, also when blocked work fills every worker thread.
     @Test func timeoutsFireWhenBlockedWorkFillsEveryThread() async {
         // More blocked calls than the system gives worker threads to a process (64).
         let pool = BlockingIO(label: "test", capacity: 100)
         let release = DispatchSemaphore(value: 0)
-        let clock = ContinuousClock()
-        let start = clock.now
-        let timeouts = await withTaskGroup(of: Bool.self) { group in
-            for _ in 0..<80 {
-                group.addTask {
-                    do {
-                        try await pool.run(timeout: .milliseconds(100)) { _ in
-                            _ = release.wait(timeout: .now() + 5)
+        let timeouts = try? await withDeadline(.seconds(60)) {
+            await withTaskGroup(of: Bool.self) { group in
+                for _ in 0..<80 {
+                    group.addTask {
+                        do {
+                            try await pool.run(timeout: .milliseconds(100)) { _ in
+                                _ = release.wait(timeout: .now() + 600)
+                            }
+                            return false
+                        } catch {
+                            return error is TimeoutError
                         }
-                        return false
-                    } catch {
-                        return error is TimeoutError
                     }
                 }
+                var count = 0
+                for await isTimeout in group where isTimeout { count += 1 }
+                return count
             }
-            var count = 0
-            for await isTimeout in group where isTimeout { count += 1 }
-            return count
         }
-        let elapsed = clock.now - start
         for _ in 0..<80 { release.signal() }
         #expect(timeouts == 80)
-        #expect(elapsed < .seconds(2))
         // Abandoned work ends after the release, and capacity comes back.
-        #expect(await waitUntil { pool.abandonedCount == 0 })
+        #expect(await waitUntil(limit: .seconds(60)) { pool.abandonedCount == 0 })
     }
 
     @Test func workWhoseCallerGaveUpBeforeItStartedNeverRuns() async throws {
         // A serial pool holds the second call behind the first.
-        let pool = BlockingIO(label: "test", attributes: [])
+        let timeLimits = ManualTimeLimits()
+        let pool = BlockingIO(label: "test", attributes: [], timeLimit: timeLimits.timeLimit)
         let release = DispatchSemaphore(value: 0)
         let (firstStarted, laterRan) = (Locked(false), Locked(false))
         let first = Task {
-            try await pool.run(timeout: .milliseconds(50)) { _ in
+            try await pool.run(timeout: .seconds(5), key: "first") { _ in
                 firstStarted.withLock { $0 = true }
-                _ = release.wait(timeout: .now() + 5)
+                _ = release.wait(timeout: .now() + 600)
             }
         }
-        #expect(await waitUntil { firstStarted.value })
-        await #expect(throws: TimeoutError.self) {
-            try await pool.run(timeout: .milliseconds(50)) { _ in laterRan.withLock { $0 = true } }
+        #expect(await waitUntil(limit: .seconds(60)) { firstStarted.value })
+        let later = Task {
+            try await pool.run(timeout: .seconds(5), key: "later") { _ in
+                laterRan.withLock { $0 = true }
+            }
         }
+        // The later work waits in the queue behind the first when its caller gives up.
+        #expect(await waitUntil(limit: .seconds(60)) { timeLimits.isWaiting("later") })
+        timeLimits.expire { $0 == "later" }
+        await #expect(throws: TimeoutError.self) { try await later.value }
+        timeLimits.expire { $0 == "first" }
         await #expect(throws: TimeoutError.self) { try await first.value }
         #expect(pool.abandonedCount == 2)
         release.signal()
-        #expect(await waitUntil { pool.abandonedCount == 0 })
+        #expect(await waitUntil(limit: .seconds(60)) { pool.abandonedCount == 0 })
         #expect(!laterRan.value)
     }
 
     @Test func failsFastAtCapacityUntilAbandonedWorkEnds() async throws {
-        let pool = BlockingIO(label: "test", capacity: 1)
-        let release = DispatchSemaphore(value: 0)
-        await #expect(throws: TimeoutError.self) {
-            try await pool.run(timeout: .milliseconds(20)) { _ in
-                _ = release.wait(timeout: .now() + 5)
-            }
-        }
+        let timeLimits = ManualTimeLimits()
+        let pool = BlockingIO(label: "test", capacity: 1, timeLimit: timeLimits.timeLimit)
+        let release = await timeLimits.makeStuckRead(in: pool)
         await #expect(throws: BlockingIO.BusyError.self) {
             try await pool.run(timeout: .seconds(5)) { _ in 1 }
         }
         release.signal()
-        #expect(await waitUntil { pool.abandonedCount == 0 })
+        #expect(await waitUntil(limit: .seconds(60)) { pool.abandonedCount == 0 })
         #expect(try await pool.run(timeout: .seconds(5)) { _ in 1 } == 1)
     }
 
     @Test func tracksTheKeysOfWorkThatPassedItsLimit() async throws {
-        let pool = BlockingIO(label: "test")
-        let release = DispatchSemaphore(value: 0)
-        await #expect(throws: TimeoutError.self) {
-            try await pool.run(timeout: .milliseconds(20), key: "stuck") { _ in
-                _ = release.wait(timeout: .now() + 5)
-            }
-        }
+        let timeLimits = ManualTimeLimits()
+        let pool = BlockingIO(label: "test", timeLimit: timeLimits.timeLimit)
+        let stuck = await timeLimits.makeStuckRead(in: pool, key: "stuck")
         _ = try await pool.run(timeout: .seconds(5), key: "quick") { _ in 1 }
         // A cancelled caller proves nothing about its resource.
+        let release = DispatchSemaphore(value: 0)
         let started = Locked(false)
         let cancelled = Task {
-            try await pool.run(timeout: .seconds(30), key: "cancelled") { _ in
+            try await pool.run(timeout: .seconds(5), key: "cancelled") { _ in
                 started.withLock { $0 = true }
-                _ = release.wait(timeout: .now() + 5)
+                _ = release.wait(timeout: .now() + 600)
             }
         }
-        #expect(await waitUntil { started.value })
+        #expect(await waitUntil(limit: .seconds(60)) { started.value })
         cancelled.cancel()
         await #expect(throws: CancellationError.self) { try await cancelled.value }
         #expect(pool.abandonedCount == 2)
         #expect(pool.isStuck("stuck"))
         #expect(!pool.isStuck("quick"))
         #expect(!pool.isStuck("cancelled"))
+        stuck.signal()
         release.signal()
-        release.signal()
-        #expect(await waitUntil { pool.abandonedCount == 0 })
+        #expect(await waitUntil(limit: .seconds(60)) { pool.abandonedCount == 0 })
         #expect(!pool.isStuck("stuck"))
     }
 }

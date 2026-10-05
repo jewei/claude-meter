@@ -330,6 +330,30 @@ import Testing
         #expect(http.requests.count == 2)
     }
 
+    /// R5-P-02: a 429 for another login in between does not end the hold of the first login.
+    @Test func aRateLimitOfAnotherLoginKeepsTheFirstHold() async throws {
+        let first = CursorFixture.token(expiresAt: .reference(.days(1)))
+        let other = CursorFixture.token(subject: "auth0|other", expiresAt: .reference(.days(1)))
+        let http = FakeHTTPClient(status: 429, json: "", headers: ["Retry-After": "120"])
+        let source = source(http)
+        keychain.store(first, service: "cursor-access-token")
+        _ = await providerError { try await source.history(now: .reference(), previous: nil) }
+
+        keychain.store(other, service: "cursor-access-token")
+        let limited = await providerError {
+            try await source.history(now: .reference(10), previous: nil)
+        }
+        #expect(limited?.issue.retryAt == .reference(130))
+        #expect(http.requests.count == 2)
+
+        keychain.store(first, service: "cursor-access-token")
+        let held = await providerError {
+            try await source.history(now: .reference(20), previous: nil)
+        }
+        #expect(held?.issue.retryAt == .reference(120))
+        #expect(http.requests.count == 2)
+    }
+
     /// A wrong `Retry-After` cannot stop the export for more than one hour.
     @Test func aRateLimitHoldsTheExportAtMostOneHour() async throws {
         keychain.store(

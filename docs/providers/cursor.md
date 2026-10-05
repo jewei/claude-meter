@@ -195,12 +195,14 @@ The email is never part of the reading.
     countdown. The hold comes before the expiry check, and a login that cannot be read keeps
     it, so a refresh that sends nothing never ends it early. The provider keeps each 429 in
     memory as soon as Cursor answers, before it reads the login again, so a refresh that is
-    cancelled after the response still holds the login. Only the hold of an observed account
-    whose token names a user (`sub`) survives a restart (`docs/architecture.md`). The usage
-    request of a refresh whose plan request got the 429 succeeded, so no account issue
-    carries that hold: the provider keeps it in memory. A restart before the next refresh ends
-    it. A refresh during the hold puts the 429 issue on the account, and that hold then
-    survives a restart like a usage-request hold.
+    cancelled after the response still holds the login. Memory keeps one hold for each login
+    (`RateLimitHolds`), so a 429 for another login never ends it: after a 429 for login A,
+    then one for login B, A still waits when it signs in again before its retry time. Only
+    the hold of an observed account whose token names a user (`sub`) survives a restart
+    (`docs/architecture.md`). The usage request of a refresh whose plan request got the 429
+    succeeded, so no account issue carries that hold: the provider keeps it in memory. A
+    restart before the next refresh ends it. A refresh during the hold puts the 429 issue on
+    the account, and that hold then survives a restart like a usage-request hold.
 20. `"enabled": false`: drop the last observation, because it no longer describes the account.
 21. If the owner after the response differs from the owner before it, discard the response.
 22. `reconcile` drops the reading when the owner changed or the user signed out. It reads local
@@ -231,8 +233,9 @@ The email is never part of the reading.
     login change during the export discards the result.
 33. After HTTP 429 with a `Retry-After`, the shared rate-limit hold applies to the export
     (`docs/architecture.md`): no export for the same login before the retry time, at most
-    1 hour after the 429. Another login exports at once. The provider keeps the hold of the
-    last 429 in memory, so a restart ends it.
+    1 hour after the 429. Another login exports at once. The provider keeps one hold for each
+    login in memory (`RateLimitHolds`), so a 429 for another login never ends it, and a
+    restart ends it.
 
 ### Messages
 

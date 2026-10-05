@@ -26,13 +26,14 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
     /// restart (``asksForPlan(owner:hasKnownPlan:now:)``). One date for each login seen while
     /// the app runs. Memory only.
     private let planAttempts = Locked<[AccountOwner: Date]>([:])
-    /// The pause after the last HTTP 429 on the usage or plan request (``RateLimitHold``), kept
-    /// as soon as Cursor answers. A 429 on the plan request has no account issue, because the
-    /// usage request of that refresh succeeded. A 429 on the usage request gets its issue only
-    /// when the refresh ends, so a cancelled refresh would lose it. A restart before the next
-    /// refresh ends this hold. A refresh during the hold puts the 429 issue on the account, and
-    /// that hold then survives a restart like a usage-request hold.
-    private let memoryHold = Locked<RateLimitHold?>(nil)
+    /// The pause after HTTP 429 on the usage or plan request for each login
+    /// (``RateLimitHolds``), kept as soon as Cursor answers. A 429 on the plan request has no
+    /// account issue, because the usage request of that refresh succeeded. A 429 on the usage
+    /// request gets its issue only when the refresh ends, so a cancelled refresh would lose it.
+    /// A 429 for another login never ends a hold. A restart before the next refresh ends these
+    /// holds. A refresh during the hold puts the 429 issue on the account, and that hold then
+    /// survives a restart like a usage-request hold.
+    private let memoryHolds = Locked(RateLimitHolds())
 
     /// - Parameters:
     ///   - keychain: Read only, for the access token when the state database has none.
@@ -145,7 +146,7 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
         // The 429 belongs to the login that sent the request, even if the login changes now.
         // Keep it at once, because a cancel during the read below drops this account.
         if case .failure(.rateLimited(let retryAt?)) = result {
-            memoryHold.withLock { $0 = RateLimitHold(owner: owner, retryAt: retryAt) }
+            hold(owner, until: retryAt, now: now)
         }
         // The response belongs to the login that sent it. Discard it if the login changed.
         let after = try await store.read().ownerStatus
@@ -166,11 +167,15 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
     }
 
     /// When `owner` may send again after HTTP 429, or nil: from the account's issue, or from
-    /// ``memoryHold``.
+    /// ``memoryHolds``.
     private func retryTime(for owner: AccountOwner, previous: AccountUsage?, now: Date) -> Date? {
         if let issue = previous?.rateLimitHold(for: owner, now: now) { return issue.retryAt }
-        if let hold = memoryHold.value, hold.holds(owner, now: now) { return hold.retryAt }
-        return nil
+        return memoryHolds.value.retryAt(for: owner, now: now)
+    }
+
+    /// Keeps the hold of `owner` after HTTP 429 at `now` in ``memoryHolds``.
+    private func hold(_ owner: AccountOwner, until retryAt: Date, now: Date) {
+        memoryHolds.withLock { $0.record(RateLimitHold(owner: owner, retryAt: retryAt), now: now) }
     }
 
     /// Throws ``CursorFailure`` or `CancellationError`.
@@ -195,7 +200,7 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
     /// The plan from `GetPlanInfo`, used only when Cursor stored no plan. `knownPlan` is the
     /// plan that the same login showed, reused without a request until the login may ask again
     /// (``asksForPlan(owner:hasKnownPlan:now:)``). A failure keeps the known plan, because the
-    /// plan only labels the card; HTTP 429 also holds the login (``memoryHold``).
+    /// plan only labels the card; HTTP 429 also holds the login (``memoryHolds``).
     private func planName(
         token: String, owner: AccountOwner, knownPlan: String?, now: Date
     ) async throws -> String? {
@@ -209,7 +214,7 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
                 planInfo: try await CursorAPI.send(request, http: http, now: now)) ?? knownPlan
         } catch let failure as CursorFailure {
             if case .rateLimited(let retryAt?) = failure {
-                memoryHold.withLock { $0 = RateLimitHold(owner: owner, retryAt: retryAt) }
+                hold(owner, until: retryAt, now: now)
             }
             return knownPlan
         }

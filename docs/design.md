@@ -174,8 +174,7 @@ inactive (`allowsToolTipsWhenApplicationIsInactive`).
 │ ┌ update notice (when available) ──────────┐ │
 │ ┌ notices ─────────────────────────────────┐ │  body: padding 15, top 2, bottom 16
 │ ┌ hero ────────────────────────────────────┐ │  spacing 12
-│  ACCOUNTS                     ◌ week ● 5-hr  │
-│  Drag a Claude or Codex card to the top…     │
+│  ACCOUNTS (i)                 ◌ week ● 5-hr  │  (i): drag hint tooltip
 │  (▭ Menu bar)                                 │  pill above the main card
 │ ┌ card ────────────────────────────────────┐ │  card list spacing 10
 └──────────────────────────────────────────────┘
@@ -194,7 +193,9 @@ padding 14×13. VoiceOver reads it as one element: "title. subtitle".
 
 ### Card list and reordering
 
-`CardList` renders `AccountsModel.cards`. A local `DragGesture` (minimum 8 pt, named
+`CardList` renders `AccountsModel.cards`. When more than one card can own the menu bar, an
+`info.circle` icon after "ACCOUNTS" shows `AccountsModel.dragHint` as its tooltip and its
+VoiceOver label. A local `DragGesture` (minimum 8 pt, named
 coordinate space) tracks the pointer in `@GestureState`, so it resets on end and cancel.
 `CardReorder.targetIndex` (pure) gives the card a new place only after the pointer crosses
 a neighbor's midpoint; a pointer above or below the list counts as its first or last place.

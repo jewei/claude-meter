@@ -12,6 +12,11 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
+### Changed
+
+- The drag hint above the cards is now a tooltip on an info icon beside **ACCOUNTS**, so the
+  popover is one line shorter.
+
 ## [4.0.0] - 2026-10-05
 
 Claude Meter 4.0 is a complete rewrite. It keeps every feature of 3.x with a new, faster

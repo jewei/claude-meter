@@ -111,7 +111,7 @@ Cookie: WorkosCursorSessionToken=<user ID>%3A%3A<access token>
   read. They read the credentials three times (in `reconcile`, and before and after the
   export), at most 2 s each, so 2 + 2 + 10 + 2 = 16 s leaves at least 4 s to parse.
 - The HTTP client accepts at most 8 MiB. Export rows are about 90 to 150 bytes, so an export
-  of roughly 55,000 rows or more fails as too large.
+  of roughly 56,000 to 93,000 rows or more fails as too large.
 
 Required CSV columns (names trimmed, unique): `Date`, `Input (w/ Cache Write)`,
 `Input (w/o Cache Write)`, `Cache Read`, `Output Tokens`. Other columns, such as `Model` and

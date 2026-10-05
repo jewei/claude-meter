@@ -17,11 +17,7 @@ struct ExtraUsageCardView: View {
                     .foregroundStyle(Palette.ink)
                 if extra.isPaused { ChipView(text: "paused") }
                 Spacer(minLength: 4)
-                Text(extra.amountText)
-                    .font(MeterFont.display(14, .bold))
-                    .foregroundStyle(Palette.ink)
-                    .monospacedDigit()
-                    .fixedSize()
+                amount
             }
             .frame(minHeight: 22)
             if let fraction = extra.fraction {
@@ -43,5 +39,16 @@ struct ExtraUsageCardView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(card.title)
         .accessibilityValue(extra.accessibilityValue)
+    }
+
+    /// `$12.50 / $50.00`. An amount has no widest value, so it keeps one width while it has
+    /// as many digits (``FixedNumberWidth/template(_:weight:)``).
+    var amount: some View {
+        Text(extra.amountText)
+            .font(MeterFont.display(14, .bold))
+            .foregroundStyle(Palette.ink)
+            .fixedNumberWidth(
+                fitting: FixedNumberWidth.template(extra.amountText, weight: .bold),
+                font: MeterFont.display(14, .bold))
     }
 }

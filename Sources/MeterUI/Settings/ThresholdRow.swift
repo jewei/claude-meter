@@ -18,16 +18,25 @@ struct ThresholdRow: View {
                     .font(MeterFont.display(16, .semibold))
                     .foregroundStyle(Palette.ink)
                 Spacer()
-                Text(ThresholdText.percent(value, in: range))
-                    .font(MeterFont.display(14, .bold))
-                    .foregroundStyle(ink)
-                    .monospacedDigit()
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(color.opacity(0.16)))
+                pill
             }
             .accessibilityHidden(true)
             ThresholdSlider(value: $value, range: range, step: step, color: color, label: label)
         }
+    }
+
+    /// The threshold in a capsule, as wide as `100%`, so the capsule keeps its size while the
+    /// slider moves, and both rows show the same capsule.
+    var pill: some View {
+        Text(ThresholdText.percent(value, in: range))
+            .font(MeterFont.display(14, .bold))
+            .foregroundStyle(ink)
+            .fixedNumberWidth(
+                fitting: FixedNumberWidth.percent, font: MeterFont.display(14, .bold),
+                alignment: .center
+            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(color.opacity(0.16)))
     }
 }

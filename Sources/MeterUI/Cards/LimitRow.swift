@@ -11,10 +11,7 @@ struct LimitRow: View {
             Text(gauge.shortTitle)
                 .font(MeterFont.body(11, .bold))
                 .foregroundStyle(Palette.ink)
-            Text(gauge.valueText)
-                .font(gauge.valueFont(size: 12))
-                .foregroundStyle(gauge.severity.ink)
-                .monospacedDigit()
+            GaugeValueText(gauge: gauge, size: 12, color: gauge.severity.ink)
             if let caption = gauge.caption {
                 Text(caption)
                     .font(MeterFont.body(11, .semibold))

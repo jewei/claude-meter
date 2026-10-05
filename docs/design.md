@@ -90,7 +90,7 @@ bar uses the system rounded font.
 | Hero subtitle | Nunito Bold | 12 | "Almost dry · Session resets in 30m" |
 | Account name | Fredoka SemiBold | 15 ring / 14 bar | "Work" |
 | Settings row title | Fredoka SemiBold | 16 | "Launch at login" |
-| Big number | Fredoka Bold | 14 (12 in limit rows) | "78%" |
+| Big number | Fredoka Bold | 14 (12 in limit rows), as wide as "100%" | "78%" |
 | Unknown number | Nunito Bold | one size smaller | "—" (Fredoka draws it like a minus) |
 | Ring letter | Fredoka Bold | 19 | "W" |
 | Plan badge | Fredoka Bold | 10 | "MAX 20X" |
@@ -101,9 +101,17 @@ bar uses the system rounded font.
 | Note | Nunito SemiBold | 10 | "Token usage unavailable" |
 | Pill | Nunito ExtraBold | 10 | "Menu bar" |
 
-Every changing number uses `.monospacedDigit()`, also in text that can hold one: the hero
-subtitle, notices, status lines and screens, the notes under tokens used and usage-limit
-resets, and the last update check.
+No changing number may change width. Nunito's digits all have one width, as do the menu
+bar's (system rounded with `.monospacedDigit()`). So every changing number in Nunito uses
+`.monospacedDigit()`, also in text that can hold one: the hero subtitle, notices, status
+lines and screens, the notes under tokens used and usage-limit resets, and the last update
+check. Fredoka's digits do not have one width, and Fredoka has no tabular digits, so
+`.monospacedDigit()` does nothing on it. A changing number in Fredoka takes a fixed width
+instead (`.fixedNumberWidth`, `Design/FixedNumberWidth.swift`): a percentage is as wide as
+`100%` (gauge values in `GaugeValueText`, and the threshold pills, so both pills have one
+width), and an amount is as wide as its text with each digit set as the widest digit (extra
+usage), so it changes width only with its count of digits. `DesignSystemTests` checks the
+digit widths of each face, and `FixedNumberWidthTests` the widths of each number.
 
 ## Components (`Design/`)
 

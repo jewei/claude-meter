@@ -52,11 +52,8 @@ struct BarCardView: View {
                 ProviderMark(provider: card.provider)
                 CardIdentity(card: card)
                 Spacer(minLength: 4)
-                Text(bars.headline.valueText)
-                    .font(bars.headline.valueFont(size: 14))
-                    .foregroundStyle(bars.headline.severity.headlineInk)
-                    .monospacedDigit()
-                    .fixedSize()
+                GaugeValueText(
+                    gauge: bars.headline, size: 14, color: bars.headline.severity.headlineInk)
                 DisclosureChevron(isExpanded: isExpanded)
             }
             .frame(minHeight: 28)

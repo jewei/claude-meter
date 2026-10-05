@@ -13,10 +13,7 @@ struct RingMetricRow: View {
                     .font(MeterFont.body(11, .bold))
                     .foregroundStyle(Palette.ink)
                 Spacer(minLength: 4)
-                Text(gauge.valueText)
-                    .font(gauge.valueFont(size: 14))
-                    .foregroundStyle(gauge.severity.ink)
-                    .monospacedDigit()
+                GaugeValueText(gauge: gauge, size: 14, color: gauge.severity.ink)
                 if let caption = gauge.caption {
                     Text(caption)
                         .font(MeterFont.body(11, .semibold))

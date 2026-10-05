@@ -15,6 +15,33 @@ import Testing
             ])
     }
 
+    /// `.monospacedDigit()` keeps a number at one width only in a face whose digits are all
+    /// as wide: every Nunito face, and the menu bar's system rounded font. Fredoka has
+    /// neither, so its changing numbers take a fixed width (review R5-U-01,
+    /// ``FixedNumberWidthTests``).
+    @Test func onlyFacesWithEqualDigitsUseMonospacedDigits() throws {
+        MeterFont.registerBundledFonts()
+        func widths(_ font: NSFont) -> Set<CGFloat> {
+            Set(
+                "0123456789".map { digit in
+                    NSAttributedString(string: String(digit), attributes: [.font: font]).size()
+                        .width
+                })
+        }
+        for weight in [MeterFont.BodyWeight.semibold, .bold, .extraBold] {
+            let font = try #require(NSFont(name: weight.face, size: 11))
+            #expect(widths(font).count == 1, "\(weight.face)")
+        }
+        let system = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .bold)
+        let rounded = try #require(
+            system.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: 12) })
+        #expect(widths(rounded).count == 1)
+        for weight in [MeterFont.DisplayWeight.semibold, .bold] {
+            let font = try #require(NSFont(name: weight.face, size: 14))
+            #expect(widths(font).count > 1, "\(weight.face) has tabular digits now")
+        }
+    }
+
     @Test func paletteAdaptsToTheAppearance() throws {
         let color = Palette.popoverBackground
         let light = try #require(NSAppearance(named: .aqua))

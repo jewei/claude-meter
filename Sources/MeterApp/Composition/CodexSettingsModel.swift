@@ -16,10 +16,13 @@ public final class CodexSettingsModel {
         /// The implicit home cannot be removed.
         public let isImplicit: Bool
         public var status: SignInStatus?
-        /// The saved path texts that resolve to this home. Usually the canonical path that Add
-        /// saved, but a folder that moved and left a link at its old path is saved by the link.
-        /// Remove and rename use these, so they still find the saved home. Empty when no saved
-        /// path names the home, as for the implicit home.
+        /// The texts in `CodexSettings.extraHomes` whose canonical path is this home, as of the
+        /// last reload. Add saves the canonical path, but a folder that moved and left a link
+        /// at its old path is still saved by the link, and more than one text can name the
+        /// same home. Remove deletes all of them. Rename and Remove act only while one of them
+        /// is still saved; rename also acts on the implicit home, which Remove never removes.
+        /// Empty when no saved text names the home; the implicit home has one only when its
+        /// path is also saved as an added home.
         public let savedPaths: [String]
 
         init(

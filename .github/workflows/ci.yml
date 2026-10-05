@@ -17,7 +17,9 @@ concurrency:
 jobs:
   check:
     name: make check
-    runs-on: macos-26
+    # The Xcode 27 image (macOS 27) is a public preview on GitHub. Move to the macOS 27 image
+    # when it is generally available.
+    runs-on: xcode-27
     timeout-minutes: 20
 
     steps:
@@ -29,7 +31,7 @@ jobs:
       - name: Select Xcode
         id: xcode
         env:
-          XCODE_APP: /Applications/Xcode_26.6.app
+          XCODE_APP: /Applications/Xcode_27.0.app
         run: |
           sudo xcode-select --switch "$XCODE_APP"
           xcodebuild -version

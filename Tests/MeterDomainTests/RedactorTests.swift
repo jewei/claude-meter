@@ -112,7 +112,7 @@ import Testing
     private static let adversarialUnits = [
         "a", "aB3", "a_", "a@", "a.", "a-", "eyJ", "eyJ.", String(repeating: "a", count: 64) + "_",
         "Bearer ", #""key":""#, #"\"key\":\""#, "sk-", "/Users/", "Basic ", "password=\"",
-        "Email: ", "-----BEGIN ",
+        "Email: ", "-----BEGIN ", #"\"token\":\"a\\\""#,
     ]
 
     /// The CPU time of this thread, so other work on a busy machine does not count. The best
@@ -185,11 +185,29 @@ import Testing
         ),
         ("password='correct horse' next", "password='[redacted]' next"),
         (#"{"password": "a\"b c"}"#, #"{"password": "[redacted]"}"#),
-        (#"{"password": ""}"#, #"{"password": ""}"#),
         (#"{"secret": "alpha bravo"}"#, #"{"secret": "[redacted]"}"#),
+        // An escaped quote in escaped JSON does not end the value (review R4-D-05).
+        (#"{\"password\":\"ab\\\"cd secret\"}"#, #"{\"password\":\"[redacted]\"}"#),
+        (
+            #"{\"token\":\"ab\\\"cd secret\",\"name\":\"ok\"}"#,
+            #"{\"token\":\"[redacted]\",\"name\":\"ok\"}"#
+        ),
+        (
+            #"{\"token\":\"ab\\\\\",\"name\":\"ok\"}"#,
+            #"{\"token\":\"[redacted]\",\"name\":\"ok\"}"#
+        ),
     ])
     func quotedSecretsAreRedactedToTheirClosingQuote(input: String, expected: String) {
         #expect(Redactor.redact(input) == expected)
+    }
+
+    /// An empty value hides nothing, so every rule leaves it empty (review R4-D-05).
+    @Test(arguments: [
+        #"{"password": ""}"#, #"{"key": "", "name": "ok"}"#, #"{"token":""}"#,
+        #"{\"secret\":\"\",\"name\":\"ok\"}"#, #"{\"access_token\":\"\"}"#,
+    ])
+    func emptyValuesStayEmpty(text: String) {
+        #expect(Redactor.redact(text) == text)
     }
 
     /// The labeled rule has no left edge, so a prefix before the label stays as it is.

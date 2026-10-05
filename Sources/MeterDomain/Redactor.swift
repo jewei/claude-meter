@@ -105,10 +105,12 @@ public enum Redactor {
         // `"access_token": "…"`, `{\"session_token\":\"…\"}`, `OPENAI_API_KEY=…`,
         // `"secret_key": "…"`. The rule has no left edge, so a prefix such as `OPENAI_` stays
         // in front of the match unchanged. A quoted value is taken to its closing quote, or to
-        // the end of the text, so a value with spaces goes completely. Starts at a fixed word;
+        // the end of the text, so a value with spaces goes completely. An empty value stays
+        // empty. In escaped JSON, an escaped backslash pair (`\\`) goes with the unit after it,
+        // so an escaped quote in the value (`\\\"`) does not end it. Starts at a fixed word;
         // the spaces and the quoted value are possessive, and the value ends the match.
         Rule(
-            #"(?i)((?:access|refresh|id|session|auth)[_-]?token|(?:api|secret|private|access)[_-]?key|client[_-]?secret|password)(\\?["']?\s*+[:=]\s*+)(?:(\\")(?:[^"\\]|\\[^"])++|(")(?:[^"\\]|\\.)++|(')(?:[^'\\]|\\.)++|[^"'\\,\s;}&]+)"#,
+            #"(?i)((?:access|refresh|id|session|auth)[_-]?token|(?:api|secret|private|access)[_-]?key|client[_-]?secret|password)(\\?["']?\s*+[:=]\s*+)(?:(\\")(?:[^"\\]|\\\\\\?.|\\[^"])++|(")(?:[^"\\]|\\.)++|(')(?:[^'\\]|\\.)++|[^"'\\,\s;}&]+)"#,
             "$1$2$3$4$5\(placeholder)"),
         // Secrets in URL query parameters: `?token=…`, `&code=…`. The value ends the match.
         Rule(
@@ -118,11 +120,12 @@ public enum Redactor {
         // fixed word that no letter or digit comes before; the value ends the match.
         Rule(#"(?i)(?<![A-Za-z0-9])(token|secret)=[^\s&"',;]+"#, "$1=\(placeholder)"),
         // Generic secret fields in JSON and in escaped JSON: `"key": "…"`, `\"token\":\"…\"`.
-        // The value goes to its closing quote, which stays, or to the end of the text. Starts
-        // at a fixed word; the value is possessive and ends the match.
-        Rule(#"(?i)"(key|token|secret)"(\s*+:\s*+)"(?:[^"\\]|\\.)*+"#, "\"$1\"$2\"\(placeholder)"),
+        // The value goes to its closing quote, which stays, or to the end of the text, with
+        // escapes as in the labeled rule. An empty value stays empty. Starts at a fixed word;
+        // the value is possessive and ends the match.
+        Rule(#"(?i)"(key|token|secret)"(\s*+:\s*+)"(?:[^"\\]|\\.)++"#, "\"$1\"$2\"\(placeholder)"),
         Rule(
-            #"(?i)\\"(key|token|secret)\\"(\s*+:\s*+)\\"(?:[^"\\]|\\[^"])*+"#,
+            #"(?i)\\"(key|token|secret)\\"(\s*+:\s*+)\\"(?:[^"\\]|\\\\\\?.|\\[^"])++"#,
             #"\\"$1\\"$2\\"\#(placeholder)"#),
         // UUIDs identify accounts and organizations. Fixed length.
         Rule(#"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#),

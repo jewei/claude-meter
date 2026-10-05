@@ -6,7 +6,8 @@ import SwiftUI
 /// The drag is local: no pasteboard, no drop from outside. While the card moves, the list
 /// shows a preview from view state only (``CardDragPreview``): the card takes a new place when
 /// the pointer crosses a neighbor's midpoint (``CardReorder``), never a place that the drop
-/// would refuse, and the Menu bar pill goes to the card that the drop makes the main meter.
+/// would refuse, and the Menu bar pill goes to the card that the drop makes the main meter,
+/// from the start of the drag for a first card that is not the main card.
 /// The settings change once, on the drop (`AppModel.moveCard`), so a card that passes over the
 /// top and comes back changes nothing. The dragged card lifts, a cancelled drag puts the cards
 /// back, and a hidden popover does not reorder. A drag never also opens or closes a bar card.
@@ -79,10 +80,10 @@ struct CardList: View {
                 return
             }
             if !isReordering { isReordering = true }
-            guard
-                let target = CardReorder.targetIndex(
-                    moving: drag.card, to: drag.location, in: shown.map(\.id), frames: frames),
-                let next = accounts.dragPreview(moving: drag.card, to: target), next != preview
+            let target = CardReorder.targetIndex(
+                moving: drag.card, to: drag.location, in: shown.map(\.id), frames: frames)
+            guard let next = accounts.dragPreview(moving: drag.card, to: target, after: preview),
+                next != preview
             else { return }
             withAnimation(Motion.disclosure(reduceMotion: reduceMotion)) { preview = next }
         }

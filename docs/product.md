@@ -58,7 +58,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    order while the card moves, but the settings change once, when the user drops the card:
    a card that passes over the top and comes back changes nothing. During the drag, the card
    takes only places that the drop accepts, and the **Menu bar** pill moves to the card that
-   the drop makes the main meter (`CardDragPreview`). **Use in Menu Bar** in a card's
+   the drop makes the main meter (`CardDragPreview`). A drag starts in the card's own place,
+   so a first card that is not the main card shows the pill as soon as the drag starts, and
+   a drop that never left the place pins it. **Use in Menu Bar** in a card's
    context menu, also a VoiceOver action, does the same as a drag to the top
    (`CardModel.canUseInMenuBar`). **Use automatic order** in Appearance clears the order and
    every pin.

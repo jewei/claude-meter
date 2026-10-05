@@ -187,14 +187,16 @@ coordinate space) tracks the pointer in `@GestureState`, so it resets on end and
 `CardReorder.targetIndex` (pure) gives the card a new place only after the pointer crosses
 a neighbor's midpoint; a pointer above or below the list counts as its first or last place.
 During the drag the list shows a preview from view state only
-(`AccountsModel.dragPreview`, `CardDragPreview`): it skips places that the drop would refuse
-(Cursor, Grok, or extra usage first; the main card off the top), and the pill moves to the
-card that the drop makes the main meter. The dragged card lifts (102%, a soft shadow; no
-scale under Reduce Motion). The drop calls `AppModel.moveCard(_:to:visible:)` once, with the
-place that the preview shows; a cancelled drag, or a refresh that changes the cards, puts
-them back. No pasteboard, no drops from outside, and a hidden popover does not reorder. The
-release that ends a drag does not toggle the bar card under the pointer, and the header
-does not show as pressed during the drag.
+(`AccountsModel.dragPreview`, `CardDragPreview`): it starts in the card's own place, it
+skips places that the drop would refuse (Cursor, Grok, or extra usage first; the main card
+off the top), and the pill moves to the card that the drop makes the main meter. So a first
+card that is not the main card gets the pill when the drag starts, and a drop in place pins
+it. The dragged card lifts (102%, a soft shadow; no scale under Reduce Motion). The drop
+calls `AppModel.moveCard(_:to:visible:)` once, with the place that the preview shows; a
+cancelled drag, or a refresh that changes the cards, puts them back. No pasteboard, no drops
+from outside, and a hidden popover does not reorder. The release that ends a drag does not
+toggle the bar card under the pointer, and the header does not show as pressed during the
+drag.
 
 Dragging is not the only way to choose the menu-bar meter: a Claude or Codex card that is
 not the main card has "Use in Menu Bar" in its context menu and as a VoiceOver action

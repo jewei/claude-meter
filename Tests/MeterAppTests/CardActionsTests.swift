@@ -118,6 +118,56 @@ import Testing
         #expect(!model.showsMenuBarPill(codex, during: back))
     }
 
+    /// A first card that is not the main card becomes the main meter in its own place: its
+    /// drag shows the pill at once, so a drop in place pins it (review R4-A-04).
+    @Test func aDragOfAFirstCardThatIsNotMainShowsThePillAtOnce() throws {
+        // Claude is in use with no account, so the Codex card is first without being main.
+        let model = try accounts(claude: [])
+        let ids = model.cards.map(\.id)
+        let codex = CardID.account(.codex, "/codex")
+        #expect(ids.first == codex)
+        let mainCards = model.cards.filter(\.isMain)
+        #expect(mainCards.isEmpty)
+
+        let start = try #require(model.dragPreview(moving: codex, to: nil, after: nil))
+        #expect(start.index == 0)
+        #expect(start.order == ids)
+        #expect(start.menuBarCard == codex)
+        #expect(model.accepts(start))
+        #expect(model.showsMenuBarPill(codex, during: start))
+        #expect(!model.showsMenuBarPill(codex, during: nil))
+    }
+
+    /// Any other card starts its drag in its own place with no change: the drop there saves
+    /// nothing, and the pill stays on the main card.
+    @Test func aDragStartsInTheCardsOwnPlace() throws {
+        let model = try accounts()
+        let ids = model.cards.map(\.id)
+        let main = try #require(ids.first)
+        let codex = CardID.account(.codex, "/codex")
+        let from = try #require(ids.firstIndex(of: codex))
+        for card in [main, codex] {
+            let start = try #require(model.dragPreview(moving: card, to: nil, after: nil))
+            #expect(start.index == ids.firstIndex(of: card))
+            #expect(start.order == ids)
+            #expect(start.menuBarCard == main)
+            #expect(model.cards(during: start) == model.cards)
+        }
+        #expect(model.dragPreview(moving: .account(.grok, .default), to: nil, after: nil) == nil)
+
+        // The pointer reaches the top, stays, then tries a place that the drop refuses.
+        let top = try #require(model.dragPreview(moving: codex, to: 0, after: nil))
+        #expect(model.dragPreview(moving: codex, to: nil, after: top) == top)
+        #expect(model.dragPreview(moving: codex, to: ids.count, after: top) == top)
+        // Back in its own place, the card changes nothing again.
+        let back = try #require(model.dragPreview(moving: codex, to: from, after: top))
+        #expect(back.order == ids)
+        #expect(back.menuBarCard == main)
+        // A preview of another card does not carry over.
+        let other = try #require(model.dragPreview(moving: codex, to: nil, after: nil))
+        #expect(model.dragPreview(moving: main, to: nil, after: other)?.card == main)
+    }
+
     /// The preview never shows a place that the drop refuses, so the drop always applies.
     @Test func aDragPreviewSkipsPlacesThatTheDropRefuses() throws {
         let model = try accounts()

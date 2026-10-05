@@ -21,7 +21,8 @@ public struct CardDragPreview: Equatable, Sendable {
 extension AccountsModel {
     /// The preview of `card` dropped at `index` of the current order, or nil when the drop
     /// would be refused (``CardOrder/move(_:to:visible:saved:main:)``) or `index` is not a
-    /// place in the list. A view keeps the last preview that was not nil.
+    /// place in the list. During a drag, ``dragPreview(moving:to:after:)`` then keeps the last
+    /// preview.
     public func dragPreview(moving card: CardID, to index: Int) -> CardDragPreview? {
         let ids = cards.map(\.id)
         guard ids.contains(card), ids.indices.contains(index) else { return nil }
@@ -35,6 +36,23 @@ extension AccountsModel {
             return CardDragPreview(
                 card: card, index: index, order: move.order, menuBarCard: move.newMain ?? main)
         }
+    }
+
+    /// The preview as the pointer moves `card`. `target` is the place that the pointer
+    /// reached, or nil while it has not left the card's place. A place that the drop accepts
+    /// gives a new preview, else `last` stays.
+    ///
+    /// The drag starts in the card's own place. There a first card that is not the main card
+    /// becomes the main meter, so it shows the pill at once and a drop in place pins it
+    /// (`docs/product.md` §2.7). A pointer that stays in the first place reaches no target,
+    /// so only this start lets such a drag make the card the main meter.
+    public func dragPreview(
+        moving card: CardID, to target: Int?, after last: CardDragPreview?
+    ) -> CardDragPreview? {
+        if let target, let preview = dragPreview(moving: card, to: target) { return preview }
+        if let last, last.card == card { return last }
+        guard let own = cards.firstIndex(where: { $0.id == card }) else { return nil }
+        return dragPreview(moving: card, to: own)
     }
 
     /// Whether `preview` still fits the cards. It does not after a refresh changed them during

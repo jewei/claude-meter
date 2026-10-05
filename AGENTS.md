@@ -1,8 +1,9 @@
 # Claude Meter
 
 A macOS 14+ menu-bar app that shows coding quota for Claude, Codex, Cursor, and Grok as
-energy left. Swift 6, SwiftUI hosted in AppKit, Sparkle updates. No Dock icon, except while
-Settings is open.
+energy left. Swift 6, SwiftUI hosted in AppKit, Sparkle updates. No Dock icon, except after
+Settings opens: the app returns to menu-bar-only when the last titled window (Settings or
+Sparkle's update window) closes.
 
 Read this file before you change anything. It is short on purpose: every rule here is one
 that a change has broken before.

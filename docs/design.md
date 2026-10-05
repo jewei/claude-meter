@@ -8,7 +8,9 @@ they never decide data rules (see `AGENTS.md`).
 
 Quota shows as energy left. The style is playful: a warm cream background, bright green,
 orange, and red, rounded type, rings, and "chunky" cards with a solid plate under them. The
-app lives in the menu bar and has no Dock icon, except while Settings is open.
+app lives in the menu bar and has no Dock icon, except after Settings opens: it returns to
+menu-bar-only when the last titled window (Settings or Sparkle's update window) closes
+(`DockIconPolicy`).
 
 ## Color tokens
 

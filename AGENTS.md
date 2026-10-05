@@ -143,12 +143,14 @@ is missing from that place.
 2. `Package.swift`: add the `Provider<Name>` target and add its name to `providers`. Add the
    `Provider<Name>Tests` test target **(no compiler check)**.
 3. `Sources/Provider<Name>/`: implement `UsageProvider` and `DiagnosticsReporting`, and
-   `TokenHistoryProvider` if the provider has local history. Wire types stay in the module.
+   `TokenHistoryProvider` if the provider reports token history (local files, or an account
+   API like Cursor). Wire types stay in the module.
 4. `Sources/MeterDomain/Redactor.swift`: add a rule for each token format of the provider,
    with a case in `Tests/MeterDomainTests/RedactorTests.swift` **(no compiler check)**. Start
    the rule at a fixed word or at the left edge of a run (`(?<![A-Za-z0-9_-])`), and make a
-   run that can fail after it possessive (`++`) or bounded, so the rule stays linear;
-   `longRunsRedactQuickly` checks this.
+   run that can fail after it possessive (`++`) or bounded, so the rule stays linear. Add the
+   rule's start word (for example `newp-`) to `adversarialUnits` in `RedactorTests`:
+   `longRunsRedactQuickly` tests only the units in that list.
 5. `Sources/MeterApp/Composition/LiveProviders.swift`: build the provider, then add it to
    `usageProviders`, `historyProviders`, and `diagnostics` **(no compiler check)**.
 6. `Sources/MeterApp/Settings/Settings.swift`: add a source property with a default. The
@@ -165,6 +167,8 @@ is missing from that place.
 10. Docs **(no compiler check)**. `git grep -n -E "Cursor,? (and )?Grok"` finds most of the
     places that list the providers:
     - `docs/providers/<name>.md`, and the rules in `docs/product.md`;
+    - `docs/design.md`: the drag rule in "Card list and reordering", the bar-card caption
+      rule in "Cards", and the `ProviderMark` row;
     - `AGENTS.md`: the first line, and the provider row of the Map;
     - `README.md`: the first paragraph, the features, the privacy paragraph, and the
       affiliation line;

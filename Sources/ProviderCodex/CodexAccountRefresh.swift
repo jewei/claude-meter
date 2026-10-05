@@ -110,14 +110,19 @@ struct CodexAccountRefresh: Sendable {
     ///
     /// A failure belongs to the login that sent the request. When another login is signed in
     /// after it, the failure is a sign-in change, so a 429 of the old login never holds the new
-    /// one. A login that cannot be read after the request proves nothing: the failure stays.
+    /// one. Recovery from a login without an identity is the exception, the same as in
+    /// ``verifiedOwner(before:after:source:report:)``: Codex can rewrite the file while it
+    /// renews the tokens, so its failure stays. A login that cannot be read after the request
+    /// proves nothing: the failure stays.
     static func kind(
         of request: RequestResult, before: CodexLogin, after: CodexLogin
     ) -> Outcome.Kind {
         switch request.quota {
         case .failure(let error):
             let status = status(after: after, error: error, request.report)
-            if let owner = before.owner, case .signedIn(let current) = status, current != owner {
+            if let owner = before.owner, case .signedIn(let current) = status, current != owner,
+                !renewsOwner(owner, source: request.source)
+            {
                 return .failed(.signInChanged, status: status)
             }
             return .failed(error, status: status)
@@ -178,6 +183,13 @@ struct CodexAccountRefresh: Sendable {
             (.recovery, .unreadable), (.recovery, .unusable), (.recovery, .notReadInTime):
             return nil
         }
+    }
+
+    /// Whether a request from `source` can leave another owner in the file without a sign-in
+    /// change: only recovery from a login without an identity, whose owner is its credential.
+    private static func renewsOwner(_ owner: AccountOwner, source: Source) -> Bool {
+        if case .identity = owner { return false }
+        return source == .recovery
     }
 
     // MARK: - Work

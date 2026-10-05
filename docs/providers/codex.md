@@ -258,7 +258,9 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
     rewrite the file while it renews the tokens. Without a file before and after, the response
     is accepted with the owner from `account/read`. Every other case, including a file that
     cannot be read or parsed after recovery, names no owner, and the response is discarded.
-    An observation always has an owner.
+    An observation always has an owner. For the same reason, a failed recovery from a login
+    without an identity is never a sign-in change: it shows its own failure, with the owner
+    that the file has after it.
 29. A failed home keeps its previous observation as stale while `AccountUsage.belongs(to:)`
     accepts the current owner status. An unknown status keeps it. Otherwise the home is
     unavailable with the issue and the attempt time. The status after a failure: API-key auth,

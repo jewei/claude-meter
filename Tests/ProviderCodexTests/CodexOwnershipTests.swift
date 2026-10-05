@@ -80,6 +80,32 @@ extension CodexTests {
             #expect(account.owner == .credential(Digest.sha256("opaque-2")))
         }
 
+        /// R4-P-05: recovery that renews the tokens of a login without claims and then fails
+        /// shows its own failure, not a sign-in change.
+        @Test func aFailedRecoveryThatRewritesAFileWithoutClaimsKeepsItsFailure() async throws {
+            let holder = Locked<TemporaryDirectory?>(nil)
+            let failure = CodexError.appServerTimedOut(step: "account/rateLimits/read")
+            let recovery = FakeRecovery { _, _ in
+                try holder.value?.write(
+                    CodexFixtures.authJSON(accessToken: "opaque-2"), to: "home/auth.json")
+                throw failure
+            }
+            let bed = try CodexTestBed(
+                http: FakeHTTPClient(status: 401, json: "{}"), recovery: recovery)
+            defer { bed.remove() }
+            holder.withLock { $0 = bed.root }
+            try bed.writeAuth(CodexFixtures.authJSON(accessToken: "opaque-1"))
+
+            let account = try #require(try await bed.provider.fetch(previous: nil).accounts.first)
+
+            #expect(recovery.calls == 1)
+            #expect(
+                account.issue?.message
+                    == CodexError.combining(failure, direct: .loginRequired).issue.message)
+            #expect(account.issue?.message != CodexError.signInChanged.localizedDescription)
+            #expect(account.owner == .credential(Digest.sha256("opaque-2")))
+        }
+
         @Test func recoveryCannotSwitchTheIdentity() async throws {
             let holder = Locked<TemporaryDirectory?>(nil)
             let recovery = FakeRecovery { _, _ in

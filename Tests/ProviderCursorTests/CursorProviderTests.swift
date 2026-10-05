@@ -112,8 +112,8 @@ import Testing
         #expect(account.windows.first?.usedPercent == 62)
     }
 
-    /// Without a stored plan, a plan that the same login showed in the last day is reused, so a
-    /// refresh sends one request, not two.
+    /// Without a stored plan, the plan that the same login showed is reused, so a refresh sends
+    /// one request, not two. After a restart too: a launch sends no plan request.
     @Test func aRecentPlanOfTheSameLoginIsReusedWithoutARequest() async throws {
         try home.write(token: CursorFixture.token())
         let http = FakeHTTPClient(json: CursorFixture.usage)
@@ -125,13 +125,75 @@ import Testing
     /// The plan badge does not disappear because the optional plan request failed.
     @Test func aFailedPlanRequestKeepsThePlanOfTheSameLogin() async throws {
         try home.write(token: CursorFixture.token(expiresAt: .reference(.days(3))))
+        let failing = Locked(false)
         let http = FakeHTTPClient { request in
-            request.url == CursorAPI.planURL ? .json(500, "") : .json(200, CursorFixture.usage)
+            guard request.url == CursorAPI.planURL else { return .json(200, CursorFixture.usage) }
+            return failing.value ? .json(500, "") : .json(200, #"{"planInfo":{"planName":"pro"}}"#)
         }
-        advance(.days(2))
-        let account = try account(try await provider(http).fetch(previous: previous()))
+        let provider = provider(http)
+        let first = try await provider.fetch(previous: nil)
+        failing.withLock { $0 = true }
+        advance(.days(1))
+
+        let account = try account(try await provider.fetch(previous: first))
+
         #expect(account.plan == "Pro")
-        #expect(http.requests.map(\.url) == [CursorAPI.usageURL, CursorAPI.planURL])
+        #expect(
+            http.requests.map(\.url) == [
+                CursorAPI.usageURL, CursorAPI.planURL, CursorAPI.usageURL, CursorAPI.planURL,
+            ])
+    }
+
+    /// R4-P-02: a plan that the same login keeps showing is asked for again once a day, so a
+    /// changed plan shows. A refresh that reuses the plan does not move that day.
+    @Test func aKnownPlanIsAskedForAgainAfterADay() async throws {
+        try home.write(token: CursorFixture.token(expiresAt: .reference(.days(10))))
+        let plan = Locked("pro")
+        let http = FakeHTTPClient { request in
+            request.url == CursorAPI.planURL
+                ? .json(200, #"{"planInfo":{"planName":"\#(plan.value)"}}"#)
+                : .json(200, CursorFixture.usage)
+        }
+        let planRequests = { http.requests.filter { $0.url == CursorAPI.planURL }.count }
+        let provider = provider(http)
+        var usage = try await provider.fetch(previous: nil)
+        var plans = [try account(usage).plan]
+        var counts = [planRequests()]
+        plan.withLock { $0 = "ultra" }
+
+        for _ in 1...4 {
+            advance(.hours(23))
+            usage = try await provider.fetch(previous: usage)
+            plans.append(try account(usage).plan)
+            counts.append(planRequests())
+        }
+
+        #expect(plans == ["Pro", "Pro", "Ultra", "Ultra", "Ultra"])
+        #expect(counts == [1, 1, 2, 2, 3])
+    }
+
+    /// R4-P-02: after a restart, the plan that the same login showed is reused, and its day
+    /// starts at the first refresh.
+    @Test func afterARestartAKnownPlanIsAskedForAgainAfterADay() async throws {
+        try home.write(token: CursorFixture.token(expiresAt: .reference(.days(10))))
+        let http = FakeHTTPClient { request in
+            request.url == CursorAPI.planURL
+                ? .json(200, #"{"planInfo":{"planName":"ultra"}}"#)
+                : .json(200, CursorFixture.usage)
+        }
+        let provider = provider(http)
+        advance(.days(3))
+
+        let first = try await provider.fetch(previous: previous())
+        advance(.days(1) - 1)
+        let second = try await provider.fetch(previous: first)
+        #expect(try account(second).plan == "Pro")
+        #expect(http.requests.map(\.url) == [CursorAPI.usageURL, CursorAPI.usageURL])
+        advance(1)
+        let third = try await provider.fetch(previous: second)
+
+        #expect(try account(third).plan == "Ultra")
+        #expect(http.requests.map(\.url).suffix(2) == [CursorAPI.usageURL, CursorAPI.planURL])
     }
 
     /// R3-P-04: a failed or empty plan answer is not asked for again at every refresh. The

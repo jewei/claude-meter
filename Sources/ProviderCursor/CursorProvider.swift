@@ -22,8 +22,9 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
     private let now: @Sendable () -> Date
     /// The outcome of the last usage request, for Diagnostics only.
     private let lastRequest = Locked<String?>(nil)
-    /// When each login last sent the plan request, so a failed or empty answer is not asked
-    /// for again at every refresh. Memory only; an entry older than ``planMaxAge`` goes.
+    /// When each login last sent the plan request, or first reused a known plan after a
+    /// restart (``asksForPlan(owner:hasKnownPlan:now:)``). One date for each login seen while
+    /// the app runs. Memory only.
     private let planAttempts = Locked<[AccountOwner: Date]>([:])
     /// The pause after the last HTTP 429 on the usage or plan request (``RateLimitHold``), kept
     /// as soon as Cursor answers. A 429 on the plan request has no account issue, because the
@@ -184,37 +185,23 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
         guard report.isEnabled else { throw CursorFailure.usageDisabled }
         var plan = credentials.membership
         if plan == nil {
-            let known = previous?.owner == credentials.owner ? previous : nil
+            let knownPlan = previous?.owner == credentials.owner ? previous?.plan : nil
             plan = try await planName(
-                token: token, owner: credentials.owner, known: known, now: now)
+                token: token, owner: credentials.owner, knownPlan: knownPlan, now: now)
         }
         return report.account(plan: plan, owner: credentials.owner, now: now)
     }
 
-    /// The plan from `GetPlanInfo`, used only when Cursor stored no plan. A plan that the same
-    /// login showed less than ``planMaxAge`` ago is reused without a request. The same login is
-    /// asked at most once in ``planMaxAge``, also after a failed or empty answer. A failure
-    /// keeps the known plan, because the plan only labels the card; HTTP 429 also holds the
-    /// login (``memoryHold``).
+    /// The plan from `GetPlanInfo`, used only when Cursor stored no plan. `knownPlan` is the
+    /// plan that the same login showed, reused without a request until the login may ask again
+    /// (``asksForPlan(owner:hasKnownPlan:now:)``). A failure keeps the known plan, because the
+    /// plan only labels the card; HTTP 429 also holds the login (``memoryHold``).
     private func planName(
-        token: String, owner: AccountOwner, known: AccountUsage?, now: Date
+        token: String, owner: AccountOwner, knownPlan: String?, now: Date
     ) async throws -> String? {
-        let knownPlan = known?.plan
-        if let knownPlan, let observedAt = known?.observedAt, observedAt <= now,
-            now.timeIntervalSince(observedAt) < Self.planMaxAge
-        {
+        guard asksForPlan(owner: owner, hasKnownPlan: knownPlan != nil, now: now) else {
             return knownPlan
         }
-        let askedRecently = planAttempts.withLock { attempts -> Bool in
-            // A date after now means that the clock moved back. It counts as old.
-            attempts = attempts.filter { _, date in
-                date <= now && now.timeIntervalSince(date) < Self.planMaxAge
-            }
-            guard attempts[owner] == nil else { return true }
-            attempts[owner] = now
-            return false
-        }
-        if askedRecently { return knownPlan }
         let request = CursorAPI.connectRequest(
             CursorAPI.planURL, token: token, deadline: CursorAPI.planDeadline)
         do {
@@ -225,6 +212,24 @@ public final class CursorProvider: UsageProvider, DiagnosticsReporting {
                 memoryHold.withLock { $0 = RateLimitHold(owner: owner, retryAt: retryAt) }
             }
             return knownPlan
+        }
+    }
+
+    /// Whether `owner` sends the plan request at `now`. When it does, `now` becomes its attempt.
+    ///
+    /// A login asks at most once in ``planMaxAge``, also after a failed or empty answer, and
+    /// again after ``planMaxAge``, so a changed plan shows within a day. A refresh that reuses
+    /// the plan does not move that date. A login without a date in memory (after a restart)
+    /// that has a known plan reuses it, and its ``planMaxAge`` starts now, so a launch sends no
+    /// plan request. A date after now means that the clock moved back, so it counts as old.
+    private func asksForPlan(owner: AccountOwner, hasKnownPlan: Bool, now: Date) -> Bool {
+        planAttempts.withLock { attempts in
+            let last = attempts[owner]
+            if let last, last <= now, now.timeIntervalSince(last) < Self.planMaxAge {
+                return false
+            }
+            attempts[owner] = now
+            return last != nil || !hasKnownPlan
         }
     }
 

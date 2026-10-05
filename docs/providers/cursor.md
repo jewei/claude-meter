@@ -83,9 +83,9 @@ string. Other fields are ignored.
 ### Plan: `GetPlanInfo`
 
 Sent only when the database has no `cursorAuth/stripeMembershipType`, after a usage request
-that succeeded. Each login sends it at most once in 24 hours while the app runs, also when the
-answer failed or had no plan (rule 14). HTTP 429 holds the login (rule 19). Same headers and
-body as the usage request. Deadline: 10 s.
+that succeeded. Each login sends it at most once in 24 hours, also when the answer failed or
+had no plan, and again after 24 hours, so a changed plan shows (rule 14). HTTP 429 holds the
+login (rule 19). Same headers and body as the usage request. Deadline: 10 s.
 
 ```text
 POST https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo
@@ -170,11 +170,14 @@ The email is never part of the reading.
     because it would come back as HTTP 401 with a harsher message.
 12. Spend and limit never give a percentage. `totalPercentUsed` is the usage.
 13. A body that is not a JSON object is an unexpected response.
-14. The plan request runs only when Cursor stored no plan, and not while the same login showed a
-    plan less than 24 hours ago. The provider keeps the time of each login's last plan request
-    in memory and does not send it again for that login for 24 hours, also after a failure or
-    an answer without a plan. A restart forgets these times. Its failures are silent and keep
-    the plan of the same login.
+14. The plan request runs only when Cursor stored no plan. The provider keeps the time of each
+    login's last plan request in memory. It does not send the request again for that login for
+    24 hours, also after a failure or an answer without a plan, and sends it again after 24
+    hours, so a changed plan shows within a day. Until then, a refresh reuses the plan that the
+    same login showed, and that reuse does not move the time. A restart forgets these times: at
+    the first refresh after it, a login that showed a plan reuses it and its 24 hours start, so
+    a launch sends no plan request. A login without a known plan sends it at once. Its failures
+    are silent and keep the plan of the same login.
 15. The plan keeps the capitalization that Cursor used, except for the known names.
 
 ### Retention

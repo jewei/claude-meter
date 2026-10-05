@@ -141,7 +141,7 @@ Other spellings: `update` and `_meta` can also be at the top level. The top-leve
     events after its owned boundary:
     - With `subagent_history_start_ordinal`, the boundary is the first event at that
       ordinal or later.
-    - Without it, the boundary is the first event after the fork time whose counters
+    - Without it, the boundary is the first event at or after the fork time whose counters
       continue the parent's counters.
 
     A file has a parent when it names one (`forked_from_id`, `forkedFromId`,

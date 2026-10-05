@@ -141,20 +141,19 @@ extension HistoryScans {
             let home = try TemporaryDirectory()
             defer { home.remove() }
             try home.write(line("a", 10), to: "a.jsonl")
-            let pool = BlockingIO(label: "test", capacity: 1)
-            let scanner = CountingScanner(match: jsonl, limits: patient, pool: pool)
+            let timeLimits = ManualTimeLimits()
+            let pool = BlockingIO(label: "test", capacity: 1, timeLimit: timeLimits.timeLimit)
+            // A short wait for a free thread, so that giving up takes milliseconds, not 2 s.
+            let scanner = CountingScanner(
+                match: jsonl, limits: HistoryLimits(), pool: pool,
+                busyWait: .retries(2, every: .milliseconds(1)))
             let roots = [home.root("one"), home.root("two", "missing")]
             let first = try await scanner.scan(roots, since: rangeStart)
             #expect(first.partialAccounts.isEmpty)
 
-            // One stuck read fills the pool, so the root check finds no thread. The read waits
-            // until the test releases it, however long the scans take.
-            let release = DispatchSemaphore(value: 0)
-            await #expect(throws: TimeoutError.self) {
-                try await pool.run(timeout: .milliseconds(20)) { _ in
-                    _ = release.wait(timeout: .now() + 600)
-                }
-            }
+            // One stuck read fills the pool, so the root check finds no thread, also after the
+            // wait. The read waits until the test releases it, however long the scans take.
+            let release = await timeLimits.makeStuckRead(in: pool)
             let full = try await scanner.scan(roots, since: rangeStart)
             #expect(full.accounts == ["one", "two"])
             #expect(full.partialAccounts == ["one", "two"])
@@ -172,28 +171,5 @@ extension HistoryScans {
             #expect(recovered.partialAccounts.isEmpty)
             #expect(recovered.total("one") == 10)
         }
-    }
-}
-
-/// Time limits that end only when a test says, so load on the machine cannot make a call
-/// time out.
-final class ManualTimeLimits: Sendable {
-    private let pending = Locked<[(key: String?, expire: @Sendable () -> Void)]>([])
-
-    var timeLimit: BlockingIO.TimeLimit {
-        { [pending] _, key, expire in pending.withLock { $0.append((key, expire)) } }
-    }
-
-    /// Ends the waits of the calls whose key matches, as if their time limit passed. A call
-    /// that already ended is not changed.
-    func expire(where matches: (String) -> Bool) {
-        let all = pending.withLock { pending in
-            defer { pending = [] }
-            return pending
-        }
-        let due = all.filter { $0.key.map(matches) ?? false }
-        let rest = all.filter { !($0.key.map(matches) ?? false) }
-        pending.withLock { $0 += rest }
-        for call in due { call.expire() }
     }
 }

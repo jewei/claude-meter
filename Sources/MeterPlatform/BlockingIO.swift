@@ -106,20 +106,33 @@ public final class BlockingIO: Sendable {
         abandoned.value.stuckKeys[key] != nil
     }
 
-    /// Runs `work` like ``run(timeout:key:_:)``, but a full pool is tried again up to
-    /// `busyRetries` times, `retryDelay` apart, because a slow volume can still free a thread.
-    /// Cancellation ends the wait.
+    /// How a call waits when the pool is full, because a slow volume can still free a thread.
+    struct BusyWait: Sendable {
+        /// Tries after the first one.
+        let retries: Int
+        /// Waits between two tries. It throws `CancellationError` when the task is cancelled,
+        /// which ends the wait.
+        let pause: @Sendable () async throws -> Void
+
+        /// `retries` more tries, `delay` apart.
+        static func retries(_ retries: Int, every delay: Duration) -> BusyWait {
+            BusyWait(retries: retries) { try await Task.sleep(for: delay) }
+        }
+    }
+
+    /// Runs `work` like ``run(timeout:key:_:)``, but a full pool is tried again as `busyWait`
+    /// says. Cancellation ends the wait.
     func run<Value: Sendable>(
-        timeout: Duration, key: String, busyRetries: Int, retryDelay: Duration,
+        timeout: Duration, key: String, busyWait: BusyWait,
         _ work: @escaping @Sendable (Cancellation) throws -> Value
     ) async throws -> Value {
         var attempts = 0
         while true {
             do {
                 return try await run(timeout: timeout, key: key, work)
-            } catch is BusyError where attempts < busyRetries {
+            } catch is BusyError where attempts < busyWait.retries {
                 attempts += 1
-                try await Task.sleep(for: retryDelay)
+                try await busyWait.pause()
             }
         }
     }

@@ -24,6 +24,7 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
     private let limits: HistoryLimits
     private let pool: BlockingIO
     private let listing: DirectoryListing.Function
+    private let busyWait: BlockingIO.BusyWait
     private let queue = ScanQueue()
     /// Pool keys of this scanner's root checks and discovery pages. File reads use the path.
     private let rootsKey: String
@@ -41,15 +42,17 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
     }
 
     /// Tests pass their own pool, so stuck test reads never reach the shared pools, and can
-    /// pass a listing that blocks.
+    /// pass a listing that blocks and a shorter wait for a full pool.
     init(
         match: HistoryFileMatch, limits: HistoryLimits, pool: BlockingIO,
-        listing: @escaping DirectoryListing.Function = DirectoryListing.standard
+        listing: @escaping DirectoryListing.Function = DirectoryListing.standard,
+        busyWait: BlockingIO.BusyWait = HistoryLimits.busyWait
     ) {
         self.match = match
         self.limits = limits
         self.pool = pool
         self.listing = listing
+        self.busyWait = busyWait
         let id = UUID().uuidString
         rootsKey = "history-scanner/\(id)/roots"
         discoveryKey = "history-scanner/\(id)/discovery"
@@ -271,8 +274,7 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
         key: String, _ work: @escaping @Sendable (BlockingIO.Cancellation) throws -> Value
     ) async throws -> Value {
         try await pool.run(
-            timeout: limits.blockingTimeout, key: key, busyRetries: HistoryLimits.busyRetries,
-            retryDelay: HistoryLimits.busyRetryDelay, work)
+            timeout: limits.blockingTimeout, key: key, busyWait: busyWait, work)
     }
 
     /// Cached files in root order, then path order, with each hard-linked file once.

@@ -52,4 +52,7 @@ public struct HistoryLimits: Equatable, Sendable {
     /// gives up: at most 2 s.
     static let busyRetries = 40
     static let busyRetryDelay: Duration = .milliseconds(50)
+    /// The wait of a scan that finds the history pool full. Tests of the scanner pass a
+    /// shorter one.
+    static let busyWait = BlockingIO.BusyWait.retries(busyRetries, every: busyRetryDelay)
 }

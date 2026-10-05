@@ -50,6 +50,16 @@ struct CodexAccountRefresh: Sendable {
         var quota: Result<CodexQuota, CodexError>
         var source: Source
         var report: CodexReport?
+
+        /// The retry time after HTTP 429 on the usage request or on the reset-credit details
+        /// request, or nil.
+        var rateLimitRetryAt: Date? {
+            switch quota {
+            case .failure(.rateLimited(let retryAt)): retryAt
+            case .failure: nil
+            case .success(let quota): quota.resetDetailsRetryAt
+            }
+        }
     }
 
     let api: CodexUsageAPI
@@ -57,10 +67,13 @@ struct CodexAccountRefresh: Sendable {
     let environment: [String: String]
     let fileReadLimit: Duration
     let now: @Sendable () -> Date
+    /// Where a 429 goes as soon as Codex answers, for every home of the provider.
+    let rateLimitHolds: CodexRateLimitHolds
 
     /// Refreshes `home`. `holds` are the rate-limit holds of every home: while one holds the
     /// login of this home (``RateLimitHold``), nothing is sent, not even recovery. A login
-    /// that stops (``CodexLogin/Route/stop(_:status:)``) sends nothing either. Throws only
+    /// that stops (``CodexLogin/Route/stop(_:status:)``) sends nothing either. HTTP 429 with a
+    /// retry time goes into ``rateLimitHolds`` before the owner is read again. Throws only
     /// `CancellationError`.
     func run(_ home: CodexHome, holds: [RateLimitHold]) async throws -> Outcome {
         let before = try await CodexLogin.read(home, timeout: fileReadLimit)
@@ -80,6 +93,12 @@ struct CodexAccountRefresh: Sendable {
             request = try await recover(home, directError: reason)
         case .request(let credentials):
             request = try await send(credentials, home: home)
+        }
+        // The 429 belongs to the login that sent the request, even if the login changes now.
+        // Keep it at once: a cancel during the read below, or of the whole fetch, drops the
+        // outcome, and the next refresh would send before the retry time.
+        if let owner = before.owner, let retryAt = request.rateLimitRetryAt {
+            rateLimitHolds.record(RateLimitHold(owner: owner, retryAt: retryAt), now: now)
         }
         let after = try await CodexLogin.read(home, timeout: fileReadLimit)
         return Outcome(

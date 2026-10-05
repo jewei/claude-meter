@@ -186,6 +186,51 @@ extension CodexTests {
             #expect(held.accounts.last?.issue == nil)
         }
 
+        /// R4-P-01: a 429 is kept as soon as Codex answers. A fetch that is cancelled after it,
+        /// here while another home still waits, holds the login all the same, so the next fetch
+        /// sends nothing for it before the retry time.
+        @Test func aRateLimitHoldsAfterTheFetchIsCancelled() async throws {
+            let gate = Gate()
+            let slowToken = CodexFixtures.accessToken(user: "user-2")
+            let http = FakeHTTPClient { request in
+                guard request.headers["Authorization"] == "Bearer \(slowToken)" else {
+                    return .json(429, "", headers: ["Retry-After": "120"])
+                }
+                await gate.wait()
+                return .json(200, CodexFixtures.usage)
+            }
+            let limitedRequests = {
+                http.requests.filter { $0.headers["Authorization"] != "Bearer \(slowToken)" }.count
+            }
+            var limits = CodexLimits.standard
+            limits.concurrentHomes = 1
+            let bed = try CodexTestBed(extraHomes: ["work"], http: http, limits: limits)
+            defer { bed.remove() }
+            try bed.writeAuth()
+            try bed.writeAuth(CodexFixtures.authJSON(accessToken: slowToken), home: "work")
+            let clock = Locked(Date.reference())
+            let provider = bed.provider(clock: clock, limits: limits)
+
+            let task = Task { try await provider.fetch(previous: nil) }
+            // One home at a time: the second home waits only after the first got its 429.
+            #expect(await gate.waitForArrivals())
+            task.cancel()
+            await #expect(throws: CancellationError.self) { try await task.value }
+            gate.open()
+
+            clock.withLock { $0 = .reference(60) }
+            let held = try await provider.fetch(previous: nil)
+            #expect(limitedRequests() == 1)
+            let limited = try #require(held.accounts.first)
+            #expect(limited.issue?.retryAt == .reference(120))
+            #expect(limited.owner != nil)
+            #expect(held.accounts.last?.hasObservation == true)
+
+            clock.withLock { $0 = .reference(120) }
+            _ = try await provider.fetch(previous: held)
+            #expect(limitedRequests() == 2)
+        }
+
         @Test func anotherLoginIsNotHeld() async throws {
             let bed = try CodexTestBed(http: Self.limited())
             defer { bed.remove() }

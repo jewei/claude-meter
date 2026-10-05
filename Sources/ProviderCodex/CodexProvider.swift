@@ -21,7 +21,7 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
     private let refresh: CodexAccountRefresh
     private let now: @Sendable () -> Date
     private let lastAttempts = Locked<[CodexAttempt]>([])
-    private let holds = CodexRateLimitHolds()
+    private let holds: CodexRateLimitHolds
 
     /// Creates the provider.
     ///
@@ -56,6 +56,8 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
         installFolders: [URL]? = nil
     ) {
         let installFolders = installFolders ?? CodexExecutable.installFolders(userHome: home)
+        let holds = CodexRateLimitHolds()
+        self.holds = holds
         self.configuration = configuration
         self.environment = environment
         self.userHome = home
@@ -71,7 +73,8 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
                     networkStepLimit: limits.appServerNetworkStep),
             environment: environment,
             fileReadLimit: limits.fileRead,
-            now: now)
+            now: now,
+            rateLimitHolds: holds)
     }
 
     /// Always ``ProviderID/codex``.
@@ -170,9 +173,8 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
             throw Self.homesUnresolved
         }
         let current = holds.current(previous: previous, now: now())
+        // Each 429 is already in `holds`, so a cancel here loses no hold.
         let attempts = await refreshAll(homes, holds: current, until: deadline)
-        // Codex answered with a 429, also when this fetch is cancelled now.
-        holds.record(attempts, now: now())
         try Task.checkCancellation()
         lastAttempts.withLock { $0 = attempts }
         let accounts = attempts.map { attempt in

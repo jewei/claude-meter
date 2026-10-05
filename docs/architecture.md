@@ -74,9 +74,10 @@ Each provider has at most one refresh in flight, identified by a token.
 4. If the token is still current and the provider is still enabled, publish:
    - any account has an observation → `.current(usage, observedAt: usage.observedAt)`;
    - none → `.failed(firstIssue, partial: usage)`.
-5. On `ProviderError` or the safety deadline: keep the previous value as `.stale` when
-   `keepsLastReading` is true (always for the deadline) and a value exists; otherwise
-   `.failed`. Cancellation changes nothing.
+5. On `ProviderError` or the safety deadline, when `keepsLastReading` is true (always for
+   the deadline): keep an observed previous value as `.stale`, and the accounts of a failed
+   reading as `.failed(issue, partial:)`, so a first 429 hold reaches the next fetch.
+   Otherwise `.failed(issue)`. Cancellation changes nothing.
 6. Save the published value to the reading archive (newest value wins, written off-main).
 
 Disabling a provider cancels its refresh, removes its readings, and rejects late results.

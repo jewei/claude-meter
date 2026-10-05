@@ -62,6 +62,30 @@ import Testing
         #expect(store.readings[.grok] == .failed(UsageIssue("Offline")))
     }
 
+    /// A first 429 leaves an account without an observation, so only the failed reading holds
+    /// it. A failure that keeps the last reading keeps that account, and the next fetch still
+    /// receives the hold as `previous`. A failure that cannot keep it drops it.
+    @Test func failureKeepsTheAccountsOfAFailedReading() async {
+        let provider = FakeUsageProvider(.codex)
+        let hold = UsageIssue("Codex limited the number of requests.", retryAt: .reference(180))
+        let held = ProviderUsage(
+            provider: .codex, accounts: [.unavailable(id: "/a", name: "a", issue: hold)])
+        let received = Locked<[ProviderUsage?]>([])
+        provider.enqueue(held)
+        provider.enqueue(failure: ProviderError("Offline"))
+        provider.enqueue { previous in
+            received.withLock { $0.append(previous) }
+            throw ProviderError("Signed out", keepsLastReading: false)
+        }
+        let store = makeStore([provider])
+        await store.refresh([.codex])
+        await store.refresh([.codex])
+        #expect(store.readings[.codex] == .failed(UsageIssue("Offline"), partial: held))
+        await store.refresh([.codex])
+        #expect(received.value == [held])
+        #expect(store.readings[.codex] == .failed(UsageIssue("Signed out")))
+    }
+
     @Test func allUnavailableAccountsFailWithTheirIssue() async {
         let provider = FakeUsageProvider(.claude)
         let usage = ProviderUsage(

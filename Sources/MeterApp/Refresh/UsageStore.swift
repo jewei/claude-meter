@@ -238,12 +238,19 @@ public final class UsageStore {
         archive?.record(usage, for: id)
     }
 
+    /// Keeps the last value when the failure allows it: an observed value as stale, and the
+    /// accounts of a failed reading as its partial value. Those accounts carry their own
+    /// issues, such as the hold of a first HTTP 429, which the next fetch receives as
+    /// `previous`.
     private func recordFailure(_ failure: ProviderError, for id: ProviderID) {
-        if failure.keepsLastReading, let value = readings[id]?.value,
-            let observedAt = readings[id]?.observedAt
-        {
+        switch (failure.keepsLastReading, readings[id]) {
+        case (true, .current(let value, let observedAt)?),
+            (true, .stale(let value, let observedAt, _)?):
             readings[id] = .stale(value, observedAt: observedAt, issue: failure.issue)
-        } else {
+        case (true, .failed(_, let partial?)?):
+            readings[id] = .failed(failure.issue, partial: partial)
+            archive?.record(nil, for: id)
+        default:
             readings[id] = .failed(failure.issue)
             archive?.record(nil, for: id)
         }

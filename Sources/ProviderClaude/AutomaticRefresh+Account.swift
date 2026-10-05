@@ -7,8 +7,9 @@ extension AutomaticRefresh {
         var usage: AccountUsage
         let identity: LocalIdentity?
         let failure: AccountFailure?
-        /// The usage request went out. A failure before it, such as an expired token or an
-        /// item that cannot be read, sent nothing.
+        /// The usage request went out. A failure before it, such as an expired token, an
+        /// item that cannot be read, or a 429 gate that another request closed meanwhile, sent
+        /// nothing.
         var isRequested = false
     }
 
@@ -65,8 +66,9 @@ extension AutomaticRefresh {
 
         let response: UsageResponse
         do {
-            isRequested.withLock { $0 = true }
-            response = try await api.usage(accessToken: credential.accessToken)
+            response = try await api.usage(
+                accessToken: credential.accessToken,
+                onSend: { isRequested.withLock { $0 = true } })
         } catch let failure as UsageFailure {
             return failed(AccountFailure(failure), .signedIn(owner), identity)
         }

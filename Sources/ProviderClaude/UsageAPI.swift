@@ -28,14 +28,16 @@ struct UsageAPI: Sendable {
             retry: .never, deadline: requestDeadline)
     }
 
-    /// Sends one request unless the gate is closed. Throws ``UsageFailure``, or
-    /// `CancellationError` when the caller was cancelled.
-    func usage(accessToken: String) async throws -> UsageResponse {
+    /// Sends one request unless the gate is closed. `onSend` runs right before the request
+    /// goes out, so a caller can tell a sent request from a closed gate, which sends nothing.
+    /// Throws ``UsageFailure``, or `CancellationError` when the caller was cancelled.
+    func usage(accessToken: String, onSend: () -> Void = {}) async throws -> UsageResponse {
         if let until = gate.blockedUntil(now: now()) {
             throw UsageFailure.rateLimited(until: until)
         }
         let response: HTTPResponse
         do {
+            onSend()
             response = try await http.send(Self.request(accessToken: accessToken))
         } catch is CancellationError {
             throw CancellationError()

@@ -51,6 +51,40 @@ extension ClaudeTests {
             #expect(http.usageTokens == ["main", "work", "main", "main", "work"])
         }
 
+        @Test func anAccountThatAClosedGateStoppedKeepsItsAttemptTime() async throws {
+            let harness = try ClaudeHarness.twoAccounts()
+            let gate = Locked<RateLimitGate?>(nil)
+            let closesGate = Locked(false)
+            let http = FakeHTTPClient { request in
+                if closesGate.value, bearer(request) == "main" {
+                    // Another request, such as a Settings check, gets HTTP 429 meanwhile.
+                    gate.value?.recordRateLimit(retryAfter: "60", now: harness.now)
+                }
+                return .json(200, ClaudeFixtures.usage(session: 5))
+            }
+            let provider = harness.provider(http)
+            gate.withLock { $0 = provider.gate }
+            let first = try await provider.fetch(previous: nil)
+
+            harness.advance(300)
+            closesGate.withLock { $0 = true }
+            let second = try await provider.fetch(previous: first)
+
+            // The work account met the closed gate and sent nothing, so its attempt time stays.
+            #expect(http.usageTokens == ["main", "work", "main"])
+            #expect(second.accounts[0].observedAt == .reference(300))
+            #expect(second.accounts[1].isStale)
+            #expect(second.accounts[1].issue?.retryAt == .reference(360))
+            #expect(second.accounts[1].attemptedAt == .reference())
+
+            // When the gate opens, the work account is due at once.
+            harness.advance(60)
+            closesGate.withLock { $0 = false }
+            let third = try await provider.fetch(previous: second)
+            #expect(http.usageTokens == ["main", "work", "main", "main", "work"])
+            #expect(third.accounts[1].attemptedAt == .reference(360))
+        }
+
         @Test func anAccountWithoutPreviousValueThatWasNotAttemptedShowsTheRateLimit() async throws
         {
             let harness = try ClaudeHarness.twoAccounts()

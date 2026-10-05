@@ -158,9 +158,10 @@ little memory. The limit is 256 MiB. The result is one of three states:
    timer cover the time that a refresh needs to start, which varies, so each timer tick reads
    every account. A failed request counts, so an account that always fails is also requested
    at most once in 290 s. A failure that sends no request (an expired token, a missing or
-   unreadable item, an unreadable `.claude.json`) keeps the previous `attemptedAt`, so the
-   account is read again at the next refresh after the user fixes it. Otherwise its previous
-   value is returned unchanged.
+   unreadable item, an unreadable `.claude.json`, or a 429 gate that another request closed
+   during this refresh) keeps the previous `attemptedAt`, so the account is read again at the
+   next refresh after the user fixes it or the gate opens. Otherwise its previous value is
+   returned unchanged.
 5. Requests go out one at a time: the account of rule 3 first, so that a 429 never starves
    the login that Claude Code uses now (often, but not always, the menu-bar account), then
    the others in output order. The output order does not change.

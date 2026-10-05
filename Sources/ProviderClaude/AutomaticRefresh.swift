@@ -116,7 +116,8 @@ struct AutomaticRefresh: Sendable {
                 slot, prior: prior, isActive: isActive, limit: min(limits.account, remaining))
             var usage = outcome.usage
             // Only a request counts as an attempt: an account whose credential could not be
-            // used is read again at the next refresh, so a fix by the user shows at once.
+            // used is read again at the next refresh, so a fix by the user shows at once. So is
+            // an account that a gate closed by another request stopped before it sent anything.
             usage.attemptedAt = outcome.isRequested ? startedAt : prior?.attemptedAt
             fetched[slot.id] = usage
             identities[slot.id] = outcome.identity

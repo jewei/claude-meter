@@ -17,8 +17,10 @@ public final class FakeHTTPClient: HTTPClient {
         self.init { _ in HTTPResponse(status: status, headers: headers, body: Data(json.utf8)) }
     }
 
-    /// Answers requests in order; the last response repeats.
+    /// Answers requests in order; the last response repeats. `sequence` must not be empty.
     public convenience init(sequence: [Result<HTTPResponse, any Error>]) {
+        precondition(
+            !sequence.isEmpty, "FakeHTTPClient(sequence:) needs at least one response to repeat.")
         let remaining = Locked(sequence)
         self.init { _ in
             let next = remaining.withLock { queue -> Result<HTTPResponse, any Error> in

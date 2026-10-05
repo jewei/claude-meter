@@ -19,7 +19,7 @@ import SwiftUI
     private let navigation = SettingsNavigation()
     /// Lives as long as the controller, so a launch-at-login error stays while the window is
     /// closed and macOS still disagrees with the user's choice.
-    let launchAtLogin: LaunchAtLoginState
+    private let launchAtLogin: LaunchAtLoginState
     private var window: NSWindow?
     private var observers: [any NSObjectProtocol] = []
 

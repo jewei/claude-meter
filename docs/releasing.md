@@ -87,6 +87,11 @@ Do these steps once on each Mac that makes releases.
    dialog appears before you select **Connect automatically**. Tests cannot show a system
    dialog, so this is the only check of the no-prompt rule.
 
+   The candidate is a Release build with the installed app's identity: it uses the same
+   settings and Keychain items. At its first fetch it deletes the 3.x manual Claude login,
+   and it saves 4.x settings that a later install also reads. Quit the installed app first.
+   If the 3.x data must stay, test the candidate in a separate macOS user account.
+
 6. Publish:
 
    ```bash

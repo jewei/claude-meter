@@ -74,4 +74,5 @@ core.
   Codex card shows.
 - A retry after a failed refresh keeps the error in the menu bar and the popover, instead
   of a spinner.
-- A Codex CLI that is too old for usage checks asks you to update it.
+- When Codex keeps its sign-in outside `auth.json`, a Codex CLI that cannot start its
+  usage service asks you to update it.

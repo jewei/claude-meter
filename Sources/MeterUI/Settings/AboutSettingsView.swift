@@ -30,7 +30,7 @@ struct AboutSettingsView: View {
                     .font(.system(size: 54, weight: .black))
                     .foregroundStyle(
                         LinearGradient(
-                            colors: [Palette.Tile.boltLight, Palette.Tile.orange],
+                            colors: [Palette.aboutBoltTop, Palette.Tile.orange],
                             startPoint: .top, endPoint: .bottom))
             }
             .shadow(color: Palette.energyFull.opacity(0.16), radius: 14, y: 6)

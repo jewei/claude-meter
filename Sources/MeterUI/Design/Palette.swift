@@ -80,9 +80,14 @@ enum Palette {
         foreground: .adaptive("planFreeFG", light: 0x6F6A5B, dark: 0xB8B3A2),
         background: .adaptive("planFreeBG", light: 0xEFECE0, dark: 0x33312A))
 
+    // MARK: About
+
+    /// The light top of the bolt's gradient on the About tile; the bottom is `Tile.orange`.
+    static let aboutBoltTop = Color(nsColor: NSColor(hex: 0xFFE38A))
+
     // MARK: Tiles
 
-    /// Bright fills for the icon tiles in Settings and the account avatars, the same in both
+    /// Fixed fills for the icon tiles in Settings and the account avatars, the same in both
     /// appearances. White glyphs sit on them.
     enum Tile {
         static let sky = Color(nsColor: NSColor(hex: 0x25B6F0))
@@ -97,8 +102,6 @@ enum Palette {
         static let graphite = Color(nsColor: NSColor(hex: 0x1C1C1E))
         static let pink = Color(nsColor: NSColor(hex: 0xFF7AA8))
         static let indigo = Color(nsColor: NSColor(hex: 0x7C83FF))
-        /// The light top of the bolt's gradient on the About tile.
-        static let boltLight = Color(nsColor: NSColor(hex: 0xFFE38A))
     }
 }
 

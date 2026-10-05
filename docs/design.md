@@ -68,10 +68,11 @@ stay `ink` while energy is full (`headlineInk`).
 | pro | `#287B12` / `#7FD65A` | `#E7F8DC` / `#23381A` |
 | free | `#6F6A5B` / `#B8B3A2` | `#EFECE0` / `#33312A` |
 
-Values are light / dark. Settings row tiles and account avatars use fixed bright fills
+Values are light / dark. Settings row tiles and account avatars use fixed fills
 (`Palette.Tile`, the same in both appearances) with white glyphs. Account avatars pick one of
 eight tile colors from a djb2 hash of the account ID. The bolt tiles in the popover header
-and on About use `energyFull`.
+and on About use `energyFull`. The About bolt is a gradient from `aboutBoltTop` (`#FFE38A`)
+to `Tile.orange`.
 
 ## Type
 

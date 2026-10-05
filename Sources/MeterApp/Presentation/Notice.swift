@@ -18,26 +18,29 @@ public struct Notice: Equatable, Sendable, Identifiable {
     public var id: String { text }
 
     /// Notices for the main provider, and for enabled providers that failed with no card.
-    /// Text that the hero already states (the reason the meter is unavailable) is left out.
+    /// The issue that the hero states (the reason the meter is unavailable) is left out, also
+    /// when a notice would prefix it with an account name.
     static func notices(
-        _ context: PresentationContext, meter: MainMeter, hero: HeroModel, cards: [CardModel]
+        _ context: PresentationContext, meter: MainMeter, cards: [CardModel]
     ) -> [Notice] {
         var notices: [Notice] = []
         let name = meter.provider.displayName
         let several = meter.accounts.count > 1
+        let reason: UsageIssue? =
+            if case .unavailable(let reason) = meter.selection { reason } else { nil }
         // A failed reading that still lists accounts reports through their own issues.
         var refreshFailed = false
         switch context.readings[meter.provider] {
         case .stale(_, _, let issue), .failed(let issue, partial: nil):
             if context.isEnabled(meter.provider) {
-                notices.append(Notice(issue: issue, now: context.now))
+                if issue != reason { notices.append(Notice(issue: issue, now: context.now)) }
                 refreshFailed = true
             }
         default:
             break
         }
         for account in meter.accounts {
-            guard let issue = account.issue else { continue }
+            guard let issue = account.issue, issue != reason else { continue }
             let text = NoticeText.text(for: issue, now: context.now)
             notices.append(
                 Notice(
@@ -69,7 +72,7 @@ public struct Notice: Equatable, Sendable, Identifiable {
                         "\(provider.displayName): \(NoticeText.text(for: issue, now: context.now))",
                     kind: issue.needsAction ? .action : .warning))
         }
-        var seen: Set<String> = meter.selected == nil ? [hero.subtitle] : []
+        var seen: Set<String> = []
         return notices.filter { seen.insert($0.text).inserted }
     }
 

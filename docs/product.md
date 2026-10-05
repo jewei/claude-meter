@@ -94,7 +94,8 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    count down: `Anthropic is rate-limiting usage checks. Retrying in 3m.` Old data that no
    failed refresh explains gets its own notice, also beside other notices:
    `Claude data may be stale.`, or `Work: Data may be stale.` when only some accounts are old.
-   When the meter is unavailable, the hero states the reason and no notice repeats it.
+   When the meter is unavailable, the hero states the reason and no notice repeats that issue,
+   also not with an account name in front (`Notice`).
 5. The hero summarizes the main meter (`HeroModel`): its headline follows the selected
    account's severity, and its subline names the limiting window and its reset, or counts
    the accounts with plenty left ("fresh") and names the lowest account. Stale accounts are

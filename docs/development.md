@@ -4,7 +4,8 @@ How to build, run, and test Claude Meter, and how the Xcode project is set up.
 
 ## Requirements
 
-- A Mac with macOS 14 or later.
+- A Mac with macOS 26.6 or later (Xcode 27 needs it). The app itself runs on macOS 14 or
+  later.
 - Xcode 27.0 or later (Swift 6.4). `Package.swift` uses Swift tools version 6.4, so an
   older Xcode cannot build the package. CI pins Xcode 27.0 on GitHub's `xcode-27` image, a
   public preview (`.github/workflows/ci.yml`). Change the CI version, the tools version,

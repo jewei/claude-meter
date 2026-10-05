@@ -247,8 +247,10 @@ Other spellings: `update` and `_meta` can also be at the top level. The top-leve
 60. A discovery page that times out ends discovery for that scan. The files found by
     earlier pages still count. The sweep skips the folder that the page waited for and makes
     its account partial, so the next page goes on past it; a later sweep lists the folder
-    again. A root check that times out returns the files of the last scan, with every
-    account partial. A root check, discovery page, or file whose earlier read timed out and
+    again. A root check that times out, or that is skipped as the next sentence says, makes
+    every account partial. The scan then returns the files of the last scan only when the
+    configured roots did not change and the first covered day did not move earlier; else it
+    returns no files. A root check, discovery page, or file whose earlier read timed out and
     still runs is skipped until that read ends, so a stuck folder holds one thread, not one
     more for each scan.
 61. Cancellation stops a scan between directory pages, inside a folder listing, and between

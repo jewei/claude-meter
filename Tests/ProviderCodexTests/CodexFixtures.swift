@@ -179,6 +179,23 @@ struct CodexTestBed {
             installFolders: [root.path("bin")])
     }
 
+    /// Another provider for the same homes whose clock moves 1 ms at each read, as a real
+    /// clock does between two reads.
+    func providerWithMovingClock(limits: CodexLimits = .standard) -> CodexProvider {
+        let extras = self.extras
+        let clock = Locked(now)
+        return CodexProvider(
+            configuration: { CodexConfiguration(extraHomes: extras) }, http: http,
+            environment: ["CODEX_HOME": root.path("home").path, "PATH": ""],
+            home: root.url, recovery: recovery,
+            now: {
+                clock.withLock { time in
+                    time += 0.001
+                    return time
+                }
+            }, limits: limits, installFolders: [root.path("bin")])
+    }
+
     /// Writes `auth.json` into a home folder (`home` is the implicit one).
     func writeAuth(_ text: String = CodexFixtures.authJSON(), home: String = "home") throws {
         try root.write(text, to: "\(home)/auth.json")

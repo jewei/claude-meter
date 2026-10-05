@@ -95,7 +95,7 @@ struct CodexAccountRefresh: Sendable {
         case .recover(let reason):
             request = try await recover(home, directError: reason)
         case .request(let credentials):
-            request = try await send(credentials, home: home)
+            request = try await send(credentials, home: home, now: now)
         }
         // The 429 belongs to the login that sent the request, even if the login changes now.
         // Keep it at once: a cancel during the read below, or of the whole fetch, drops the
@@ -198,11 +198,11 @@ struct CodexAccountRefresh: Sendable {
     // MARK: - Work
 
     /// Sends the usage request, or starts recovery when the token expires within a minute or
-    /// the request returns HTTP 401 or 403.
-    private func send(_ credentials: CodexCredentials, home: CodexHome) async throws
+    /// the request returns HTTP 401 or 403. `now` is the time of the hold check in ``run``:
+    /// a retry time from the same time always passes the one-hour rule when it is kept.
+    private func send(_ credentials: CodexCredentials, home: CodexHome, now: Date) async throws
         -> RequestResult
     {
-        let now = now()
         if credentials.needsRenewal(at: now) {
             return try await recover(home, directError: .accessTokenExpired)
         }

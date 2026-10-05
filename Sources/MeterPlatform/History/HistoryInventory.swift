@@ -4,7 +4,9 @@ import Foundation
 ///
 /// A sweep can take several scans. Until it completes, its pages only add files, so the files
 /// of the last complete sweep keep their folders complete. A completed sweep replaces the
-/// files, so deleted files leave and files modified before the range start leave.
+/// files, so deleted files leave and files modified before the range start leave, except a
+/// file that a folder change hid from the sweep and that a read found (see
+/// ``complete(_:limit:wasRead:)``).
 struct HistoryInventory: Sendable {
     /// The sweep in progress. Nil after a sweep completes, so the next scan starts a new one.
     var sweep: DiscoverySweep?

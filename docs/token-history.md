@@ -242,7 +242,8 @@ Other spellings: `update` and `_meta` can also be at the top level. The top-leve
     and the file list stays too: the date that discovery saved for a file can be older than
     the file, because a resumed session can have written to it since. Records before the new
     first day do not count. A sweep that starts after the move does not find the files last
-    modified before the new first day, so its completion removes them.
+    modified before the new first day, so its completion removes them, except as rule 55
+    says.
 60. A discovery page that times out ends discovery for that scan. The files found by
     earlier pages still count. The sweep skips the folder that the page waited for and makes
     its account partial, so the next page goes on past it; a later sweep lists the folder

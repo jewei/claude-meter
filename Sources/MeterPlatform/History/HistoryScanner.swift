@@ -64,7 +64,8 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
     /// saved state first. A later `start`, as at each local midnight, keeps the saved state,
     /// files modified before it included: a saved date can be older than the file, which a
     /// resumed session can have changed since. Their records before `start` do not count, and
-    /// the next complete sweep leaves them out. Scans run one at a time.
+    /// the next complete sweep leaves them out, except a file in a folder that changed during
+    /// the sweep and that a read found. Scans run one at a time.
     public func scan(_ roots: [HistoryRoot], since start: Date) async throws -> HistoryScan<Parser>
     {
         try await queue.enter()

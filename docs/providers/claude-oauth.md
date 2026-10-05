@@ -223,9 +223,9 @@ little memory. The limit is 256 MiB. The result is one of three states:
    first, then changes the setting and asks for a refresh in one turn. The model calls
    Disconnect in every mode and never abandons it. A Disconnect whose delete fails still
    turns the connection off; for a manual connection it also says that the tokens could not
-   be deleted. Each reload (at launch, and when Settings opens) deletes a manual item that
-   no manual connection uses, while no attempt runs. When no manual item is left, that
-   message goes away.
+   be deleted. Each reload (at launch, and each time the Data page of Settings shows) deletes
+   a manual item that no manual connection uses, while no attempt runs. When no manual item
+   is left, that message goes away.
 8. Keychain writes of the manual item run one at a time, in order, on a private queue,
    never on the shared `BlockingIO` threads. Connect reads the old item on the same queue,
    after the writes before it. A write that times out before it starts is skipped, so it

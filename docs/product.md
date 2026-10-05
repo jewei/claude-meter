@@ -149,8 +149,8 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    saved, the Claude subtitle says so while Claude is off; turning Claude on clears the note
    (`DataSourceText.claudeSubtitle`). A Disconnect turns the connection off even when the saved
    tokens cannot be deleted. A Disconnect of a manual connection whose delete fails says so, and
-   the next reload (at launch, and when Settings opens) deletes a manual login that no manual
-   connection uses, then removes that message (`ClaudeSettingsModel`).
+   the next reload (at launch, and each time the Data page of Settings shows) deletes a manual
+   login that no manual connection uses, then removes that message (`ClaudeSettingsModel`).
 2. **Appearance**: card style, energy left or used, the menu-bar window, warning and critical
    thresholds (warning 50–90, critical 60–100, steps of 5; critical stays above warning),
    and automatic order.

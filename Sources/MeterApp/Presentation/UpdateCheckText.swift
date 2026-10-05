@@ -37,15 +37,13 @@ public enum UpdateCheckText {
         guard canUpdate else { return (unavailable, .neutral) }
         let text = status(version: version, build: build, isUpdateAvailable: isUpdateAvailable)
         if isUpdateAvailable { return (text, .attention) }
-        guard let version, !version.isEmpty else { return (text, .neutral) }
-        return (text, .current)
+        return (text, AppVersion(version: version, build: build).isKnown ? .current : .neutral)
     }
 
     /// `Installed v4.0.0 (400)`, or the update notice when one is waiting.
     public static func status(version: String?, build: String?, isUpdateAvailable: Bool) -> String {
         if isUpdateAvailable { return "An update is available." }
-        guard let version, !version.isEmpty else { return "Installed version unknown" }
-        guard let build, !build.isEmpty, build != version else { return "Installed v\(version)" }
-        return "Installed v\(version) (\(build))"
+        let installed = AppVersion(version: version, build: build)
+        return installed.isKnown ? "Installed v\(installed.text)" : "Installed version unknown"
     }
 }

@@ -1,4 +1,5 @@
 import AppKit
+import MeterApp
 import SwiftUI
 
 /// Settings > About: the icon, name, version, project link, license, credits, and the

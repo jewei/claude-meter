@@ -28,16 +28,12 @@ public struct Notice: Equatable, Sendable, Identifiable {
         let several = meter.accounts.count > 1
         let reason: UsageIssue? =
             if case .unavailable(let reason) = meter.selection { reason } else { nil }
-        // A failed reading that still lists accounts reports through their own issues.
         var refreshFailed = false
-        switch context.readings[meter.provider] {
-        case .stale(_, _, let issue), .failed(let issue, partial: nil):
-            if context.isEnabled(meter.provider) {
-                if issue != reason { notices.append(Notice(issue: issue, now: context.now)) }
-                refreshFailed = true
-            }
-        default:
-            break
+        if context.isEnabled(meter.provider),
+            let issue = refreshIssue(context.readings[meter.provider])
+        {
+            if issue != reason { notices.append(Notice(issue: issue, now: context.now)) }
+            refreshFailed = true
         }
         for account in meter.accounts {
             guard let issue = account.issue, issue != reason else { continue }
@@ -74,6 +70,18 @@ public struct Notice: Equatable, Sendable, Identifiable {
         }
         var seen: Set<String> = []
         return notices.filter { seen.insert($0.text).inserted }
+    }
+
+    /// The issue of a failed refresh. A failed reading whose accounts carry its issue (the
+    /// first account's issue when no account was observed) reports through their notices.
+    /// A provider error after such a reading keeps its accounts, with an issue of its own.
+    private static func refreshIssue(_ reading: Reading<ProviderUsage>?) -> UsageIssue? {
+        switch reading {
+        case .stale(_, _, let issue): issue
+        case .failed(let issue, let partial):
+            partial?.accounts.contains { $0.issue == issue } == true ? nil : issue
+        case .current, nil: nil
+        }
     }
 
     init(text: String, kind: Kind) {

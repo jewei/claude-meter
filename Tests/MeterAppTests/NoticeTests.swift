@@ -44,4 +44,21 @@ import Testing
         #expect(model.hero.subtitle == "Sign in again.")
         #expect(model.notices.map(\.text) == ["Work: Offline."])
     }
+
+    /// A provider error after a reading without observations keeps its accounts, each with
+    /// its own issue. The failed refresh has an issue that no account carries, so it gets its
+    /// own notice; the pinned account's hold is the hero's reason.
+    @Test func aFailedRefreshThatNoAccountCarriesGetsANotice() throws {
+        let hold = UsageIssue(
+            "Anthropic is rate-limiting usage checks.", retryAt: .reference(.minutes(3)))
+        let usage = Fixture.usage(
+            .claude, .unavailable(id: "home", name: "home", issue: signIn),
+            .unavailable(id: "work", name: "work", issue: hold))
+        let settings = Fixture.settings { $0.menuBar.pinnedAccounts[.claude] = "work" }
+        let model = try #require(
+            accounts(settings, readings: [.claude: .failed(offline, partial: usage)]))
+        #expect(
+            model.hero.subtitle == "Anthropic is rate-limiting usage checks. Retrying in 3m.")
+        #expect(model.notices.map(\.text) == ["Offline.", "Home: Sign in again."])
+    }
 }

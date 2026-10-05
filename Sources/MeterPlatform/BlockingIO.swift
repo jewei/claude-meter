@@ -7,8 +7,9 @@ import Foundation
 /// A read can block forever, for example on a FIFO or a stuck network volume. The caller gets
 /// a ``TimeoutError`` at the limit, also when blocked work fills every worker thread, because
 /// the timers run on their own serial queue, which always gets a thread. Work whose caller
-/// gave up before the work started never runs. Work that already runs is abandoned: it keeps
-/// its thread until it ends.
+/// gave up before the work started never runs: the pool marks it to skip before the caller
+/// hears that the wait ended. Work that already runs is abandoned: it keeps its thread until
+/// it ends.
 ///
 /// Each pool caps its abandoned work. While ``capacity`` abandoned operations still run, new
 /// work fails at once with ``BusyError``, so a stuck volume cannot pile up threads. Work in
@@ -163,7 +164,8 @@ public final class BlockingIO: Sendable {
                     giveUp(outcome, cancellation, stuckKey: key, TimeoutError(limit: timeout))
                 }
                 queue.async { [self] in
-                    // The caller gave up before the work started: skip it.
+                    // The flag is set before the caller hears that it gave up, so work that
+                    // reads it unset starts before that, and work that reads it set is skipped.
                     let result: Result<Value, any Error> =
                         cancellation.isCancelled
                         ? .failure(CancellationError()) : Result { try work(cancellation) }
@@ -179,9 +181,8 @@ public final class BlockingIO: Sendable {
         _ outcome: Outcome<Value>, _ cancellation: Cancellation, stuckKey: String?,
         _ error: any Error
     ) {
-        outcome.giveUp(with: error, stuckKey: stuckKey, abandon: abandon)
-        // Set after the outcome, so work that sees the flag was already abandoned.
-        cancellation.flag.withLock { $0 = true }
+        outcome.giveUp(
+            with: error, stuckKey: stuckKey, cancellation: cancellation, abandon: abandon)
     }
 
     private func abandon(_ stuckKey: String?) {
@@ -236,12 +237,19 @@ public final class BlockingIO: Sendable {
 
         /// Ends the wait with `error`, unless the work ended first. When the work was handed
         /// to the queue, it is abandoned: `abandon` runs with `stuckKey`.
+        ///
+        /// Sets `cancellation` in the same locked step, before the caller hears of `error`.
+        /// So work that reads it unset started before the caller gave up, and work that reads
+        /// it set finds its abandonment in ``end(with:release:)``. The flag's lock is taken
+        /// inside this lock, never the other way around.
         func giveUp(
-            with error: any Error, stuckKey: String?, abandon: @Sendable (String?) -> Void
+            with error: any Error, stuckKey: String?, cancellation: Cancellation,
+            abandon: @Sendable (String?) -> Void
         ) {
             let continuation = state.withLock { state -> CheckedContinuation<Value, any Error>? in
                 guard !state.isFinished else { return nil }
                 state.isFinished = true
+                cancellation.flag.withLock { $0 = true }
                 guard let continuation = state.continuation else {
                     state.early = .failure(error)
                     return nil

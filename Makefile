@@ -24,7 +24,8 @@ lint: ## Fail on any formatting difference.
 
 # `swift test --quiet` also hides compiler errors, so the build runs as its own step with full
 # output. The quiet test run prints a short summary for each test product and each failure with
-# its file and line, but no test names. Only VERBOSE=1 lists every test; VERBOSE=0 stays quiet.
+# its file and line, but no names of tests that pass. Only VERBOSE=1 lists every test;
+# VERBOSE=0 stays quiet.
 test: ## Build with warnings as errors and run every test. VERBOSE=1 lists every test.
 	swift build --build-tests $(SWIFT_FLAGS)
 	swift test --skip-build $(if $(filter 1,$(VERBOSE)),,--quiet)

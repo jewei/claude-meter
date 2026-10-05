@@ -73,7 +73,8 @@ stay `ink` while energy is full (`headlineInk`).
 | free | `#6F6A5B` / `#B8B3A2` | `#EFECE0` / `#33312A` |
 
 Values are light / dark. Settings row tiles and account avatars use fixed fills
-(`Palette.Tile`, the same in both appearances) with white glyphs. Account avatars pick one of
+(`Palette.Tile`, the same in both appearances) with white glyphs. A data source tile shows
+its provider's `ProviderMark` (20 pt, white). Account avatars pick one of
 eight tile colors from a djb2 hash of the account ID. The bolt tiles in the popover header
 and on About use `energyFull`. The About bolt is a gradient from `aboutBoltTop` (`#FFE38A`)
 to `Tile.orange`.
@@ -129,7 +130,7 @@ digit widths of each face, and `FixedNumberWidthTests` the widths of each number
 | `ActivityRings` | 88 pt. Outer weekly ring radius 34, inner session ring radius 24, 8 pt strokes, round caps, start at the top, `track` behind, a white highlight along each arc that grows from clear at the start to 30% at the tip (angular gradient). Center disc 30 pt in `popover` with the letter. Hidden from accessibility. |
 | `PlanBadgeView` | Capsule, padding 8×3, tier colors, one line. |
 | `ChipView` | Neutral capsule for "same login", "paused", and "Not tracked"; a tooltip only when it has help text. |
-| `ProviderMark` | Bundled logo as a 15 pt template image in `ink`; Grok uses the `atom` symbol. |
+| `ProviderMark` | Bundled logo as a 15 pt template image in `ink` (white, 20 pt on Settings data source tiles); Grok uses the `atom` symbol. |
 | `NoticeBanner` | Top-aligned 12 pt icon, wrapping Nunito SemiBold 11, padding 12×9, tint 8% fill, 16% 1 pt border, radius 12. Action: `key.slash.fill`, warning: `exclamationmark.triangle.fill` (both `energyLowInk`); info: `clock.fill` (`inkMuted`). |
 | `SquareIconButton` | 28 pt target, glyph 12 bold, quiet style on a chunky surface. |
 | `InlineConfirmation` (`Settings/Data`) | A question in the page in place of the control that asked: `energyEmptyInk` warning symbol, Fredoka SemiBold 15 title, Nunito SemiBold 12 message, Cancel (Escape, when it is the newest question: `CancelShortcuts`) and a raised `destructive` button; `popover` fill, 1.5 pt border in `energyEmptyInk` at 40%, radius 14. Never a blocking alert. |

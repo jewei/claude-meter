@@ -104,4 +104,38 @@ import Testing
         #expect(stale.notices.map(\.kind) == [.action])
         #expect(stale.cards.first { $0.provider == .codex }?.status == card.status)
     }
+
+    /// A 429 that a stale refresh and its account both report shows once, on the card or as
+    /// the account's notice, never also as the refresh notice (review F-A-01).
+    @Test func aStaleRefreshThatAnAccountCarriesIsNotRepeated() throws {
+        let hold = UsageIssue(
+            "Anthropic is rate-limiting usage checks.", retryAt: .reference(.minutes(3)))
+        let held = Fixture.usage(.claude, Fixture.account("home", issue: hold))
+        let stale = Reading<ProviderUsage>.stale(held, observedAt: .reference(), issue: hold)
+        let codex = Fixture.current(Fixture.usage(.codex, Fixture.account("/h")))
+
+        // Claude is not the main meter: only its card states the 429.
+        let other = Fixture.settings(enabled: [.claude, .codex]) {
+            $0.menuBar.provider = .codex
+        }
+        let notMain = try #require(accounts(other, readings: [.claude: stale, .codex: codex]))
+        #expect(notMain.notices.isEmpty)
+        #expect(
+            notMain.cards.first { $0.provider == .claude }?.status?.text
+                == "Anthropic is rate-limiting usage checks. Retrying in 3m.")
+
+        // Claude is the main meter with two accounts: the account's notice states it once,
+        // and the failed refresh still keeps the "data may be stale" notice away.
+        let two = Fixture.usage(
+            .claude, Fixture.account("home", issue: hold), Fixture.account("work"))
+        let main = try #require(
+            accounts(
+                Fixture.settings(),
+                readings: [.claude: .stale(two, observedAt: .reference(), issue: hold)]))
+        #expect(
+            main.notices.map(\.text) == [
+                "Home: Anthropic is rate-limiting usage checks. Retrying in 3m."
+            ])
+    }
+
 }

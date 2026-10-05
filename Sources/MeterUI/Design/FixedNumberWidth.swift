@@ -8,7 +8,7 @@ import SwiftUI
 /// (``SwiftUI/View/fixedNumberWidth(fitting:font:alignment:)``).
 @MainActor enum FixedNumberWidth {
     /// The widest whole percentage: its third digit is wider than any difference between two
-    /// digits, so no value from `0%` to `99%` is wider (`DesignSystemTests` checks each).
+    /// digits, so no value from `0%` to `99%` is wider (`FixedNumberWidthTests` checks each).
     static let percent = "100%"
 
     /// `text` with every digit replaced by the widest digit of the display face: the widest

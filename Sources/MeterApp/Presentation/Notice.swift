@@ -28,9 +28,11 @@ public struct Notice: Equatable, Sendable, Identifiable {
             if case .unavailable(let reason) = meter.selection { reason } else { nil }
         var refreshFailed = false
         if context.isEnabled(meter.provider),
-            let issue = refreshIssue(context.readings[meter.provider])
+            let failure = refreshFailure(context.readings[meter.provider])
         {
-            if issue != reason { notices.append(Notice(issue: issue, now: context.now)) }
+            if !failure.isCarried, failure.issue != reason {
+                notices.append(Notice(issue: failure.issue, now: context.now))
+            }
             refreshFailed = true
         }
         for account in meter.accounts {
@@ -58,7 +60,9 @@ public struct Notice: Equatable, Sendable, Identifiable {
         // The cards of these providers state their accounts' own issues and old data.
         for provider in ProviderID.allCases
         where provider != meter.provider && context.isEnabled(provider) {
-            guard let issue = refreshIssue(context.readings[provider]) else { continue }
+            guard let failure = refreshFailure(context.readings[provider]), !failure.isCarried
+            else { continue }
+            let issue = failure.issue
             notices.append(
                 Notice(
                     text:
@@ -69,15 +73,19 @@ public struct Notice: Equatable, Sendable, Identifiable {
         return notices.filter { seen.insert($0.text).inserted }
     }
 
-    /// The issue of a failed refresh. A failed reading whose accounts carry its issue (the
-    /// first account's issue when no account was observed) reports through their notices or
-    /// cards. A provider error after such a reading keeps its accounts, with an issue of its
-    /// own.
-    private static func refreshIssue(_ reading: Reading<ProviderUsage>?) -> UsageIssue? {
+    /// The issue of a failed refresh, and whether an account of the reading carries it. A
+    /// carried issue reports through that account's notice or card, never a second time: for
+    /// example a 429 that a stale refresh and its account both report, or the first account's
+    /// issue of a failed reading that observed no account. A provider error after such a
+    /// reading keeps its accounts, with an issue of its own.
+    private static func refreshFailure(_ reading: Reading<ProviderUsage>?)
+        -> (issue: UsageIssue, isCarried: Bool)?
+    {
         switch reading {
-        case .stale(_, _, let issue): issue
+        case .stale(let value, _, let issue):
+            (issue, value.accounts.contains { $0.issue == issue })
         case .failed(let issue, let partial):
-            partial?.accounts.contains { $0.issue == issue } == true ? nil : issue
+            (issue, partial?.accounts.contains { $0.issue == issue } == true)
         case .current, nil: nil
         }
     }

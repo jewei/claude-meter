@@ -92,7 +92,9 @@ import Testing
             Issue.record("Expected accounts")
             return
         }
-        #expect(model.notices.map(\.text) == ["Sign in again.", "Work: Sign in again."])
+        // The stale refresh reports the same issue as `work`, so only the account notice
+        // states it (review F-A-01).
+        #expect(model.notices.map(\.text) == ["Work: Sign in again."])
         #expect(model.notices.allSatisfy { $0.kind == .action })
     }
 

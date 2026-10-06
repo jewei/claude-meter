@@ -80,9 +80,12 @@ struct ClaudeCodeKeychain: Sendable {
             return try await run { keychain, user in
                 guard !user.isEmpty else { return .missing }
                 for service in services {
-                    guard let data = try keychain.password(service: service, account: user) else {
-                        continue
-                    }
+                    // Claude Code writes its items with /usr/bin/security; a read through the
+                    // same tool shows no Keychain dialog.
+                    guard
+                        let data = try keychain.passwordThroughSecurityTool(
+                            service: service, account: user)
+                    else { continue }
                     return ClaudeCredential.claudeCode(data).map(CredentialRead.found) ?? .invalid
                 }
                 return .missing

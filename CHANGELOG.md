@@ -12,6 +12,12 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude Meter no longer asks for your login Keychain password to read Claude Code's
+  sign-in. The dialog came back after each Claude Code token renewal, also after
+  **Always Allow**.
+
 ## [4.0.0] - 2026-10-05
 
 Claude Meter 4.0 is a complete rewrite. It keeps every feature of 3.x with a new, faster

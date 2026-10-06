@@ -178,6 +178,13 @@ private struct SlowKeychain: Keychain {
         return nil
     }
 
+    func passwordThroughSecurityTool(
+        service: String, account: String
+    ) throws(KeychainError) -> Data? {
+        Thread.sleep(forTimeInterval: delay)
+        return nil
+    }
+
     func items(servicePrefix: String, account: String?) throws(KeychainError) -> [KeychainItem] {
         Thread.sleep(forTimeInterval: delay)
         return []

@@ -21,6 +21,16 @@ public struct SystemKeychain: Keychain {
         return result as? Data
     }
 
+    /// Fails with ``KeychainError/unavailable`` while the login Keychain is locked, because
+    /// the tool would then ask to unlock it.
+    public func passwordThroughSecurityTool(
+        service: String, account: String
+    ) throws(KeychainError) -> Data? {
+        try ensureAllowed()
+        if Self.isLocked() { throw .unavailable }
+        return try SecurityTool.password(service: service, account: account)
+    }
+
     public func items(
         servicePrefix: String, account: String?
     ) throws(KeychainError) -> [KeychainItem] {
@@ -107,6 +117,40 @@ public struct SystemKeychain: Keychain {
         if TestProcess.isRunning && !TestProcess.allowsLiveKeychain {
             throw .unavailable
         }
+        _ = Self.interactionDisabled
+    }
+
+    /// Turns off Keychain dialogs for the whole process, once, before the first call.
+    ///
+    /// On recent macOS, the UI-fail policy of ``baseQuery(service:account:)`` does not stop
+    /// the legacy dialog for items of other apps. The process-wide switch does. The function
+    /// is deprecated, so it is looked up by name, like ``authenticationUIFail``.
+    private static let interactionDisabled: Void = {
+        typealias SetAllowed = @convention(c) (UInt8) -> OSStatus
+        guard let symbol = securitySymbol("SecKeychainSetUserInteractionAllowed") else { return }
+        _ = unsafeBitCast(symbol, to: SetAllowed.self)(0)
+    }()
+
+    /// Whether the default Keychain is locked. False when macOS cannot say, so that the read
+    /// goes on and reports its own error.
+    static func isLocked() -> Bool {
+        typealias GetStatus =
+            @convention(c) (UnsafeRawPointer?, UnsafeMutablePointer<UInt32>)
+            -> OSStatus
+        guard let symbol = securitySymbol("SecKeychainGetStatus") else { return false }
+        var status: UInt32 = 0
+        guard unsafeBitCast(symbol, to: GetStatus.self)(nil, &status) == errSecSuccess else {
+            return false
+        }
+        // kSecUnlockStateStatus
+        return status & 1 == 0
+    }
+
+    private static func securitySymbol(_ name: String) -> UnsafeMutableRawPointer? {
+        let path = "/System/Library/Frameworks/Security.framework/Security"
+        guard let handle = dlopen(path, RTLD_NOW) else { return nil }
+        // Security.framework stays loaded: the app links it.
+        return dlsym(handle, name)
     }
 
     private func check(_ status: OSStatus) throws(KeychainError) {

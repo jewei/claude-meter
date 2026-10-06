@@ -36,6 +36,12 @@ public enum KeychainError: Error, Equatable, LocalizedError, Sendable {
 public protocol Keychain: Sendable {
     /// The secret of one item, or nil when the item does not exist.
     func password(service: String, account: String?) throws(KeychainError) -> Data?
+    /// The secret of an item that another app wrote with `/usr/bin/security`, such as Claude
+    /// Code's login, read through the same tool so that macOS shows no dialog. Nil when the
+    /// item does not exist.
+    func passwordThroughSecurityTool(
+        service: String, account: String
+    ) throws(KeychainError) -> Data?
     /// Attributes of every item whose service starts with `servicePrefix`. Reads no secrets.
     func items(servicePrefix: String, account: String?) throws(KeychainError) -> [KeychainItem]
     /// Creates or replaces an item that this app owns.

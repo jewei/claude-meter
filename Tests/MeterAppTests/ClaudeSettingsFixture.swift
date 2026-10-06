@@ -140,6 +140,12 @@ private final class HoldingKeychain: Keychain {
         try base.password(service: service, account: account)
     }
 
+    func passwordThroughSecurityTool(
+        service: String, account: String
+    ) throws(KeychainError) -> Data? {
+        try base.passwordThroughSecurityTool(service: service, account: account)
+    }
+
     func items(servicePrefix: String, account: String?) throws(KeychainError) -> [KeychainItem] {
         try base.items(servicePrefix: servicePrefix, account: account)
     }

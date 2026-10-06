@@ -27,6 +27,9 @@ public final class FakeKeychain: Keychain {
 
     /// Services whose secrets were read, in order.
     public var readServices: [String] { reads.value }
+    private let toolReads = Locked<[String]>([])
+    /// Services whose secrets were read through the security tool, in order.
+    public var toolReadServices: [String] { toolReads.value }
 
     public func store(
         _ password: String, service: String, account: String = "user", modifiedAt: Date? = nil
@@ -52,6 +55,14 @@ public final class FakeKeychain: Keychain {
             key.service == service && (account == nil || key.account == account)
         }
         return matches.min { $0.key.account < $1.key.account }?.value.password
+    }
+
+    public func passwordThroughSecurityTool(
+        service: String, account: String
+    ) throws(KeychainError) -> Data? {
+        if let failure { throw failure }
+        toolReads.withLock { $0.append(service) }
+        return entries.value[Key(service: service, account: account)]?.password
     }
 
     public func items(

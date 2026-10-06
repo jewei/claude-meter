@@ -109,7 +109,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 5. The hero summarizes the main meter (`HeroModel`): its headline follows the selected
    account's severity, and its subline names the limiting window and its reset, or counts
    the accounts with plenty left ("fresh") and names the lowest account. Stale accounts are
-   left out of that count and ranking, so old numbers never read as current.
+   left out of that count and ranking, so old numbers never read as current. A stale
+   selected account reads "Refresh needed", or "Waiting to retry" with a countdown while
+   its issue has a future `retryAt`, such as a rate limit: the refresh retries by itself.
 6. Cards: one per account, in the user's order, with the main card first. Without a main
    card, the first Claude or Codex card comes first (`CardOrder.ordered`). Automatic order is the main provider's accounts (selected first),
    Claude extra usage, the other main-capable provider, Cursor, then Grok. The extra-usage

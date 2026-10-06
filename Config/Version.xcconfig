@@ -6,5 +6,5 @@
 // must use a greater build. So 4.0.0 can use 400 until tag v4.0.0 exists. See "The build
 // number" in docs/releasing.md. The last 3.x build is 337.
 
-MARKETING_VERSION = 4.0.0
-CURRENT_PROJECT_VERSION = 400
+MARKETING_VERSION = 4.1.0
+CURRENT_PROJECT_VERSION = 410

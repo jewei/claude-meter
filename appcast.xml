@@ -6,6 +6,36 @@
         <description>Claude Meter release feed</description>
         <language>en</language>
         <item>
+            <title>Version 4.1.0</title>
+            <pubDate>Tue, 06 Oct 2026 06:11:24 +0000</pubDate>
+            <sparkle:version>410</sparkle:version>
+            <sparkle:shortVersionString>4.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:minimumUpdateVersion>295</sparkle:minimumUpdateVersion>
+            <sparkle:minimumAutoupdateVersion>400</sparkle:minimumAutoupdateVersion>
+            <description><![CDATA[
+<h3>Changed</h3>
+<ul>
+<li>The drag hint above the cards is now a tooltip on an info icon beside <strong>ACCOUNTS</strong>, and the <strong>Menu bar</strong> pill above the first card is gone, so the popover is two lines shorter. The top Claude or Codex card still sets the menu bar.</li>
+<li>Ring cards now open and close from their header, like bar cards, so usage-limit resets and tokens used can stay hidden. They start closed.</li>
+<li>While a provider rate-limits usage checks, the summary at the top says <strong>Waiting to retry</strong> with a countdown instead of <strong>Refresh needed</strong>, because the app retries by itself.</li>
+<li>Settings &gt; Data shows each provider's logo on its tile.</li>
+<li>Settings calls a Codex home a "config dir", the same as for Claude: <strong>Add config dir…</strong>.</li>
+<li>You can now choose the plan badge of any Claude login in Settings &gt; Data, also when the login reports a plan. Claude Code keeps the plan of the last sign-in, so after a plan change the badge could stay old. <strong>Use reported plan</strong> goes back to the reported badge.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>Claude Meter no longer asks for your login Keychain password to read Claude Code's sign-in. The dialog came back after each Claude Code token renewal, also after <strong>Always Allow</strong>.</li>
+</ul>
+            ]]></description>
+            <enclosure
+                url="https://github.com/jewei/claude-meter/releases/download/v4.1.0/ClaudeMeter-4.1.0.dmg"
+                sparkle:edSignature="oCURCU7rTLwy+UgMQpikTL1mUaOyBrgsvwrf1pup2bX1li8O/eHqf6h//DFv1v3bA0Z5Etoi65ooTh0+cgwJDA=="
+                length="5085057"
+                type="application/octet-stream"
+            />
+        </item>
+        <item>
             <title>Version 4.0.0</title>
             <pubDate>Mon, 05 Oct 2026 12:21:24 +0000</pubDate>
             <sparkle:version>400</sparkle:version>

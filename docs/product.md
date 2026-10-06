@@ -141,7 +141,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 ## 6. Settings
 
 1. **Data**: one switch per source, then each provider's accounts: Claude config dirs and
-   connection, Codex homes, display names, and plan badges for logins that report none. Removing a
+   connection, Codex homes, display names, and Claude plan badges. A badge that the user
+   picks wins over the reported plan, because Claude Code reports the plan of the last
+   sign-in, which can be old after a plan change (`PlanChoice`). Removing a
    config dir or a Codex home also removes its name, pin, and card state, and for a config dir
    its plan badge and switch (`Settings.forgetAccount`). Turning off a config dir's tracking
    switch clears its pin, so the main meter follows the automatic selection

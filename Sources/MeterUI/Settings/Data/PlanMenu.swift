@@ -1,10 +1,10 @@
 import MeterApp
 import SwiftUI
 
-/// A badge for a login that reports no plan: "Set plan" until the user picks one, then the
-/// chosen plan with a menu to change or remove it. The plans come from ``PlanChoice``.
+/// The plan badge of a Claude login with a menu to change it: "Set plan" while there is no
+/// badge, then the badge. The plans, the reset item, and the tooltip come from ``PlanChoice``.
 struct PlanMenu: View {
-    let current: PlanBadge?
+    let choice: PlanChoice
     let choose: (String?) -> Void
 
     var body: some View {
@@ -12,13 +12,13 @@ struct PlanMenu: View {
             ForEach(PlanChoice.plans, id: \.self) { plan in
                 Button(plan) { choose(plan) }
             }
-            if current != nil {
+            if let reset = choice.resetTitle {
                 Divider()
-                Button("Remove plan") { choose(nil) }
+                Button(reset) { choose(nil) }
             }
         } label: {
             HStack(spacing: 4) {
-                if let current {
+                if let current = choice.current {
                     PlanBadgeView(badge: current)
                 } else {
                     Text("Set plan")
@@ -37,7 +37,7 @@ struct PlanMenu: View {
         .buttonStyle(QuietButtonStyle(radius: 8))
         .menuIndicator(.hidden)
         .fixedSize()
-        .accessibilityLabel(current.map { "Plan \($0.text)" } ?? "Set plan")
-        .help("This login reports no plan. Choose the badge to show.")
+        .accessibilityLabel(choice.current.map { "Plan \($0.text)" } ?? "Set plan")
+        .help(choice.help)
     }
 }

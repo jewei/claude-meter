@@ -27,11 +27,7 @@ struct ClaudeSourceSection: View {
                     Text("Plan")
                         .font(MeterFont.body(12, .semibold))
                         .foregroundStyle(Palette.inkMuted)
-                    switch claude.manualPlan {
-                    case .reported(let badge): PlanBadgeView(badge: badge)
-                    case .pickable(let current):
-                        PlanMenu(current: current, choose: { claude.setManualPlan($0) })
-                    }
+                    PlanMenu(choice: claude.manualPlan, choose: { claude.setManualPlan($0) })
                     Spacer(minLength: 0)
                 }
             }

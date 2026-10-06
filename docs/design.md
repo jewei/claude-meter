@@ -323,7 +323,8 @@ the app is regular; "About Claude Meter" opens the About tab.
     Quit. While the field is empty it shows the default name in `inkMuted`; the system
     placeholder color is below 4.5:1, so the name and token fields draw their own
     (`fieldPlaceholder`). A Claude row (`ClaudeAccountRow`) adds a path chip with the full
-    path in its tooltip, the plan (`PlanChoice`: the reported badge, or a menu), a "Not
+    path in its tooltip, the plan menu (`PlanMenu`, `PlanChoice`: the picked badge, else the reported one;
+    "Use reported plan (…)" or "Remove plan" removes the pick), a "Not
     tracked" chip, and a tracking switch where the login can be turned off; a login that
     is not tracked dims only its avatar, so its text keeps full contrast. A Codex row
     (`CodexHomeRow`) adds a path chip and the sign-in state, and no plan. Remove asks in

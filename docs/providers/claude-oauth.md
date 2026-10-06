@@ -317,7 +317,9 @@ little memory. The limit is 256 MiB. The result is one of three states:
    `grants` missing, or with a grant that is not an object, the count is unknown.
 7. The plan is from the credential's `subscriptionType` and `rateLimitTier`, else the
    `.claude.json` tier: "Max 20x", "Max 5x", "Max", "Pro", "Team", "Enterprise", "Free".
-   Manual tokens name no plan: the card shows the plan badge saved for `claude` in Settings.
+   Manual tokens name no plan. A plan badge that the user picks in Settings wins over the
+   reported plan: Claude Code keeps the plan of the last sign-in, so after a plan change
+   the reported plan stays old until the next `/login`.
 
 ### Limits
 

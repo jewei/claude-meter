@@ -12,6 +12,12 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
+### Changed
+
+- You can now choose the plan badge of any Claude login in Settings > Data, also when the
+  login reports a plan. Claude Code keeps the plan of the last sign-in, so after a plan
+  change the badge could stay old. **Use reported plan** goes back to the reported badge.
+
 ## [4.0.0] - 2026-10-05
 
 Claude Meter 4.0 is a complete rewrite. It keeps every feature of 3.x with a new, faster

@@ -68,7 +68,7 @@ enum CodexError: Error, Equatable, LocalizedError, Sendable {
         case .accessTokenExpired:
             "Codex access token needs renewal by Codex. Open Codex or run `codex login`."
         case .homeMissing:
-            "Codex home folder not found. Run `codex login`, or check the folder in Settings."
+            "Codex config dir not found. Run `codex login`, or check the folder in Settings."
         case .loginRequired:
             "Codex login required. Run `codex login`."
         case .rateLimited:

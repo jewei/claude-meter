@@ -102,7 +102,7 @@ public final class CodexProvider: UsageProvider, DiagnosticsReporting {
     }
 
     private static let homesUnresolved = ProviderError(
-        "Could not read the Codex home folders in time. Refresh again.")
+        "Could not read the Codex config dirs in time. Refresh again.")
 
     /// Whether `url` holds `auth.json` or `config.toml`, so it can be a Codex home.
     public static func looksLikeHome(_ url: URL) -> Bool {

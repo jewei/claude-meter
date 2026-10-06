@@ -56,7 +56,7 @@ import Testing
         Snapshot.render("settings-data-sources") {
             SettingsPage(title: "Data sources", subtitle: "Sample folders.", spacing: 16) {
                 DataSourceCard(
-                    symbol: "key.fill", tint: Palette.Tile.gold, title: "Claude",
+                    provider: .claude, tint: Palette.Tile.gold, title: "Claude",
                     subtitle: DataSourceText.claudeSubtitle(
                         connection: .automatic, isEnabled: true, connectWasNotSaved: false),
                     isEnabled: .constant(true)
@@ -69,12 +69,12 @@ import Testing
                         setEnabled: { _, _ in }, setPlan: { _, _ in }, remove: { _ in }, add: {})
                 }
                 DataSourceCard(
-                    symbol: "sparkles", tint: Palette.Tile.lagoon, title: "Codex",
+                    provider: .codex, tint: Palette.Tile.lagoon, title: "Codex",
                     subtitle: DataSourceText.codexSubtitle, isEnabled: .constant(true)
                 ) {
                     CodexHomesList(
                         homes: homes, names: [:], isLoading: false,
-                        error: "That Codex home is already listed.", rename: { _, _ in },
+                        error: "That config dir is already listed.", rename: { _, _ in },
                         remove: { _ in }, add: {})
                 }
             }

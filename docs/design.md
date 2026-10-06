@@ -73,7 +73,8 @@ stay `ink` while energy is full (`headlineInk`).
 | free | `#6F6A5B` / `#B8B3A2` | `#EFECE0` / `#33312A` |
 
 Values are light / dark. Settings row tiles and account avatars use fixed fills
-(`Palette.Tile`, the same in both appearances) with white glyphs. Account avatars pick one of
+(`Palette.Tile`, the same in both appearances) with white glyphs. A data source tile shows
+its provider's `ProviderMark` (20 pt, white). Account avatars pick one of
 eight tile colors from a djb2 hash of the account ID. The bolt tiles in the popover header
 and on About use `energyFull`. The About bolt is a gradient from `aboutBoltTop` (`#FFE38A`)
 to `Tile.orange`.
@@ -103,7 +104,6 @@ bar uses the system rounded font.
 | Caption | Nunito SemiBold | 11 | "Resets in 3h 12m" |
 | Section label | Nunito ExtraBold | 11, tracking 0.99, uppercase, `inkMuted` | "ACCOUNTS", Settings section headings |
 | Note | Nunito SemiBold | 10 | "Token usage unavailable" |
-| Pill | Nunito ExtraBold | 10 | "Menu bar" |
 
 No changing number may change width. Nunito's digits all have one width, as do the menu
 bar's (system rounded with `.monospacedDigit()`). So every changing number in Nunito uses
@@ -130,7 +130,7 @@ digit widths of each face, and `FixedNumberWidthTests` the widths of each number
 | `ActivityRings` | 88 pt. Outer weekly ring radius 34, inner session ring radius 24, 8 pt strokes, round caps, start at the top, `track` behind, a white highlight along each arc that grows from clear at the start to 30% at the tip (angular gradient). Center disc 30 pt in `popover` with the letter. Hidden from accessibility. |
 | `PlanBadgeView` | Capsule, padding 8×3, tier colors, one line. |
 | `ChipView` | Neutral capsule for "same login", "paused", and "Not tracked"; a tooltip only when it has help text. |
-| `ProviderMark` | Bundled logo as a 15 pt template image in `ink`; Grok uses the `atom` symbol. |
+| `ProviderMark` | Bundled logo as a 15 pt template image in `ink` (white, 20 pt on Settings data source tiles); Grok uses the `atom` symbol. |
 | `NoticeBanner` | Top-aligned 12 pt icon, wrapping Nunito SemiBold 11, padding 12×9, tint 8% fill, 16% 1 pt border, radius 12. Action: `key.slash.fill`, warning: `exclamationmark.triangle.fill` (both `energyLowInk`); info: `clock.fill` (`inkMuted`). |
 | `SquareIconButton` | 28 pt target, glyph 12 bold, quiet style on a chunky surface. |
 | `InlineConfirmation` (`Settings/Data`) | A question in the page in place of the control that asked: `energyEmptyInk` warning symbol, Fredoka SemiBold 15 title, Nunito SemiBold 12 message, Cancel (Escape, when it is the newest question: `CancelShortcuts`) and a raised `destructive` button; `popover` fill, 1.5 pt border in `energyEmptyInk` at 40%, radius 14. Never a blocking alert. |
@@ -174,9 +174,7 @@ inactive (`allowsToolTipsWhenApplicationIsInactive`).
 │ ┌ update notice (when available) ──────────┐ │
 │ ┌ notices ─────────────────────────────────┐ │  body: padding 15, top 2, bottom 16
 │ ┌ hero ────────────────────────────────────┐ │  spacing 12
-│  ACCOUNTS                     ◌ week ● 5-hr  │
-│  Drag a Claude or Codex card to the top…     │
-│  (▭ Menu bar)                                 │  pill above the main card
+│  ACCOUNTS (i)                 ◌ week ● 5-hr  │  (i): drag hint tooltip
 │ ┌ card ────────────────────────────────────┐ │  card list spacing 10
 └──────────────────────────────────────────────┘
 ```
@@ -194,20 +192,21 @@ padding 14×13. VoiceOver reads it as one element: "title. subtitle".
 
 ### Card list and reordering
 
-`CardList` renders `AccountsModel.cards`. A local `DragGesture` (minimum 8 pt, named
+`CardList` renders `AccountsModel.cards`. When more than one card can own the menu bar, an
+`info.circle` icon after "ACCOUNTS" shows `AccountsModel.dragHint` as its tooltip and its
+VoiceOver label. A local `DragGesture` (minimum 8 pt, named
 coordinate space) tracks the pointer in `@GestureState`, so it resets on end and cancel.
 `CardReorder.targetIndex` (pure) gives the card a new place only after the pointer crosses
 a neighbor's midpoint; a pointer above or below the list counts as its first or last place.
 During the drag the list shows a preview from view state only
 (`AccountsModel.dragPreview`, `CardDragPreview`): it starts in the card's own place, it
 skips places that the drop would refuse (Cursor, Grok, or extra usage first; the main card
-off the top), and the pill moves to the card that the drop makes the main meter. So a first
-card that is not the main card gets the pill when the drag starts, and a drop in place pins
-it. The dragged card lifts (102%, a soft shadow; no scale under Reduce Motion). The drop
+off the top). So a drag of a first card that is not the main card starts with a preview
+that the drop accepts, and a drop in place pins it. The dragged card lifts (102%, a soft shadow; no scale under Reduce Motion). The drop
 calls `AppModel.moveCard(_:to:visible:)` once, with the place that the preview shows; a
 cancelled drag, or a refresh that changes the cards, puts them back. No pasteboard, no drops
 from outside, and a hidden popover does not reorder. The release that ends a drag does not
-toggle the bar card under the pointer, and the header does not show as pressed during the
+toggle the card under the pointer, and the header does not show as pressed during the
 drag.
 
 Dragging is not the only way to choose the menu-bar meter: a Claude or Codex card that is
@@ -221,10 +220,12 @@ header's value is its headline and whether it is expanded.
 
 All cards: padding 14×13, `chunkyCard()`, full width.
 
-- **Ring card** (`RingCardView`): the name (Fredoka SemiBold 15) with badges at the trailing
-  edge, or below the name when they do not fit. Then rings and rows, 14 pt apart. Each row
+- **Ring card** (`RingCardView`): a header button (the name in Fredoka SemiBold 15 with
+  badges at the trailing edge, or below the name when they do not fit, then the chevron;
+  28 pt minimum height) that calls `toggleCard`. Then rings and rows, 14 pt apart. Each row
   (`RingMetricRow`): dot, short title, value in severity ink, caption, and "Resets in …"
-  below, indented 15 pt. Details and the status line follow; ring cards are always open.
+  below, indented 15 pt. Expanded details, then the status line, follow. Details reveal
+  from the top with the card height; the card clips its content.
 - **Bar card** (`BarCardView`): a header button (provider mark, name, badges, headline
   value, chevron; 28 pt minimum height) that calls `toggleCard`. One 12 pt `BarRow` per
   window with "Session · 60% left" and the reset, unless `BarsModel.showsBarLabels` is false

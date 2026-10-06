@@ -105,6 +105,20 @@ import Testing
         #expect(hero.tone == .neutral)
     }
 
+    @Test func aRateLimitWaitsInsteadOfAskingForARefresh() {
+        var limited = single(session: 10)
+        limited.isStale = true
+        limited.issue = UsageIssue(
+            "Anthropic is rate-limiting usage checks.", retryAt: .reference(60))
+        let waiting = hero([limited])
+        #expect(waiting.title == "Waiting to retry")
+        #expect(waiting.subtitle == "Showing the last Claude reading. Retrying in 1m.")
+        #expect(waiting.tone == .neutral)
+
+        let expired = hero([limited], now: .reference(61))
+        #expect(expired.title == "Refresh needed")
+    }
+
     @Test func staleAccountsAreNotRankedFromOldData() {
         let home = AccountUsage(
             id: "home", name: "Home", windows: [Fixture.window(.session, used: 5)],

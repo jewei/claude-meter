@@ -35,6 +35,17 @@ public struct HeroModel: Equatable, Sendable {
             selected = account
         }
         guard !selected.isStale else {
+            // A rate limit needs no action: the refresh retries by itself. The notice states
+            // the limit, so the hero only says that the app waits.
+            if let retryAt = meter.issue?.retryAt,
+                let countdown = Countdown.text(until: retryAt, now: context.now)
+            {
+                self.init(
+                    emoji: "⏳", title: "Waiting to retry",
+                    subtitle: "Showing the last \(name) reading. Retrying in \(countdown).",
+                    tone: .neutral)
+                return
+            }
             self.init(
                 emoji: "🛰️", title: "Refresh needed", subtitle: "\(name) data is out of date.",
                 tone: .neutral)

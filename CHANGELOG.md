@@ -23,6 +23,9 @@ are in the `v3.1.3` tag.
   with a countdown instead of **Refresh needed**, because the app retries by itself.
 - Settings > Data shows each provider's logo on its tile.
 - Settings calls a Codex home a "config dir", the same as for Claude: **Add config dir…**.
+- You can now choose the plan badge of any Claude login in Settings > Data, also when the
+  login reports a plan. Claude Code keeps the plan of the last sign-in, so after a plan
+  change the badge could stay old. **Use reported plan** goes back to the reported badge.
 
 ### Fixed
 

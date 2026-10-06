@@ -250,11 +250,17 @@ import Testing
         #expect(renamed.accounts(for: .claude).first?.name == "Day job")
     }
 
-    @Test func reportedPlanWinsOverTheOverride() {
-        let usage = Fixture.usage(.claude, Fixture.account("claude", plan: "Max 20x"))
-        let settings = Fixture.settings { $0.claude.planOverrides = ["claude": "Pro"] }
+    /// Claude Code reports the plan of the last sign-in, which can be old after a plan
+    /// change, so the user's pick wins.
+    @Test func thePickWinsOverTheReportedPlan() {
+        let usage = Fixture.usage(.claude, Fixture.account("claude", plan: "Pro"))
+        let settings = Fixture.settings { $0.claude.planOverrides = ["claude": "Max 20x"] }
         let context = Fixture.context(settings, readings: [.claude: Fixture.current(usage)])
         #expect(context.accounts(for: .claude).first?.plan == "Max 20x")
+
+        let reported = Fixture.context(
+            Fixture.settings(), readings: [.claude: Fixture.current(usage)])
+        #expect(reported.accounts(for: .claude).first?.plan == "Pro")
     }
 }
 

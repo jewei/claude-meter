@@ -124,14 +124,30 @@ import Testing
         #expect(DataSourceText.trackingChip(isEnabled: true) == nil)
     }
 
-    /// A reported plan wins; otherwise the user may pick one (review UI-39).
-    @Test func planChoiceFollowsTheReportedPlan() throws {
-        let max = try #require(PlanBadge(plan: "Max 20x"))
-        #expect(PlanChoice(reported: "Max 20x", override: "Team") == .reported(max))
+    /// The user's pick wins over the reported plan, which can be old after a plan change.
+    @Test func planChoicePrefersThePick() throws {
+        let picked = PlanChoice(reported: "Pro", override: "Max 20x")
+        #expect(picked.current == PlanBadge(plan: "Max 20x"))
+        #expect(picked.reported == PlanBadge(plan: "Pro"))
+        #expect(picked.isPicked)
+        #expect(picked.resetTitle == "Use reported plan (Pro)")
+        #expect(picked.help == "You chose this badge. The login reports Pro.")
+
+        let reported = PlanChoice(reported: "Max 5x", override: nil)
+        #expect(reported.current == PlanBadge(plan: "Max 5x"))
+        #expect(!reported.isPicked)
+        #expect(reported.resetTitle == nil)
         #expect(
-            PlanChoice(reported: nil, override: "Team")
-                == .pickable(current: PlanBadge(plan: "Team")))
-        #expect(PlanChoice(reported: " ", override: nil) == .pickable(current: nil))
+            reported.help == "The login reports Max 5x. Choose another badge if your plan changed.")
+
+        let unreported = PlanChoice(reported: nil, override: "Team")
+        #expect(unreported.current == PlanBadge(plan: "Team"))
+        #expect(unreported.resetTitle == "Remove plan")
+        #expect(unreported.help == "This login reports no plan. Choose the badge to show.")
+
+        let empty = PlanChoice(reported: " ", override: nil)
+        #expect(empty.current == nil)
+        #expect(empty.resetTitle == nil)
         #expect(PlanChoice.plans.first == "Pro")
         #expect(PlanChoice.plans.allSatisfy { PlanBadge(plan: $0) != nil })
     }

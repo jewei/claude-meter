@@ -83,8 +83,9 @@ public struct PresentationContext: Sendable {
             // Codex folder names are shown as Settings lists them.
             let label = provider == .claude ? Self.friendlyName(account.name) : account.name
             account.name = settings.displayName(for: provider, account: account.id) ?? label
-            if provider == .claude, account.plan == nil {
-                account.plan = settings.claude.planOverrides[account.id]
+            // The user's pick wins: Claude Code reports the plan of the last sign-in.
+            if provider == .claude, let picked = settings.claude.planOverrides[account.id] {
+                account.plan = picked
             }
             return account.resolved(at: now, isStale: isStale(account, reading: reading))
         }

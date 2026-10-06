@@ -29,10 +29,9 @@ struct ClaudeAccountRow: View {
                         .font(MeterFont.body(11, .semibold))
                         .foregroundStyle(Palette.inkMuted)
                 }
-                switch PlanChoice(reported: account.reportedPlan, override: planOverride) {
-                case .reported(let badge): PlanBadgeView(badge: badge)
-                case .pickable(let current): PlanMenu(current: current, choose: setPlan)
-                }
+                PlanMenu(
+                    choice: PlanChoice(reported: account.reportedPlan, override: planOverride),
+                    choose: setPlan)
                 if let chip = DataSourceText.trackingChip(isEnabled: account.isEnabled) {
                     ChipView(text: chip)
                 }

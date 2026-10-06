@@ -80,9 +80,6 @@ import Testing
         Pair(name: "token placeholder", text: Palette.inkMuted, background: Palette.card),
         Pair(name: "chip", text: Palette.inkMuted, background: Palette.track),
         Pair(
-            name: "menu bar pill", text: Palette.inkMuted, background: Palette.popover,
-            tint: (Palette.track, 0.65)),
-        Pair(
             name: "path chip", text: Palette.inkMuted, background: Palette.popover,
             tint: (Palette.track, 0.8)),
         Pair(name: "green text", text: Palette.energyFullInk, background: Palette.card),

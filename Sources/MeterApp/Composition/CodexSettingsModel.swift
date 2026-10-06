@@ -112,7 +112,7 @@ public final class CodexSettingsModel {
         }
         guard let canonical = checked else {
             error =
-                "That folder does not look like a Codex home. "
+                "That folder does not look like a Codex config dir. "
                 + "Choose a folder with auth.json or config.toml."
             return false
         }
@@ -123,13 +123,13 @@ public final class CodexSettingsModel {
         do {
             current = try await readHomes(settings.codexConfiguration)
         } catch {
-            self.error = "Could not check the Codex homes in time. Try again."
+            self.error = "Could not check the Codex config dirs in time. Try again."
             return false
         }
         guard !current.contains(where: { $0.directory.path == canonical.path }),
             !settings.settings.codex.extraHomes.contains(canonical.path)
         else {
-            error = "That Codex home is already listed."
+            error = "That config dir is already listed."
             return false
         }
         error = nil

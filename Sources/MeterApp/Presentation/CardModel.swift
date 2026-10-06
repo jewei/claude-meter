@@ -5,7 +5,7 @@ import MeterDomain
 /// anything about the data.
 public struct CardModel: Identifiable, Equatable, Sendable {
     public enum Disclosure: Equatable, Sendable {
-        /// Always shows its details (ring cards).
+        /// Always shows its details (the extra usage card).
         case alwaysOpen
         case collapsed
         case expanded

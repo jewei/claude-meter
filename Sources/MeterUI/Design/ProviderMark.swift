@@ -2,11 +2,12 @@ import AppKit
 import MeterDomain
 import SwiftUI
 
-/// The provider's logo as a one-color mark in ink. Grok has no bundled logo and uses a
-/// symbol.
+/// The provider's logo as a one-color mark, in ink unless `color` says otherwise. Grok has no
+/// bundled logo and uses a symbol.
 struct ProviderMark: View {
     let provider: ProviderID
     var size: CGFloat = 15
+    var color = Palette.ink
 
     var body: some View {
         Group {
@@ -18,7 +19,7 @@ struct ProviderMark: View {
         }
         .scaledToFit()
         .frame(width: size, height: size)
-        .foregroundStyle(Palette.ink)
+        .foregroundStyle(color)
         .accessibilityLabel(provider.displayName)
     }
 

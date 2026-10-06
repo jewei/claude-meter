@@ -13,9 +13,6 @@ public struct CardDragPreview: Equatable, Sendable {
     public let index: Int
     /// The visible cards in the order that the list shows during the drag.
     public let order: [CardID]
-    /// The card with the Menu bar pill during the drag: the dragged card when the drop makes
-    /// it the main meter, else the main card.
-    public let menuBarCard: CardID?
 }
 
 extension AccountsModel {
@@ -31,10 +28,9 @@ extension AccountsModel {
         case .refused:
             return nil
         case .unchanged:
-            return CardDragPreview(card: card, index: index, order: ids, menuBarCard: main)
+            return CardDragPreview(card: card, index: index, order: ids)
         case .moved(let move):
-            return CardDragPreview(
-                card: card, index: index, order: move.order, menuBarCard: move.newMain ?? main)
+            return CardDragPreview(card: card, index: index, order: move.order)
         }
     }
 
@@ -43,7 +39,7 @@ extension AccountsModel {
     /// gives a new preview, else `last` stays.
     ///
     /// The drag starts in the card's own place. There a first card that is not the main card
-    /// becomes the main meter, so it shows the pill at once and a drop in place pins it
+    /// becomes the main meter, so a drop in place pins it
     /// (`docs/product.md` §2.7). A pointer that stays in the first place reaches no target,
     /// so only this start lets such a drag make the card the main meter.
     public func dragPreview(
@@ -66,12 +62,5 @@ extension AccountsModel {
         guard let preview, accepts(preview) else { return cards }
         let byID = Dictionary(cards.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return preview.order.compactMap { byID[$0] }
-    }
-
-    /// Whether `card` shows the Menu bar pill: the main card, or during a drag the card that
-    /// the drop makes the main meter.
-    public func showsMenuBarPill(_ card: CardID, during preview: CardDragPreview?) -> Bool {
-        if let preview, accepts(preview) { return preview.menuBarCard == card }
-        return cards.contains { $0.id == card && $0.isMain }
     }
 }

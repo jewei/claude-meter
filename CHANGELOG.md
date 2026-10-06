@@ -14,6 +14,15 @@ are in the `v3.1.3` tag.
 
 ### Changed
 
+- The drag hint above the cards is now a tooltip on an info icon beside **ACCOUNTS**, and
+  the **Menu bar** pill above the first card is gone, so the popover is two lines shorter.
+  The top Claude or Codex card still sets the menu bar.
+- Ring cards now open and close from their header, like bar cards, so usage-limit resets and
+  tokens used can stay hidden. They start closed.
+- While a provider rate-limits usage checks, the summary at the top says **Waiting to retry**
+  with a countdown instead of **Refresh needed**, because the app retries by itself.
+- Settings > Data shows each provider's logo on its tile.
+- Settings calls a Codex home a "config dir", the same as for Claude: **Add config dir…**.
 - You can now choose the plan badge of any Claude login in Settings > Data, also when the
   login reports a plan. Claude Code keeps the plan of the last sign-in, so after a plan
   change the badge could stay old. **Use reported plan** goes back to the reported badge.

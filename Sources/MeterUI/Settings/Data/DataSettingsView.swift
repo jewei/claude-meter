@@ -1,4 +1,5 @@
 import MeterApp
+import MeterDomain
 import SwiftUI
 
 /// Settings > Data: one card per source.
@@ -17,7 +18,7 @@ struct DataSettingsView: View {
             spacing: 16
         ) {
             DataSourceCard(
-                symbol: "key.fill", tint: Palette.Tile.gold, title: "Claude",
+                provider: .claude, tint: Palette.Tile.gold, title: "Claude",
                 subtitle: DataSourceText.claudeSubtitle(
                     connection: settings.claude.connection, isEnabled: settings.claude.isEnabled,
                     connectWasNotSaved: model.claudeSettings?.connectWasNotSaved ?? false),
@@ -29,7 +30,7 @@ struct DataSettingsView: View {
                 }
             }
             DataSourceCard(
-                symbol: "sparkles", tint: Palette.Tile.lagoon, title: "Codex",
+                provider: .codex, tint: Palette.Tile.lagoon, title: "Codex",
                 subtitle: DataSourceText.codexSubtitle, isEnabled: $store.settings.codex.isEnabled,
                 showsContent: model.codexSettings != nil
             ) {
@@ -38,11 +39,11 @@ struct DataSettingsView: View {
                 }
             }
             DataSourceCard(
-                symbol: "cursorarrow.rays", tint: Palette.Tile.teal, title: "Cursor",
+                provider: .cursor, tint: Palette.Tile.teal, title: "Cursor",
                 subtitle: DataSourceText.cursorSubtitle,
                 isEnabled: $store.settings.cursor.isEnabled)
             DataSourceCard(
-                symbol: "atom", tint: Palette.Tile.graphite, title: "Grok",
+                provider: .grok, tint: Palette.Tile.graphite, title: "Grok",
                 subtitle: DataSourceText.grokSubtitle, isEnabled: $store.settings.grok.isEnabled)
         }
         .task { await reload() }

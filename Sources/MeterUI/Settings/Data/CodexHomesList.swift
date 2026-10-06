@@ -14,7 +14,7 @@ struct CodexHomesList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Each Codex home is one account.")
+            Text("Each config dir is one Codex login.")
                 .font(MeterFont.body(12, .semibold))
                 .foregroundStyle(Palette.inkMuted)
             ForEach(homes) { home in
@@ -23,11 +23,11 @@ struct CodexHomesList: View {
                     remove: { remove(home.id) })
             }
             if homes.isEmpty, isLoading {
-                Text("Looking for Codex homes…")
+                Text("Looking for config dirs…")
                     .font(MeterFont.body(12, .semibold))
                     .foregroundStyle(Palette.inkMuted)
             }
-            AddFolderButton(title: "Add Codex home…", action: add)
+            AddFolderButton(title: "Add config dir…", action: add)
             if let error {
                 Text(error)
                     .font(MeterFont.body(11, .bold))

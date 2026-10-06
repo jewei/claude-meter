@@ -20,6 +20,14 @@ extension CardModel {
     }
 }
 
+extension RingsModel {
+    /// The spoken value of a ring card's header button: whether the details show. The rows
+    /// speak the windows.
+    public func headerAccessibilityValue(isExpanded: Bool) -> String {
+        isExpanded ? "Expanded" : "Collapsed"
+    }
+}
+
 extension BarsModel {
     /// The spoken value of a bar card's header button: the headline, then whether the
     /// details show.

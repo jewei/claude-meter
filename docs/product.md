@@ -60,10 +60,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    Cursor, Grok, and extra usage cannot go first (`CardOrder.move`). The list shows the new
    order while the card moves, but the settings change once, when the user drops the card:
    a card that passes over the top and comes back changes nothing. During the drag, the card
-   takes only places that the drop accepts, and the **Menu bar** pill moves to the card that
-   the drop makes the main meter (`CardDragPreview`). A drag starts in the card's own place,
-   so a first card that is not the main card shows the pill as soon as the drag starts, and
-   a drop that never left the place pins it. **Use in Menu Bar** in a card's
+   takes only places that the drop accepts (`CardDragPreview`). A drag starts in the card's
+   own place, so for a first card that is not the main card, a drop that never left the
+   place pins it. **Use in Menu Bar** in a card's
    context menu, also a VoiceOver action, does the same as a drag to the top
    (`CardModel.canUseInMenuBar`). **Use automatic order** in Appearance clears the order and
    every pin.
@@ -110,15 +109,17 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 5. The hero summarizes the main meter (`HeroModel`): its headline follows the selected
    account's severity, and its subline names the limiting window and its reset, or counts
    the accounts with plenty left ("fresh") and names the lowest account. Stale accounts are
-   left out of that count and ranking, so old numbers never read as current.
-6. Cards: one per account, in the user's order, with the main card first and a **Menu bar**
-   pill. Without a main card, the first Claude or Codex card comes first
-   (`CardOrder.ordered`). Automatic order is the main provider's accounts (selected first),
+   left out of that count and ranking, so old numbers never read as current. A stale
+   selected account reads "Refresh needed", or "Waiting to retry" with a countdown while
+   its issue has a future `retryAt`, such as a rate limit: the refresh retries by itself.
+6. Cards: one per account, in the user's order, with the main card first. Without a main
+   card, the first Claude or Codex card comes first (`CardOrder.ordered`). Automatic order is the main provider's accounts (selected first),
    Claude extra usage, the other main-capable provider, Cursor, then Grok. The extra-usage
    card shows only while Claude is the main meter, for its selected account, when that
    account reports extra usage (`CardBuilder`).
-7. **Rings** cards are always open. **Bars**, Cursor, and Grok cards open and close, and
-   remember their state. Details hold scoped windows, usage-limit resets, and tokens used.
+7. Account cards (rings, bars, Cursor, and Grok) open and close from their header, and
+   remember their state. They start closed. The extra-usage card is always open. Details
+   hold usage-limit resets and tokens used, and in bar cards also scoped windows.
 8. A card shows its account's own issue. A card of a provider that is not the main meter also
    shows old data (`Data may be stale`); the main provider shows it as a notice instead. A
    failed refresh is a notice for every provider (§4.4), so no card repeats it

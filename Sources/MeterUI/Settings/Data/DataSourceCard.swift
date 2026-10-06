@@ -1,9 +1,10 @@
+import MeterDomain
 import SwiftUI
 
-/// One data source: a tile, title, subtitle, and switch. When the source is on, its own
+/// One data source: a tile with the provider's logo, title, subtitle, and switch. When the source is on, its own
 /// controls follow below a divider at the full card width.
 struct DataSourceCard<Content: View>: View {
-    let symbol: String
+    let provider: ProviderID
     let tint: Color
     let title: String
     let subtitle: String
@@ -14,7 +15,13 @@ struct DataSourceCard<Content: View>: View {
 
     var body: some View {
         SettingsCard(spacing: 14) {
-            SettingsRow(symbol: symbol, tint: tint, title: title, subtitle: subtitle) {
+            SettingsRow(
+                icon: RaisedTile(fill: tint, size: 40) {
+                    ProviderMark(provider: provider, size: 20, color: .white)
+                        .accessibilityHidden(true)
+                },
+                title: title, subtitle: subtitle
+            ) {
                 MeterSwitch(label: title, isOn: $isEnabled)
             }
             if isEnabled, showsContent {
@@ -27,10 +34,11 @@ struct DataSourceCard<Content: View>: View {
 
 extension DataSourceCard where Content == EmptyView {
     init(
-        symbol: String, tint: Color, title: String, subtitle: String, isEnabled: Binding<Bool>
+        provider: ProviderID, tint: Color, title: String, subtitle: String,
+        isEnabled: Binding<Bool>
     ) {
         self.init(
-            symbol: symbol, tint: tint, title: title, subtitle: subtitle, isEnabled: isEnabled,
+            provider: provider, tint: tint, title: title, subtitle: subtitle, isEnabled: isEnabled,
             showsContent: false
         ) { EmptyView() }
     }

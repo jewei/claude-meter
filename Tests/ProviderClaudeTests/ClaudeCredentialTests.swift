@@ -110,6 +110,10 @@ extension ClaudeTests {
 
             let found = try await reader.credential(services: services)
             #expect(found == .found(try #require(ClaudeCredential.claudeCode(Data(item.utf8)))))
+            // Claude Code's items are read through the security tool, which they trust, so
+            // macOS shows no dialog.
+            #expect(fake.toolReadServices == services)
+            #expect(fake.readServices.isEmpty)
 
             fake.failure = .unavailable
             #expect(

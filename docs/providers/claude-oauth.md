@@ -77,14 +77,22 @@ Content-Type: application/json
    Claude Code may hash `CLAUDE_CONFIG_DIR` without resolving links.
 2. The default dir tries the legacy item first, then its hashed item. Other dirs use only
    their hashed item.
-3. Claude Code's item value is
+3. Claude Code writes its items with `/usr/bin/security`, so their access lists trust only
+   that tool, and every write resets an "Always Allow" given to this app. So their secrets
+   are read with `security find-generic-password -s <service> -a <user> -w`
+   (`SystemKeychain.passwordThroughSecurityTool`), which shows no dialog. Exit 44 is a
+   missing item. While the login Keychain is locked, the read fails without starting the
+   tool, which would ask to unlock it. The tool has 5 s. Attributes (`activeService`) and
+   the manual item are read in the process, and Keychain dialogs are off for the whole
+   process, so those reads fail instead of asking.
+4. Claude Code's item value is
    `{"claudeAiOauth": {"accessToken", "refreshToken", "expiresAt" (epoch ms),
    "subscriptionType", "rateLimitTier"}}`. `accessToken`, `refreshToken`, and `expiresAt` are
    required.
-4. The manual item value is JSON `{accessToken, refreshToken, expiresAt, connectionID}` with
+5. The manual item value is JSON `{accessToken, refreshToken, expiresAt, connectionID}` with
    ISO-8601 dates. `expiresAt` is the real expiry or absent. Pasted tokens name no plan.
    Unknown keys are ignored.
-5. Sign-in status checks read item attributes only, never a secret.
+6. Sign-in status checks read item attributes only, never a secret.
 
 ### Files read
 

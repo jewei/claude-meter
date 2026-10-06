@@ -46,7 +46,7 @@ import Testing
         #expect(model.error == nil)
         #expect(settings.settings.codex.extraHomes == [work.path])
         #expect(await !model.addHome(work))
-        #expect(model.error == "That Codex home is already listed.")
+        #expect(model.error == "That config dir is already listed.")
     }
 
     /// The list is empty before the first reload, so the check reads the homes again.
@@ -56,17 +56,17 @@ import Testing
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: implicit)
         #expect(model.homes.isEmpty)
         #expect(await !model.addHome(implicit))
-        #expect(model.error == "That Codex home is already listed.")
+        #expect(model.error == "That config dir is already listed.")
         #expect(await !model.addHome(link))
         #expect(settings.settings.codex.extraHomes.isEmpty)
     }
 
     @Test func addHomeFailsWhenTheHomesDoNotAnswer() async throws {
         let model = CodexSettingsModel(settings: settings, provider: provider) { _ in
-            throw ProviderError("Could not read the Codex home folders in time. Refresh again.")
+            throw ProviderError("Could not read the Codex config dirs in time. Refresh again.")
         }
         #expect(await !model.addHome(try makeHome("work")))
-        #expect(model.error == "Could not check the Codex homes in time. Try again.")
+        #expect(model.error == "Could not check the Codex config dirs in time. Try again.")
         #expect(settings.settings.codex.extraHomes.isEmpty)
     }
 

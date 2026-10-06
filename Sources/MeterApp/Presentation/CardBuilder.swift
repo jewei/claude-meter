@@ -42,12 +42,11 @@ struct CardBuilder {
         case .claude, .codex:
             let resets = ResetsBuilder.model(
                 account.resetAllowance, now: context.now, calendar: context.calendar)
+            disclosure = disclosureState(id)
             if context.settings.appearance.cardStyle == .rings {
-                disclosure = .alwaysOpen
                 summary = .rings(rings(account))
                 if account.resetAllowance != nil { details.append(.resets(resets)) }
             } else {
-                disclosure = disclosureState(id)
                 summary = .bars(bars(account, provider: provider, resetSummary: resets.summary))
                 let limits = gauges.scoped(account)
                 if !limits.isEmpty { details.append(.limits(limits)) }

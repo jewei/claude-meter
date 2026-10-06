@@ -193,7 +193,24 @@ import Testing
         #expect(rings.inner.caption == "left")
         #expect(rings.outer.fraction == 0.5)
         #expect(rings.initial == "A")
-        #expect(card.disclosure == .alwaysOpen)
+        #expect(card.disclosure == .collapsed)
+    }
+
+    @Test func ringCardsOpenAndCloseLikeBarCards() throws {
+        let usage = Fixture.usage(.claude, Fixture.account("a"))
+        let id = CardID.account(.claude, "a")
+        let card = try #require(
+            cards(
+                [.claude: Fixture.current(usage)], enabled: [.claude],
+                configure: { $0.cards.expanded = [id] }
+            ).first)
+        guard case .rings(let rings) = card.summary else {
+            Issue.record("Expected rings")
+            return
+        }
+        #expect(card.disclosure == .expanded)
+        #expect(rings.headerAccessibilityValue(isExpanded: true) == "Expanded")
+        #expect(rings.headerAccessibilityValue(isExpanded: false) == "Collapsed")
     }
 
     @Test func barCardsCollapseAndKeepOneUnknownBar() throws {

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// "Add config dir…" and "Add Codex home…": a chunky button with a folder symbol.
+/// "Add config dir…" for Claude and Codex: a chunky button with a folder symbol.
 struct AddFolderButton: View {
     let title: String
     let action: () -> Void

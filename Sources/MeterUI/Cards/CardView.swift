@@ -11,15 +11,17 @@ struct CardView: View {
     var body: some View {
         switch card.summary {
         case .rings(let rings):
-            RingCardView(card: card, rings: rings)
+            RingCardView(card: card, rings: rings, toggle: toggle)
         case .bars(let bars):
-            BarCardView(card: card, bars: bars) {
-                withAnimation(Motion.disclosure(reduceMotion: reduceMotion)) {
-                    model.toggleCard(card.id)
-                }
-            }
+            BarCardView(card: card, bars: bars, toggle: toggle)
         case .extraUsage(let extra):
             ExtraUsageCardView(card: card, extra: extra)
+        }
+    }
+
+    private func toggle() {
+        withAnimation(Motion.disclosure(reduceMotion: reduceMotion)) {
+            model.toggleCard(card.id)
         }
     }
 }

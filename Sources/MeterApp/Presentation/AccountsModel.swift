@@ -8,7 +8,8 @@ public struct AccountsModel: Equatable, Sendable {
     public let cards: [CardModel]
     /// The ring legend, when any card is drawn as rings.
     public let ringLegend: RingLegendModel?
-    /// Shown when more than one card can own the menu bar.
+    /// The tooltip of the info icon beside "ACCOUNTS". Shown when more than one card can own
+    /// the menu bar.
     public let dragHint: String?
 
     init(_ context: PresentationContext, meter: MainMeter, automatic: [CardModel]) {
@@ -22,6 +23,8 @@ public struct AccountsModel: Equatable, Sendable {
         let hasRings = cards.contains { if case .rings = $0.summary { true } else { false } }
         ringLegend = hasRings ? .standard : nil
         let eligible = cards.filter { $0.id.menuBarSelection != nil }.count
-        dragHint = eligible > 1 ? "Drag a Claude or Codex card to the top for the menu bar." : nil
+        dragHint =
+            eligible > 1
+            ? "Drag cards to reorder. The top Claude or Codex card shows in the menu bar." : nil
     }
 }

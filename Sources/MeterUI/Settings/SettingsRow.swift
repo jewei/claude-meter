@@ -1,9 +1,8 @@
 import SwiftUI
 
 /// A 40 pt icon tile, a title, a subtitle, and a trailing control.
-struct SettingsRow<Accessory: View>: View {
-    let symbol: String
-    let tint: Color
+struct SettingsRow<Icon: View, Accessory: View>: View {
+    let icon: Icon
     let title: String
     var subtitle: String?
     var subtitleColor: Color = Palette.inkMuted
@@ -11,7 +10,7 @@ struct SettingsRow<Accessory: View>: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            RaisedTile(symbol: symbol, fill: tint)
+            icon
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(MeterFont.display(16, .semibold))
@@ -30,7 +29,19 @@ struct SettingsRow<Accessory: View>: View {
     }
 }
 
-extension SettingsRow where Accessory == EmptyView {
+extension SettingsRow where Icon == RaisedTile<TileGlyph> {
+    /// A row whose tile shows one white SF Symbol.
+    init(
+        symbol: String, tint: Color, title: String, subtitle: String? = nil,
+        subtitleColor: Color = Palette.inkMuted, @ViewBuilder accessory: () -> Accessory
+    ) {
+        self.init(
+            icon: RaisedTile(symbol: symbol, fill: tint), title: title, subtitle: subtitle,
+            subtitleColor: subtitleColor, accessory: accessory)
+    }
+}
+
+extension SettingsRow where Icon == RaisedTile<TileGlyph>, Accessory == EmptyView {
     init(symbol: String, tint: Color, title: String, subtitle: String? = nil) {
         self.init(symbol: symbol, tint: tint, title: title, subtitle: subtitle) { EmptyView() }
     }

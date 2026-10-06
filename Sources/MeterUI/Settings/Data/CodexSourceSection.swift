@@ -2,7 +2,7 @@ import MeterApp
 import MeterDomain
 import SwiftUI
 
-/// The Codex homes list and "Add Codex home…".
+/// The Codex homes list and "Add config dir…".
 struct CodexSourceSection: View {
     let codex: CodexSettingsModel
     let names: [AccountID: String]
@@ -15,9 +15,10 @@ struct CodexSourceSection: View {
                 Task {
                     guard
                         let url = await FolderPicker.chooseFolder(
-                            title: "Add Codex Home",
+                            title: "Add Config Dir",
                             message:
-                                "Choose a Codex home: a folder with auth.json, such as ~/.codex.")
+                                "Choose a Codex config dir: a folder with auth.json, such as ~/.codex."
+                        )
                     else { return }
                     await codex.addHome(url)
                 }

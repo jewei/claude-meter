@@ -249,13 +249,19 @@ All cards: padding 14×13, `chunkyCard()`, full width.
 
 ## Menu bar (`MenuBar/`)
 
-`StatusItemController` owns an `NSStatusItem`. Its button hosts `MenuBarLabel` in a hosting
-view that ignores clicks and stays out of the accessibility tree. The button's accessibility
-label is `MenuBarModel.accessibilityLabel`. The label renders again on every change to what
+`StatusItemController` owns an `NSStatusItem`. Its button shows `MenuBarLabel` as its image
+(`MenuBarImage`), not as a hosted view: the system dims a button's own image on the menu bar
+of an inactive display, like every other item, but it never dims views added to the button.
+`MenuBarImage` renders the label for the light and dark appearance at each screen scale, and
+its drawing handler picks the one that matches the menu bar that draws it (no cache, so each
+menu bar gets its own appearance). The image is the label with 5 pt on each side, a whole
+number of points wide, and as tall as the status bar. While the critical dot pulses or the
+loading arrow turns, a frame clock draws the image again at the animation's frame rate. The
+button's accessibility label is `MenuBarModel.accessibilityLabel`. The label renders again on every change to what
 the model reads (Observation, tracked in the render itself) and on a 30 s clock (5 s
 tolerance, common run-loop modes, stopped while the display sleeps), so resets and staleness
 show without a refresh. A render whose model and pulse equal the shown ones does not touch
-the button. The label keeps flexible top and bottom margins, so it stays centered when the
+the button. The button centers the image and does not scale it, so it stays centered when the
 menu bar changes height. Colors are real colors, not a template.
 
 | `MenuBarModel.icon` | Drawing |

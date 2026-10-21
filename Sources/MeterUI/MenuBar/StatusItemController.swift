@@ -4,11 +4,13 @@ import MeterPlatform
 import Observation
 import SwiftUI
 
-/// Owns the `NSStatusItem`. Its button hosts ``MenuBarLabel`` and speaks the model's summary.
+/// Owns the `NSStatusItem`. Its button shows ``MenuBarLabel`` as an image (``MenuBarImage``)
+/// and speaks the model's summary.
 ///
 /// The label renders again when the model's inputs change and on a 30-second clock, so a
 /// reset or an old reading shows without a refresh. A render that would show the same thing
-/// does not touch the button. The clock stops while the display sleeps.
+/// does not touch the button. While the dot pulses or the loading arrow turns, a frame clock
+/// draws the image again. The clocks stop while the display sleeps.
 @MainActor final class StatusItemController {
     /// The clock that keeps countdown-driven state (resets, staleness) current.
     static let clockInterval: TimeInterval = 30
@@ -22,9 +24,11 @@ import SwiftUI
 
     private let model: AppModel
     private let statusItem: NSStatusItem
-    private let hostingView: LabelHostingView
     private let displaySleep = DisplaySleepMonitor()
     private var clock: Timer?
+    /// Draws animation frames. Nil while the label is still.
+    private var frameClock: Timer?
+    private var screenChange: (any NSObjectProtocol)?
     private var pulse = CriticalPulse()
     private var pulseEnd: Task<Void, Never>?
     /// What the button shows now.
@@ -42,23 +46,31 @@ import SwiftUI
         self.model = model
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.autosaveName = "ClaudeMeter"
-        hostingView = LabelHostingView(
-            rootView: MenuBarLabel(model: model.menuBarModel(at: Date())))
-        // Flexible margins keep the label centered when the menu bar changes height, for
-        // example on a move between a notched and a plain display.
-        hostingView.autoresizingMask = [.minYMargin, .maxYMargin]
         if let button = statusItem.button {
-            button.addSubview(hostingView)
+            // Real colors, not a template, so the dot shows its severity.
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleNone
             button.target = self
             button.action = #selector(buttonClicked)
             button.sendAction(on: [.leftMouseDown, .rightMouseDown])
         }
         render()
         startClock()
-        displaySleep.onSleep = { [weak self] in self?.stopClock() }
+        displaySleep.onSleep = { [weak self] in
+            self?.stopClock()
+            self?.stopFrames()
+        }
         displaySleep.onWake = { [weak self] in
             self?.render()
+            self?.updateFrames()
             self?.startClock()
+        }
+        // A display with another scale needs the image drawn for that scale.
+        screenChange = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.draw() }
         }
     }
 
@@ -95,19 +107,50 @@ import SwiftUI
             statusItem.button?.setAccessibilityLabel(menuBar.accessibilityLabel)
         }
         shown = next
-        hostingView.rootView = MenuBarLabel(model: menuBar, pulseStartedAt: next.pulseStartedAt)
-        layout()
+        draw()
+        updateFrames()
     }
 
-    private func layout() {
-        guard let button = statusItem.button else { return }
-        let size = hostingView.fittingSize
-        let length = ceil(size.width) + 2 * Self.horizontalPadding
-        if statusItem.length != length { statusItem.length = length }
-        let height = button.bounds.height > 0 ? button.bounds.height : NSStatusBar.system.thickness
-        hostingView.frame = NSRect(
-            x: Self.horizontalPadding, y: ((height - size.height) / 2).rounded(),
-            width: ceil(size.width), height: size.height)
+    /// Puts the shown label on the button as an image.
+    private func draw() {
+        guard let shown, let button = statusItem.button else { return }
+        let label = MenuBarLabel(model: shown.model, pulseStartedAt: shown.pulseStartedAt)
+        let scales = Set(NSScreen.screens.map(\.backingScaleFactor) + [2])
+        guard
+            let image = MenuBarImage.make(
+                label, padding: Self.horizontalPadding, height: NSStatusBar.system.thickness,
+                scales: scales)
+        else { return }
+        button.image = image
+        if statusItem.length != image.size.width { statusItem.length = image.size.width }
+    }
+
+    /// Runs the frame clock while the label moves: the critical pulse, or the loading arrow
+    /// unless Reduce Motion is on.
+    private func updateFrames() {
+        let interval: TimeInterval? =
+            if shown?.pulseStartedAt != nil {
+                Motion.pulseFrameInterval
+            } else if shown?.model.icon == .loading,
+                !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            {
+                Motion.spinFrameInterval
+            } else {
+                nil
+            }
+        guard let interval else { return stopFrames() }
+        guard frameClock?.timeInterval != interval else { return }
+        stopFrames()
+        let frameClock = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.draw() }
+        }
+        RunLoop.main.add(frameClock, forMode: .common)
+        self.frameClock = frameClock
+    }
+
+    private func stopFrames() {
+        frameClock?.invalidate()
+        frameClock = nil
     }
 
     private func startClock() {
@@ -139,25 +182,4 @@ import SwiftUI
     @objc private func buttonClicked() {
         onClick?()
     }
-}
-
-/// A hosting view that lets clicks through to the status button and stays out of the
-/// accessibility tree, so the button is the one element VoiceOver sees.
-///
-/// It keeps the intrinsic-size option: without it, `fittingSize` is zero and the status
-/// item would collapse.
-final class LabelHostingView: NSHostingView<MenuBarLabel> {
-    required init(rootView: MenuBarLabel) {
-        super.init(rootView: rootView)
-        sizingOptions = [.intrinsicContentSize]
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("Not used from a nib")
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    override func isAccessibilityElement() -> Bool { false }
-    override func accessibilityChildren() -> [Any]? { [] }
 }

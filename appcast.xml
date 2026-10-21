@@ -6,6 +6,31 @@
         <description>Claude Meter release feed</description>
         <language>en</language>
         <item>
+            <title>Version 4.1.2</title>
+            <pubDate>Wed, 21 Oct 2026 09:28:47 +0000</pubDate>
+            <sparkle:version>412</sparkle:version>
+            <sparkle:shortVersionString>4.1.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:minimumUpdateVersion>295</sparkle:minimumUpdateVersion>
+            <sparkle:minimumAutoupdateVersion>400</sparkle:minimumAutoupdateVersion>
+            <description><![CDATA[
+<h3>Removed</h3>
+<ul>
+<li>The colored severity dot on the menu-bar bolt, and its pulse at critical. The dot stayed bright on the menu bar of an inactive display. The popover still shows the severity, and the red <code>0</code> still shows when no energy is left.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>On the menu bar of an inactive display, the bolt and the number now dim as much as the other items. 4.1.1 dimmed them only a little.</li>
+</ul>
+            ]]></description>
+            <enclosure
+                url="https://github.com/jewei/claude-meter/releases/download/v4.1.2/ClaudeMeter-4.1.2.dmg"
+                sparkle:edSignature="gG9FGvX1ImfbKg47YWGhcofOrAufGsa3DC/6W7HvV6V1+YAc2PojTUdhXsi7/VYSz4y/0VSKstlwL9ecbqBuBA=="
+                length="5096220"
+                type="application/octet-stream"
+            />
+        </item>
+        <item>
             <title>Version 4.1.1</title>
             <pubDate>Wed, 21 Oct 2026 08:37:42 +0000</pubDate>
             <sparkle:version>411</sparkle:version>

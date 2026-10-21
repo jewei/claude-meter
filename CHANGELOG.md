@@ -12,6 +12,8 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
+## [4.1.2] - 2026-10-21
+
 ### Removed
 
 - The colored severity dot on the menu-bar bolt, and its pulse at critical. The dot stayed
@@ -131,7 +133,8 @@ core.
 - When Codex keeps its sign-in outside `auth.json`, a Codex CLI that cannot start its
   usage service asks you to update it.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v4.1.1...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v4.1.2...HEAD
+[4.1.2]: https://github.com/jewei/claude-meter/compare/v4.1.1...v4.1.2
 [4.1.1]: https://github.com/jewei/claude-meter/compare/v4.1.0...v4.1.1
 [4.1.0]: https://github.com/jewei/claude-meter/compare/v4.0.0...v4.1.0
 [4.0.0]: https://github.com/jewei/claude-meter/compare/v3.1.3...v4.0.0

@@ -6,6 +6,31 @@
         <description>Claude Meter release feed</description>
         <language>en</language>
         <item>
+            <title>Version 4.1.1</title>
+            <pubDate>Wed, 21 Oct 2026 08:37:42 +0000</pubDate>
+            <sparkle:version>411</sparkle:version>
+            <sparkle:shortVersionString>4.1.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:minimumUpdateVersion>295</sparkle:minimumUpdateVersion>
+            <sparkle:minimumAutoupdateVersion>400</sparkle:minimumAutoupdateVersion>
+            <description><![CDATA[
+<h3>Added</h3>
+<ul>
+<li>Settings &gt; Appearance has a <strong>Window label</strong> switch. Turn it off to show only the percentage in the menu bar, for example <code>92%</code> instead of <code>92% 5h</code>.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>The menu-bar item now dims on the menu bar of an inactive display, like the other items.</li>
+</ul>
+            ]]></description>
+            <enclosure
+                url="https://github.com/jewei/claude-meter/releases/download/v4.1.1/ClaudeMeter-4.1.1.dmg"
+                sparkle:edSignature="eUbIe5SQM3xB90lcOy/soVMhScHa/P4lCXme9Jm+xzfc5naitlUNFFKUcZ2gbGmTAQ5obyX8VeoPOfNhlTbfAg=="
+                length="5105736"
+                type="application/octet-stream"
+            />
+        </item>
+        <item>
             <title>Version 4.1.0</title>
             <pubDate>Tue, 06 Oct 2026 06:11:24 +0000</pubDate>
             <sparkle:version>410</sparkle:version>

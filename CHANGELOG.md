@@ -12,6 +12,8 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
+## [4.1.1] - 2026-10-21
+
 ### Added
 
 - Settings > Appearance has a **Window label** switch. Turn it off to show only the
@@ -118,6 +120,7 @@ core.
 - When Codex keeps its sign-in outside `auth.json`, a Codex CLI that cannot start its
   usage service asks you to update it.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v4.1.0...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v4.1.1...HEAD
+[4.1.1]: https://github.com/jewei/claude-meter/compare/v4.1.0...v4.1.1
 [4.1.0]: https://github.com/jewei/claude-meter/compare/v4.0.0...v4.1.0
 [4.0.0]: https://github.com/jewei/claude-meter/compare/v3.1.3...v4.0.0

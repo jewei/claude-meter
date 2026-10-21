@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import MeterApp
+import MeterDomain
 import SwiftUI
 import Testing
 
@@ -9,6 +10,24 @@ import Testing
 @MainActor @Suite struct MenuBarImageTests {
     private func image(_ model: MenuBarModel) -> MenuBarImage? {
         MenuBarImage.make(MenuBarLabel(model: model), padding: 5, height: 22, scales: [1, 2])
+    }
+
+    /// A Claude reading with `session` percent used.
+    private func model(session: Double) -> MenuBarModel {
+        let now = Date()
+        let account = AccountUsage(
+            id: "claude", name: "default", plan: "Pro",
+            windows: [
+                QuotaWindow(
+                    id: "session", title: "Session", kind: .session, usedPercent: session,
+                    resetsAt: now.addingTimeInterval(3_600), isBinding: true)
+            ],
+            observedAt: now)
+        let usage = ProviderUsage(provider: .claude, accounts: [account])
+        return MenuBarModel(
+            PresentationContext(
+                settings: .preview, readings: [.claude: .current(usage, observedAt: now)],
+                refreshing: [], now: now))
     }
 
     @Test func sizeFollowsTheLabelInWholePoints() throws {
@@ -22,8 +41,8 @@ import Testing
     }
 
     /// The system dims a template on an inactive display as much as the other items.
-    @Test func inkIsATemplateAndTheBadgeLinesUp() throws {
-        let image = try #require(image(AppModel.preview().menuBarModel(at: Date())))
+    @Test func inkIsATemplateAndThePillLinesUp() throws {
+        let image = try #require(image(model(session: 100)))
         #expect(image.ink.isTemplate)
         let badge = try #require(image.badge)
         #expect(!badge.isTemplate)
@@ -31,14 +50,17 @@ import Testing
         #expect(Set(image.ink.representations.map(\.pixelsWide)).count == 2)
     }
 
-    @Test func noBadgeWithoutData() throws {
-        let image = try #require(image(AppModel.preview(readings: []).menuBarModel(at: Date())))
-        #expect(image.badge == nil)
+    /// Only the red "0" pill keeps its colors.
+    @Test func noColoredLayerWithEnergyLeft() throws {
+        #expect(try #require(image(model(session: 97))).badge == nil)
+        #expect(
+            try #require(image(AppModel.preview(readings: []).menuBarModel(at: Date()))).badge
+                == nil)
     }
 
-    /// The badge is drawn in the appearance of the menu bar that draws it.
-    @Test func badgeDrawsInTheAppearanceOfTheMenuBar() throws {
-        let image = try #require(image(AppModel.preview().menuBarModel(at: Date())))
+    /// The pill is drawn in the appearance of the menu bar that draws it.
+    @Test func pillDrawsInTheAppearanceOfTheMenuBar() throws {
+        let image = try #require(image(model(session: 100)))
         let badge = try #require(image.badge)
         func pixels(_ appearance: NSAppearance.Name) throws -> Data {
             let size = badge.size

@@ -17,8 +17,7 @@ countdown shows when each limit resets.
 
 ## Features
 
-- A menu-bar bolt with a severity dot and the energy left in your session or weekly
-  window.
+- A menu-bar bolt with the energy left in your session or weekly window.
 - A hero that names the limit closest to running out and when it resets.
 - One card per account: several Claude and Codex config dirs, with your own names and
   plan badges. Drag a Claude or Codex card to the top to choose the menu-bar account.

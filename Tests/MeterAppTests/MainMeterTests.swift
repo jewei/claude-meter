@@ -279,7 +279,7 @@ import Testing
     @Test func showsTheSessionWindowByDefault() {
         let model = model(Fixture.account("a", session: 1, weekly: 27))
         #expect(model.text == "99% 5h")
-        #expect(model.icon == .bolt(.dot(.normal)))
+        #expect(model.icon == .bolt(.none))
         #expect(!model.isDimmed)
     }
 
@@ -313,24 +313,9 @@ import Testing
         #expect(both.text == "99% · 73%")
     }
 
-    @Test func hidesTheSeverityDotWhenAsked() {
-        func icon(session: Double) -> MenuBarModel.Icon {
-            model(Fixture.account("a", session: session)) {
-                $0.appearance.showsMenuBarSeverityDot = false
-            }.icon
-        }
-        #expect(icon(session: 97) == .bolt(.none))
-        // No energy left still shows: it is the one alert in the menu bar.
-        #expect(icon(session: 100) == .bolt(.exhausted))
-        #expect(
-            model(Fixture.account("a", session: 97)) {
-                $0.appearance.showsMenuBarSeverityDot = false
-            }.accessibilityLabel.contains("Overall quota is critical."))
-    }
-
     @Test func exhaustedAtExactlyOneHundredPercent() {
         #expect(model(Fixture.account("a", session: 100)).icon == .bolt(.exhausted))
-        #expect(model(Fixture.account("a", session: 96)).icon == .bolt(.dot(.critical)))
+        #expect(model(Fixture.account("a", session: 96)).icon == .bolt(.none))
     }
 
     @Test func staleHidesTheNumber() {
@@ -428,17 +413,17 @@ import Testing
         #expect(model.text == nil)
     }
 
-    @Test func menuBarDotUsesEveryAccountWithoutAPin() {
+    @Test func menuBarSeverityUsesEveryAccountWithoutAPin() {
         let usage = Fixture.usage(
             .claude, Fixture.account("home", session: 10), Fixture.account("work", session: 96))
         let unpinned = MenuBarModel(
             Fixture.context(Fixture.settings(), readings: [.claude: Fixture.current(usage)]))
-        #expect(unpinned.icon == .bolt(.dot(.critical)))
+        #expect(unpinned.accessibilityLabel.hasSuffix("Overall quota is critical."))
         let pinned = MenuBarModel(
             Fixture.context(
                 Fixture.settings { $0.menuBar.pinnedAccounts[.claude] = "home" },
                 readings: [.claude: Fixture.current(usage)]))
-        #expect(pinned.icon == .bolt(.dot(.normal)))
+        #expect(pinned.accessibilityLabel.hasSuffix("Overall quota is normal."))
         #expect(pinned.text == "90% 5h")
     }
 
@@ -474,7 +459,7 @@ import Testing
         }
         let almostEmpty = model(Fixture.account("a", session: 99.6))
         #expect(almostEmpty.text == "1% 5h")
-        #expect(almostEmpty.icon == .bolt(.dot(.critical)))
+        #expect(almostEmpty.icon == .bolt(.none))
         #expect(almostEmpty.accessibilityLabel.contains("Session 1 percent left."))
         #expect(model(Fixture.account("a", session: 0.4)).text == "99% 5h")
         let used = model(Fixture.account("a", session: 0.4)) { $0.appearance.meterMode = .used }

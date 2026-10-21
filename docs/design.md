@@ -250,39 +250,33 @@ All cards: padding 14×13, `chunkyCard()`, full width.
 ## Menu bar (`MenuBar/`)
 
 `StatusItemController` owns an `NSStatusItem`. `MenuBarImage` draws `MenuBarLabel` in two
-layers of the same size. The ink (icon and number) is the button's template image: on the
-menu bar of an inactive display the system dims a template as much as every other item, but
-it dims a colored image only a little and never dims a view added to the button. The badge
-is a colored image in a view over the button that ignores clicks and stays out of the
-accessibility tree; it is the one part that stays bright on an inactive display, so
-**Energy dot** can turn the severity dot off. The badge is rendered for the light and dark
-appearance at each screen scale, and its drawing handler picks the one that matches the menu
-bar that draws it (no cache, so each menu bar gets its own appearance). Each layer is the
-label with 5 pt on each side, a whole number of points wide, and as tall as the status bar. While the critical dot pulses or the
-loading arrow turns, a frame clock draws the image again at the animation's frame rate. The
-button's accessibility label is `MenuBarModel.accessibilityLabel`. The label renders again on every change to what
-the model reads (Observation, tracked in the render itself) and on a 30 s clock (5 s
+layers of the same size. The ink (icon, number, and stale dot) is the button's template
+image: on the menu bar of an inactive display the system dims a template as much as every
+other item, but it dims a colored image only a little and never dims a view added to the
+button. The red `0` pill is the one colored layer, an image in a view over the button that
+ignores clicks and stays out of the accessibility tree. It is rendered for the light and
+dark appearance at each screen scale, and its drawing handler picks the one that matches the
+menu bar that draws it (no cache, so each menu bar gets its own appearance). Each layer is
+the label with 5 pt on each side, a whole number of points wide, and as tall as the status
+bar. While the loading arrow turns, a frame clock draws the image again at most 30 times a
+second. The button's accessibility label is `MenuBarModel.accessibilityLabel`. The label
+renders again on every change to what the model reads (Observation, tracked in the render itself) and on a 30 s clock (5 s
 tolerance, common run-loop modes, stopped while the display sleeps), so resets and staleness
-show without a refresh. A render whose model and pulse equal the shown ones does not touch
-the button. The button centers the image and does not scale it, so it stays centered when the
-menu bar changes height. Colors are real colors, not a template.
+show without a refresh. A render whose model equals the shown one does not touch the
+button. The button centers the image and does not scale it, so it stays centered when the
+menu bar changes height.
 
 | `MenuBarModel.icon` | Drawing |
 | --- | --- |
-| `.bolt(.dot(severity))` | `bolt.fill` 13 bold, 6 pt dot at top trailing in the severity fill |
-| `.bolt(.stale)` | dot in the system secondary color, no number |
+| `.bolt(.none)` | `bolt.fill` 13 bold, no badge (a current reading, before setup, paused, or no reading yet) |
+| `.bolt(.stale)` | 6 pt dot at top trailing in the system secondary color, no number |
 | `.bolt(.exhausted)` | red capsule with "0" (7 pt heavy, white) |
-| `.bolt(.none)` | no badge (before setup, paused, or no reading yet) |
 | `.loading` | `arrow.clockwise` that turns once a second, redrawn at most 30 times a second |
 | `.error` | `bolt.trianglebadge.exclamationmark.fill`, hierarchical |
 
 The number is system rounded 12 bold with monospaced digits. `isDimmed` (before setup and
 while paused) draws the ink in the system secondary label color, which the template keeps as
-a lower opacity, with no further fade, so it stays visible. A dot of unknown severity also uses the secondary color.
-
-Critical pulse (`CriticalPulse`, pure): when the badge becomes critical, the dot scales to
-135% and fades to 55% three times over 1.2 s each, redrawn at most 12 times a second. Then it
-stays still. Loading, stale, and error periods do not restart it. Reduce Motion turns it off.
+a lower opacity, with no further fade, so it stays visible.
 
 ## Settings (`Settings/`)
 
@@ -368,7 +362,6 @@ the app is regular; "About Claude Meter" opens the About tab.
 | Panel height | ease-in-out 0.18 s, top edge fixed | at once |
 | Button press | spring 0.2 / 0.85, down 2 pt | darker tint only |
 | Loading arrow | one turn per second, ≤ 30 fps | still |
-| Critical pulse | 3 × 1.2 s, ≤ 12 fps | none |
 
 `Design/Motion.swift` holds every duration. A hidden popover runs no clock and no animation:
 ring, bar, and hero animations are off while `popoverIsVisible` is false.

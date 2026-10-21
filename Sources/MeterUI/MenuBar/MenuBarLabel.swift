@@ -4,23 +4,21 @@ import SwiftUI
 
 /// The status item content: the icon with its badge, then the compact number.
 ///
-/// The status item draws it in two layers (``MenuBarImage``): the ink (icon and number) as a
-/// template, and the badge in its real colors. Each layer keeps the layout of the whole label,
+/// The status item draws it in two layers (``MenuBarImage``): the ink (icon, number, and stale
+/// dot) as a template, and the red "0" pill in its real colors. Each layer keeps the layout of the whole label,
 /// so the layers line up. The whole label is hidden from accessibility; the status button
 /// speaks ``MenuBarModel/accessibilityLabel``.
 struct MenuBarLabel: View {
     /// The parts of the label that one drawing shows.
     enum Layer {
         case all
-        /// The icon and the number, without the badge.
+        /// Everything but the red "0" pill.
         case ink
-        /// The badge only.
+        /// The red "0" pill only.
         case badge
     }
 
     let model: MenuBarModel
-    /// The start of a running critical pulse. Nil keeps the dot still.
-    var pulseStartedAt: Date?
     var layer = Layer.all
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -57,8 +55,7 @@ struct MenuBarLabel: View {
                 .font(.system(size: 13, weight: .bold))
                 .opacity(inkOpacity)
                 .overlay(alignment: .topTrailing) {
-                    BadgeView(badge: badge, pulseStartedAt: reduceMotion ? nil : pulseStartedAt)
-                        .opacity(layer == .ink ? 0 : 1)
+                    BadgeView(badge: badge).opacity(badgeOpacity(badge))
                 }
                 // The "0" pill reaches past the bolt; keep it clear of the number.
                 .padding(.trailing, badge == .exhausted ? 4 : 0)
@@ -66,12 +63,21 @@ struct MenuBarLabel: View {
     }
 
     private var inkOpacity: Double { layer == .badge ? 0 : 1 }
+
+    /// The red "0" pill is the badge layer. The gray stale dot is ink, so it dims with the
+    /// bolt.
+    private func badgeOpacity(_ badge: MenuBarModel.Badge) -> Double {
+        switch layer {
+        case .all: 1
+        case .ink: badge == .exhausted ? 0 : 1
+        case .badge: badge == .exhausted ? 1 : 0
+        }
+    }
 }
 
-/// The badge on the bolt: a severity dot, a gray stale dot, or a red "0" pill.
+/// The badge on the bolt: a gray stale dot, or a red "0" pill.
 private struct BadgeView: View {
     let badge: MenuBarModel.Badge
-    let pulseStartedAt: Date?
 
     var body: some View {
         switch badge {
@@ -87,28 +93,6 @@ private struct BadgeView: View {
                 .frame(minWidth: 10, minHeight: 10)
                 .background(Capsule().fill(Palette.energyEmpty))
                 .offset(x: 5, y: -4)
-        case .dot(let severity):
-            dot(severity)
-        }
-    }
-
-    @ViewBuilder private func dot(_ severity: Severity) -> some View {
-        let color: Color = severity == .unknown ? .secondary : severity.fill
-        if let pulseStartedAt {
-            // Redraws at most 12 times a second, and only while the pulse runs: the status
-            // item renders again without a start when the pulse ends.
-            TimelineView(.animation(minimumInterval: Motion.pulseFrameInterval)) { timeline in
-                let phase = CriticalPulse.phase(
-                    elapsed: timeline.date.timeIntervalSince(pulseStartedAt))
-                Circle()
-                    .fill(color)
-                    .frame(width: 6, height: 6)
-                    .scaleEffect(CriticalPulse.scale(phase: phase))
-                    .opacity(CriticalPulse.opacity(phase: phase))
-                    .offset(x: 3, y: -3)
-            }
-        } else {
-            Circle().fill(color).frame(width: 6, height: 6).offset(x: 3, y: -3)
         }
     }
 }

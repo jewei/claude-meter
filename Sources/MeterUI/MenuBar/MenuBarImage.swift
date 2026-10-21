@@ -3,17 +3,17 @@ import MeterApp
 import SwiftUI
 
 /// Draws ``MenuBarLabel`` for the status button: the ink as the button's template image, and
-/// the badge as a colored image on top.
+/// the red "0" pill as a colored image on top.
 ///
 /// The system dims a button's template image on the menu bar of an inactive display as much as
 /// every other item. It dims a colored image only a little, and never dims views added to the
-/// button. So the icon and the number are a template, and only the badge keeps its colors.
-/// Both images have the same size, so the badge lines up with the bolt.
+/// button. So everything is a template except the pill, the one alert that keeps its color.
+/// Both images have the same size, so the pill lines up with the bolt.
 struct MenuBarImage {
-    /// The icon and the number, as a template. Paused and not set up draw it in the secondary
+    /// The icon, the number, and the stale dot, as a template. Paused and not set up draw it in the secondary
     /// color, which a template keeps as a lower opacity.
     let ink: NSImage
-    /// The badge in its colors. Nil when the icon has no badge.
+    /// The red "0" pill. Nil unless no energy is left.
     let badge: NSImage?
 
     private struct Render: Sendable {
@@ -37,12 +37,9 @@ struct MenuBarImage {
             return label.frame(width: size.width, height: size.height)
         }
         guard let ink = template(layer(.ink), size: size, scales: scales) else { return nil }
-        let hasBadge =
-            switch label.model.icon {
-            case .bolt(let badge): badge != .none
-            case .loading, .error: false
-            }
-        let badge = hasBadge ? colored(layer(.badge), size: size, scales: scales) : nil
+        let badge =
+            label.model.icon == .bolt(.exhausted)
+            ? colored(layer(.badge), size: size, scales: scales) : nil
         return MenuBarImage(ink: ink, badge: badge)
     }
 

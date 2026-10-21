@@ -12,10 +12,11 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
-### Added
+### Removed
 
-- Settings > Appearance has an **Energy dot** switch. Turn it off to hide the colored dot on
-  the menu-bar bolt. The red `0` still shows when no energy is left.
+- The colored severity dot on the menu-bar bolt, and its pulse at critical. The dot stayed
+  bright on the menu bar of an inactive display. The popover still shows the severity, and
+  the red `0` still shows when no energy is left.
 
 ### Fixed
 

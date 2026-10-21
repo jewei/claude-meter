@@ -152,9 +152,6 @@ public struct AppearanceSettings: Codable, Equatable, Sendable {
     public var menuBarWindow = MenuBarWindow.session
     /// Show `5h` or `7d` after each menu-bar percentage.
     public var showsMenuBarWindowLabel = true
-    /// Show the severity dot on the menu-bar bolt. The red "0" pill and the stale dot always
-    /// show.
-    public var showsMenuBarSeverityDot = true
     public var thresholds = Thresholds.standard
 
     public init() {}

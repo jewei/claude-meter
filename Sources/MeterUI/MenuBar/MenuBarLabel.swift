@@ -4,12 +4,24 @@ import SwiftUI
 
 /// The status item content: the icon with its badge, then the compact number.
 ///
-/// Colors are real colors, not a template, so the dot shows its severity. The whole label is
-/// hidden from accessibility; the status button speaks ``MenuBarModel/accessibilityLabel``.
+/// The status item draws it in two layers (``MenuBarImage``): the ink (icon and number) as a
+/// template, and the badge in its real colors. Each layer keeps the layout of the whole label,
+/// so the layers line up. The whole label is hidden from accessibility; the status button
+/// speaks ``MenuBarModel/accessibilityLabel``.
 struct MenuBarLabel: View {
+    /// The parts of the label that one drawing shows.
+    enum Layer {
+        case all
+        /// The icon and the number, without the badge.
+        case ink
+        /// The badge only.
+        case badge
+    }
+
     let model: MenuBarModel
     /// The start of a running critical pulse. Nil keeps the dot still.
     var pulseStartedAt: Date?
+    var layer = Layer.all
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -21,6 +33,7 @@ struct MenuBarLabel: View {
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .lineLimit(1)
+                    .opacity(inkOpacity)
             }
         }
         // Dimmed is the system's secondary label color, which stays readable on every menu
@@ -33,21 +46,26 @@ struct MenuBarLabel: View {
     @ViewBuilder private var icon: some View {
         switch model.icon {
         case .loading:
-            LoadingArrow(spins: !reduceMotion)
+            LoadingArrow(spins: !reduceMotion).opacity(inkOpacity)
         case .error:
             Image(systemName: "bolt.trianglebadge.exclamationmark.fill")
                 .font(.system(size: 12, weight: .semibold))
                 .symbolRenderingMode(.hierarchical)
+                .opacity(inkOpacity)
         case .bolt(let badge):
             Image(systemName: "bolt.fill")
                 .font(.system(size: 13, weight: .bold))
+                .opacity(inkOpacity)
                 .overlay(alignment: .topTrailing) {
                     BadgeView(badge: badge, pulseStartedAt: reduceMotion ? nil : pulseStartedAt)
+                        .opacity(layer == .ink ? 0 : 1)
                 }
                 // The "0" pill reaches past the bolt; keep it clear of the number.
                 .padding(.trailing, badge == .exhausted ? 4 : 0)
         }
     }
+
+    private var inkOpacity: Double { layer == .badge ? 0 : 1 }
 }
 
 /// The badge on the bolt: a severity dot, a gray stale dot, or a red "0" pill.

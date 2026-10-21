@@ -4,8 +4,8 @@ import MeterPlatform
 import Observation
 import SwiftUI
 
-/// Owns the `NSStatusItem`. Its button shows ``MenuBarLabel`` as an image (``MenuBarImage``)
-/// and speaks the model's summary.
+/// Owns the `NSStatusItem`. Its button shows ``MenuBarLabel`` as a template image with the
+/// colored badge on top (``MenuBarImage``), and speaks the model's summary.
 ///
 /// The label renders again when the model's inputs change and on a 30-second clock, so a
 /// reset or an old reading shows without a refresh. A render that would show the same thing
@@ -24,6 +24,7 @@ import SwiftUI
 
     private let model: AppModel
     private let statusItem: NSStatusItem
+    private let badgeView = BadgeImageView()
     private let displaySleep = DisplaySleepMonitor()
     private var clock: Timer?
     /// Draws animation frames. Nil while the label is still.
@@ -47,9 +48,13 @@ import SwiftUI
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.autosaveName = "ClaudeMeter"
         if let button = statusItem.button {
-            // Real colors, not a template, so the dot shows its severity.
             button.imagePosition = .imageOnly
             button.imageScaling = .scaleNone
+            // The badge fills the button and centers its image, as the button centers the
+            // ink, so the two line up at every menu-bar height.
+            badgeView.frame = button.bounds
+            badgeView.autoresizingMask = [.width, .height]
+            button.addSubview(badgeView)
             button.target = self
             button.action = #selector(buttonClicked)
             button.sendAction(on: [.leftMouseDown, .rightMouseDown])
@@ -111,7 +116,7 @@ import SwiftUI
         updateFrames()
     }
 
-    /// Puts the shown label on the button as an image.
+    /// Puts the shown label on the button: the ink as its image, the badge on top.
     private func draw() {
         guard let shown, let button = statusItem.button else { return }
         let label = MenuBarLabel(model: shown.model, pulseStartedAt: shown.pulseStartedAt)
@@ -121,8 +126,9 @@ import SwiftUI
                 label, padding: Self.horizontalPadding, height: NSStatusBar.system.thickness,
                 scales: scales)
         else { return }
-        button.image = image
-        if statusItem.length != image.size.width { statusItem.length = image.size.width }
+        button.image = image.ink
+        badgeView.image = image.badge
+        if statusItem.length != image.ink.size.width { statusItem.length = image.ink.size.width }
     }
 
     /// Runs the frame clock while the label moves: the critical pulse, or the loading arrow
@@ -182,4 +188,22 @@ import SwiftUI
     @objc private func buttonClicked() {
         onClick?()
     }
+}
+
+/// Shows the colored badge over the status button. It lets clicks through and stays out of
+/// the accessibility tree, so the button is the one element that VoiceOver sees.
+private final class BadgeImageView: NSImageView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        imageScaling = .scaleNone
+        imageAlignment = .alignCenter
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("Not used from a nib")
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func isAccessibilityElement() -> Bool { false }
 }

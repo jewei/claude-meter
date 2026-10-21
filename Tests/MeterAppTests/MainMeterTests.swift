@@ -313,6 +313,21 @@ import Testing
         #expect(both.text == "99% · 73%")
     }
 
+    @Test func hidesTheSeverityDotWhenAsked() {
+        func icon(session: Double) -> MenuBarModel.Icon {
+            model(Fixture.account("a", session: session)) {
+                $0.appearance.showsMenuBarSeverityDot = false
+            }.icon
+        }
+        #expect(icon(session: 97) == .bolt(.none))
+        // No energy left still shows: it is the one alert in the menu bar.
+        #expect(icon(session: 100) == .bolt(.exhausted))
+        #expect(
+            model(Fixture.account("a", session: 97)) {
+                $0.appearance.showsMenuBarSeverityDot = false
+            }.accessibilityLabel.contains("Overall quota is critical."))
+    }
+
     @Test func exhaustedAtExactlyOneHundredPercent() {
         #expect(model(Fixture.account("a", session: 100)).icon == .bolt(.exhausted))
         #expect(model(Fixture.account("a", session: 96)).icon == .bolt(.dot(.critical)))

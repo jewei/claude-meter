@@ -49,8 +49,10 @@ public struct MenuBarModel: Equatable, Sendable {
             icon = .bolt(.stale)
         } else if meter.severity == .exhausted {
             icon = .bolt(.exhausted)
-        } else {
+        } else if context.settings.appearance.showsMenuBarSeverityDot {
             icon = .bolt(.dot(meter.severity))
+        } else {
+            icon = .bolt(.none)
         }
 
         let parts = selected.map { Self.parts(of: $0, context: context) } ?? []

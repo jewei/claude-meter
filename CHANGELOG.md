@@ -12,6 +12,16 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
+### Added
+
+- Settings > Appearance has an **Energy dot** switch. Turn it off to hide the colored dot on
+  the menu-bar bolt. The red `0` still shows when no energy is left.
+
+### Fixed
+
+- On the menu bar of an inactive display, the bolt and the number now dim as much as the
+  other items. 4.1.1 dimmed them only a little.
+
 ## [4.1.1] - 2026-10-21
 
 ### Added

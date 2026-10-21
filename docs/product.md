@@ -74,7 +74,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    account that the saved reading lacks (`MainMeter.isLoadingFirstReading`); a warning bolt
    shows when there is no reading because something failed (`MainMeter.hasFailure`), also
    while a retry runs (`PresentationContext.isLoadingFirstReading`). Before
-   setup, while paused, and before the first reading, the bolt has no badge.
+   setup, while paused, and before the first reading, the bolt has no badge. With
+   **Energy dot** off, the bolt shows no severity dot; the stale dot and the `0` pill still
+   show, and the spoken summary still names the severity.
 2. The number follows **Menu bar shows**: `99% 5h` (session, or the weekly window with a
    `7d` suffix when there is no session value), `73% 7d`, or both joined by ` · `. With
    **Window label** off, the number has no `5h` or `7d`: `99%`, or `99% · 73%`. The spoken
@@ -173,7 +175,7 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    tokens cannot be deleted. A Disconnect of a manual connection whose delete fails says so, and
    the next reload (at launch, and each time the Data page of Settings shows) deletes a manual
    login that no manual connection uses, then removes that message (`ClaudeSettingsModel`).
-2. **Appearance**: card style, energy left or used, the menu-bar window and its label,
+2. **Appearance**: card style, energy left or used, the menu-bar window, its label, and the energy dot,
    warning and critical thresholds (warning 50–90, critical 60–100, steps of 5; critical
    stays above warning), and automatic order.
 3. **Advanced**: fetch usage (pause), launch at login, automatic update checks, the log file,

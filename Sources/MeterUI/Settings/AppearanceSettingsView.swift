@@ -54,6 +54,14 @@ struct AppearanceSettingsView: View {
                     MeterSwitch(
                         label: "Window label", isOn: appearance.showsMenuBarWindowLabel)
                 }
+                CardDivider()
+                SettingsRow(
+                    symbol: "circle.fill", tint: Palette.Tile.green, title: "Energy dot",
+                    subtitle: "Show a colored dot for the energy level."
+                ) {
+                    MeterSwitch(
+                        label: "Energy dot", isOn: appearance.showsMenuBarSeverityDot)
+                }
             }
             SettingsCard(spacing: 12) {
                 SettingsRow(

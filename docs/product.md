@@ -69,8 +69,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 
 ## 3. Menu bar (`MenuBarModel`)
 
-1. The icon is the bolt with a badge: a severity dot, a gray dot when stale, or a red `0`
-   pill when exhausted. A spinner replaces it while the first reading loads, also of a pinned
+1. The icon is the bolt. It has no severity dot, so on the menu bar of an inactive display
+   the whole item dims like the other items; the popover and the spoken summary show the
+   severity. Its only badges are a gray dot when stale and a red `0` pill when exhausted. A spinner replaces it while the first reading loads, also of a pinned
    account that the saved reading lacks (`MainMeter.isLoadingFirstReading`); a warning bolt
    shows when there is no reading because something failed (`MainMeter.hasFailure`), also
    while a retry runs (`PresentationContext.isLoadingFirstReading`). Before
@@ -84,8 +85,6 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 4. One spoken summary names the provider, each shown window, and the overall severity, for
    example `Claude Meter. Claude. Session 15 percent left. Overall quota warning.`
 5. The label refreshes on every store change and every 30 s.
-6. When the severity becomes critical, the dot pulses three times, unless Reduce Motion is on.
-   The view owns this animation (`MeterUI`); the model only reports the severity.
 
 ## 4. Popover (`PopoverModel`)
 

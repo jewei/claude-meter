@@ -45,40 +45,37 @@ import Testing
     }
 
     @Test func everyState() {
-        let states: [(String, MenuBarModel, Date?)] = [
-            ("full", model(account(session: 20)), nil),
-            ("low", model(account(session: 85)), nil),
-            ("critical", model(account(session: 97)), nil),
-            ("critical-pulse-peak", model(account(session: 97)), now.addingTimeInterval(-0.6)),
-            ("tapped-out", model(account(session: 100)), nil),
-            ("stale", model(account(session: 20, age: 3_600)), nil),
-            ("loading", model(nil, refreshing: [.claude]), nil),
-            ("error", model(nil, failed: true), nil),
-            ("paused", model(account(session: 20)) { $0.isPaused = true }, nil),
-            ("paused-no-data", model(nil, failed: true) { $0.isPaused = true }, nil),
-            ("not-set-up", model(nil, failed: true) { $0.hasCompletedOnboarding = false }, nil),
+        let states: [(String, MenuBarModel)] = [
+            ("full", model(account(session: 20))),
+            ("tapped-out", model(account(session: 100))),
+            ("stale", model(account(session: 20, age: 3_600))),
+            ("loading", model(nil, refreshing: [.claude])),
+            ("error", model(nil, failed: true)),
+            ("paused", model(account(session: 20)) { $0.isPaused = true }),
+            ("paused-no-data", model(nil, failed: true) { $0.isPaused = true }),
+            ("not-set-up", model(nil, failed: true) { $0.hasCompletedOnboarding = false }),
             (
                 "both",
-                model(account(session: 1, weekly: 27)) { $0.appearance.menuBarWindow = .both }, nil
+                model(account(session: 1, weekly: 27)) { $0.appearance.menuBarWindow = .both }
             ),
-            ("used", model(account(session: 20)) { $0.appearance.meterMode = .used }, nil),
+            ("used", model(account(session: 20)) { $0.appearance.meterMode = .used }),
         ]
         Snapshot.render("menubar", background: .clear) {
             MenuBarStrip(states: states)
         }
         #expect(states[0].1.text == "80% 5h")
-        #expect(states[6].1.icon == .loading)
+        #expect(states[3].1.icon == .loading)
         // Before setup and while paused, a failure left from earlier never shows the warning
         // bolt (review UI-03).
-        #expect(states[9].1.icon == .bolt(.none))
-        #expect(states[10].1.icon == .bolt(.none))
-        #expect(states[10].1.isDimmed)
+        #expect(states[6].1.icon == .bolt(.none))
+        #expect(states[7].1.icon == .bolt(.none))
+        #expect(states[7].1.isDimmed)
     }
 }
 
 /// Each label on a menu-bar colored strip, with its name.
 private struct MenuBarStrip: View {
-    let states: [(String, MenuBarModel, Date?)]
+    let states: [(String, MenuBarModel)]
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -90,7 +87,7 @@ private struct MenuBarStrip: View {
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .frame(width: 120, alignment: .trailing)
-                    MenuBarLabel(model: state.1, pulseStartedAt: state.2)
+                    MenuBarLabel(model: state.1)
                         .padding(.horizontal, 5)
                         .frame(height: 24)
                         .background(colorScheme == .dark ? Color(white: 0.17) : Color(white: 0.93))

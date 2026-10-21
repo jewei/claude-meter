@@ -5,8 +5,8 @@ import MeterDomain
 /// summary for VoiceOver.
 public struct MenuBarModel: Equatable, Sendable {
     public enum Icon: Equatable, Sendable {
-        /// The bolt with its badge. Also the calm state with no data: before setup, while
-        /// paused, or before the first reading.
+        /// The bolt with its badge. Without a badge, it is both a current reading and the calm
+        /// state with no data: before setup, while paused, or before the first reading.
         case bolt(Badge)
         /// The first reading is on its way. A retry after a failure shows ``error`` instead.
         case loading
@@ -16,8 +16,6 @@ public struct MenuBarModel: Equatable, Sendable {
 
     public enum Badge: Equatable, Sendable {
         case none
-        /// A dot colored by severity.
-        case dot(Severity)
         /// A gray dot: the reading is old.
         case stale
         /// A red pill with "0": no energy left.
@@ -50,7 +48,9 @@ public struct MenuBarModel: Equatable, Sendable {
         } else if meter.severity == .exhausted {
             icon = .bolt(.exhausted)
         } else {
-            icon = .bolt(.dot(meter.severity))
+            // No severity dot: it was the one colored mark that stayed bright on the menu bar
+            // of an inactive display. The spoken summary still names the severity.
+            icon = .bolt(.none)
         }
 
         let parts = selected.map { Self.parts(of: $0, context: context) } ?? []

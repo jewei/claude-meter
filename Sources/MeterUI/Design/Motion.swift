@@ -4,11 +4,6 @@ import SwiftUI
 enum Motion {
     /// Card expansion and collapse, the chevron, list reordering, and the panel height.
     static let disclosureDuration: TimeInterval = 0.18
-    /// One critical pulse cycle of the menu-bar dot.
-    static let pulsePeriod: TimeInterval = 1.2
-    static let pulseCount = 3
-    /// The pulse redraws at most this often.
-    static let pulseFrameInterval: TimeInterval = 1.0 / 12
     /// One turn of the loading arrow.
     static let spinPeriod: TimeInterval = 1
     /// The loading arrow redraws at most this often, not at the display refresh rate.

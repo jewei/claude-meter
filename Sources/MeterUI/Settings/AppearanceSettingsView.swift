@@ -54,6 +54,7 @@ struct AppearanceSettingsView: View {
                     MeterSwitch(
                         label: "Window label", isOn: appearance.showsMenuBarWindowLabel)
                 }
+
             }
             SettingsCard(spacing: 12) {
                 SettingsRow(

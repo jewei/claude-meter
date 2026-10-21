@@ -300,6 +300,19 @@ import Testing
         #expect(used.text == "27% 7d")
     }
 
+    @Test func hidesTheWindowLabelsWhenAsked() {
+        let one = model(Fixture.account("a", session: 1, weekly: 27)) {
+            $0.appearance.showsMenuBarWindowLabel = false
+        }
+        #expect(one.text == "99%")
+        #expect(one.accessibilityLabel.contains("Session 99 percent left."))
+        let both = model(Fixture.account("a", session: 1, weekly: 27)) {
+            $0.appearance.menuBarWindow = .both
+            $0.appearance.showsMenuBarWindowLabel = false
+        }
+        #expect(both.text == "99% · 73%")
+    }
+
     @Test func exhaustedAtExactlyOneHundredPercent() {
         #expect(model(Fixture.account("a", session: 100)).icon == .bolt(.exhausted))
         #expect(model(Fixture.account("a", session: 96)).icon == .bolt(.dot(.critical)))

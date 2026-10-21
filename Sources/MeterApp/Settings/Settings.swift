@@ -150,6 +150,8 @@ public struct AppearanceSettings: Codable, Equatable, Sendable {
     public var cardStyle = CardStyle.rings
     public var meterMode = MeterMode.energyLeft
     public var menuBarWindow = MenuBarWindow.session
+    /// Show `5h` or `7d` after each menu-bar percentage.
+    public var showsMenuBarWindowLabel = true
     public var thresholds = Thresholds.standard
 
     public init() {}

@@ -46,6 +46,14 @@ struct AppearanceSettingsView: View {
                     label: "Menu bar window",
                     options: [(.session, "5h"), (.weekly, "7d"), (.both, "Both")],
                     selection: appearance.menuBarWindow)
+                CardDivider()
+                SettingsRow(
+                    symbol: "textformat", tint: Palette.Tile.slate, title: "Window label",
+                    subtitle: "Show 5h or 7d after the percentage."
+                ) {
+                    MeterSwitch(
+                        label: "Window label", isOn: appearance.showsMenuBarWindowLabel)
+                }
             }
             SettingsCard(spacing: 12) {
                 SettingsRow(

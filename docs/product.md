@@ -76,7 +76,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    while a retry runs (`PresentationContext.isLoadingFirstReading`). Before
    setup, while paused, and before the first reading, the bolt has no badge.
 2. The number follows **Menu bar shows**: `99% 5h` (session, or the weekly window with a
-   `7d` suffix when there is no session value), `73% 7d`, or both joined by ` · `.
+   `7d` suffix when there is no session value), `73% 7d`, or both joined by ` · `. With
+   **Window label** off, the number has no `5h` or `7d`: `99%`, or `99% · 73%`. The spoken
+   summary still names each window.
 3. Paused and stale states hide the number. Paused and not set up dim the whole item; the
    spoken summary says `Paused.` or `Claude Meter. Not set up.`
 4. One spoken summary names the provider, each shown window, and the overall severity, for
@@ -171,9 +173,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    tokens cannot be deleted. A Disconnect of a manual connection whose delete fails says so, and
    the next reload (at launch, and each time the Data page of Settings shows) deletes a manual
    login that no manual connection uses, then removes that message (`ClaudeSettingsModel`).
-2. **Appearance**: card style, energy left or used, the menu-bar window, warning and critical
-   thresholds (warning 50–90, critical 60–100, steps of 5; critical stays above warning),
-   and automatic order.
+2. **Appearance**: card style, energy left or used, the menu-bar window and its label,
+   warning and critical thresholds (warning 50–90, critical 60–100, steps of 5; critical
+   stays above warning), and automatic order.
 3. **Advanced**: fetch usage (pause), launch at login, automatic update checks, the log file,
    and Diagnostics. Diagnostics shows and copies redacted facts. A development or unsigned
    build cannot update itself (`Updater.isAvailable`) and shows only a note there.

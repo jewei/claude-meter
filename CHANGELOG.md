@@ -12,6 +12,15 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
+### Added
+
+- Settings > Appearance has a **Window label** switch. Turn it off to show only the
+  percentage in the menu bar, for example `92%` instead of `92% 5h`.
+
+### Fixed
+
+- The menu-bar item now dims on the menu bar of an inactive display, like the other items.
+
 ## [4.1.0] - 2026-10-06
 
 ### Changed

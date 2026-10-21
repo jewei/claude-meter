@@ -25,7 +25,8 @@ public struct MenuBarModel: Equatable, Sendable {
     }
 
     public let icon: Icon
-    /// `99% 5h`, `73% 7d`, or `99% 5h · 73% 7d`. Nil when paused or stale.
+    /// `99% 5h`, `73% 7d`, or `99% 5h · 73% 7d`; without the window labels, `99%` or
+    /// `99% · 73%`. Nil when paused or stale.
     public let text: String?
     /// Paused or not set up yet: the whole item is dimmed.
     public let isDimmed: Bool
@@ -81,10 +82,12 @@ public struct MenuBarModel: Equatable, Sendable {
             case .weekly: [weekly.map { ($0, "7d") }].compactMap { $0 }
             case .both: [session.map { ($0, "5h") }, weekly.map { ($0, "7d") }].compactMap { $0 }
             }
+        let showsLabel = context.settings.appearance.showsMenuBarWindowLabel
         return windows.map { window, suffix in
-            Part(
+            let percent = Formatting.percent(window, showsUsed: context.showsUsed)
+            return Part(
                 window: window, suffix: suffix,
-                short: "\(Formatting.percent(window, showsUsed: context.showsUsed)) \(suffix)")
+                short: showsLabel ? "\(percent) \(suffix)" : percent)
         }
     }
 

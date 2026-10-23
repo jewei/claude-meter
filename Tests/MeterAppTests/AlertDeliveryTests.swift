@@ -231,6 +231,23 @@ import Testing
         model.settings.update { $0.alerts.refill = true }
         await publish(model, .claude, [window(96)])
         #expect(poster.attempts.isEmpty)
+        #expect(model.alerts.state.activations[.lowEnergy] == nil)
+    }
+
+    /// Two changes in one main-actor turn give one evaluation, and one post.
+    @Test func changesInOneTurnMerge() async {
+        let poster = FakeNotificationPoster()
+        let model = makeModel(poster: poster) { $0.alerts.lowEnergy = true }
+        await start(model)
+        await publish(model, .claude, [window(70)])
+        let before = model.alerts.evaluationCount
+        model.alerts.scheduleEvaluation()
+        model.alerts.scheduleEvaluation()
+        model.settings.update { $0.appearance.thresholds = Thresholds(warning: 50, critical: 60) }
+        #expect(await waitUntil { model.alerts.evaluationCount > before })
+        await settle(model)
+        #expect(model.alerts.evaluationCount == before + 1)
+        #expect(poster.posted.count == 1)
     }
 
     /// Settings saved by 4.1.2 have no alerts, and decode with every alert off.

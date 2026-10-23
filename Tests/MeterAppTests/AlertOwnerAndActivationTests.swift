@@ -35,10 +35,10 @@ import Testing
         #expect(run.claude([window], at: .reference(60), owner: .identity("b")).isEmpty)
     }
 
-    @Test func theFirstObservationIsNotAnOwnerChange() {
+    /// A stored nil is an owner: a later identity is a change, with a new baseline.
+    @Test func aStoredNilOwnerIsAnOwner() {
         var run = AlertRun()
         _ = run.claude([session(50)], at: .reference(), owner: nil)
-        // A stored nil is an owner: a later identity is a change, with a new baseline.
         #expect(run.claude([session(96)], at: .reference(60), owner: .identity("a")).isEmpty)
     }
 
@@ -125,6 +125,27 @@ import Testing
         run.state.activate(.lowEnergy, providers: [.claude])
         run.state.deactivate(.lowEnergy)
         #expect(run.claude([session(96)], at: .reference(60)).isEmpty)
+    }
+
+    /// A source turned off and on again forgets its windows: a silent baseline, not an alert
+    /// for a crossing that the evaluator did not see.
+    @Test func aSourceTurnedOffAndOnIsABaselineAgain() {
+        var run = AlertRun()
+        _ = run.claude([session(50)], at: .reference())
+        run.settings.claude.isEnabled = false
+        #expect(run.run([:], now: .reference(60)).isEmpty)
+        #expect(run.state.windows.isEmpty)
+        run.settings.claude.isEnabled = true
+        #expect(run.claude([session(97)], at: .reference(120)).isEmpty)
+    }
+
+    @Test func aConfigDirTrackedAgainIsABaselineAgain() {
+        var run = AlertRun()
+        _ = run.claude([session(50)], at: .reference())
+        run.settings.claude.disabledAccounts = ["work"]
+        _ = run.claude([session(60)], at: .reference(60))
+        run.settings.claude.disabledAccounts = []
+        #expect(run.claude([session(97)], at: .reference(120)).isEmpty)
     }
 
     /// A provider enabled after the activation was not part of it: a silent baseline.

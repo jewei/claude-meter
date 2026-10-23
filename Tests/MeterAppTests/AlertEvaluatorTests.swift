@@ -98,6 +98,16 @@ func session(
         #expect(count == 2)
     }
 
+    /// A reading without a reset time cannot clear the flag of a known period, so the next
+    /// critical reading in that period stays silent.
+    @Test func aReadingWithoutAResetDoesNotReArm() {
+        var run = AlertRun()
+        _ = run.claude([session(50)], at: .reference())
+        #expect(run.claude([session(96)], at: .reference(60)).count == 1)
+        _ = run.claude([session(10, resetsAt: nil)], at: .reference(120))
+        #expect(run.claude([session(96)], at: .reference(180)).isEmpty)
+    }
+
     @Test func aNewPeriodThatIsStillCriticalAlertsOnce() {
         var run = AlertRun()
         _ = run.claude([session(50)], at: .reference())

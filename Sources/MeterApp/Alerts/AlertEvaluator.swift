@@ -67,6 +67,7 @@ struct AlertEvaluator {
         _ context: PresentationContext, enabledKinds: Set<Alert.Kind>, previous: State
     ) -> (alerts: [Alert], state: State) {
         var state = previous
+        forgetDroppedAccounts(context, state: &state)
         var alerts: [Alert] = []
         for provider in ProviderID.allCases where !context.restored.contains(provider) {
             for account in context.observedAccounts(for: provider) where !account.isStale {
@@ -85,6 +86,16 @@ struct AlertEvaluator {
             }
         }
         return (alerts, state)
+    }
+
+    /// A source that is turned off, and a Claude config dir whose tracking is off, lose their
+    /// state, so when they come back their first observation is a silent baseline again.
+    private static func forgetDroppedAccounts(_ context: PresentationContext, state: inout State) {
+        func isDropped(_ provider: ProviderID, _ account: AccountID) -> Bool {
+            !context.isEnabled(provider) || context.settings.isUntracked(account, of: provider)
+        }
+        state.windows = state.windows.filter { !isDropped($0.key.provider, $0.key.account) }
+        state.owners = state.owners.filter { !isDropped($0.key.provider, $0.key.account) }
     }
 
     /// Step 0: an owner change cannot prove that the login stayed, so every window that the
@@ -142,6 +153,8 @@ struct AlertEvaluator {
         let isFirst = state.windows[key] == nil
         var current = state.windows[key] ?? WindowState()
         let snapshot = current.snapshot
+        // A reset at or before the observation is not a usable period: a period that starts
+        // from it would already be over.
         let resetsAt = window.resetsAt.flatMap { $0 > observedAt ? $0 : nil }
 
         // Step 1: a new period starts only after the known reset, with a later reset.

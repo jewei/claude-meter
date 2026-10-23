@@ -311,6 +311,10 @@ little memory. The limit is 256 MiB. The result is one of three states:
 2. Session, weekly, and Opus windows are binding. Other scoped windows and extra usage are
    not.
 3. Session and weekly windows are always present; unknown values stay unknown, never 0.
+   The response gives no window length. Pace (`docs/product.md` §1.8) assumes 5 hours for
+   the session and 7 days for every weekly window, scoped or not (`UsageMapper`). Extra
+   usage has no length and no pace. If Anthropic changes a window's length, the pace of that
+   window is wrong until this assumption changes.
 4. A flat `seven_day_<scope>` field with a value wins over `limits[]`. A key whose scope has
    no letter or digit, such as `seven_day_`, is ignored. A `limits[]` key is
    `seven_day_` plus the first word of the model name that is not "Claude", lowercased. The

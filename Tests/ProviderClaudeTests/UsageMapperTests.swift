@@ -26,6 +26,9 @@ extension ClaudeTests {
             #expect(windows.map(\.kind) == [.session, .weekly, .scoped, .scoped, .billing])
             #expect(windows.map(\.isBinding) == [true, true, true, false, false])
             #expect(windows.map(\.usedPercent) == [42, 61, 88, 34, 80.75])
+            // The API sends no window length: 5 hours and 7 days by assumption, none for extra
+            // usage.
+            #expect(windows.map(\.duration) == [18_000, 604_800, 604_800, 604_800, nil])
             let sessionReset = try #require(windows[0].resetsAt)
             let wholeSecond = try #require(DateParsing.iso8601("2026-10-04T15:00:00Z"))
             #expect(abs(sessionReset.timeIntervalSince(wholeSecond) - 0.462) < 0.001)

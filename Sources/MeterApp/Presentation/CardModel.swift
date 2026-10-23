@@ -48,7 +48,13 @@ public struct GaugeModel: Equatable, Sendable {
     public let severity: Severity
     /// `Resets in 3h 12m`.
     public let resetText: String?
-    /// `60 percent left, full energy, resets in 3h 12m`.
+    /// `Runs out in 2h 10m`, `Tight: ~4% left at reset`, or `Lasts until reset`. Nil without a
+    /// pace or for a stale account.
+    public let paceText: String?
+    /// Where an even pace would be now, on the same 0...1 scale as ``fraction``. Nil when
+    /// ``paceText`` is nil.
+    public let evenPaceFraction: Double?
+    /// `60 percent left, full energy, resets in 3h 12m, lasts until reset`.
     public let accessibilityValue: String
 }
 

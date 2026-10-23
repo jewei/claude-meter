@@ -126,8 +126,9 @@ digit widths of each face, and `FixedNumberWidthTests` the widths of each number
 | `RaisedButtonStyle` | `action` fill, white Fredoka Bold 14, padding 20×12, radius 14, plate at y 4. Pressed: label down 2 pt, plate at y 2, spring 0.2/0.85. Hover: white 6%. Focus: 2 pt `accent` ring. Disabled: 45%. Reduce Motion: no movement, darker tint. |
 | `QuietButtonStyle` | `ink` surface at 6% hover and 10% press (muted text keeps 4.5:1 on both), 2 pt focus border, 45% when disabled. Nothing moves. The style also draws the button's own fill (`Surface`: clear, chunky, or a flat fill) below the ink surface, so a label never hides the feedback; labels draw no opaque fill. `.buttonStyle(.chunky)` is the small chunky button for `ChunkyButtonLabel`. |
 | `EnergyDot` | 9 pt rounded square, radius 3. |
-| `EnergyBar` | Capsule on `track`. Fill width = share × width; the track's capsule clips the fill, so a tiny fill follows the rounded end. A white 45% highlight, `min(2, height / 4)` pt high, 2 pt below the top and 3 pt in from each end, runs along the top of the fill only when the fill is wider than 6 pt. |
-| `ActivityRings` | 88 pt. Outer weekly ring radius 34, inner session ring radius 24, 8 pt strokes, round caps, start at the top, `track` behind, a white highlight along each arc that grows from clear at the start to 30% at the tip (angular gradient). Center disc 30 pt in `popover` with the letter. Hidden from accessibility. |
+| `EnergyBar` | Capsule on `track`. Fill width = share × width; the track's capsule clips the fill, so a tiny fill follows the rounded end. A white 45% highlight, `min(2, height / 4)` pt high, 2 pt below the top and 3 pt in from each end, runs along the top of the fill only when the fill is wider than 6 pt. A bar with a pace has a `PaceMark` (height + 4 pt) at the even-pace share, kept inside the capsule at either end. |
+| `ActivityRings` | 88 pt. Outer weekly ring radius 34, inner session ring radius 24, 8 pt strokes, round caps, start at the top, `track` behind, a white highlight along each arc that grows from clear at the start to 30% at the tip (angular gradient). Center disc 30 pt in `popover` with the letter. A ring with a pace has a `PaceMark` across its stroke (stroke + 2 pt long) at the even-pace share, clockwise from the top. Hidden from accessibility. |
+| `PaceMark` | The even-pace mark: a 2 pt `ink` line with a 1 pt `card` edge on each side, so it reads on the track and on every fill in both appearances. It never animates. Hidden from accessibility. |
 | `PlanBadgeView` | Capsule, padding 8×3, tier colors, one line. |
 | `ChipView` | Neutral capsule for "same login", "paused", and "Not tracked"; a tooltip only when it has help text. |
 | `ProviderMark` | Bundled logo as a 15 pt template image in `ink` (white, 20 pt on Settings data source tiles); Grok uses the `atom` symbol. |
@@ -224,13 +225,14 @@ All cards: padding 14×13, `chunkyCard()`, full width.
   badges at the trailing edge, or below the name when they do not fit, then the chevron;
   28 pt minimum height) that calls `toggleCard`. Then rings and rows, 14 pt apart. Each row
   (`RingMetricRow`): dot, short title, value in severity ink, caption, and "Resets in …"
-  below, indented 15 pt. Expanded details, then the status line, follow. Details reveal
+  and the pace (`PaceLine`, "Runs out in …") below, indented 15 pt. Expanded details, then the status line, follow. Details reveal
   from the top with the card height; the card clips its content.
 - **Bar card** (`BarCardView`): a header button (provider mark, name, badges, headline
   value, chevron; 28 pt minimum height) that calls `toggleCard`. One 12 pt `BarRow` per
   window with "Session · 60% left" and the reset, unless `BarsModel.showsBarLabels` is false
   (Cursor and Grok: the caption states the spend and the reset; Grok's also names the
-  window). Then the caption and status line.
+  window). The pace (`PaceLine`) has its own line under the bar, also without the label
+  row. Then the caption and status line.
   Expanded details reveal from the top with the card height; the card clips its content.
 - **Extra usage** (`ExtraUsageCardView`): 💳, title, "paused" chip, and the amount spent of
   the limit (`$12.50 / $50.00`). The monthly limit is a budget, drawn as energy like every
@@ -241,7 +243,7 @@ All cards: padding 14×13, `chunkyCard()`, full width.
   it fills as money is spent, in the same colors, so it is green only while little is spent
   and red and full at the limit. Without a limit share there is no bar.
 - **Details** (`DetailSectionsView`), each after a 1 pt `cardBorder` rule: limit rows
-  (`LimitRow`), usage bars (`UsageBarRow`, 7 pt bars, the value with "left" or "used"), usage-limit resets
+  (`LimitRow`, one line, with the pace on a second line indented 15 pt), usage bars (`UsageBarRow`, 7 pt bars, the value with "left" or "used"), usage-limit resets
   (`ResetsSectionView`: count, rows with the exact date in a tooltip, note), and tokens used
   (`TokensSectionView`: source label with a scope tooltip, three rows with full counts in
   tooltips and accessibility values, note).
@@ -357,6 +359,7 @@ the app is regular; "About Claude Meter" opens the About tab.
 | Trigger | Animation | Reduce Motion |
 | --- | --- | --- |
 | Ring arc, bar fill | ease-out 0.4 s | none |
+| Even-pace mark | none: it moves with the clock | none |
 | Hero tone | ease-in-out 0.3 s | none |
 | Card expand and collapse, chevron, card reorder | ease-in-out 0.18 s | none |
 | Panel height | ease-in-out 0.18 s, top edge fixed | at once |
@@ -369,7 +372,8 @@ ring, bar, and hero animations are off while `popoverIsVisible` is false.
 ## Accessibility
 
 - Rings and bars expose a label and a value: "Session", "78 percent left, full energy,
-  resets in 3h". The band is in the words, not only the color.
+  resets in 3h, lasts until reset". The band and the pace are in the words, not only the
+  color and the mark. Spoken pace has no symbols: "tight, about 4 percent left at reset".
 - The hero is one element: "title. subtitle".
 - The menu-bar button speaks the model's summary; the drawn label is hidden.
 - Every icon button has a label and a tooltip, and a target of at least 28 pt.

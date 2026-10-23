@@ -19,11 +19,13 @@ struct GrokBillingReport: Hashable, Sendable {
         else { throw .unexpectedResponse }
 
         let percent = config["creditUsagePercent"]
+        let periodStart = DateParsing.date(period["start"])
+        let periodEnd = DateParsing.date(period["end"])
         window = QuotaWindow(
             id: "credits", title: Self.title(periodType: period["type"]?.stringValue),
             kind: .billing,
             usedPercent: percent == nil || percent == .null ? 0 : percent?.doubleValue,
-            resetsAt: DateParsing.date(period["end"]))
+            resetsAt: periodEnd, duration: Self.duration(from: periodStart, to: periodEnd))
 
         // A cap of zero means that on-demand spend has no cap.
         let cap = Self.dollars(config["onDemandCap"]).flatMap { $0 > 0 ? $0 : nil }
@@ -38,6 +40,12 @@ struct GrokBillingReport: Hashable, Sendable {
         AccountUsage(
             id: .default, name: GrokProvider.accountName, windows: [window],
             balances: [onDemand, prepaid], observedAt: now, attemptedAt: now, owner: owner)
+    }
+
+    /// The period's length, so the credits window gets a pace. Nil without both dates.
+    static func duration(from start: Date?, to end: Date?) -> TimeInterval? {
+        guard let start, let end else { return nil }
+        return end.timeIntervalSince(start)
     }
 
     static func title(periodType: String?) -> String {

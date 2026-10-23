@@ -32,6 +32,9 @@ public struct QuotaWindow: Codable, Hashable, Sendable, Identifiable {
     /// severity of their cards. ``ProviderID/canOwnMenuBar`` keeps those providers out of the
     /// menu bar.
     public let isBinding: Bool
+    /// The window length in seconds, so ``Pace`` knows when the window started. Nil when the
+    /// provider gives no length; never inferred from the kind.
+    public let duration: TimeInterval?
 
     public init(
         id: String,
@@ -40,7 +43,8 @@ public struct QuotaWindow: Codable, Hashable, Sendable, Identifiable {
         usedPercent: Double?,
         resetsAt: Date?,
         isBinding: Bool = true,
-        isOverLimit: Bool = false
+        isOverLimit: Bool = false,
+        duration: TimeInterval? = nil
     ) {
         let used = usedPercent.flatMap { $0.isFinite ? $0 : nil }
         self.id = id
@@ -50,6 +54,7 @@ public struct QuotaWindow: Codable, Hashable, Sendable, Identifiable {
         self.isOverLimit = used.map { isOverLimit || $0 > 100 } ?? false
         self.resetsAt = DateBounds.validated(resetsAt)
         self.isBinding = isBinding
+        self.duration = duration.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
     }
 
     public init(from decoder: any Decoder) throws {
@@ -61,7 +66,9 @@ public struct QuotaWindow: Codable, Hashable, Sendable, Identifiable {
             usedPercent: try container.decodeIfPresent(Double.self, forKey: .usedPercent),
             resetsAt: try container.decodeIfPresent(Date.self, forKey: .resetsAt),
             isBinding: try container.decode(Bool.self, forKey: .isBinding),
-            isOverLimit: try container.decode(Bool.self, forKey: .isOverLimit))
+            isOverLimit: try container.decode(Bool.self, forKey: .isOverLimit),
+            // Readings saved by version 4.1.2 and earlier have no duration.
+            duration: try container.decodeIfPresent(TimeInterval.self, forKey: .duration))
     }
 
     /// Percent of the limit still available, 0...100.
@@ -79,7 +86,7 @@ public struct QuotaWindow: Codable, Hashable, Sendable, Identifiable {
         return QuotaWindow(
             id: id, title: title, kind: kind,
             usedPercent: isStale ? nil : usedPercent.map { _ in 0 },
-            resetsAt: nil, isBinding: isBinding)
+            resetsAt: nil, isBinding: isBinding, duration: duration)
     }
 
     public func severity(_ thresholds: Thresholds) -> Severity {

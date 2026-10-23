@@ -8,7 +8,8 @@ import MeterTestSupport
 enum Fixture {
     static func window(
         _ kind: QuotaWindow.Kind, used: Double?, resetsIn seconds: TimeInterval? = .hours(2),
-        id: String? = nil, title: String? = nil, isBinding: Bool = true
+        id: String? = nil, title: String? = nil, isBinding: Bool = true,
+        duration: TimeInterval? = nil
     ) -> QuotaWindow {
         let defaultTitle =
             switch kind {
@@ -19,7 +20,7 @@ enum Fixture {
             }
         return QuotaWindow(
             id: id ?? kind.rawValue, title: title ?? defaultTitle, kind: kind, usedPercent: used,
-            resetsAt: seconds.map { .reference($0) }, isBinding: isBinding)
+            resetsAt: seconds.map { .reference($0) }, isBinding: isBinding, duration: duration)
     }
 
     static func account(

@@ -75,6 +75,7 @@ Recorded response (grok 0.2.93):
 | --- | --- |
 | `config.currentPeriod` | Required. Its absence is an unexpected response. |
 | `currentPeriod.type` | `USAGE_PERIOD_TYPE_WEEKLY` or `USAGE_PERIOD_TYPE_MONTHLY`. |
+| `currentPeriod.start` | When the period started. Only for pace. |
 | `currentPeriod.end` | When the period resets. |
 | `config.creditUsagePercent` | Percent used. Absent means 0. |
 | `config.onDemandUsed.val` | On-demand spend in US cents. Absent means 0. |
@@ -88,7 +89,7 @@ Every number can be a JSON number or a numeric string. Other fields are ignored.
 
 | Domain value | Source |
 | --- | --- |
-| Window `credits`, `.billing`, binding | `creditUsagePercent`, resets at `currentPeriod.end` |
+| Window `credits`, `.billing`, binding | `creditUsagePercent`, resets at `currentPeriod.end`; duration `end − start` for pace, none when either is missing |
 | Window title | "Weekly", "Monthly", or "Credits" for any other type |
 | `Balance(kind: .onDemand, unit: .currency("USD"))` | `onDemandUsed` / 100, limit `onDemandCap` / 100 when above 0 |
 | `Balance(kind: .prepaid, unit: .currency("USD"))` | `prepaidBalance` / 100 |

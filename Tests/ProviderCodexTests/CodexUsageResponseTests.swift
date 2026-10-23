@@ -122,6 +122,13 @@ extension CodexTests {
                 CodexQuota.Window(usedPercent: 1, resetsAt: nil, duration: seconds), slot: .primary)
             #expect(window.title == title)
             #expect(window.kind == kind)
+            #expect(window.duration == seconds)
+        }
+
+        @Test func anUnknownDurationStaysUnknown() {
+            let window = CodexQuota.quotaWindow(
+                CodexQuota.Window(usedPercent: 1, resetsAt: nil, duration: nil), slot: .primary)
+            #expect(window.duration == nil)
         }
 
         /// CDX-11: every upstream `PlanType` value has a readable name.

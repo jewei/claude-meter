@@ -27,6 +27,7 @@ struct CursorUsageReport: Hashable, Sendable {
         var hasUsage = false
         if case .object? = usage { hasUsage = true }
         let periodEnd = DateParsing.date(json["billingCycleEnd"])
+        let periodStart = DateParsing.date(json["billingCycleStart"])
         isEnabled = json["enabled"]?.boolValue != false
 
         let total = usage?["totalPercentUsed"]
@@ -35,7 +36,7 @@ struct CursorUsageReport: Hashable, Sendable {
                 id: "billing", title: "Billing period", kind: .billing,
                 usedPercent: total == nil || total == .null
                     ? (hasUsage ? 0 : nil) : total?.doubleValue,
-                resetsAt: periodEnd)
+                resetsAt: periodEnd, duration: Self.duration(from: periodStart, to: periodEnd))
         ]
         // Older responses have no breakdown, so a row appears only when its field does.
         let breakdown = [
@@ -59,6 +60,13 @@ struct CursorUsageReport: Hashable, Sendable {
         spend =
             amount == nil && limit == nil
             ? nil : Balance(kind: .spend, amount: amount, limit: limit, unit: .currency("USD"))
+    }
+
+    /// The billing period's length, so the billing window gets a pace. The Auto and API rows
+    /// share the period but get none: they do not limit the account.
+    static func duration(from start: Date?, to end: Date?) -> TimeInterval? {
+        guard let start, let end else { return nil }
+        return end.timeIntervalSince(start)
     }
 
     /// The observed account. The email is never part of it.

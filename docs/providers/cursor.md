@@ -65,6 +65,7 @@ Retry: never. Deadline: 20 s. Only HTTP 200 is success.
 
 | Field | Meaning |
 | --- | --- |
+| `billingCycleStart` | Start of the billing period, in the same formats. Only for pace. |
 | `billingCycleEnd` | End of the billing period: epoch seconds or milliseconds, or ISO-8601. String or number. |
 | `planUsage.totalPercentUsed` | Percent used. The authoritative value. Absent means 0 when `planUsage` is present. |
 | `planUsage.autoPercentUsed` | Percent used by Auto and Composer. Optional. |
@@ -128,9 +129,9 @@ This row counts 2 + 10 + 1000 + 3 = 1015 tokens on 1 October, local time.
 
 | Domain value | Source |
 | --- | --- |
-| Window `billing`, "Billing period", `.billing`, binding | `totalPercentUsed`, resets at `billingCycleEnd` |
-| Window `auto`, "Auto + Composer", `.scoped`, not binding | `autoPercentUsed`, only when present |
-| Window `api`, "API", `.scoped`, not binding | `apiPercentUsed`, only when present |
+| Window `billing`, "Billing period", `.billing`, binding | `totalPercentUsed`, resets at `billingCycleEnd`; duration `billingCycleEnd − billingCycleStart` for pace, none when either is missing |
+| Window `auto`, "Auto + Composer", `.scoped`, not binding | `autoPercentUsed`, only when present; no duration |
+| Window `api`, "API", `.scoped`, not binding | `apiPercentUsed`, only when present; no duration |
 | `Balance(kind: .spend, unit: .currency("USD"))` | `totalSpend` / 100 with `limit` / 100, only when `planUsage` is present |
 | Plan | Membership or `planName`: `free` Free, `pro` Pro, `pro_plus` or `pro+` Pro+, `ultra` Ultra, `business` Business, `team` or `teams` Teams; any other name as written |
 | Owner | `.identity(sha256("cursor", sub))`, or `.credential(sha256("cursor", token))` without `sub` |

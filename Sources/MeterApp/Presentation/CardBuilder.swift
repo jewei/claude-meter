@@ -57,7 +57,7 @@ struct CardBuilder {
             summary = .bars(simpleBars(account, provider: provider))
             let rows = account.windows.filter { $0.kind == .scoped && $0.usedPercent != nil }
             if provider == .cursor, !rows.isEmpty {
-                details.append(.usageBars(rows.map(gauges.gauge)))
+                details.append(.usageBars(rows.map { gauges.gauge($0, account: account) }))
             }
         }
         if let tokens = TokenRowsBuilder(context: context).model(
@@ -115,7 +115,9 @@ struct CardBuilder {
     /// One bar for the provider's main window, with spend details in the caption.
     private func simpleBars(_ account: AccountUsage, provider: ProviderID) -> BarsModel {
         let main = account.windows.first { $0.kind != .scoped } ?? account.windows.first
-        let gauge = main.map(gauges.gauge) ?? gauges.gauge(nil, title: "Usage", shortTitle: "usage")
+        let gauge =
+            main.map { gauges.gauge($0, account: account) }
+            ?? gauges.gauge(nil, title: "Usage", shortTitle: "usage")
         var caption: [String] = []
         if provider == .grok, let title = main?.title { caption.append(title) }
         if provider == .cursor, let spend = account.balance(.spend), let amount = spend.amount {

@@ -10,6 +10,20 @@ import Testing
         try CursorUsageReport(body: Data(json.utf8))
     }
 
+    /// Only the billing window gets the period's length. The Auto and API rows share the
+    /// period but do not limit the account.
+    @Test func theBillingWindowHasThePeriodLength() throws {
+        let report = try report(CursorFixture.usage)
+        #expect(report.windows.map(\.id) == ["billing", "auto", "api"])
+        #expect(report.windows.map(\.duration) == [2_592_200, nil, nil])
+    }
+
+    @Test func aMissingStartGivesNoLength() throws {
+        let report = try report(#"{"billingCycleEnd":"1752592200000","planUsage":{}}"#)
+        #expect(report.windows.first?.resetsAt != nil)
+        #expect(report.windows.first?.duration == nil)
+    }
+
     @Test func zeroLimitMeansNoFixedLimit() throws {
         let report = try report(#"{"planUsage":{"totalSpend":500,"limit":0,"totalPercentUsed":5}}"#)
         #expect(report.spend?.amount == 5)

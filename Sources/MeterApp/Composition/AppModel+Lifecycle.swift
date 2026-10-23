@@ -8,6 +8,7 @@ extension AppModel {
         // First, so the log file also gets the warnings of the archive load. A change while
         // the file loads reaches the log file through `settingsDidChange`.
         logFile.setEnabled(settings.settings.writesLogFile)
+        alerts.observe(usage)
         var restored: Set<ProviderID> = []
         if let archive {
             let saved = await archive.load()
@@ -27,6 +28,7 @@ extension AppModel {
         }
         await claudeSettings?.reload()
         await codexSettings?.reload()
+        await alerts.start()
     }
 
     /// Refreshing runs once the welcome is done and while the user has not paused it.
@@ -41,6 +43,7 @@ extension AppModel {
         if old.writesLogFile != new.writesLogFile {
             logFile.setEnabled(new.writesLogFile)
         }
+        alerts.settingsDidChange(from: old, to: new)
         if old.claude.isEnabled, !new.claude.isEnabled, claudeSettings?.isWorking == true {
             // A connect that finishes after Claude was turned off must store nothing.
             Task { await claudeSettings?.abandonConnect() }

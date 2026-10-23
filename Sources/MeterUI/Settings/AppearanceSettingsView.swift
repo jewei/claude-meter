@@ -2,8 +2,8 @@ import MeterApp
 import MeterDomain
 import SwiftUI
 
-/// Settings > Appearance: card style and order, the number shown, the menu-bar window, and
-/// the severity thresholds.
+/// Settings > Appearance: card style and order, the number shown, the menu-bar window, the
+/// severity thresholds, and alerts.
 struct AppearanceSettingsView: View {
     let model: AppModel
 
@@ -71,6 +71,7 @@ struct AppearanceSettingsView: View {
                     value: thresholdBinding(\.critical), range: Thresholds.criticalRange,
                     step: Thresholds.step)
             }
+            AlertsCard(model: model)
         }
     }
 

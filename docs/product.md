@@ -195,7 +195,7 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    login that no manual connection uses, then removes that message (`ClaudeSettingsModel`).
 2. **Appearance**: card style, energy left or used, the menu-bar window and its label,
    warning and critical thresholds (warning 50–90, critical 60–100, steps of 5; critical
-   stays above warning), and automatic order.
+   stays above warning), automatic order, and alerts (§8).
 3. **Advanced**: fetch usage (pause), launch at login, automatic update checks, the log file,
    and Diagnostics. Diagnostics shows and copies redacted facts. A development or unsigned
    build cannot update itself (`Updater.isAvailable`) and shows only a note there.
@@ -211,3 +211,43 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    (`AppController.openSettings`).
 2. 4.0 starts with fresh settings. Installations older than 3.0 receive 3.1.3 first through
    the update feed, which removes 2.x hooks and files.
+
+## 8. Alerts (`AlertEvaluator`, `AlertCenter`)
+
+1. **Settings > Appearance > Alerts** has three switches, all off by default, so an upgrade
+   sends nothing: **Low energy** (a binding window reaches critical or exhausted severity),
+   **Runs out early** (a window's pace says it runs out before its reset, §1.8), and
+   **Refilled** (a binding window that was critical, exhausted, or projected to run out in
+   its last period is back below the warning threshold in a new period).
+2. Turning on the first alert asks macOS for permission. Nothing is evaluated without
+   permission, so no alert is used up before it. When macOS blocks notifications and an alert
+   is on, the card says how to turn them on and opens System Settings
+   (`AlertPermissionText`). The app reads the permission again when Settings opens and when
+   the app becomes active.
+3. Alerts use the windows as observed, never the resolved windows of §1.5: the 0% that the
+   display shows after a reset is not a refill. Stale accounts, restored readings, and
+   untracked Claude config dirs are silent. An account with an issue that is not stale still
+   alerts (`PresentationContext.observedAccounts`).
+4. State is kept per window, in memory only. The first evaluation of a window marks what is
+   already true and sends nothing, so a launch, a newly enabled source, or a crossing while
+   the app was not running never alerts. Turning a kind on is the exception: each window of
+   the sources in use alerts once if the condition is already met, which confirms that alerts
+   work.
+5. Low energy alerts once per crossing into critical, and once at a new period that is still
+   critical. It re-arms when used percent drops 5 points below critical, so a reading that
+   wobbles at the border sends one alert. A run-out alerts once per window and period, when an
+   evaluation sees a projected run-out: after a refresh or when the alert is turned on. The
+   clock passing the projected time sends nothing more. A refill alerts once, at the first
+   observation of the new period.
+6. A new period starts only when an observation after the known reset reports a later reset.
+   A corrected reset time, and a reset time that becomes known, are not new periods. An
+   expired window (its reset is not in the future) meets no condition.
+7. Any owner change of an account (a login switch or a token renewal) starts a new silent
+   baseline for its windows and forgets their last period, so a different login never gets
+   a refill alert for the old one. A renewal can lose one refill alert; a lost alert is better
+   than a wrong one. A pending confirmation of a kind turned on still alerts.
+8. One notification per window and kind: a newer one replaces the older one. The text names
+   the account by its display name through `Redactor`, then says what happens next:
+   `Claude Work: Session has 4% left. It refills in 1h 20m.` Values follow the meter mode.
+   A post that macOS rejects or that takes more than 5 s is logged and not sent again.
+   Clicking a notification opens the popover.

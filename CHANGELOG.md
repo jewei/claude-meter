@@ -14,6 +14,10 @@ are in the `v3.1.3` tag.
 
 ### Added
 
+- Optional alerts in Settings > Appearance: a macOS notification when a limit runs low,
+  when it will run out before it resets, and when it refills. All are off until you turn
+  them on.
+
 - Cards say whether energy lasts until the reset: "Runs out in 2h 10m", "Tight: ~4% left
   at reset", or "Lasts until reset", with a mark on each bar and ring where an even pace
   would be. The summary at the top names the limit that runs out first. Claude, Codex,

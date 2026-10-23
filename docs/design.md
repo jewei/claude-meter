@@ -339,7 +339,9 @@ the app is regular; "About Claude Meter" opens the About tab.
 - **Appearance**: card style as two visual options with a checkmark; Energy left / Usage;
   menu bar 5h / 7d / Both; warning and critical sliders (`ThresholdSlider`: step 5, arrow
   keys, VoiceOver adjustable, focus border) written through `Thresholds`; "Use automatic
-  order" when `CardOrderHint.canReset`.
+  order" when `CardOrderHint.canReset`. Last, the Alerts card (`AlertsCard`): one
+  `MeterSwitch` row per alert, and while macOS blocks notifications, the
+  `AlertPermissionText` note in `energyLowInk` with an "Open System Settings" quiet button.
 - **Advanced**: Fetch usage, Launch at login (`LoginItem`, with approval and error text; the
   state is read again when the app or the window becomes active; an hourglass while waiting
   for approval, a warning symbol when macOS cannot start this copy; an error stays until

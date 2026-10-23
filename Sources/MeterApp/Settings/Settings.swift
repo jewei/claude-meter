@@ -18,6 +18,7 @@ public struct Settings: Codable, Equatable, Sendable {
     public var appearance = AppearanceSettings()
     public var menuBar = MenuBarSettings()
     public var cards = CardSettings()
+    public var alerts = AlertSettings()
     /// Write a private log file in `~/Library/Logs/ClaudeMeter`.
     public var writesLogFile = false
 
@@ -155,6 +156,26 @@ public struct AppearanceSettings: Codable, Equatable, Sendable {
     public var thresholds = Thresholds.standard
 
     public init() {}
+}
+
+/// Optional macOS notifications. All are off by default, so an upgrade sends nothing.
+public struct AlertSettings: Codable, Equatable, Sendable {
+    /// A binding window reaches critical or exhausted severity.
+    public var lowEnergy = false
+    /// A window's pace says it runs out before its reset.
+    public var runOut = false
+    /// A binding window that had trouble in its last period is back to normal in a new one.
+    public var refill = false
+
+    public init() {}
+
+    public var enabledKinds: Set<Alert.Kind> {
+        var kinds: Set<Alert.Kind> = []
+        if lowEnergy { kinds.insert(.lowEnergy) }
+        if runOut { kinds.insert(.runOut) }
+        if refill { kinds.insert(.refill) }
+        return kinds
+    }
 }
 
 public struct MenuBarSettings: Codable, Equatable, Sendable {

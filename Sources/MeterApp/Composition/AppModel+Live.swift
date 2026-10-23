@@ -5,7 +5,11 @@ import MeterPlatform
 extension AppModel {
     /// The model for the running app, with live providers and storage.
     /// Starts refreshing at once; the first refresh waits for the saved readings to load.
-    public static func live(updater: any Updater) -> AppModel {
+    /// - Parameter notifications: The live poster. Only the app creates one
+    ///   (``UserNotificationPoster``).
+    public static func live(
+        updater: any Updater, notifications: any NotificationPosting
+    ) -> AppModel {
         let defaults = DefaultsStore()
         let settings = SettingsStore(store: defaults)
         let providers = LiveProviders(settings: settings, store: defaults)
@@ -17,7 +21,7 @@ extension AppModel {
         let scheduler = RefreshScheduler(store: usage, display: DisplaySleepMonitor())
         let model = AppModel(
             settings: settings, usage: usage, scheduler: scheduler, updater: updater,
-            logFile: logFile, providers: providers)
+            logFile: logFile, providers: providers, notifications: notifications)
         Task { await model.start(archive: archive) }
         return model
     }

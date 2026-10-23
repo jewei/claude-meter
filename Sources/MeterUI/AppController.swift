@@ -1,5 +1,7 @@
 import AppKit
 import MeterApp
+import MeterPlatform
+import UserNotifications
 
 /// Wires the app at launch: fonts, the model, the status item, the popover, Settings, and the
 /// menu bar shown while Settings is open.
@@ -12,6 +14,7 @@ import MeterApp
     private var statusItem: StatusItemController?
     private var popover: PopoverPanelController?
     private var settingsWindow: SettingsWindowController?
+    private var notificationResponder: NotificationResponder?
 
     init(updater: any Updater) {
         self.updater = updater
@@ -23,7 +26,7 @@ import MeterApp
         NSApp.mainMenu = menu.main
         NSApp.windowsMenu = menu.window
 
-        let model = AppModel.live(updater: updater)
+        let model = AppModel.live(updater: updater, notifications: UserNotificationPoster())
         let statusItem = StatusItemController(model: model)
         let popover = PopoverPanelController(model: model) { [weak statusItem] in
             statusItem?.button
@@ -35,11 +38,24 @@ import MeterApp
             statusItem?.setHighlighted(isVisible)
         }
         popover.onOpenSettings = { [weak self] tab in self?.openSettings(tab: tab) }
+        let responder = NotificationResponder { [weak popover] in popover?.show() }
+        UNUserNotificationCenter.current().delegate = responder
 
         self.model = model
         self.statusItem = statusItem
         self.popover = popover
         self.settingsWindow = settingsWindow
+        self.notificationResponder = responder
+    }
+
+    /// A permission change in System Settings applies without a relaunch.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        refreshNotificationPermission()
+    }
+
+    private func refreshNotificationPermission() {
+        guard let alerts = model?.alerts else { return }
+        Task { await alerts.refreshAuthorization() }
     }
 
     /// Opening the app again from Finder or Spotlight shows Settings, since there is no
@@ -65,5 +81,6 @@ import MeterApp
         model?.completeOnboarding()
         popover?.close()
         settingsWindow?.show(tab: tab)
+        refreshNotificationPermission()
     }
 }

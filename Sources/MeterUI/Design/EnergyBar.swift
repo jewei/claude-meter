@@ -45,7 +45,10 @@ struct EnergyBar: View {
                 GeometryReader { geometry in
                     PaceMark(length: height + 4)
                         .position(
-                            x: Self.fillWidth(fraction: mark, in: geometry.size.width),
+                            // Inside the capsule at either end: the mark is 4 pt wide.
+                            x: min(
+                                max(2, Self.fillWidth(fraction: mark, in: geometry.size.width)),
+                                geometry.size.width - 2),
                             y: geometry.size.height / 2)
                 }
             }

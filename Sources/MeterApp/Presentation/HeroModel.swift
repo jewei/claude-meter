@@ -58,7 +58,8 @@ public struct HeroModel: Equatable, Sendable {
         }
         let severity = selected.severity(context.thresholds)
         let (emoji, title, tone) = Self.headline(severity)
-        let runOut = Self.soonestRunOut([selected] + others, now: context.now)
+        let runOut = Self.soonestRunOut(
+            [selected] + others, thresholds: context.thresholds, now: context.now)
         let subtitle =
             others.isEmpty
             ? Self.singleSubtitle(selected, severity: severity, runOut: runOut, now: context.now)
@@ -179,10 +180,14 @@ public struct HeroModel: Equatable, Sendable {
     /// The binding window that runs out first. The highest pressure is not always first: weekly
     /// can be more used while the session runs out sooner. Each date comes from its own
     /// account's observation. Non-binding windows show their pace on the card only, because the
-    /// hero names what limits an account.
-    static func soonestRunOut(_ accounts: [AccountUsage], now: Date) -> RunOut? {
+    /// hero names what limits an account. An account that is already out of energy has no
+    /// run-out: another window stops it first.
+    static func soonestRunOut(
+        _ accounts: [AccountUsage], thresholds: Thresholds, now: Date
+    ) -> RunOut? {
         var soonest: RunOut?
-        for account in accounts where !account.isStale {
+        for account in accounts
+        where !account.isStale && account.severity(thresholds) != .exhausted {
             guard let observedAt = account.observedAt else { continue }
             for window in account.windows where window.isBinding {
                 guard let pace = Pace.of(window, observedAt: observedAt, now: now),

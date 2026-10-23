@@ -72,6 +72,13 @@ import Testing
                 == "All 2 accounts fresh · Home: Session runs out in 2h")
     }
 
+    /// Weekly is over its limit, so the session cannot run out first.
+    @Test func anAccountOutOfEnergyNamesNoRunOut() {
+        let weekly = Fixture.window(.weekly, used: 100, resetsIn: .days(2))
+        let work = account("work", name: "Work", [session(used: 50), weekly])
+        #expect(hero([work]).subtitle == "Out of energy · Weekly resets in 2d")
+    }
+
     /// A non-binding window does not limit the account, so only its card shows the pace.
     @Test func aNonBindingRunOutIsNotNamed() {
         let sonnet = Fixture.window(

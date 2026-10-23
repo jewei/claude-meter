@@ -72,7 +72,8 @@ private struct RingArc: View {
         .animation(Motion.value(reduceMotion: reduceMotion || !isVisible), value: fill)
         .overlay {
             if let mark = ring.mark, mark.isFinite {
-                PaceMark(length: lineWidth + 4)
+                // Only 2 pt longer than the stroke: the rings are 2 pt apart.
+                PaceMark(length: lineWidth + 2)
                     .offset(y: -diameter / 2)
                     .rotationEffect(.degrees(360 * min(1, max(0, mark))))
                     .transaction { $0.animation = nil }

@@ -125,7 +125,8 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    `Session runs out in 2h 10m, resets in 3h` when that window is the limiting one, else
    `Session runs out in 2h · Weekly resets in 1h`. A run-out of another account than the one
    named starts with that account's name (`Home: Session runs out in 2h`). The first run-out
-   is the soonest date, not the highest pressure. Non-binding windows, such as Sonnet Weekly,
+   is the soonest date, not the highest pressure. An account that is out of energy names no
+   run-out: another window stops it first. Non-binding windows, such as Sonnet Weekly,
    show their pace only on their card. Stale accounts are
    left out of that count and ranking, so old numbers never read as current. A stale
    selected account reads "Refresh needed", or "Waiting to retry" with a countdown while

@@ -9,10 +9,15 @@ struct GaugeBuilder {
 
     let context: PresentationContext
 
-    func gauge(_ window: QuotaWindow?, title: String, shortTitle: String) -> GaugeModel {
+    /// `account` is the window's account. Its observation gives the pace; without it, or when
+    /// it is stale, the gauge has no pace.
+    func gauge(
+        _ window: QuotaWindow?, title: String, shortTitle: String, account: AccountUsage? = nil
+    ) -> GaugeModel {
         let showsUsed = context.showsUsed
         let severity = window?.severity(context.thresholds) ?? .unknown
         let reset = Formatting.resetText(window, now: context.now)
+        let pace = window.flatMap { pace(of: $0, account: account) }
         var spoken: [String] = []
         if let value = Formatting.value(window, showsUsed: showsUsed) {
             spoken.append(
@@ -25,6 +30,9 @@ struct GaugeBuilder {
         {
             spoken.append("resets \(phrase)")
         }
+        if let pace {
+            spoken.append(PaceText.spoken(pace, now: context.now, showsUsed: showsUsed))
+        }
         return GaugeModel(
             title: title,
             shortTitle: shortTitle,
@@ -33,24 +41,40 @@ struct GaugeBuilder {
             fraction: Formatting.fraction(window, showsUsed: showsUsed),
             severity: severity,
             resetText: reset,
+            paceText: pace.map { PaceText.text($0, now: context.now, showsUsed: showsUsed) },
+            evenPaceFraction: pace.map {
+                showsUsed ? $0.expectedUsed / 100 : 1 - $0.expectedUsed / 100
+            },
             accessibilityValue: spoken.joined(separator: ", "))
     }
 
-    func gauge(_ window: QuotaWindow) -> GaugeModel {
-        gauge(window, title: window.title, shortTitle: Self.shortTitle(window))
+    func gauge(_ window: QuotaWindow, account: AccountUsage? = nil) -> GaugeModel {
+        gauge(window, title: window.title, shortTitle: Self.shortTitle(window), account: account)
     }
 
     func session(_ account: AccountUsage) -> GaugeModel {
-        gauge(account.bindingWindow(.session), title: "Session", shortTitle: Self.sessionShortTitle)
+        gauge(
+            account.bindingWindow(.session), title: "Session", shortTitle: Self.sessionShortTitle,
+            account: account)
     }
 
     func weekly(_ account: AccountUsage) -> GaugeModel {
-        gauge(account.bindingWindow(.weekly), title: "Weekly", shortTitle: Self.weeklyShortTitle)
+        gauge(
+            account.bindingWindow(.weekly), title: "Weekly", shortTitle: Self.weeklyShortTitle,
+            account: account)
     }
 
     /// Scoped windows (Opus, Sonnet, …) after the session and weekly windows.
     func scoped(_ account: AccountUsage) -> [GaugeModel] {
-        account.windows.filter { $0.kind == .scoped }.map(gauge)
+        account.windows.filter { $0.kind == .scoped }.map { gauge($0, account: account) }
+    }
+
+    /// Stale numbers must not predict anything, so a stale account has no pace.
+    private func pace(of window: QuotaWindow, account: AccountUsage?) -> Pace? {
+        guard let account, !account.isStale, let observedAt = account.observedAt else {
+            return nil
+        }
+        return Pace.of(window, observedAt: observedAt, now: context.now)
     }
 
     /// `Opus Weekly` → `opus`.

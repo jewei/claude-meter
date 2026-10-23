@@ -12,6 +12,13 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
+### Added
+
+- Cards say whether energy lasts until the reset: "Runs out in 2h 10m", "Tight: ~4% left
+  at reset", or "Lasts until reset", with a mark on each bar and ring where an even pace
+  would be. The summary at the top names the limit that runs out first. Claude, Codex,
+  Cursor's billing period, and Grok's credits all show it.
+
 ## [4.1.2] - 2026-10-21
 
 ### Removed

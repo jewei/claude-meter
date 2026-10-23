@@ -1,7 +1,8 @@
 import MeterApp
 import SwiftUI
 
-/// A ring card row: band dot, short title, value with its caption, and the reset below.
+/// A ring card row: band dot, short title, value with its caption, and the reset and pace
+/// below.
 struct RingMetricRow: View {
     let gauge: GaugeModel
 
@@ -26,6 +27,10 @@ struct RingMetricRow: View {
                     .foregroundStyle(Palette.inkMuted)
                     .monospacedDigit()
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 15)
+            }
+            if let pace = gauge.paceText {
+                PaceLine(text: pace)
                     .padding(.leading, 15)
             }
         }

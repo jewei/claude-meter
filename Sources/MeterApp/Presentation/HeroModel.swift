@@ -58,10 +58,11 @@ public struct HeroModel: Equatable, Sendable {
         }
         let severity = selected.severity(context.thresholds)
         let (emoji, title, tone) = Self.headline(severity)
+        let runOut = Self.soonestRunOut([selected] + others, now: context.now)
         let subtitle =
             others.isEmpty
-            ? Self.singleSubtitle(selected, severity: severity, now: context.now)
-            : Self.multipleSubtitle([selected] + others, context: context)
+            ? Self.singleSubtitle(selected, severity: severity, runOut: runOut, now: context.now)
+            : Self.multipleSubtitle([selected] + others, runOut: runOut, context: context)
         self.init(emoji: emoji, title: title, subtitle: subtitle, tone: tone)
     }
 
@@ -76,9 +77,9 @@ public struct HeroModel: Equatable, Sendable {
     }
 
     private static func singleSubtitle(
-        _ account: AccountUsage, severity: Severity, now: Date
+        _ account: AccountUsage, severity: Severity, runOut: RunOut?, now: Date
     ) -> String {
-        let reset = limitingReset(account, now: now)
+        let reset = limitText(account, runOut: runOut, now: now)
         let lead =
             switch severity {
             case .normal: "Plenty in the tank"
@@ -96,7 +97,7 @@ public struct HeroModel: Equatable, Sendable {
     /// the lowest account, which can be the selected one: `2 fresh · Work low · Weekly resets
     /// in 1h 8m`, or `All 3 accounts fresh 🎉`.
     private static func multipleSubtitle(
-        _ accounts: [AccountUsage], context: PresentationContext
+        _ accounts: [AccountUsage], runOut: RunOut?, context: PresentationContext
     ) -> String {
         let rated = accounts.map { ($0, $0.severity(context.thresholds)) }
         let plenty = rated.filter { $0.1 == .normal }.count
@@ -105,9 +106,12 @@ public struct HeroModel: Equatable, Sendable {
         let warmingText = warming == 0 ? "" : " · \(warming) warming up"
 
         guard let (account, severity) = lowest else {
+            let runOutText = runOut.map { " · \($0.text(naming: true, now: context.now))" } ?? ""
             if warming > 0 {
-                return plenty == 0 ? "Warming up…" : "\(plenty) fresh\(warmingText)"
+                return plenty == 0
+                    ? "Warming up…\(runOutText)" : "\(plenty) fresh\(runOutText)\(warmingText)"
             }
+            if !runOutText.isEmpty { return "All \(accounts.count) accounts fresh\(runOutText)" }
             return "All \(accounts.count) accounts fresh 🎉"
         }
         let word =
@@ -116,7 +120,7 @@ public struct HeroModel: Equatable, Sendable {
             case .warning: "low"
             default: "nearly dry"
             }
-        let reset = limitingReset(account, now: context.now).map { " · \($0)" } ?? ""
+        let reset = limitText(account, runOut: runOut, now: context.now).map { " · \($0)" } ?? ""
         if plenty == 0 { return "\(account.name) is \(word)\(reset)\(warmingText)" }
         return "\(plenty) fresh · \(account.name) \(word)\(reset)\(warmingText)"
     }
@@ -124,15 +128,71 @@ public struct HeroModel: Equatable, Sendable {
     /// `Weekly resets in 1h 8m` for the most constrained binding window. Equal usage picks the
     /// later reset, because that limit blocks work for longer. Never another window's reset.
     static func limitingReset(_ account: AccountUsage, now: Date) -> String? {
-        let limiting = account.windows.filter { $0.isBinding && $0.usedPercent != nil }.max {
+        limitingWindow(account).flatMap { resetText($0, now: now) }
+    }
+
+    private static func limitingWindow(_ account: AccountUsage) -> QuotaWindow? {
+        account.windows.filter { $0.isBinding && $0.usedPercent != nil }.max {
             if $0.pressure != $1.pressure { return $0.pressure < $1.pressure }
             guard let left = $0.resetsAt else { return false }
             guard let right = $1.resetsAt else { return true }
             return left < right
         }
-        guard let limiting, let date = limiting.resetsAt,
-            let phrase = Countdown.phrase(until: date, now: now)
+    }
+
+    private static func resetText(_ window: QuotaWindow, now: Date) -> String? {
+        guard let date = window.resetsAt, let phrase = Countdown.phrase(until: date, now: now)
         else { return nil }
-        return "\(limiting.title) resets \(phrase)"
+        return "\(window.title) resets \(phrase)"
+    }
+
+    /// The run-out and the reset of `account`, which the subtitle names: `Session runs out in
+    /// 2h 10m, resets in 3h` when both are of one window, else `Session runs out in 2h 10m ·
+    /// Weekly resets in 1h 8m`. A run-out of another account names that account.
+    private static func limitText(_ account: AccountUsage, runOut: RunOut?, now: Date) -> String? {
+        let limiting = limitingWindow(account)
+        let reset = limiting.flatMap { resetText($0, now: now) }
+        guard let runOut else { return reset }
+        let isOwn = runOut.account.id == account.id
+        if isOwn, runOut.window.id == limiting?.id, let date = limiting?.resetsAt,
+            let phrase = Countdown.phrase(until: date, now: now)
+        {
+            return "\(runOut.text(naming: false, now: now)), resets \(phrase)"
+        }
+        return ([runOut.text(naming: !isOwn, now: now)] + [reset].compactMap { $0 })
+            .joined(separator: " · ")
+    }
+
+    /// A binding window that runs out before its reset, at the projected date.
+    struct RunOut {
+        let account: AccountUsage
+        let window: QuotaWindow
+        let date: Date
+
+        /// `Session runs out in 2h 10m`, or `Work: Session runs out now`.
+        func text(naming: Bool, now: Date) -> String {
+            let text = "\(window.title) runs out \(PaceText.when(date, now: now))"
+            return naming ? "\(account.name): \(text)" : text
+        }
+    }
+
+    /// The binding window that runs out first. The highest pressure is not always first: weekly
+    /// can be more used while the session runs out sooner. Each date comes from its own
+    /// account's observation. Non-binding windows show their pace on the card only, because the
+    /// hero names what limits an account.
+    static func soonestRunOut(_ accounts: [AccountUsage], now: Date) -> RunOut? {
+        var soonest: RunOut?
+        for account in accounts where !account.isStale {
+            guard let observedAt = account.observedAt else { continue }
+            for window in account.windows where window.isBinding {
+                guard let pace = Pace.of(window, observedAt: observedAt, now: now),
+                    case .runsOut(let date) = pace.verdict
+                else { continue }
+                if soonest.map({ date < $0.date }) ?? true {
+                    soonest = RunOut(account: account, window: window, date: date)
+                }
+            }
+        }
+        return soonest
     }
 }

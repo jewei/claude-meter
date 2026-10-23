@@ -36,18 +36,20 @@ public enum PreviewData {
         let now = Date()
         func window(
             _ kind: QuotaWindow.Kind, _ title: String, used: Double, hours: Double,
-            id: String? = nil, binding: Bool = true
+            id: String? = nil, binding: Bool = true, length: Double? = nil
         ) -> QuotaWindow {
             QuotaWindow(
                 id: id ?? kind.rawValue, title: title, kind: kind, usedPercent: used,
-                resetsAt: now.addingTimeInterval(hours * 3_600), isBinding: binding)
+                resetsAt: now.addingTimeInterval(hours * 3_600), isBinding: binding,
+                duration: length.map { $0 * 3_600 })
         }
         let work = AccountUsage(
             id: "claude-work", name: "work", plan: "Max 20x",
             windows: [
-                window(.session, "Session", used: 22, hours: 3.2),
-                window(.weekly, "Weekly", used: 36, hours: 151),
-                window(.scoped, "Opus Weekly", used: 48, hours: 151, id: "seven_day_opus"),
+                window(.session, "Session", used: 22, hours: 3.2, length: 5),
+                window(.weekly, "Weekly", used: 36, hours: 151, length: 168),
+                window(
+                    .scoped, "Opus Weekly", used: 48, hours: 151, id: "seven_day_opus", length: 168),
             ],
             resetAllowance: ResetAllowance(
                 available: 1,
@@ -58,22 +60,22 @@ public enum PreviewData {
         let personal = AccountUsage(
             id: "claude", name: "default", plan: "Pro",
             windows: [
-                window(.session, "Session", used: 81, hours: 1.1),
-                window(.weekly, "Weekly", used: 64, hours: 40),
+                window(.session, "Session", used: 81, hours: 1.1, length: 5),
+                window(.weekly, "Weekly", used: 64, hours: 40, length: 168),
             ],
             observedAt: now.addingTimeInterval(-90))
         let codex = AccountUsage(
             id: "/Users/me/.codex", name: "codex", plan: "plus",
             windows: [
-                window(.session, "Session", used: 12, hours: 4),
-                window(.weekly, "Weekly", used: 30, hours: 90),
+                window(.session, "Session", used: 12, hours: 4, length: 5),
+                window(.weekly, "Weekly", used: 30, hours: 90, length: 168),
             ],
             balances: [Balance(kind: .credits, amount: 12, unit: .credits)],
             observedAt: now.addingTimeInterval(-120))
         let cursor = AccountUsage(
             id: .default, name: "Cursor", plan: "Pro",
             windows: [
-                window(.billing, "Total", used: 42, hours: 300),
+                window(.billing, "Total", used: 42, hours: 300, length: 720),
                 window(.scoped, "Auto", used: 30, hours: 300, id: "auto", binding: false),
                 window(.scoped, "API", used: 12, hours: 300, id: "api", binding: false),
             ],

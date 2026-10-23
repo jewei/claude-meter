@@ -1,11 +1,25 @@
 import MeterApp
 import SwiftUI
 
-/// A further limit window on one line, such as Opus: dot, short title, value, and reset.
+/// A further limit window on one line, such as Opus: dot, short title, value, and reset. The
+/// pace has its own line below, so the first line is not clipped.
 struct LimitRow: View {
     let gauge: GaugeModel
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            line
+            if let pace = gauge.paceText {
+                PaceLine(text: pace)
+                    .padding(.leading, 15)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(gauge.title)
+        .accessibilityValue(gauge.accessibilityValue)
+    }
+
+    private var line: some View {
         HStack(spacing: 6) {
             EnergyDot(color: gauge.severity.fill)
             Text(gauge.shortTitle)
@@ -26,8 +40,5 @@ struct LimitRow: View {
             }
         }
         .lineLimit(1)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(gauge.title)
-        .accessibilityValue(gauge.accessibilityValue)
     }
 }

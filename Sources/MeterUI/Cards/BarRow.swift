@@ -2,14 +2,17 @@ import MeterApp
 import SwiftUI
 
 /// One window as a 12 pt energy bar, with "Session · 60% left" and the reset below it when
-/// the card's caption does not state them already.
+/// the card's caption does not state them already. The pace has its own line, also on cards
+/// whose caption states the rest.
 struct BarRow: View {
     let gauge: GaugeModel
     var showsLabels = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            EnergyBar(fraction: gauge.fraction, color: gauge.severity.fill, height: 12)
+            EnergyBar(
+                fraction: gauge.fraction, color: gauge.severity.fill, height: 12,
+                mark: gauge.evenPaceFraction)
             if showsLabels {
                 HStack(spacing: 6) {
                     Text(gauge.summaryText)
@@ -21,6 +24,7 @@ struct BarRow: View {
                 .monospacedDigit()
                 .lineLimit(1)
             }
+            if let pace = gauge.paceText { PaceLine(text: pace) }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(gauge.title)

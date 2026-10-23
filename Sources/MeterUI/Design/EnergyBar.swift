@@ -11,6 +11,8 @@ struct EnergyBar: View {
     var fraction: Double
     var color: Color
     var height: CGFloat = 12
+    /// Where an even pace would be, 0...1, drawn as a ``PaceMark``. Nil draws none.
+    var mark: Double? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.popoverIsVisible) private var isVisible
@@ -38,6 +40,16 @@ struct EnergyBar: View {
         }
         .frame(height: height)
         .animation(Motion.value(reduceMotion: reduceMotion || !isVisible), value: fraction)
+        .overlay(alignment: .leading) {
+            if let mark {
+                GeometryReader { geometry in
+                    PaceMark(length: height + 4)
+                        .position(
+                            x: Self.fillWidth(fraction: mark, in: geometry.size.width),
+                            y: geometry.size.height / 2)
+                }
+            }
+        }
         .accessibilityHidden(true)
     }
 

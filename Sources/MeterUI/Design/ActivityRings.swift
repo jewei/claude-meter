@@ -10,6 +10,8 @@ struct ActivityRings: View {
     struct Ring: Equatable {
         var fraction: Double
         var color: Color
+        /// Where an even pace would be, 0...1, drawn as a ``PaceMark`` across the stroke.
+        var mark: Double? = nil
     }
 
     var outer: Ring
@@ -68,5 +70,13 @@ private struct RingArc: View {
         }
         .frame(width: diameter, height: diameter)
         .animation(Motion.value(reduceMotion: reduceMotion || !isVisible), value: fill)
+        .overlay {
+            if let mark = ring.mark, mark.isFinite {
+                PaceMark(length: lineWidth + 4)
+                    .offset(y: -diameter / 2)
+                    .rotationEffect(.degrees(360 * min(1, max(0, mark))))
+                    .transaction { $0.animation = nil }
+            }
+        }
     }
 }

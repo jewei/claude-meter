@@ -1,0 +1,109 @@
+import Foundation
+import MeterDomain
+import MeterTestSupport
+import Testing
+
+@testable import MeterApp
+
+/// Pace on cards: the text and the even-pace mark (`docs/product.md`, Pace).
+@Suite struct PaceCardTests {
+    /// A 5-hour session, 2 hours in, that resets in 3 hours. 50% used runs out in 2 hours.
+    private func session(used: Double) -> QuotaWindow {
+        Fixture.window(.session, used: used, resetsIn: .hours(3), duration: .hours(5))
+    }
+
+    private func account(_ windows: [QuotaWindow]) -> AccountUsage {
+        AccountUsage(id: "work", name: "Work", windows: windows, observedAt: .reference())
+    }
+
+    private func cards(
+        _ readings: [ProviderID: Reading<ProviderUsage>], enabled: Set<ProviderID> = [.claude],
+        configure: (inout Settings) -> Void = { _ in }
+    ) -> [CardModel] {
+        let settings = Fixture.settings(enabled: enabled, configure: configure)
+        let context = Fixture.context(settings, readings: readings)
+        guard case .accounts(let model) = PopoverModel(context).content else { return [] }
+        return model.cards
+    }
+
+    private func rings(_ reading: Reading<ProviderUsage>, showsUsed: Bool = false) -> RingsModel? {
+        let cards = cards([.claude: reading]) {
+            $0.appearance.meterMode = showsUsed ? .used : .energyLeft
+        }
+        guard case .rings(let rings) = cards.first?.summary else { return nil }
+        return rings
+    }
+
+    @Test func ringRowsShowPaceAndMark() throws {
+        let usage = Fixture.usage(.claude, account([session(used: 50)]))
+        let rings = try #require(rings(Fixture.current(usage)))
+        #expect(rings.inner.paceText == "Runs out in 2h")
+        #expect(rings.inner.accessibilityValue.hasSuffix("runs out in 2h"))
+        // 2 of 5 hours: an even pace has used 40%, so 60% is left.
+        #expect(try abs(#require(rings.inner.evenPaceFraction) - 0.6) < 1e-9)
+        // The weekly window has no duration, so it has no pace.
+        #expect(rings.outer.paceText == nil)
+        #expect(rings.outer.evenPaceFraction == nil)
+    }
+
+    @Test func theMarkFollowsTheMeterMode() throws {
+        let usage = Fixture.usage(.claude, account([session(used: 50)]))
+        let rings = try #require(rings(Fixture.current(usage), showsUsed: true))
+        #expect(try abs(#require(rings.inner.evenPaceFraction) - 0.4) < 1e-9)
+    }
+
+    @Test func aStaleAccountHasNoPace() throws {
+        let usage = Fixture.usage(.claude, account([session(used: 50)]))
+        let stale = Reading<ProviderUsage>.stale(
+            usage, observedAt: .reference(), issue: UsageIssue("Offline"))
+        let rings = try #require(rings(stale))
+        #expect(rings.inner.paceText == nil)
+        #expect(rings.inner.evenPaceFraction == nil)
+    }
+
+    /// A non-binding scoped window shows its pace on the card. The hero does not name it
+    /// (``HeroModelTests``).
+    @Test func aScopedWindowShowsItsPace() throws {
+        let sonnet = Fixture.window(
+            .scoped, used: 80, resetsIn: .days(3), id: "seven_day_sonnet", title: "Sonnet Weekly",
+            isBinding: false, duration: .days(7))
+        let usage = Fixture.usage(.claude, account([session(used: 10), sonnet]))
+        let rings = try #require(rings(Fixture.current(usage)))
+        #expect(rings.rows.last?.paceText == "Runs out in 24h")
+    }
+
+    @Test func cursorBillingShowsPaceWithoutBarLabels() throws {
+        let cursor = AccountUsage(
+            id: .default, name: "Cursor",
+            windows: [
+                Fixture.window(
+                    .billing, used: 20, resetsIn: .days(20), title: "Billing period",
+                    duration: .days(30)),
+                Fixture.window(
+                    .scoped, used: 10, resetsIn: .days(20), title: "API", isBinding: false),
+            ],
+            observedAt: .reference())
+        let claude = Fixture.usage(.claude, Fixture.account("a"))
+        let all = cards(
+            [
+                .claude: Fixture.current(claude),
+                .cursor: Fixture.current(.init(provider: .cursor, accounts: [cursor])),
+            ],
+            enabled: [.claude, .cursor]
+        ) { $0.cards.expanded = [.account(.cursor, .default)] }
+        let card = try #require(all.last)
+        guard case .bars(let bars) = card.summary else {
+            Issue.record("Expected bars")
+            return
+        }
+        #expect(!bars.showsBarLabels)
+        // 20% in 10 of 30 days: 40% more in the last 20 days leaves 40%.
+        #expect(bars.headline.paceText == "Lasts until reset")
+        #expect(bars.headline.evenPaceFraction != nil)
+        guard case .usageBars(let rows)? = card.details.first else {
+            Issue.record("Expected usage rows")
+            return
+        }
+        #expect(rows.allSatisfy { $0.paceText == nil })
+    }
+}

@@ -25,6 +25,17 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    shows at least 1 and a value below 100 at most 99. So `0%` left appears only when the
    window is exhausted, and `100%` left only when nothing is used
    (`Formatting.wholePercent`, for text and speech alike).
+8. **Pace** projects a window's use so far in a straight line to its reset (`Pace.of`). The
+   rate is the percent used at the observation divided by the time since the window started
+   (`resetsAt − duration`), so an unchanged reading always gives the same projection. The
+   verdict is "Runs out in …" when the projection reaches 100% before the reset, "Tight"
+   when at most 10% is left at the reset, else "Lasts until reset". A projection that
+   passed before a new reading says "Runs out now": the app did not see the window run out,
+   so it does not say that it did. There is no pace when the window has no duration, value,
+   or future reset, is at or over its limit, has no use yet, or is still in its quiet period
+   (10% of its length, at least 15 minutes and at most 1 hour), and none for a stale account.
+   The even-pace mark shows how much an even pace would have used by now. Each provider doc
+   says where the duration comes from.
 
 ## 2. The main meter
 
@@ -109,7 +120,13 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    also not with an account name in front (`Notice`).
 5. The hero summarizes the main meter (`HeroModel`): its headline follows the selected
    account's severity, and its subline names the limiting window and its reset, or counts
-   the accounts with plenty left ("fresh") and names the lowest account. Stale accounts are
+   the accounts with plenty left ("fresh") and names the lowest account. Before the reset,
+   the subline names the binding window that runs out first, of any account that it ranks:
+   `Session runs out in 2h 10m, resets in 3h` when that window is the limiting one, else
+   `Session runs out in 2h · Weekly resets in 1h`. A run-out of another account than the one
+   named starts with that account's name (`Home: Session runs out in 2h`). The first run-out
+   is the soonest date, not the highest pressure. Non-binding windows, such as Sonnet Weekly,
+   show their pace only on their card. Stale accounts are
    left out of that count and ranking, so old numbers never read as current. A stale
    selected account reads "Refresh needed", or "Waiting to retry" with a countdown while
    its issue has a future `retryAt`, such as a rate limit: the refresh retries by itself.
@@ -118,15 +135,18 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    Claude extra usage, the other main-capable provider, Cursor, then Grok. The extra-usage
    card shows only while Claude is the main meter, for its selected account, when that
    account reports extra usage (`CardBuilder`).
-7. Account cards (rings, bars, Cursor, and Grok) open and close from their header, and
+7. Every limit row, bar, and ring with a pace (§1.8) shows the verdict on its own line, and
+   an even-pace mark on its bar or ring. Cursor's and Grok's bar shows it too, although their
+   caption replaces the bar's label row (`GaugeBuilder`, `PaceText`).
+8. Account cards (rings, bars, Cursor, and Grok) open and close from their header, and
    remember their state. They start closed. The extra-usage card is always open. Details
    hold usage-limit resets and tokens used, and in bar cards also scoped windows.
-8. A card shows its account's own issue. A card of a provider that is not the main meter also
+9. A card shows its account's own issue. A card of a provider that is not the main meter also
    shows old data (`Data may be stale`); the main provider shows it as a notice instead. A
    failed refresh is a notice for every provider (§4.4), so no card repeats it
    (`CardBuilder`).
-9. While the popover is open, countdowns and ages update every second.
-10. When a background check finds an update that Sparkle did not show, the popover shows
+10. While the popover is open, countdowns and ages update every second.
+11. When a background check finds an update that Sparkle did not show, the popover shows
     "Update available"; selecting it opens Sparkle's update window
     (`PopoverModel.showsUpdateNotice`, `Updater.isUpdateAvailable`).
 

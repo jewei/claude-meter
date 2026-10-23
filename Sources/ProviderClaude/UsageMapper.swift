@@ -87,12 +87,18 @@ enum UsageMapper {
         return exact / divisor
     }
 
+    /// The API sends no window length. The session is 5 hours and every weekly window, scoped
+    /// or not, is 7 days, as Claude documents them.
+    static let sessionDuration: TimeInterval = 5 * 3_600
+    static let weeklyDuration: TimeInterval = 7 * 86_400
+
     private static func window(
         _ window: UsageResponse.Window?, id: String, title: String, kind: QuotaWindow.Kind,
         isBinding: Bool = true
     ) -> QuotaWindow {
         QuotaWindow(
             id: id, title: title, kind: kind, usedPercent: window?.utilization,
-            resetsAt: window?.resetsAt, isBinding: isBinding)
+            resetsAt: window?.resetsAt, isBinding: isBinding,
+            duration: kind == .session ? sessionDuration : weeklyDuration)
     }
 }

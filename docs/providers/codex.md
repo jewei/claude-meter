@@ -205,7 +205,8 @@ The app never calls an endpoint or method that uses a reset credit or renews a t
     numeric `usedPercent` is not a window. A value that is not a snapshot, or a map in another
     place, never becomes a window.
 17. A window of at most 24 hours is a session window. A longer window is weekly. Without a
-    duration, `primary` is session and `secondary` is weekly.
+    duration, `primary` is session and `secondary` is weekly. The window keeps its duration
+    for pace (`docs/product.md` §1.8); without one it has no pace.
 18. Window titles are `Session` and `Weekly`, from the kind, the same as Claude. A limit ID
     is never a title.
 19. A percent above 100 shows as 100 and over the limit. Dates outside 1970 to 3000 are

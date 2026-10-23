@@ -74,7 +74,7 @@ struct CodexQuota: Equatable, Sendable {
         let kind = kind(of: window, slot: slot)
         return QuotaWindow(
             id: slot.rawValue, title: title(kind: kind), kind: kind,
-            usedPercent: window.usedPercent, resetsAt: window.resetsAt)
+            usedPercent: window.usedPercent, resetsAt: window.resetsAt, duration: window.duration)
     }
 
     /// "Session" or "Weekly", matching Claude, so the hero and cards read the same for both

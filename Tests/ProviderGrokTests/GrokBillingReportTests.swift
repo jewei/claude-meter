@@ -10,6 +10,19 @@ import Testing
         try GrokBillingReport(body: Data(json.utf8))
     }
 
+    @Test func theWindowHasThePeriodLength() throws {
+        let report = try report(GrokProviderTests.liveFixture)
+        #expect(report.window.duration == 604_800)
+    }
+
+    @Test func aPeriodWithoutAStartHasNoLength() throws {
+        let report = try report(
+            #"{"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","end":"2026-07-11T05:57:34Z"}}}"#
+        )
+        #expect(report.window.resetsAt != nil)
+        #expect(report.window.duration == nil)
+    }
+
     @Test func anAbsentPercentWithAPeriodMeansZeroUsed() throws {
         let report = try report(
             #"{"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY"},"onDemandCap":{}}}"#)

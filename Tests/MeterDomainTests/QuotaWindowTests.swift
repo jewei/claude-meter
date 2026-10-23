@@ -80,4 +80,33 @@ import Testing
         #expect(decoded.usedPercent == 100)
         #expect(decoded.isOverLimit)
     }
+
+    /// Version 4.1.2 saved windows without a duration, and `readings.json` must still load.
+    @Test func decodesAWindowWithoutDuration() throws {
+        let json = #"""
+            {"id":"w","title":"W","kind":"weekly","usedPercent":30,"isBinding":true,"isOverLimit":false}
+            """#
+        let decoded = try JSONDecoder().decode(QuotaWindow.self, from: Data(json.utf8))
+        #expect(decoded.duration == nil)
+    }
+
+    @Test func durationSurvivesEncodingAndResolution() throws {
+        let original = QuotaWindow(
+            id: "w", title: "W", kind: .weekly, usedPercent: 30, resetsAt: .reference(-1),
+            duration: .days(7))
+        let decoded = try JSONDecoder().decode(
+            QuotaWindow.self, from: JSONEncoder().encode(original))
+        #expect(decoded == original)
+        #expect(original.resolved(at: .reference(), isStale: false).duration == .days(7))
+        #expect(original.resolved(at: .reference(), isStale: true).duration == .days(7))
+    }
+
+    @Test func rejectsUnusableDurations() {
+        for duration in [0, -1, .nan, .infinity] as [TimeInterval] {
+            let window = QuotaWindow(
+                id: "w", title: "W", kind: .weekly, usedPercent: 30, resetsAt: nil,
+                duration: duration)
+            #expect(window.duration == nil)
+        }
+    }
 }

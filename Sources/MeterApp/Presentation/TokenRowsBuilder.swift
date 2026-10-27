@@ -49,7 +49,7 @@ struct TokenRowsBuilder {
         }
         let age = context.now.timeIntervalSince(history.observedAt)
         let isOld =
-            age > PresentationContext.staleAfter
+            age > context.staleAfter
             || history.timeZoneID != context.calendar.timeZone.identifier
             || !context.calendar.isDate(history.observedAt, inSameDayAs: context.now)
         return isOld ? "Token data may be stale" : nil

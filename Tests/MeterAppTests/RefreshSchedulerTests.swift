@@ -7,7 +7,7 @@ import Testing
 @testable import MeterApp
 
 /// A sleep function that returns only when a test fires it.
-private final class ManualTimer: Sendable {
+final class ManualTimer: Sendable {
     private let gates = Locked<[Gate]>([])
     private let requested = Locked<[TimeInterval]>([])
 

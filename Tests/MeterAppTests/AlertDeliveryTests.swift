@@ -23,7 +23,7 @@ import Testing
 
     private func makeModel(
         poster: FakeNotificationPoster, configure: (inout Settings) -> Void = { _ in },
-        limits: AlertCenter.Limits = AlertCenter.Limits()
+        limits: AlertCenter.Limits = AlertCenter.Limits(), power: FakePower? = nil
     ) -> AppModel {
         var settings = Settings()
         settings.hasCompletedOnboarding = true
@@ -34,8 +34,17 @@ import Testing
         defaults.set(SettingsCodec.encode(settings), forKey: SettingsStore.storageKey)
         let store = UsageStore(providers: [claude, codex])
         store.setEnabled(settings.enabledProviders)
+        // With a power monitor, a scheduler supplies the stale limit. Its display is asleep,
+        // so it sends no request that would use up the fakes' answers.
+        let scheduler = power.map { power in
+            let display = FakeDisplay()
+            display.isDisplayAsleep = true
+            return RefreshScheduler(
+                store: store, display: display, power: power,
+                sleep: { _ in try await Task.sleep(for: .seconds(3_600)) })
+        }
         return AppModel(
-            settings: SettingsStore(store: defaults), usage: store, scheduler: nil,
+            settings: SettingsStore(store: defaults), usage: store, scheduler: scheduler,
             updater: DisabledUpdater(), logFile: LogFile(directory: directory.path("Logs")),
             notifications: poster, alertLimits: limits)
     }
@@ -60,10 +69,11 @@ import Testing
 
     /// Publishes a reading, then lets the merged evaluation and its delivery finish.
     private func publish(
-        _ model: AppModel, _ provider: ProviderID, _ windows: [QuotaWindow]
+        _ model: AppModel, _ provider: ProviderID, _ windows: [QuotaWindow],
+        age: TimeInterval = 0
     ) async {
         let fake = provider == .claude ? claude : codex
-        fake.enqueue(usage(provider, windows))
+        fake.enqueue(usage(provider, windows, at: Date().addingTimeInterval(-age)))
         let before = model.alerts.evaluationCount
         await model.usage.refresh([provider])
         #expect(await waitUntil { model.alerts.evaluationCount > before })
@@ -309,6 +319,21 @@ import Testing
         gate.open()
         await older.value
         #expect(model.alerts.authorization == .authorized)
+    }
+
+    /// Alerts use the same stale limit as the display: under strain a reading 700 s old is
+    /// current, so it alerts; normally it is stale, so it is silent.
+    @Test(arguments: [true, false])
+    func anOlderReadingAlertsOnlyUnderStrain(constrained: Bool) async {
+        let poster = FakeNotificationPoster()
+        let power = FakePower()
+        power.isConstrained = constrained
+        let model = makeModel(
+            poster: poster, configure: { $0.alerts.lowEnergy = true }, power: power)
+        await start(model)
+        await publish(model, .claude, [window(50)], age: 700)
+        await publish(model, .claude, [window(96)], age: 700)
+        #expect(poster.posted.count == (constrained ? 1 : 0))
     }
 
     /// Settings saved by 4.1.2 have no alerts, and decode with every alert off.

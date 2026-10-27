@@ -15,6 +15,10 @@ extension AppModel {
                 DiagnosticFact("Version", "\(version) (\(build))"),
                 DiagnosticFact("macOS", os),
                 DiagnosticFact("Updates", settings.settings.isPaused ? "paused" : "running"),
+                DiagnosticFact(
+                    "Refresh interval",
+                    scheduler?.isConstrained == true
+                        ? "15 min (Low Power Mode or heat)" : "5 min"),
             ])
         let readings = DiagnosticsReport.Section(
             title: "Readings",

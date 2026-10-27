@@ -27,8 +27,9 @@ countdown shows when each limit resets.
 - Usage-limit resets and credits, when the provider reports them.
 - Launch at login and signed automatic updates.
 
-Usage refreshes every five minutes while the display is awake, and when you open the
-popover if the data is more than a minute old. Nothing runs while the display sleeps.
+Usage refreshes every five minutes while the display is awake, or every 15 minutes in Low
+Power Mode or when the Mac runs hot, and when you open the popover if the data is more than
+a minute old. Nothing runs while the display sleeps.
 
 ## Privacy
 

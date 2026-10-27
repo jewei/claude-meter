@@ -23,6 +23,11 @@ are in the `v3.1.3` tag.
   would be. The summary at the top names the limit that runs out first. Claude, Codex,
   Cursor's billing period, and Grok's credits all show it.
 
+### Changed
+
+- In Low Power Mode, or when the Mac runs hot, Claude Meter refreshes every 15 minutes
+  instead of 5, to save battery. Readings from the slower refresh are not marked stale.
+
 ## [4.1.2] - 2026-10-21
 
 ### Removed

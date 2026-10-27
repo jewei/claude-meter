@@ -18,7 +18,8 @@ extension AppModel {
         let usage = UsageStore(
             providers: providers.usageProviders, historyProviders: providers.historyProviders,
             archive: archive)
-        let scheduler = RefreshScheduler(store: usage, display: DisplaySleepMonitor())
+        let scheduler = RefreshScheduler(
+            store: usage, display: DisplaySleepMonitor(), power: PowerStateMonitor())
         let model = AppModel(
             settings: settings, usage: usage, scheduler: scheduler, updater: updater,
             logFile: logFile, providers: providers, notifications: notifications)

@@ -115,25 +115,36 @@ import Testing
         "Email: ", "-----BEGIN ", #"\"token\":\"a\\\""#,
     ]
 
-    /// The CPU time of this thread, so other work on a busy machine does not count. The best
-    /// of three runs, so one interruption does not count either.
+    /// The CPU time of this thread for one redaction, so other work on a busy machine does not
+    /// count.
     private static func cpuTime(_ text: String) -> UInt64 {
-        (0..<3).map { _ in
-            let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
-            _ = Redactor.redact(text)
-            return clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start
-        }.min() ?? 0
+        let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+        _ = Redactor.redact(text)
+        return clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start
     }
 
     /// Twice the text takes about twice the time, never four times, and 16 KiB stays far below
     /// the old seconds. Each shape needs about 1 to 30 ms for 16 KiB in a debug build.
+    ///
+    /// Apple silicon has fast and slow cores. Each round times both sizes back to back, so they
+    /// most likely run on the same kind of core, and the test passes when one round of seven
+    /// grows in a straight line. Quadratic redaction fails every round. A run over the absolute
+    /// limit ends the rounds, so a real regression fails fast.
     @Test(arguments: adversarialUnits)
     func longRunsRedactQuickly(unit: String) {
         _ = Redactor.redact("warm up \(unit)")
-        let half = Self.cpuTime(String(repeating: unit, count: 8_192 / unit.utf16.count))
-        let full = Self.cpuTime(String(repeating: unit, count: 16_384 / unit.utf16.count))
-        #expect(full < 3 * half + 5_000_000, "8 KiB: \(half) ns, 16 KiB: \(full) ns")
-        #expect(full < 300_000_000, "16 KiB: \(full) ns")
+        let half = String(repeating: unit, count: 8_192 / unit.utf16.count)
+        let full = String(repeating: unit, count: 16_384 / unit.utf16.count)
+        let limit: UInt64 = 300_000_000
+        var rounds: [(half: UInt64, full: UInt64)] = []
+        for _ in 0..<7 {
+            let round = (half: Self.cpuTime(half), full: Self.cpuTime(full))
+            rounds.append(round)
+            if round.full >= limit { break }
+        }
+        let linear = rounds.contains { $0.half > 0 && $0.full < 3 * $0.half + 5_000_000 }
+        #expect(linear, "8 KiB and 16 KiB per round: \(rounds)")
+        #expect(rounds.map(\.full).min() ?? .max < limit, "16 KiB per round: \(rounds)")
     }
 
     @Test func longTextIsCutWithoutAPartialSecret() {

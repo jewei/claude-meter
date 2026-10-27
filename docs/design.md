@@ -128,7 +128,7 @@ digit widths of each face, and `FixedNumberWidthTests` the widths of each number
 | `EnergyDot` | 9 pt rounded square, radius 3. |
 | `EnergyBar` | Capsule on `track`. Fill width = share × width; the track's capsule clips the fill, so a tiny fill follows the rounded end. A white 45% highlight, `min(2, height / 4)` pt high, 2 pt below the top and 3 pt in from each end, runs along the top of the fill only when the fill is wider than 6 pt. A bar with a pace has a `PaceMark` (height + 4 pt) at the even-pace share, kept inside the capsule at either end. |
 | `ActivityRings` | 88 pt. Outer weekly ring radius 34, inner session ring radius 24, 8 pt strokes, round caps, start at the top, `track` behind, a white highlight along each arc that grows from clear at the start to 30% at the tip (angular gradient). Center disc 30 pt in `popover` with the letter. A ring with a pace has a `PaceMark` across its stroke (stroke + 2 pt long) at the even-pace share, clockwise from the top. Hidden from accessibility. |
-| `PaceMark` | The even-pace mark: a 2 pt `ink` line with a 1 pt `card` edge on each side, so it reads on the track and on every fill in both appearances. It never animates. Hidden from accessibility. |
+| `PaceMark` | The even-pace mark: a 2 pt `ink` line with a 1 pt `card` edge on each side, so it reads on the track and on every fill in both appearances. A change of its share never animates (`noShareAnimation`); it still moves with its bar or ring when a card opens or moves. Hidden from accessibility. |
 | `PlanBadgeView` | Capsule, padding 8×3, tier colors, one line. |
 | `ChipView` | Neutral capsule for "same login", "paused", and "Not tracked"; a tooltip only when it has help text. |
 | `ProviderMark` | Bundled logo as a 15 pt template image in `ink` (white, 20 pt on Settings data source tiles); Grok uses the `atom` symbol. |
@@ -361,7 +361,7 @@ the app is regular; "About Claude Meter" opens the About tab.
 | Trigger | Animation | Reduce Motion |
 | --- | --- | --- |
 | Ring arc, bar fill | ease-out 0.4 s | none |
-| Even-pace mark | none: it moves with the clock | none |
+| Even-pace mark share | none: it moves with the clock | none |
 | Hero tone | ease-in-out 0.3 s | none |
 | Card expand and collapse, chevron, card reorder | ease-in-out 0.18 s | none |
 | Panel height | ease-in-out 0.18 s, top edge fixed | at once |

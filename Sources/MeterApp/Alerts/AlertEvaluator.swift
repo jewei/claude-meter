@@ -53,6 +53,18 @@ struct AlertEvaluator {
             activations[kind] = nil
         }
 
+        /// A source that is turned off, and a Claude config dir whose tracking is off, lose
+        /// their state, so when they come back their first observation is a silent baseline
+        /// again. Runs on each settings change, also without notification permission.
+        mutating func forgetDroppedAccounts(_ settings: Settings) {
+            func isDropped(_ provider: ProviderID, _ account: AccountID) -> Bool {
+                !settings.enabledProviders.contains(provider)
+                    || settings.isUntracked(account, of: provider)
+            }
+            windows = windows.filter { !isDropped($0.key.provider, $0.key.account) }
+            owners = owners.filter { !isDropped($0.key.provider, $0.key.account) }
+        }
+
         func isPending(_ kind: Alert.Kind, _ key: Alert.Key) -> Bool {
             guard let activation = activations[kind] else { return false }
             return activation.providers.contains(key.provider)
@@ -67,7 +79,7 @@ struct AlertEvaluator {
         _ context: PresentationContext, enabledKinds: Set<Alert.Kind>, previous: State
     ) -> (alerts: [Alert], state: State) {
         var state = previous
-        forgetDroppedAccounts(context, state: &state)
+        state.forgetDroppedAccounts(context.settings)
         var alerts: [Alert] = []
         for provider in ProviderID.allCases where !context.restored.contains(provider) {
             for account in context.observedAccounts(for: provider) where !account.isStale {
@@ -86,16 +98,6 @@ struct AlertEvaluator {
             }
         }
         return (alerts, state)
-    }
-
-    /// A source that is turned off, and a Claude config dir whose tracking is off, lose their
-    /// state, so when they come back their first observation is a silent baseline again.
-    private static func forgetDroppedAccounts(_ context: PresentationContext, state: inout State) {
-        func isDropped(_ provider: ProviderID, _ account: AccountID) -> Bool {
-            !context.isEnabled(provider) || context.settings.isUntracked(account, of: provider)
-        }
-        state.windows = state.windows.filter { !isDropped($0.key.provider, $0.key.account) }
-        state.owners = state.owners.filter { !isDropped($0.key.provider, $0.key.account) }
     }
 
     /// Step 0: an owner change cannot prove that the login stayed, so every window that the

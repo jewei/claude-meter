@@ -8,6 +8,8 @@ import Testing
 /// Owner changes, activations, and silent accounts (`docs/product.md` §8).
 @Suite struct AlertOwnerAndActivationTests {
     private let reset = Date.reference(.hours(2))
+    private static let workSession = Alert.Key(
+        provider: .claude, account: "work", window: "session")
 
     /// Login A had trouble; login B in the same slot is healthy in a later period. B never
     /// reads A's period, and its first observation is a silent baseline.
@@ -81,7 +83,11 @@ import Testing
         _ = run.claude([session(10)], at: .reference(), owner: .identity("a"))
         run.state.activate(.lowEnergy, providers: [.claude])
         #expect(run.claude([session(20)], at: .reference(60), owner: .identity("b")).isEmpty)
-        #expect(run.claude([session(96)], at: .reference(120), owner: .identity("b")).count == 1)
+        #expect(run.state.activations[.lowEnergy]?.consumed.contains(Self.workSession) == true)
+        // A consumed activation does not win over the baseline of a later owner change.
+        #expect(run.claude([session(96)], at: .reference(120), owner: .identity("c")).isEmpty)
+        #expect(run.claude([session(50)], at: .reference(180), owner: .identity("c")).isEmpty)
+        #expect(run.claude([session(96)], at: .reference(240), owner: .identity("c")).count == 1)
     }
 
     /// A consumed activation never replays, also after an owner change.
@@ -114,6 +120,7 @@ import Testing
         _ = run.claude([session(10, resetsAt: resetsAt)], at: .reference())
         run.state.activate(.runOut, providers: [.claude])
         #expect(run.claude([session(60, resetsAt: resetsAt)], at: .reference(60)).isEmpty)
+        #expect(run.state.activations[.runOut]?.consumed.contains(Self.workSession) == true)
         #expect(
             run.claude([session(60, resetsAt: resetsAt, duration: .hours(5))], at: .reference(120))
                 .map(\.kind) == [.runOut])

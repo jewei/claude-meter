@@ -49,7 +49,9 @@ struct EnergyBar: View {
                             x: min(
                                 max(2, Self.fillWidth(fraction: mark, in: geometry.size.width)),
                                 geometry.size.width - 2),
-                            y: geometry.size.height / 2)
+                            y: geometry.size.height / 2
+                        )
+                        .noShareAnimation(mark)
                 }
             }
         }

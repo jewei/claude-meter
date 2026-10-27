@@ -27,6 +27,11 @@ public final class AlertCenter {
     @ObservationIgnored private(set) var state = AlertEvaluator.State()
     @ObservationIgnored private var pendingEvaluation: Task<Void, Never>?
     @ObservationIgnored private var permissionRequest: Task<Void, Never>?
+    /// Counts permission reads, so an older read that answers late cannot overwrite a newer
+    /// one.
+    @ObservationIgnored private var authorizationReads = 0
+    /// A permission read that an evaluation without permission started.
+    @ObservationIgnored private var skippedEvaluationRead: Task<Void, Never>?
     /// How many evaluations ran or were skipped for lack of permission, for tests.
     @ObservationIgnored private(set) var evaluationCount = 0
     /// The latest delivery, for tests.
@@ -62,10 +67,13 @@ public final class AlertCenter {
     /// The app calls it when Settings opens and when the app becomes active.
     public func refreshAuthorization() async {
         guard let poster else { return }
+        authorizationReads += 1
+        let read = authorizationReads
         do {
             let value = try await withDeadline(limits.authorization) {
                 await poster.authorization()
             }
+            guard read == authorizationReads else { return }
             let wasAuthorized = authorization == .authorized
             authorization = value
             if value == .authorized, !wasAuthorized { scheduleEvaluation() }
@@ -76,6 +84,7 @@ public final class AlertCenter {
 
     /// Applies a change of the alert switches or the thresholds.
     func settingsDidChange(from old: Settings, to new: Settings) {
+        state.forgetDroppedAccounts(new)
         let before = old.alerts.enabledKinds
         let after = new.alerts.enabledKinds
         for kind in after.subtracting(before) {
@@ -128,7 +137,18 @@ public final class AlertCenter {
 
     private func evaluate() {
         evaluationCount += 1
-        guard let poster, authorization == .authorized else { return }
+        guard let poster else { return }
+        guard authorization == .authorized else {
+            // The popover does not make the app active, so a permission granted later in
+            // System Settings is noticed here. A grant schedules the next evaluation.
+            if skippedEvaluationRead == nil {
+                skippedEvaluationRead = Task { [weak self] in
+                    await self?.refreshAuthorization()
+                    self?.skippedEvaluationRead = nil
+                }
+            }
+            return
+        }
         let (alerts, newState) = AlertEvaluator.evaluate(
             context(), enabledKinds: enabledKinds, previous: state)
         state = newState
@@ -136,10 +156,13 @@ public final class AlertCenter {
         let limit = limits.post
         let log = log
         let previous = latestDelivery
-        latestDelivery = Task {
+        latestDelivery = Task { [weak self] in
             // Deliveries keep their order.
             await previous?.value
             for alert in alerts {
+                // A post can wait up to its limit. An alert whose switch was turned off in the
+                // meantime is dropped.
+                guard self?.enabledKinds.contains(alert.kind) == true else { continue }
                 let notification = LocalNotification(
                     id: alert.notificationID, title: alert.title, body: alert.body)
                 let posted = (try? await withDeadline(limit) { await poster.post(notification) })

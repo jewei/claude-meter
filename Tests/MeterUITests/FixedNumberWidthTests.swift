@@ -21,7 +21,9 @@ import Testing
         GaugeModel(
             title: "Session", shortTitle: "5-hr", valueText: value,
             caption: hasValue ? "left" : nil, fraction: 0.5, severity: .normal,
-            resetText: nil, paceText: nil, evenPaceFraction: nil, accessibilityValue: value)
+            resetText: nil, paceText: nil, paceSeverity: nil, shortfallSeverity: nil,
+            evenPaceFraction: nil,
+            accessibilityValue: value)
     }
 
     @Test func gaugeValuesKeepOneWidth() {

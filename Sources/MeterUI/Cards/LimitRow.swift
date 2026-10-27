@@ -10,7 +10,7 @@ struct LimitRow: View {
         VStack(alignment: .leading, spacing: 1) {
             line
             if let pace = gauge.paceText {
-                PaceLine(text: pace)
+                PaceLine(text: pace, severity: gauge.paceSeverity)
                     .padding(.leading, 15)
             }
         }

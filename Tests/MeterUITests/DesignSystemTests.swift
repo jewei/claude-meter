@@ -63,6 +63,29 @@ import Testing
         #expect(EnergyBar.showsHighlight(fillWidth: 6.5))
     }
 
+    /// The shortfall runs from under the end of the fill to a mark beyond it, and the mark
+    /// is white only where it sits on the fill, clear of the rounded ends.
+    @Test func energyBarShortfallAndMarkStyle() {
+        #expect(EnergyBar.shortfallSpan(fraction: 0.5, mark: 0.8, in: 200) == 92...160)
+        #expect(EnergyBar.shortfallSpan(fraction: 0.02, mark: 0.5, in: 200) == 0...100)
+        #expect(EnergyBar.shortfallSpan(fraction: 0, mark: 0.5, in: 200) == 0...100)
+        #expect(EnergyBar.shortfallSpan(fraction: 0.8, mark: 0.5, in: 200) == nil)
+        #expect(EnergyBar.shortfallSpan(fraction: 0.5, mark: 0.5, in: 200) == nil)
+        #expect(EnergyBar.shortfallSpan(fraction: 0.5, mark: nil, in: 200) == nil)
+        func style(_ fraction: Double, _ mark: Double) -> PaceMark.Style {
+            EnergyBar.markStyle(fraction: fraction, mark: mark, in: 200, height: 14)
+        }
+        #expect(style(0.8, 0.5) == .onFill)
+        #expect(style(0.5, 0.8) == .onTrack)
+        #expect(style(0.5, 0.5) == .onTrack)
+        // Within 7 pt (half the height) of the end of the fill: partly on the track.
+        #expect(style(0.5, 0.47) == .onTrack)
+        #expect(style(0.5, 0.46) == .onFill)
+        // At the rounded left end, a bar-high line would stick out of the capsule.
+        #expect(style(0.5, 0.03) == .onTrack)
+        #expect(style(0.5, 0.04) == .onFill)
+    }
+
     @Test func thresholdSliderSnapsAndSteps() {
         let range = 50.0...90.0
         #expect(ThresholdSlider.snapped(72.4, in: range, step: 5) == 70)

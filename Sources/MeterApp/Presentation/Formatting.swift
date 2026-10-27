@@ -56,9 +56,13 @@ enum Formatting {
 
     /// `35.8M tokens`, `1 token`.
     static func tokens(_ count: Int64) -> String {
-        let number = count.formatted(
+        "\(compactCount(count)) \(count == 1 ? "token" : "tokens")"
+    }
+
+    /// `35.8M`, `1`.
+    static func compactCount(_ count: Int64) -> String {
+        count.formatted(
             .number.notation(.compactName).precision(.fractionLength(0...1)).locale(numberLocale))
-        return "\(number) \(count == 1 ? "token" : "tokens")"
     }
 
     /// `$12.34` for US dollars, otherwise the code first: `EUR 12.34`.
@@ -71,23 +75,18 @@ enum Formatting {
         }
     }
 
-    /// `~$42.10`, `~$1,241`, or `<$0.01`, with `+` when the estimate is incomplete. Under
-    /// $100 two decimals; from $100 whole dollars with grouping.
-    static func estimate(_ estimate: CostEstimate) -> String {
-        let text: String
+    /// `$42.10`, `$1,241`, or `<$0.01`. Under $100 two decimals; from $100 whole dollars with
+    /// grouping. The tile marks an incomplete estimate itself.
+    static func estimateAmount(_ estimate: CostEstimate) -> String {
         // Below a cent before rounding; above it, round to cents first, so $99.996 shows as
-        // `~$100`, not `~$100.00`.
-        if estimate.amount < cent {
-            text = "<$0.01"
-        } else {
-            let amount = rounded(estimate.amount, scale: 2)
-            let number =
-                amount < 100
-                ? amount.formatted(.number.precision(.fractionLength(2)).locale(numberLocale))
-                : amount.formatted(.number.precision(.fractionLength(0)).locale(groupingLocale))
-            text = "~$" + number
-        }
-        return estimate.isComplete ? text : text + "+"
+        // `$100`, not `$100.00`.
+        guard estimate.amount >= cent else { return "<$0.01" }
+        let amount = rounded(estimate.amount, scale: 2)
+        let number =
+            amount < 100
+            ? amount.formatted(.number.precision(.fractionLength(2)).locale(numberLocale))
+            : amount.formatted(.number.precision(.fractionLength(0)).locale(groupingLocale))
+        return "$" + number
     }
 
     /// `about 42 dollars at API prices`, for VoiceOver, with `, may be higher` when the
@@ -123,10 +122,10 @@ enum Formatting {
     /// Groups thousands (`1,241`), which `numberLocale` does not.
     private static let groupingLocale = Locale(identifier: "en_US")
 
-    /// `12 credits`, `1.5 credits`.
+    /// `12 credits`, `1.5 credits`, `72,909.6 credits`.
     static func credits(_ amount: Decimal) -> String {
         let number = amount.formatted(
-            .number.precision(.fractionLength(0...1)).locale(numberLocale))
+            .number.precision(.fractionLength(0...1)).locale(groupingLocale))
         return "\(number) \(amount == 1 ? "credit" : "credits")"
     }
 

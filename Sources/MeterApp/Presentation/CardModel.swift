@@ -48,11 +48,18 @@ public struct GaugeModel: Equatable, Sendable {
     public let severity: Severity
     /// `Resets in 3h 12m`.
     public let resetText: String?
-    /// `Runs out in 2h 10m`, `Tight: ~4% left at reset`, or `Lasts until reset`. Nil without a
-    /// pace or for a stale account.
+    /// `Runs out in 2h 10m` or `Tight: ~4% left at reset`. Nil without a pace, for a stale
+    /// account, and when the energy lasts until the reset: only the spoken value says that.
     public let paceText: String?
-    /// Where an even pace would be now, on the same 0...1 scale as ``fraction``. Nil when
-    /// ``paceText`` is nil.
+    /// The severity of a pace that runs out before the reset: warning, or the window's own
+    /// severity when that is worse. It colors the pace line. Nil for every other pace.
+    public let paceSeverity: Severity?
+    /// ``paceSeverity`` while the bar hatches the shortfall from its fill to the even-pace
+    /// mark: in Energy left mode, when the mark is beyond the fill. Nil otherwise. Usage mode
+    /// never hatches.
+    public let shortfallSeverity: Severity?
+    /// Where an even pace would be now, on the same 0...1 scale as ``fraction``. Nil without
+    /// a pace or for a stale account.
     public let evenPaceFraction: Double?
     /// `60 percent left, full energy, resets in 3h 12m, lasts until reset`.
     public let accessibilityValue: String
@@ -74,8 +81,8 @@ public struct BarsModel: Equatable, Sendable {
     public let bars: [GaugeModel]
     /// `12 credits · 1 usage reset available`.
     public let caption: String?
-    /// Each bar has its own label row: `Session · 60% left` and its reset. False for Cursor
-    /// and Grok, whose caption states the spend and the reset (Grok's also the window).
+    /// Each bar has its own label row: `Session · 60% left` and its reset. False for Cursor,
+    /// whose caption states the spend and the reset.
     public let showsBarLabels: Bool
 }
 
@@ -161,7 +168,7 @@ public struct ResetsModel: Equatable, Sendable {
         public let help: String
     }
 
-    /// `3 available` or `Not reported`.
+    /// `3 available`, `None available`, or `Not reported`.
     public let countText: String
     public let rows: [Row]
     public let note: String?
@@ -171,12 +178,22 @@ public struct ResetsModel: Equatable, Sendable {
 }
 
 public struct TokenRowsModel: Equatable, Sendable {
+    /// One period, drawn as a tile: title, value, and detail.
     public struct Row: Equatable, Sendable {
+        /// `Today`, `Yesterday`, or `Last 7 days`.
         public let title: String
-        /// `35.8M tokens` or `—`.
+        /// The estimate (`$42.10`, `<$0.01`), else the token count (`35.8M`), else `—`.
         public let value: String
+        /// The estimate leaves out tokens without a price, or comes from a partial history.
+        /// The tile marks it with `+`.
+        public let isIncomplete: Bool
+        /// `35.8M tokens` under an estimate, `tokens` under a count, nil when unknown.
+        public let detail: String?
         public let accessibilityValue: String
         public let help: String
+
+        /// False for an unknown count, which shows `—`.
+        public var hasValue: Bool { detail != nil }
     }
 
     /// `This Mac` or `Account usage`.
@@ -184,4 +201,21 @@ public struct TokenRowsModel: Equatable, Sendable {
     public let help: String
     public let rows: [Row]
     public let note: String?
+    /// The text under the tiles: `Estimated at API list prices, not a bill.` when a tile
+    /// shows an estimate, then ``note``, after the `+` mark when the note says why an
+    /// estimate is incomplete. Empty when there is nothing to say.
+    public let footnote: [FootnotePart]
+
+    public enum FootnotePart: Equatable, Sendable {
+        case text(String)
+        /// The `+` of an incomplete estimate.
+        case mark
+    }
+
+    /// The footnote for VoiceOver: its text without the mark, because each tile already
+    /// says "may be higher".
+    public var spokenFootnote: String {
+        footnote.compactMap { if case .text(let words) = $0 { words } else { nil } }
+            .joined(separator: " ")
+    }
 }

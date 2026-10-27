@@ -104,6 +104,7 @@ bar uses the system rounded font.
 | Caption | Nunito SemiBold | 11 | "Resets in 3h 12m" |
 | Section label | Nunito ExtraBold | 11, tracking 0.99, uppercase, `inkMuted` | "ACCOUNTS", Settings section headings |
 | Note | Nunito SemiBold | 10 | "Token usage unavailable" |
+| Token amount | Fredoka Bold | 18, `+` 11 raised 5 pt in `energyLowInk` | "$42.10" |
 
 No changing number may change width. Nunito's digits all have one width, as do the menu
 bar's (system rounded with `.monospacedDigit()`). So every changing number in Nunito uses
@@ -114,7 +115,9 @@ check. Fredoka's digits do not have one width, and Fredoka has no tabular digits
 instead (`.fixedNumberWidth`, `Design/FixedNumberWidth.swift`): a percentage is as wide as
 `100%` (gauge values in `GaugeValueText`, and the threshold pills, so both pills have one
 width), and an amount is as wide as its text with each digit set as the widest digit (extra
-usage), so it changes width only with its count of digits. `DesignSystemTests` checks the
+usage), so it changes width only with its count of digits. The token tile value (an amount
+or a count) is the one exception: it is alone on its line with its `+`, so a change of its
+width moves nothing, and it shrinks to fit a narrow tile. `DesignSystemTests` checks the
 digit widths of each face, and `FixedNumberWidthTests` the widths of each number.
 
 ## Components (`Design/`)
@@ -126,12 +129,12 @@ digit widths of each face, and `FixedNumberWidthTests` the widths of each number
 | `RaisedButtonStyle` | `action` fill, white Fredoka Bold 14, padding 20×12, radius 14, plate at y 4. Pressed: label down 2 pt, plate at y 2, spring 0.2/0.85. Hover: white 6%. Focus: 2 pt `accent` ring. Disabled: 45%. Reduce Motion: no movement, darker tint. |
 | `QuietButtonStyle` | `ink` surface at 6% hover and 10% press (muted text keeps 4.5:1 on both), 2 pt focus border, 45% when disabled. Nothing moves. The style also draws the button's own fill (`Surface`: clear, chunky, or a flat fill) below the ink surface, so a label never hides the feedback; labels draw no opaque fill. `.buttonStyle(.chunky)` is the small chunky button for `ChunkyButtonLabel`. |
 | `EnergyDot` | 9 pt rounded square, radius 3. |
-| `EnergyBar` | Capsule on `track`. Fill width = share × width; the track's capsule clips the fill, so a tiny fill follows the rounded end. A white 45% highlight, `min(2, height / 4)` pt high, 2 pt below the top and 3 pt in from each end, runs along the top of the fill only when the fill is wider than 6 pt. A bar with a pace has a `PaceMark` (height + 4 pt) at the even-pace share, kept inside the capsule at either end. |
+| `EnergyBar` | Capsule on `track`, recessed by a `black 8%` inner shadow 1.5 pt down. Fill width = share × width; the track's capsule clips the fill, so a tiny fill follows the rounded end. The fill has a white wash from 16% at the top to clear at the bottom, and a `black 10%` band, `min(3, height / 4.5)` pt high, along its bottom edge. A white 50% highlight, `min(3, height / 4)` pt high, `min(2.5, height / 5)` pt below the top and `min(6, fill / 4)` pt in from each end, runs along the top of the fill only when the fill is wider than 6 pt. A bar with a pace has a `PaceMark` at the even-pace share, kept inside the capsule at either end: `onFill` (as long as the bar is high) when the mark is on the fill and at least half the bar height from the end of the fill and from the left end, so it stays inside the capsule and off the track; else `onTrack` (height + 4 pt) (`EnergyBar.markStyle`). A bar with a shortfall color hatches the track from 8 pt under the end of the fill to a mark beyond it: 45° stripes 2 pt wide and 5 pt apart at 42% on a 10% wash of the color, clipped at the mark. An exhausted window adds a 1.5 pt `energyEmpty` 35% ring inside the track (`Severity.trackOutline`). |
 | `ActivityRings` | 88 pt. Outer weekly ring radius 34, inner session ring radius 24, 8 pt strokes, round caps, start at the top, `track` behind, a white highlight along each arc that grows from clear at the start to 30% at the tip (angular gradient). Center disc 30 pt in `popover` with the letter. A ring with a pace has a `PaceMark` across its stroke (stroke + 2 pt long) at the even-pace share, clockwise from the top. Hidden from accessibility. |
-| `PaceMark` | The even-pace mark: a 2 pt `ink` line with a 1 pt `card` edge on each side, so it reads on the track and on every fill in both appearances. A change of its share never animates (`noShareAnimation`); it still moves with its bar or ring when a card opens or moves. Hidden from accessibility. |
+| `PaceMark` | The even-pace mark, in three styles. `edged` (rings): a 2 pt `ink` line with a 1 pt `card` edge on each side, so it reads on the track and on every fill in both appearances. `onFill` (bars): a 2 pt white 85% line. `onTrack` (bars): a 2 pt `ink` 50% line, radius 1, in a 1 pt `card` 90% halo. A change of its share never animates (`noShareAnimation`); it still moves with its bar or ring when a card opens or moves. Hidden from accessibility. |
 | `PlanBadgeView` | Capsule, padding 8×3, tier colors, one line. |
 | `ChipView` | Neutral capsule for "same login", "paused", and "Not tracked"; a tooltip only when it has help text. |
-| `ProviderMark` | Bundled logo as a 15 pt template image in `ink` (white, 20 pt on Settings data source tiles); Grok uses the `atom` symbol. |
+| `ProviderMark` | Bundled logo as a 15 pt template image in `ink` (white, 20 pt on Settings data source tiles); a provider without a logo falls back to the `atom` symbol. |
 | `NoticeBanner` | Top-aligned 12 pt icon, wrapping Nunito SemiBold 11, padding 12×9, tint 8% fill, 16% 1 pt border, radius 12. Action: `key.slash.fill`, warning: `exclamationmark.triangle.fill` (both `energyLowInk`); info: `clock.fill` (`inkMuted`). |
 | `SquareIconButton` | 28 pt target, glyph 12 bold, quiet style on a chunky surface. |
 | `InlineConfirmation` (`Settings/Data`) | A question in the page in place of the control that asked: `energyEmptyInk` warning symbol, Fredoka SemiBold 15 title, Nunito SemiBold 12 message, Cancel (Escape, when it is the newest question: `CancelShortcuts`) and a raised `destructive` button; `popover` fill, 1.5 pt border in `energyEmptyInk` at 40%, radius 14. Never a blocking alert. |
@@ -219,20 +222,25 @@ header's value is its headline and whether it is expanded.
 
 ## Cards (`Cards/`)
 
-All cards: padding 14×13, `chunkyCard()`, full width.
+All cards: padding 14×13 (bar cards 14 at the bottom), `chunkyCard()`, full width.
+
+The pace line (`PaceLine`) states a verdict that needs attention. A run-out has an
+`exclamationmark.triangle.fill` icon (10 pt, 4 pt before the text) and Nunito Bold 11 in the
+ink of `GaugeModel.paceSeverity`; "Tight" is a caption in `inkMuted`.
 
 - **Ring card** (`RingCardView`): a header button (the name in Fredoka SemiBold 15 with
   badges at the trailing edge, or below the name when they do not fit, then the chevron;
   28 pt minimum height) that calls `toggleCard`. Then rings and rows, 14 pt apart. Each row
   (`RingMetricRow`): dot, short title, value in severity ink, caption, and "Resets in …"
-  and the pace (`PaceLine`, "Runs out in …") below, indented 15 pt. Expanded details, then the status line, follow. Details reveal
+  and the pace line below, indented 15 pt. Expanded details, then the status line, follow. Details reveal
   from the top with the card height; the card clips its content.
 - **Bar card** (`BarCardView`): a header button (provider mark, name, badges, headline
-  value, chevron; 28 pt minimum height) that calls `toggleCard`. One 12 pt `BarRow` per
-  window with "Session · 60% left" and the reset, unless `BarsModel.showsBarLabels` is false
-  (Cursor and Grok: the caption states the spend and the reset; Grok's also names the
-  window). The pace (`PaceLine`) has its own line under the bar, also without the label
-  row. Then the caption and status line.
+  value, chevron; 28 pt minimum height) that calls `toggleCard`. Rows 12 pt apart. One
+  `BarRow` per window: a 14 pt `EnergyBar` with the pace mark, the shortfall in the color
+  of `GaugeModel.shortfallSeverity`, and the exhausted ring, then 5 pt below
+  "Session · 60% left" and the reset (8 pt apart), unless `BarsModel.showsBarLabels` is false (Cursor: the
+  caption states the spend and the reset). The pace line is under the bar, also without
+  the label row. Then the caption and status line.
   Expanded details reveal from the top with the card height; the card clips its content.
 - **Extra usage** (`ExtraUsageCardView`): 💳, title, "paused" chip, and the amount spent of
   the limit (`$12.50 / $50.00`). The monthly limit is a budget, drawn as energy like every
@@ -242,15 +250,23 @@ All cards: padding 14×13, `chunkyCard()`, full width.
   and turns orange, then red, as money is spent, and it is empty at the limit. In Usage mode
   it fills as money is spent, in the same colors, so it is green only while little is spent
   and red and full at the limit. Without a limit share there is no bar.
-- **Details** (`DetailSectionsView`), each after a 1 pt `cardBorder` rule: limit rows
-  (`LimitRow`, one line, with the pace on a second line indented 15 pt), usage bars (`UsageBarRow`, 7 pt bars, the value with "left" or "used"), usage-limit resets
-  (`ResetsSectionView`: count, rows with the exact date in a tooltip, note), and tokens used
-  (`TokensSectionView`: source label with a scope tooltip, three rows with full counts in
-  tooltips and accessibility values, note). A row with an estimate reads
-  `35.8M tokens · ~$42.10` in the same face and ink, `+` when incomplete; its tooltip adds
-  "Estimated at API list prices. Not a bill." and its spoken value adds "about 42 dollars at
-  API prices" ("under 1 cent", or "about 42 cents" below a dollar), from the amount that the
-  row shows, then ", may be higher" when incomplete.
+- **Details** (`DetailSectionsView`), each after a 1 pt `cardBorder` rule, 12 pt from the
+  content on either side: limit rows (`LimitRow`, one line, with the pace line on a second
+  line indented 15 pt), usage bars (`UsageBarRow`, 7 pt bars, the value with "left" or
+  "used"), usage-limit resets (`ResetsSectionView`: the title in Nunito Bold 11 `ink` and
+  the count, "None available" at zero, as a caption; rows with the exact date in a tooltip;
+  note), and tokens used (`TokensSectionView`).
+- **Tokens used** (`TokensSectionView`): the title, the source as a `ChipView` with a scope
+  tooltip, then 8 pt below one tile per period, 6 pt apart, equal widths and heights. A
+  tile (`TokenTile`): padding 9×8 (9 at the bottom), radius 12 continuous, `popover` fill,
+  1.5 pt `cardBorder` border; the period in Nunito Bold 10 `inkMuted`, the token amount (or
+  the count, or `—` in Nunito Bold 17), and the detail ("35.8M tokens") as a note. Its
+  tooltip has the full count and, with an estimate, "Estimated at API list prices. Not a
+  bill."; its spoken value adds "about 42 dollars at API prices" ("under 1 cent", or
+  "about 42 cents" below a dollar), from the amount that the tile shows, then ", may be
+  higher" when incomplete. Below the tiles, the footnote (`TokenRowsModel.footnote`) as a
+  note, its parts one space apart, the `+` in Nunito ExtraBold `energyLowInk`. VoiceOver
+  reads it without the `+` (`TokenRowsModel.spokenFootnote`).
 - **Status line**: Nunito SemiBold 11, `energyLowInk` for failures, `inkMuted` otherwise.
 
 ## Menu bar (`MenuBar/`)

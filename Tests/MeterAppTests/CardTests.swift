@@ -363,7 +363,11 @@ import Testing
             Issue.record("Expected bars")
             return
         }
-        #expect(bars.caption == "Weekly credits · On-demand $5.00 of $20.00 · Resets in 2h")
+        // The bar's own label row names the window and the reset.
+        #expect(bars.caption == "On-demand $5.00 of $20.00")
+        #expect(bars.showsBarLabels)
+        #expect(bars.bars.first?.summaryText == "Weekly credits · 70% left")
+        #expect(bars.bars.first?.resetText == "Resets in 2h")
     }
 
     @Test func planBadges() {
@@ -387,6 +391,9 @@ import Testing
             ])
         let model = ResetsBuilder.model(allowance, now: .reference())
         #expect(model.countText == "3 available")
+        #expect(
+            ResetsBuilder.model(.init(available: 0), now: .reference()).countText
+                == "None available")
         #expect(model.rows.map(\.expiryText) == ["Expires in 2d", "Expiry date not provided"])
         #expect(model.note == "Expiry details shown for 2 of 3 resets")
         #expect(model.summary == "3 usage resets available")
@@ -440,7 +447,8 @@ import Testing
         let reported = try tokenRows(.codex, history: history(.codex, source: .account))
         #expect(reported.sourceLabel == "Account usage")
         #expect(reported.help == "Token records reported by Codex for this account.")
-        #expect(reported.rows.first?.value == "1 token")
+        #expect(reported.rows.first?.value == "1")
+        #expect(reported.rows.first?.detail == "token")
         #expect(
             try tokenRows(.cursor, history: nil).help
                 == "Token records reported by Cursor for this account.")
@@ -477,6 +485,7 @@ import Testing
         #expect(Formatting.money(12, unit: .credits) == "12.00 credits")
         #expect(Formatting.credits(1.5) == "1.5 credits")
         #expect(Formatting.credits(1) == "1 credit")
+        #expect(Formatting.credits(72_909.6) == "72,909.6 credits")
     }
 
     @Test func ageShowsSecondsMinutesHoursAndDays() {
@@ -504,12 +513,17 @@ import Testing
         context.histories = [.claude: .current(provider, observedAt: .reference())]
         let model = try #require(
             TokenRowsBuilder(context: context).model(provider: .claude, account: "a"))
-        #expect(model.rows.first?.value == "35.8M tokens")
+        #expect(model.rows.first?.value == "35.8M")
+        #expect(model.rows.first?.detail == "tokens")
+        #expect(model.rows.map(\.title) == ["Today", "Yesterday", "Last 7 days"])
         #expect(model.sourceLabel == "This Mac")
-        #expect(model.note == "Partial history · some records could not be counted")
+        #expect(model.note == "Partial history — some records couldn't be counted")
+        // No tile has an estimate, so nothing is marked and nothing is estimated.
+        #expect(model.footnote == [.text("Partial history — some records couldn't be counted")])
         let other = try #require(
             TokenRowsBuilder(context: context).model(provider: .claude, account: "b"))
         #expect(other.rows.first?.value == "—")
+        #expect(other.rows.first?.hasValue == false)
         #expect(other.note == "No local token records")
     }
 }

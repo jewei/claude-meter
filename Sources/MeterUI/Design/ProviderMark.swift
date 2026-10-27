@@ -2,8 +2,8 @@ import AppKit
 import MeterDomain
 import SwiftUI
 
-/// The provider's logo as a one-color mark, in ink unless `color` says otherwise. Grok has no
-/// bundled logo and uses a symbol.
+/// The provider's logo as a one-color mark, in ink unless `color` says otherwise. A provider
+/// without a bundled logo falls back to a symbol.
 struct ProviderMark: View {
     let provider: ProviderID
     var size: CGFloat = 15
@@ -28,14 +28,14 @@ struct ProviderMark: View {
     /// The bundled logo, loaded once. Nil for providers without one.
     @MainActor static func image(for provider: ProviderID) -> NSImage? {
         if let image = cache[provider] { return image }
-        let name: String? =
+        let name =
             switch provider {
             case .claude: "claude"
             case .codex: "codex"
             case .cursor: "cursor"
-            case .grok: nil
+            case .grok: "grok"
             }
-        guard let name, let image = Bundle.module.image(forResource: name) else { return nil }
+        guard let image = Bundle.module.image(forResource: name) else { return nil }
         image.isTemplate = true
         cache[provider] = image
         return image

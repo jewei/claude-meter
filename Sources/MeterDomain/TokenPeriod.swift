@@ -11,7 +11,7 @@ public enum TokenPeriod: CaseIterable, Sendable {
         switch self {
         case .today: "Today"
         case .yesterday: "Yesterday"
-        case .lastSevenDays: "Last 7 Days"
+        case .lastSevenDays: "Last 7 days"
         }
     }
 

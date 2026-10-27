@@ -183,9 +183,10 @@ behaves as without strain. The popover and wake rules do not change under strain
 
 The stale limit follows the cadence (`RefreshScheduler.staleAfter(at:)`): the interval plus
 600 s, so 900 s normally, and 1500 s under strain and for 390 s after it. A healthy reading
-is at most the interval + 290 + 90 s old: the cadence, Claude's skip of an account that it
-checked recently (`AutomaticRefresh.isDue`), and the request deadline. That is 680 s
-normally and 1280 s under strain; the rest of the 600 s covers a late wake. The 390 s grace covers the
+is at most the interval + 290 + 90 s old: the cadence, Claude's skip of an account other
+than the active login that it checked less than 290 s ago (`AutomaticRefresh.isDue`), and
+the request deadline. That is 680 s normally and 1280 s under strain; the rest of the
+600 s covers a late wake. The 390 s grace covers the
 first tick after strain ends and its deadline. `AppModel` builds every presentation context,
 also the one for alerts, through one builder that reads this limit.
 

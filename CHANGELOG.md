@@ -33,9 +33,9 @@ are in the `v3.1.3` tag.
 
 ### Fixed
 
-- A Claude account that Claude Meter had checked a moment earlier no longer shows as
-  stale for about a minute. Numbers now count as old after 15 minutes without a refresh,
-  instead of 10.
+- With several Claude accounts, one could show as stale for about a minute while
+  refreshing still worked. Numbers now count as old after 15 minutes without a refresh,
+  not 10.
 
 ## [4.1.2] - 2026-10-21
 

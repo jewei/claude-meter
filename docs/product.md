@@ -15,11 +15,13 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    warning (default 80), warning below critical (default 95), critical below 100, and
    exhausted at 100 or more. Unknown when there is no value.
 4. **Stale** data is shown, but marked. An account is stale when its provider says so, the
-   last refresh failed, or its observation is more than 600 s old or more than 300 s in the
-   future (`PresentationContext.isStale`). Under strain (Low Power Mode, or a serious or
-   critical thermal state), refreshing is slower, so the age limit is 1500 s, and it stays
-   1500 s for 390 s after strain ends (`RefreshScheduler.staleAfter(at:)`). Token rows use
-   the same limit for their old-data note.
+   last refresh failed, or its observation is more than 900 s old or more than 300 s in the
+   future (`PresentationContext.isStale`). A failed refresh marks data stale at once; the age
+   limit catches data that stops updating without an error. Under strain (Low Power Mode,
+   or a serious or critical thermal state), refreshing is slower, so the age limit is
+   1500 s, and it stays 1500 s for 390 s after strain ends
+   (`RefreshScheduler.staleAfter(at:)`). Token rows use the same limit for their old-data
+   note.
 5. **Resolution**: after a window's reset time, a current reading reads 0% used with no next
    reset; a stale reading reads unknown (`QuotaWindow.resolved`).
 6. **Reset countdowns** use only provider-reported times and one format: `42m`, `3h 12m`,

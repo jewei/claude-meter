@@ -99,7 +99,7 @@ import Testing
     }
 
     @Test func staleDataAsksForARefresh() {
-        let hero = hero([single(session: 10)], now: .reference(601))
+        let hero = hero([single(session: 10)], now: .reference(901))
         #expect(hero.title == "Refresh needed")
         #expect(hero.subtitle == "Claude data is out of date.")
         #expect(hero.tone == .neutral)

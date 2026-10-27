@@ -87,7 +87,7 @@ import Testing
     /// The old-data and partial notes come first.
     @Test func olderNotesWin() {
         #expect(
-            model(cost: "1", unpriced: 100, models: ["m"], observedAt: .reference(-700))?.note
+            model(cost: "1", unpriced: 100, models: ["m"], observedAt: .reference(-1_000))?.note
                 == "Token data may be stale")
         #expect(
             model(cost: "1", unpriced: 100, models: ["m"], isPartial: true)?.note

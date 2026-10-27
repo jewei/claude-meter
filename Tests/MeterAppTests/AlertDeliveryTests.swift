@@ -321,7 +321,7 @@ import Testing
         #expect(model.alerts.authorization == .authorized)
     }
 
-    /// Alerts use the same stale limit as the display: under strain a reading 700 s old is
+    /// Alerts use the same stale limit as the display: under strain a reading 1000 s old is
     /// current, so it alerts; normally it is stale, so it is silent.
     @Test(arguments: [true, false])
     func anOlderReadingAlertsOnlyUnderStrain(constrained: Bool) async {
@@ -331,8 +331,8 @@ import Testing
         let model = makeModel(
             poster: poster, configure: { $0.alerts.lowEnergy = true }, power: power)
         await start(model)
-        await publish(model, .claude, [window(50)], age: 700)
-        await publish(model, .claude, [window(96)], age: 700)
+        await publish(model, .claude, [window(50)], age: 1_000)
+        await publish(model, .claude, [window(96)], age: 1_000)
         #expect(poster.posted.count == (constrained ? 1 : 0))
     }
 

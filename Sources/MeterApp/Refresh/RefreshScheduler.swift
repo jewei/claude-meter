@@ -50,11 +50,12 @@ public final class RefreshScheduler {
     public nonisolated static let interval: TimeInterval = 300
     public nonisolated static let constrainedInterval: TimeInterval = 900
     public nonisolated static let popoverMaxAge: TimeInterval = 60
-    /// An observation older than this is stale at the normal cadence: one interval plus 300 s
-    /// for the 90 s request deadline and a late wake.
-    public nonisolated static let staleAfter: TimeInterval = 600
-    /// The same under strain: 900 s plus 600 s, which also covers Claude's 290 s skip of an
-    /// account that is not the active one. A healthy reading is at most 900 + 290 + 90 s old.
+    /// An observation older than this is stale at the normal cadence: one interval plus 600 s.
+    /// The 600 s cover Claude's 290 s skip of an account that it checked recently, the 90 s
+    /// request deadline, and a late wake: a healthy reading is at most 300 + 290 + 90 s old.
+    public nonisolated static let staleAfter: TimeInterval = 900
+    /// The same under strain: 900 s plus the same 600 s. A healthy reading is at most
+    /// 900 + 290 + 90 s old.
     public nonisolated static let constrainedStaleAfter: TimeInterval = 1_500
     /// After strain ends, the strain limit holds this long: the first tick after the restart
     /// (300 s) plus its 90 s request deadline.

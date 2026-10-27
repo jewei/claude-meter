@@ -176,7 +176,7 @@ import Testing
                 .isEmpty)
         // Too old to be current.
         #expect(
-            run.run([.claude: .current(usage, observedAt: .reference())], now: .reference(601))
+            run.run([.claude: .current(usage, observedAt: .reference())], now: .reference(901))
                 .isEmpty)
         // The activation is still pending for the first fresh observation.
         #expect(run.run([.claude: .current(usage, observedAt: .reference())]).count == 1)

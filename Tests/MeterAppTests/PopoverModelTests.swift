@@ -142,7 +142,7 @@ import Testing
     @Test func oldMainAccountIsMarkedBesideOtherNotices() throws {
         let usage = Fixture.usage(
             .claude, Fixture.account("home", issue: UsageIssue("Rate limited.")),
-            Fixture.account("work", observedAt: .reference(-700)))
+            Fixture.account("work", observedAt: .reference(-1_000)))
         let model = try #require(
             accounts(Fixture.settings(), readings: [.claude: Fixture.current(usage)]))
         #expect(model.notices.map(\.text) == ["Home: Rate limited.", "Work: Data may be stale."])
@@ -150,16 +150,16 @@ import Testing
     }
 
     @Test func oldDataNotice() throws {
-        let usage = Fixture.usage(.claude, Fixture.account("a", observedAt: .reference(-700)))
+        let usage = Fixture.usage(.claude, Fixture.account("a", observedAt: .reference(-1_000)))
         let model = try #require(
             accounts(Fixture.settings(), readings: [.claude: Fixture.current(usage)]))
         #expect(model.notices == [Notice(text: "Claude data may be stale.", kind: .info)])
     }
 
     @Test func failedRefreshExplainsOldDataAlone() throws {
-        let usage = Fixture.usage(.claude, Fixture.account("a", observedAt: .reference(-700)))
+        let usage = Fixture.usage(.claude, Fixture.account("a", observedAt: .reference(-1_000)))
         let reading = Reading<ProviderUsage>.stale(
-            usage, observedAt: .reference(-700), issue: UsageIssue("Offline."))
+            usage, observedAt: .reference(-1_000), issue: UsageIssue("Offline."))
         let model = try #require(accounts(Fixture.settings(), readings: [.claude: reading]))
         #expect(model.notices.map(\.text) == ["Offline."])
     }

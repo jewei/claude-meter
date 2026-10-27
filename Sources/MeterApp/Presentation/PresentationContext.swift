@@ -21,7 +21,7 @@ public struct PresentationContext: Sendable {
     public var calendar: Calendar
     public var isUpdateAvailable: Bool
     /// An observation older than this is stale, even when the last refresh succeeded. The
-    /// scheduler sets it from the cadence (``RefreshScheduler/staleAfter(at:)``): 600 s
+    /// scheduler sets it from the cadence (``RefreshScheduler/staleAfter(at:)``): 900 s
     /// normally, longer under strain.
     public var staleAfter: TimeInterval
 

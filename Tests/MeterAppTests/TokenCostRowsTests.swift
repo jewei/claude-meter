@@ -24,7 +24,7 @@ import Testing
             provider: provider, source: provider == .cursor ? .account : .thisMac,
             accounts: ["a": account], coverageStart: account.coverageStart,
             observedAt: observedAt, timeZoneID: calendar.timeZone.identifier)
-        let settings = Fixture.settings(enabled: [.claude, .cursor])
+        let settings = Fixture.settings(enabled: [.claude, .cursor, .grok])
         let context = PresentationContext(
             settings: settings, histories: [provider: .current(history, observedAt: observedAt)],
             now: .reference(), calendar: calendar)
@@ -37,8 +37,9 @@ import Testing
 
     @Test(arguments: [
         ("0.004", "35.8M tokens · <$0.01"), ("0.01", "35.8M tokens · ~$0.01"),
-        ("42.105", "35.8M tokens · ~$42.10"), ("99.99", "35.8M tokens · ~$99.99"),
-        ("100", "35.8M tokens · ~$100"), ("1240.6", "35.8M tokens · ~$1,241"),
+        ("42.105", "35.8M tokens · ~$42.11"), ("99.99", "35.8M tokens · ~$99.99"),
+        ("99.996", "35.8M tokens · ~$100"), ("100", "35.8M tokens · ~$100"),
+        ("1240.6", "35.8M tokens · ~$1,241"),
     ])
     func amountsFollowTheFormatBorders(cost: String, text: String) {
         #expect(today(model(cost: cost))?.value == text)
@@ -49,7 +50,12 @@ import Testing
         #expect(row?.help.hasSuffix("Estimated at API list prices. Not a bill.") == true)
         #expect(row?.accessibilityValue == "35800000 tokens, about 42 dollars at API prices")
         let small = today(model(cost: "0.5", unpriced: 10, models: ["m"]))
-        #expect(small?.accessibilityValue.hasSuffix("under 1 dollar or more at API prices") == true)
+        #expect(
+            small?.accessibilityValue.hasSuffix(
+                "under 1 dollar at API prices, some tokens not priced") == true)
+        #expect(
+            today(model(cost: "0.004"))?.accessibilityValue.hasSuffix(
+                "under 1 cent at API prices") == true)
     }
 
     @Test func anIncompleteEstimateIsMarked() {
@@ -83,9 +89,10 @@ import Testing
                 == "Partial history · some records could not be counted")
     }
 
-    /// Cursor's account reports real money; its records carry no estimate.
-    @Test func cursorRowsAreUnchanged() {
-        #expect(today(model(.cursor))?.value == "35.8M tokens")
-        #expect(model(.cursor)?.note == nil)
+    /// Cursor's and Grok's accounts report real money; their records carry no estimate.
+    @Test(arguments: [ProviderID.cursor, .grok])
+    func cursorAndGrokRowsAreUnchanged(provider: ProviderID) {
+        #expect(today(model(provider))?.value == "35.8M tokens")
+        #expect(model(provider)?.note == nil)
     }
 }

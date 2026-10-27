@@ -61,10 +61,16 @@ public struct TokenDayTally: Sendable {
         // A record can have a priced part and an unpriced part, so both add independently.
         if let cost = record.cost { dailyCost[day, default: 0] += cost }
         if record.unpricedTokens > 0 {
-            dailyUnpricedTokens[day] =
-                TokenRecord.sum([dailyUnpricedTokens[day, default: 0], record.unpricedTokens])
-                ?? Int64.max
-            if let model = record.model,
+            guard
+                let unpriced = TokenRecord.sum([
+                    dailyUnpricedTokens[day, default: 0], record.unpricedTokens,
+                ])
+            else {
+                isPartial = true
+                return
+            }
+            dailyUnpricedTokens[day] = unpriced
+            if let model = record.unpricedModel,
                 unpricedModels.count < TokenHistory.maximumUnpricedModels
             {
                 unpricedModels.insert(model)

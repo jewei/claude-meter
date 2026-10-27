@@ -249,7 +249,8 @@ All cards: padding 14×13, `chunkyCard()`, full width.
   tooltips and accessibility values, note). A row with an estimate reads
   `35.8M tokens · ~$42.10` in the same face and ink, `+` when incomplete; its tooltip adds
   "Estimated at API list prices. Not a bill." and its spoken value adds "about 42 dollars at
-  API prices".
+  API prices" ("under 1 cent" or "under 1 dollar" for small amounts), then ", some tokens not
+  priced" when incomplete.
 - **Status line**: Nunito SemiBold 11, `energyLowInk` for failures, `inkMuted` otherwise.
 
 ## Menu bar (`MenuBar/`)

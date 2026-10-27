@@ -67,12 +67,21 @@ import Testing
         #expect(try record(try line(speed: "standard")).cost == dollars("0.0164"))
     }
 
-    /// Sonnet 5.5 has no fast mode, so a fast record has no price.
+    /// Sonnet 5.5 has no fast mode, so a fast record has no price. The model itself has a
+    /// price, so the note does not name it.
     @Test func fastModeWithoutAMultiplierHasNoPrice() throws {
         let record = try record(try line(model: "claude-sonnet-5-5", speed: "fast"))
         #expect(record.cost == nil)
         #expect(record.unpricedTokens == 3_900)
-        #expect(record.model == "claude-sonnet-5-5")
+        #expect(record.unpricedModel == nil)
+    }
+
+    /// Only a model that is not in the table is named in the price note.
+    @Test func anUnknownModelIsNamed() throws {
+        let record = try record(try line(model: "claude-opus-9"))
+        #expect(record.cost == nil)
+        #expect(record.unpricedModel == "claude-opus-9")
+        #expect(try self.record(try line()).unpricedModel == nil)
     }
 
     /// Haiku 5.5 pays higher rates when the prompt (input plus cache) is over 100,000 tokens.
@@ -109,7 +118,7 @@ import Testing
         let record = try record(try line(model: nil))
         #expect(record.cost == nil)
         #expect(record.unpricedTokens == record.count)
-        #expect(record.model == nil)
+        #expect(record.unpricedModel == nil)
     }
 
     /// Claude Code writes `<synthetic>` lines with zero usage. They add nothing unpriced.

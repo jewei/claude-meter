@@ -74,7 +74,8 @@ enum Formatting {
     /// `~$42.10`, `~$1,241`, or `<$0.01`, with `+` when the estimate is incomplete. Under
     /// $100 two decimals; from $100 whole dollars with grouping.
     static func estimate(_ estimate: CostEstimate) -> String {
-        let amount = estimate.amount
+        // Round to cents first, so $99.996 shows as `~$100`, not `~$100.00`.
+        let amount = rounded(estimate.amount, scale: 2)
         let text: String
         if amount < Decimal(string: "0.01") ?? 0 {
             text = "<$0.01"
@@ -90,16 +91,29 @@ enum Formatting {
         return estimate.isComplete ? text : text + "+"
     }
 
-    /// `about 42 dollars at API prices`, for VoiceOver.
+    /// `about 42 dollars at API prices`, for VoiceOver, with `, some tokens not priced` when
+    /// the estimate is incomplete.
     static func spokenEstimate(_ estimate: CostEstimate) -> String {
-        let more = estimate.isComplete ? "" : " or more"
-        guard estimate.amount >= 1 else { return "under 1 dollar\(more) at API prices" }
-        let dollars = NSDecimalNumber(decimal: estimate.amount).rounding(
-            accordingToBehavior: NSDecimalNumberHandler(
-                roundingMode: .plain, scale: 0, raiseOnExactness: false, raiseOnOverflow: false,
-                raiseOnUnderflow: false, raiseOnDivideByZero: false)
-        ).intValue
-        return "about \(dollars) \(dollars == 1 ? "dollar" : "dollars")\(more) at API prices"
+        let note = estimate.isComplete ? "" : ", some tokens not priced"
+        let amount = estimate.amount
+        let text: String
+        if amount < Decimal(string: "0.01") ?? 0 {
+            text = "under 1 cent"
+        } else if amount < 1 {
+            text = "under 1 dollar"
+        } else {
+            let dollars = NSDecimalNumber(decimal: rounded(amount, scale: 0)).intValue
+            text = "about \(dollars) \(dollars == 1 ? "dollar" : "dollars")"
+        }
+        return "\(text) at API prices\(note)"
+    }
+
+    /// `value` rounded half up to `scale` decimal places.
+    private static func rounded(_ value: Decimal, scale: Int) -> Decimal {
+        var value = value
+        var result = Decimal()
+        NSDecimalRound(&result, &value, scale, .plain)
+        return result
     }
 
     /// Groups thousands (`1,241`), which `numberLocale` does not.

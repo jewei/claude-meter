@@ -88,7 +88,8 @@ enum CodexPrices {
         date: Date, counts: CodexTokenCounts, cache: CodexCacheParts?, model: String?
     ) -> TokenRecord? {
         guard let count = counts.total else { return nil }
-        let unpriced = TokenRecord(date: date, count: count, unpricedTokens: count, model: model)
+        let unpriced = TokenRecord(
+            date: date, count: count, unpricedTokens: count, unpricedModel: unpricedName(model))
         guard let model, let price = price(for: model) else { return unpriced }
         let rates =
             counts.input > longContextThreshold ? price.longContext ?? price.rates : price.rates
@@ -108,8 +109,12 @@ enum CodexPrices {
             unpricedTokens = counts.input
         }
         return TokenRecord(
-            date: date, count: count, cost: dollars / 1_000_000, unpricedTokens: unpricedTokens,
-            model: model)
+            date: date, count: count, cost: dollars / 1_000_000, unpricedTokens: unpricedTokens)
+    }
+
+    /// `model` when the table has no price for it, for the price note.
+    static func unpricedName(_ model: String?) -> String? {
+        model.flatMap { price(for: $0) == nil ? $0 : nil }
     }
 }
 

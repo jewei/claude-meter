@@ -91,7 +91,8 @@ private struct CounterWalk {
         guard let count = delta.total else { return nil }
         guard let last = event.last, delta == last else {
             return TokenRecord(
-                date: event.date, count: count, unpricedTokens: count, model: event.model)
+                date: event.date, count: count, unpricedTokens: count,
+                unpricedModel: CodexPrices.unpricedName(event.model))
         }
         return CodexPrices.record(
             date: event.date, counts: delta, cache: event.lastCache, model: event.model)

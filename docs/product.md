@@ -170,8 +170,8 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    Cursor and Grok rows have no estimate: their accounts report real money.
 5. The note, first match wins: an issue, no history, partial history, no records, old data,
    then the price note, which shows whenever the rows show counts: `No price for: <model>`
-   (up to three names, through `Redactor`), or `Some tokens have no price` for tokens without
-   a model name or with a part that has no price. The price note covers Last 7 Days, which
+   for models that are not in the price table (up to three names, through `Redactor`), or
+   `Some tokens have no price` for other tokens without a price. The price note covers Last 7 Days, which
    contains the other rows (`TokenRowsBuilder`, `docs/token-history.md`).
 
 ## 6. Settings

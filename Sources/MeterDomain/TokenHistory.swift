@@ -3,7 +3,7 @@ import Foundation
 /// Token counts per local day for one account, and an estimate of their cost at API list
 /// prices where the provider can price them.
 ///
-/// History counts tokens and estimates money; it never counts quota. It never affects severity, selection, or quota
+/// History counts tokens and estimates money. It never counts quota. It never affects severity, selection, or quota
 /// freshness. A missing day is zero only when the history covers that day; an uncovered
 /// period is unknown. The history covers the days from ``coverageStart`` through the day of
 /// ``observedAt``, so a history observed on an earlier day cannot answer for any period.
@@ -77,9 +77,9 @@ public struct TokenHistory: Hashable, Sendable {
         for (day, cost) in dailyCost where day >= interval.start && day < interval.end {
             amount += cost
         }
-        guard amount > 0, let unpriced = Self.sum(dailyUnpricedTokens, in: interval) else {
-            return nil
-        }
+        guard amount > 0 else { return nil }
+        // An unpriced sum that does not fit in `Int64` is still incomplete, never hidden.
+        let unpriced = Self.sum(dailyUnpricedTokens, in: interval)
         return CostEstimate(amount: amount, isComplete: unpriced == 0 && !isPartial)
     }
 

@@ -63,7 +63,7 @@ import Testing
     }
 
     /// Growth seen only in cumulative counters can span turns of two models, so it counts
-    /// without a price.
+    /// without a price. The model has a price, so the note does not name it.
     @Test func cumulativeOnlyGrowthHasNoPrice() async throws {
         let history = try await read([
             metadata("s"), turn("t1", model: "gpt-6-astra"),
@@ -72,6 +72,28 @@ import Testing
         #expect(history.tokens(in: .today, now: .reference(), calendar: calendar) == 1_100)
         #expect(cost(history) == nil)
         #expect(unpriced(history) == 1_100)
+        #expect(history.unpricedModels.isEmpty)
+    }
+
+    /// A session resumed in the same file restarts its counters; each response is priced
+    /// once. 500 × $10 + 500 × $1 + 100 × $50, then 250 × $10 + 250 × $1 + 50 × $50.
+    @Test func aResumeInTheSameFilePricesEachResponseOnce() async throws {
+        let history = try await read([
+            metadata("s"), turn("t1", model: "gpt-6-astra"),
+            event(total: (1_000, 100), last: (1_000, 100), ordinal: 1, id: "one"),
+            turn("t2", model: "gpt-6-astra"),
+            event(total: (500, 50), last: (500, 50), ordinal: 2, id: "two"),
+        ])
+        #expect(history.tokens(in: .today, now: .reference(), calendar: calendar) == 1_650)
+        #expect(cost(history)?.amount == dollars("0.01575"))
+    }
+
+    @Test func everyTableEntryHasPositiveRates() {
+        for (model, price) in CodexPrices.table {
+            for rates in [price.rates] + [price.longContext].compactMap({ $0 }) {
+                #expect(rates.input > 0 && rates.cachedInput > 0 && rates.output > 0, "\(model)")
+            }
+        }
     }
 
     @Test func aTurnWithoutAModelHasNoPrice() async throws {
@@ -103,6 +125,7 @@ import Testing
         ])
         #expect(cost(history) == CostEstimate(amount: dollars("0.0095"), isComplete: false))
         #expect(unpriced(history) == 100)
+        #expect(history.unpricedModels.isEmpty)
     }
 
     /// A breakdown above the input leaves the input without a price; the output keeps its.

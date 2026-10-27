@@ -80,7 +80,8 @@ extension ClaudePrices {
     static func record(
         date: Date, count: Int64, usage: ClaudeLogLine.Usage, model: String?
     ) -> TokenRecord {
-        let unpriced = TokenRecord(date: date, count: count, unpricedTokens: count, model: model)
+        let unpriced = TokenRecord(
+            date: date, count: count, unpricedTokens: count, unpricedModel: unpricedName(model))
         guard let model, var price = price(for: model),
             let input = usage.input?.value, let output = usage.output?.value,
             let read = HistoryJSON.Count.orZero(usage.cacheRead),
@@ -102,7 +103,11 @@ extension ClaudePrices {
             Decimal(input) * rates.input + Decimal(output) * rates.output + Decimal(read)
             * rates.read + Decimal(writes.fiveMinutes) * rates.fiveMinuteWrite
             + Decimal(writes.oneHour) * rates.oneHourWrite
-        return TokenRecord(
-            date: date, count: count, cost: dollars * multiplier / 1_000_000, model: model)
+        return TokenRecord(date: date, count: count, cost: dollars * multiplier / 1_000_000)
+    }
+
+    /// `model` when the table has no price for it, for the price note.
+    static func unpricedName(_ model: String?) -> String? {
+        model.flatMap { price(for: $0) == nil ? $0 : nil }
     }
 }

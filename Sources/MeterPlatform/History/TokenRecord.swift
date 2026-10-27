@@ -8,20 +8,22 @@ public struct TokenRecord: Hashable, Sendable {
     public let cost: Decimal?
     /// Tokens of this record that have no price.
     public let unpricedTokens: Int64
-    /// The model that produced the response, when the record names one.
-    public let model: String?
+    /// A model that has no price in the provider's table, for the price note. Nil for a model
+    /// that has a price, also when some part of the record has none: the note then says that
+    /// some tokens have no price, without blaming the model.
+    public let unpricedModel: String?
 
     /// A record of `count` tokens. Without pricing, the record adds no cost and no unpriced
     /// tokens, for providers that do not estimate cost.
     public init(
         date: Date, count: Int64, cost: Decimal? = nil, unpricedTokens: Int64 = 0,
-        model: String? = nil
+        unpricedModel: String? = nil
     ) {
         self.date = date
         self.count = count
         self.cost = cost
         self.unpricedTokens = max(0, unpricedTokens)
-        self.model = model
+        self.unpricedModel = unpricedModel
     }
 
     /// Whether this record wins over `other` when both describe the same response.
@@ -30,8 +32,8 @@ public struct TokenRecord: Hashable, Sendable {
     /// read order: the larger count wins, because usage within one response only grows. With
     /// equal counts the earlier date wins, because a copy is written after the original. On a
     /// full tie, pricing decides, so the cost does not depend on the read order either: a
-    /// priced record, then the larger cost, then fewer unpriced tokens, then the smaller model
-    /// name (no model first).
+    /// priced record, then the larger cost, then fewer unpriced tokens, then the smaller
+    /// unpriced model name (none first).
     public func replaces(_ other: TokenRecord) -> Bool {
         if count != other.count { return count > other.count }
         if date != other.date { return date < other.date }
@@ -42,7 +44,7 @@ public struct TokenRecord: Hashable, Sendable {
         default: break
         }
         if unpricedTokens != other.unpricedTokens { return unpricedTokens < other.unpricedTokens }
-        switch (model, other.model) {
+        switch (unpricedModel, other.unpricedModel) {
         case (.none, .some): return true
         case (.some(let mine), .some(let theirs)): return mine < theirs
         default: return false

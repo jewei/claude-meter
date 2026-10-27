@@ -178,8 +178,8 @@ Other spellings: `update` and `_meta` can also be at the top level. The top-leve
 34. One rule applies inside a file and across files, so the result does not depend on the
     read order: of two records with the same key, the record with the larger count wins.
     With equal counts, the record with the earlier date wins. With an equal date too, in
-    order: a priced record, the larger cost, fewer unpriced tokens, then the smaller model
-    name (no model first). The kept record carries its own cost.
+    order: a priced record, the larger cost, fewer unpriced tokens, then the smaller unpriced
+    model name (none first). The kept record carries its own cost.
 35. Codex session copies that disagree make history partial. The copy with more events wins.
     With equal counts, the first copy in root order, then path order, wins. Copies compare
     each event's date, counters, ordinal, response ID, and turn ID; its model and cache
@@ -308,7 +308,8 @@ pay a flat fee.
     rate. Without the lifetime split, every write is a 5-minute write. `speed: "fast"`
     multiplies every rate by the model's fast multiplier; a fast record of a model without
     one has no price. Claude Haiku 5.5 uses its higher rates when the prompt (input plus
-    cache tokens) is over 100,000 tokens.
+    cache tokens) is over 100,000 tokens. The rates are those of global inference; US-only
+    inference costs 1.1 times as much, so its estimate is low.
 70. Codex: uncached input (input minus cached minus writes), cached input, and output each
     have their rate. Cache writes have no price, because the log does not say whether they
     last 30 minutes or 12 hours, which OpenAI prices differently. A breakdown above the input
@@ -322,4 +323,9 @@ pay a flat fee.
     can have both. A record with zero tokens adds neither, so Claude Code's `<synthetic>`
     lines change nothing.
 73. A period has an estimate when it has priced tokens. It is incomplete (`+`) when the period
-    has unpriced tokens or the history is partial.
+    has unpriced tokens, or the history is partial, also when its unpriced tokens do not fit in
+    a 64-bit count. A day whose unpriced sum does not fit makes the history partial.
+74. A record names its model for the price note only when the model is not in the table. A
+    model that has a price is never named, also when some part of its record has none (a
+    fast record without a multiplier, a Codex cache write, or a delta that is not one
+    response).

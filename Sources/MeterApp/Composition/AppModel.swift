@@ -19,13 +19,17 @@ public final class AppModel {
     public let claudeSettings: ClaudeSettingsModel?
     /// Codex homes for Settings. Nil in previews.
     public let codexSettings: CodexSettingsModel?
+    /// Optional notifications (`docs/product.md` §8).
+    public let alerts: AlertCenter
 
     @ObservationIgnored let scheduler: RefreshScheduler?
     @ObservationIgnored let providers: LiveProviders?
 
     init(
         settings: SettingsStore, usage: UsageStore, scheduler: RefreshScheduler?,
-        updater: any Updater, logFile: LogFile, providers: LiveProviders? = nil
+        updater: any Updater, logFile: LogFile, providers: LiveProviders? = nil,
+        notifications: (any NotificationPosting)? = nil,
+        alertLimits: AlertCenter.Limits = AlertCenter.Limits()
     ) {
         self.settings = settings
         self.usage = usage
@@ -39,6 +43,10 @@ public final class AppModel {
         self.codexSettings = providers.map {
             CodexSettingsModel(settings: settings, provider: $0.codex)
         }
+        self.alerts = AlertCenter(poster: notifications, limits: alertLimits) {
+            [settings, usage, updater] in
+            Self.context(settings: settings, usage: usage, updater: updater, now: Date())
+        }
         settings.onChange = { [weak self] old, new in
             self?.settingsDidChange(from: old, to: new)
         }
@@ -50,6 +58,12 @@ public final class AppModel {
     // MARK: - Models
 
     public func context(at now: Date) -> PresentationContext {
+        Self.context(settings: settings, usage: usage, updater: updater, now: now)
+    }
+
+    private static func context(
+        settings: SettingsStore, usage: UsageStore, updater: any Updater, now: Date
+    ) -> PresentationContext {
         PresentationContext(
             settings: settings.settings, readings: usage.readings, histories: usage.histories,
             refreshing: usage.refreshing, refreshingHistory: usage.refreshingHistory,

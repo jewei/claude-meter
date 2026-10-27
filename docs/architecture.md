@@ -29,10 +29,22 @@ RefreshScheduler ──refresh(quota:history:)──▶ UsageStore ──reconci
                                      Presentation builders (pure, given Settings and now)
                                                   ▼
                                         MenuBarModel, PopoverModel ──▶ MeterUI views
+
+UsageStore readings ──▶ AlertCenter ──observedAccounts(for:)──▶ AlertEvaluator (pure)
+                             │                                        │ alerts, new state
+                             └──────── post ◀─────────────────────────┘
+                                         ▼
+                              NotificationPosting (UserNotificationPoster)
 ```
 
 The scheduler calls `UsageStore.refresh(quota:history:)` when requests may go out, and
 `UsageStore.reconcile(_:)` (local reads only) when they may not.
+
+`AlertCenter` evaluates after each change of the readings and of the alert or threshold
+settings, merged per main-actor turn, and only while macOS allows notifications. It reads
+`PresentationContext.observedAccounts(for:)`, which differs from `accounts(for:)` in two
+ways: it drops untracked accounts, and it keeps windows as stored instead of resolving them.
+It saves the evaluator's state before it posts.
 
 `UsageStore` is the only owner of readings. Presentation builders derive everything else on
 each render from the readings, the settings, and the current time. Nothing caches a derived
@@ -209,5 +221,7 @@ keeps its update state in keys that start with `SU`. Launch at login is register
 | One HTTP send, including retries | 30 s (provider requests may set less) |
 | One provider refresh (safety net) | 90 s |
 | One history refresh | 20 s |
+| Notification permission read, one notification post | 5 s |
+| Notification permission prompt (waits for the person) | 600 s |
 | Blocking file, SQLite, or Keychain read | 5 s; 3 s for a Codex `auth.json`, 2 s for the Cursor credentials of a history read. A read past its limit is abandoned and keeps its thread until it ends; while 16 abandoned reads still run, new reads fail at once. History scans have a separate pool (`BlockingIO.history`) with the same limits, but a scan that finds it full first waits up to 2 s (`HistoryLimits.busyRetries` tries, 50 ms apart) for a stuck read to end. |
 | Child process (Codex recovery) | 5 s for the search and `initialize`, 10 s each for `account/read` and `account/rateLimits/read`; TERM, then KILL after 0.25 s, then at most 2 s for the reap |

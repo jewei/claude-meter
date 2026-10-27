@@ -75,6 +75,21 @@ public struct PresentationContext: Sendable {
     /// The accounts of an enabled provider as they apply now: display names and plan
     /// overrides applied, staleness combined, and windows resolved.
     public func accounts(for provider: ProviderID) -> [AccountUsage] {
+        namedAccounts(for: provider).map { $0.resolved(at: now, isStale: $0.isStale) }
+    }
+
+    /// The accounts of an enabled provider as observed, for alerts: display names, plan
+    /// overrides, and staleness as in ``accounts(for:)``, but windows as stored, never
+    /// resolved. After a reset, resolution shows a synthetic 0%, which is not evidence of a
+    /// refill. Untracked accounts are left out: ``accounts(for:)`` keeps them on their card
+    /// only until the next refresh drops them.
+    public func observedAccounts(for provider: ProviderID) -> [AccountUsage] {
+        namedAccounts(for: provider).filter { !settings.isUntracked($0.id, of: provider) }
+    }
+
+    /// The shared path of ``accounts(for:)`` and ``observedAccounts(for:)``. Each account
+    /// carries the result of ``isStale(_:reading:)`` in `isStale`.
+    private func namedAccounts(for provider: ProviderID) -> [AccountUsage] {
         guard isEnabled(provider), let reading = readings[provider], let value = reading.value
         else { return [] }
         return value.accounts.map { account in
@@ -87,7 +102,8 @@ public struct PresentationContext: Sendable {
             if provider == .claude, let picked = settings.claude.planOverrides[account.id] {
                 account.plan = picked
             }
-            return account.resolved(at: now, isStale: isStale(account, reading: reading))
+            account.isStale = isStale(account, reading: reading)
+            return account
         }
     }
 

@@ -518,9 +518,8 @@ import Testing
         #expect(model.rows.map(\.title) == ["Today", "Yesterday", "Last 7 days"])
         #expect(model.sourceLabel == "This Mac")
         #expect(model.note == "Partial history — some records couldn't be counted")
-        // No row has an estimate, so nothing is marked and nothing is estimated.
-        #expect(!model.noteExplainsIncomplete)
-        #expect(model.estimateNote == nil)
+        // No tile has an estimate, so nothing is marked and nothing is estimated.
+        #expect(model.footnote == [.text("Partial history — some records couldn't be counted")])
         let other = try #require(
             TokenRowsBuilder(context: context).model(provider: .claude, account: "b"))
         #expect(other.rows.first?.value == "—")

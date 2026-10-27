@@ -115,9 +115,9 @@ check. Fredoka's digits do not have one width, and Fredoka has no tabular digits
 instead (`.fixedNumberWidth`, `Design/FixedNumberWidth.swift`): a percentage is as wide as
 `100%` (gauge values in `GaugeValueText`, and the threshold pills, so both pills have one
 width), and an amount is as wide as its text with each digit set as the widest digit (extra
-usage), so it changes width only with its count of digits. The token tile amount is the one
-exception: it is alone on its line with its `+`, so a change of its width moves nothing, and
-it shrinks to fit a narrow tile. `DesignSystemTests` checks the digit widths of each face,
+usage), so it changes width only with its count of digits. The token tile value (an amount
+or a count) is the one exception: it is alone on its line with its `+`, so a change of its
+width moves nothing, and it shrinks to fit a narrow tile. `DesignSystemTests` checks the digit widths of each face,
 and `FixedNumberWidthTests` the widths of each number.
 
 ## Components (`Design/`)
@@ -129,7 +129,7 @@ and `FixedNumberWidthTests` the widths of each number.
 | `RaisedButtonStyle` | `action` fill, white Fredoka Bold 14, padding 20×12, radius 14, plate at y 4. Pressed: label down 2 pt, plate at y 2, spring 0.2/0.85. Hover: white 6%. Focus: 2 pt `accent` ring. Disabled: 45%. Reduce Motion: no movement, darker tint. |
 | `QuietButtonStyle` | `ink` surface at 6% hover and 10% press (muted text keeps 4.5:1 on both), 2 pt focus border, 45% when disabled. Nothing moves. The style also draws the button's own fill (`Surface`: clear, chunky, or a flat fill) below the ink surface, so a label never hides the feedback; labels draw no opaque fill. `.buttonStyle(.chunky)` is the small chunky button for `ChunkyButtonLabel`. |
 | `EnergyDot` | 9 pt rounded square, radius 3. |
-| `EnergyBar` | Capsule on `track`, recessed by a `black 8%` inner shadow 1.5 pt down. Fill width = share × width; the track's capsule clips the fill, so a tiny fill follows the rounded end. The fill has a white wash from 16% at the top to clear at the bottom, and a `black 10%` band, `min(3, height / 4.5)` pt high, along its bottom edge. A white 50% highlight, `min(3, height / 4)` pt high, `min(2.5, height / 5)` pt below the top and `min(6, fill / 4)` pt in from each end, runs along the top of the fill only when the fill is wider than 6 pt. A bar with a pace has a `PaceMark` at the even-pace share, kept inside the capsule at either end: `onFill` (as long as the bar is high) when the mark is on the fill, else `onTrack` (height + 4 pt). A bar with a shortfall color hatches the track from 8 pt under the end of the fill to a mark beyond it: 45° stripes 2 pt wide and 5 pt apart at 42% on a 10% wash of the color, clipped at the mark. An exhausted window adds a 1.5 pt `energyEmpty` 35% ring inside the track (`Severity.trackOutline`). |
+| `EnergyBar` | Capsule on `track`, recessed by a `black 8%` inner shadow 1.5 pt down. Fill width = share × width; the track's capsule clips the fill, so a tiny fill follows the rounded end. The fill has a white wash from 16% at the top to clear at the bottom, and a `black 10%` band, `min(3, height / 4.5)` pt high, along its bottom edge. A white 50% highlight, `min(3, height / 4)` pt high, `min(2.5, height / 5)` pt below the top and `min(6, fill / 4)` pt in from each end, runs along the top of the fill only when the fill is wider than 6 pt. A bar with a pace has a `PaceMark` at the even-pace share, kept inside the capsule at either end: `onFill` (as long as the bar is high) when the mark is on the fill and at least half the bar height from the end of the fill and from the left end, so it stays inside the capsule and off the track; else `onTrack` (height + 4 pt) (`EnergyBar.markStyle`). A bar with a shortfall color hatches the track from 8 pt under the end of the fill to a mark beyond it: 45° stripes 2 pt wide and 5 pt apart at 42% on a 10% wash of the color, clipped at the mark. An exhausted window adds a 1.5 pt `energyEmpty` 35% ring inside the track (`Severity.trackOutline`). |
 | `ActivityRings` | 88 pt. Outer weekly ring radius 34, inner session ring radius 24, 8 pt strokes, round caps, start at the top, `track` behind, a white highlight along each arc that grows from clear at the start to 30% at the tip (angular gradient). Center disc 30 pt in `popover` with the letter. A ring with a pace has a `PaceMark` across its stroke (stroke + 2 pt long) at the even-pace share, clockwise from the top. Hidden from accessibility. |
 | `PaceMark` | The even-pace mark, in three styles. `edged` (rings): a 2 pt `ink` line with a 1 pt `card` edge on each side, so it reads on the track and on every fill in both appearances. `onFill` (bars): a 2 pt white 85% line. `onTrack` (bars): a 2 pt `ink` 50% line, radius 1, in a 1 pt `card` 90% halo. A change of its share never animates (`noShareAnimation`); it still moves with its bar or ring when a card opens or moves. Hidden from accessibility. |
 | `PlanBadgeView` | Capsule, padding 8×3, tier colors, one line. |
@@ -237,7 +237,7 @@ ink of `GaugeModel.paceSeverity`; "Tight" is a caption in `inkMuted`.
 - **Bar card** (`BarCardView`): a header button (provider mark, name, badges, headline
   value, chevron; 28 pt minimum height) that calls `toggleCard`. Rows 12 pt apart. One
   `BarRow` per window: a 14 pt `EnergyBar` with the pace mark, the shortfall in the color
-  of `GaugeModel.paceSeverity`, and the exhausted ring, then 5 pt below "Session · 60% left"
+  of `GaugeModel.shortfallSeverity`, and the exhausted ring, then 5 pt below "Session · 60% left"
   and the reset (8 pt apart), unless `BarsModel.showsBarLabels` is false (Cursor: the
   caption states the spend and the reset). The pace line is under the bar, also without
   the label row. Then the caption and status line.
@@ -264,8 +264,9 @@ ink of `GaugeModel.paceSeverity`; "Tight" is a caption in `inkMuted`.
   tooltip has the full count and, with an estimate, "Estimated at API list prices. Not a
   bill."; its spoken value adds "about 42 dollars at API prices" ("under 1 cent", or
   "about 42 cents" below a dollar), from the amount that the tile shows, then ", may be
-  higher" when incomplete. Below the tiles, a note: the estimate note, then `+` in Nunito
-  ExtraBold `energyLowInk` when the note explains it, then the note.
+  higher" when incomplete. Below the tiles, the footnote (`TokenRowsModel.footnote`) as a
+  note, its parts one space apart, the `+` in Nunito ExtraBold `energyLowInk`. VoiceOver
+  reads the footnote without the `+`.
 - **Status line**: Nunito SemiBold 11, `energyLowInk` for failures, `inkMuted` otherwise.
 
 ## Menu bar (`MenuBar/`)

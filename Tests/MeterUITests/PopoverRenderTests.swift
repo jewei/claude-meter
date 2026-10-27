@@ -28,8 +28,11 @@ import Testing
                 row("Today", "$42.10", "35.8M tokens"), row("Yesterday", "$9.87", "12.4M tokens"),
                 row("Last 7 days", "$1,241", "210M tokens", incomplete: true),
             ],
-            estimateNote: "Estimated at API list prices, not a bill.",
-            note: "No price for: gpt-9", noteExplainsIncomplete: true)
+            note: "No price for: gpt-9",
+            footnote: [
+                .text("Estimated at API list prices, not a bill."), .mark,
+                .text("No price for: gpt-9"),
+            ])
         Snapshot.render("token-rows-estimates", padding: 14) {
             TokensSectionView(tokens: tokens).frame(width: 312)
         }

@@ -1,9 +1,8 @@
 import MeterApp
 import SwiftUI
 
-/// "Tokens used": the source chip, one tile each for Today, Yesterday, and Last 7 days, and a
-/// footnote: the estimate note, then the note, after the `+` mark when the note explains it.
-/// Each tile has its full count in a tooltip and in its accessibility value.
+/// "Tokens used": the source chip, one tile each for Today, Yesterday, and Last 7 days, and
+/// the footnote. Each tile has its full count in a tooltip and in its accessibility value.
 struct TokensSectionView: View {
     let tokens: TokenRowsModel
 
@@ -26,33 +25,40 @@ struct TokensSectionView: View {
             }
             // Tiles share the height of the tallest.
             .fixedSize(horizontal: false, vertical: true)
-            if let footnote = Self.footnote(tokens) {
+            if !tokens.footnote.isEmpty {
                 // A rate-limit note counts down ("Retrying in 3m").
-                Text(footnote)
+                Text(Self.footnote(tokens.footnote))
                     .font(MeterFont.body(10, .semibold))
                     .monospacedDigit()
                     .foregroundStyle(Palette.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
+                    // The tiles speak "may be higher"; the mark is not read out.
+                    .accessibilityLabel(Self.spokenFootnote(tokens.footnote))
             }
         }
     }
 
-    /// `Estimated at API list prices, not a bill. + Partial history — …`, with the `+` in
-    /// the low-energy ink. Nil when there is nothing to say.
-    static func footnote(_ tokens: TokenRowsModel) -> AttributedString? {
-        guard tokens.estimateNote != nil || tokens.note != nil else { return nil }
-        var text = AttributedString(tokens.estimateNote ?? "")
-        if let note = tokens.note {
-            if tokens.estimateNote != nil { text += AttributedString(" ") }
-            if tokens.noteExplainsIncomplete {
+    /// The parts one space apart, with the `+` mark in the low-energy ink.
+    static func footnote(_ parts: [TokenRowsModel.FootnotePart]) -> AttributedString {
+        var text = AttributedString()
+        for (index, part) in parts.enumerated() {
+            if index > 0 { text += AttributedString(" ") }
+            switch part {
+            case .text(let words):
+                text += AttributedString(words)
+            case .mark:
                 var mark = AttributedString("+")
                 mark.font = MeterFont.body(10, .extraBold)
                 mark.foregroundColor = Palette.energyLowInk
-                text += mark + AttributedString(" ")
+                text += mark
             }
-            text += AttributedString(note)
         }
         return text
+    }
+
+    static func spokenFootnote(_ parts: [TokenRowsModel.FootnotePart]) -> String {
+        parts.compactMap { if case .text(let words) = $0 { words } else { nil } }
+            .joined(separator: " ")
     }
 }
 

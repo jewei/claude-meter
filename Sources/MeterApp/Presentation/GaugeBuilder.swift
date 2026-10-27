@@ -18,6 +18,9 @@ struct GaugeBuilder {
         let severity = window?.severity(context.thresholds) ?? .unknown
         let reset = Formatting.resetText(window, now: context.now)
         let pace = window.flatMap { pace(of: $0, account: account) }
+        let fraction = Formatting.fraction(window, showsUsed: showsUsed)
+        let evenPace = pace.map { showsUsed ? $0.expectedUsed / 100 : 1 - $0.expectedUsed / 100 }
+        let paceSeverity = pace.flatMap { Self.paceSeverity($0, window: severity) }
         var spoken: [String] = []
         if let value = Formatting.value(window, showsUsed: showsUsed) {
             spoken.append(
@@ -38,16 +41,17 @@ struct GaugeBuilder {
             shortTitle: shortTitle,
             valueText: Formatting.percent(window, showsUsed: showsUsed),
             caption: window?.usedPercent == nil ? nil : (showsUsed ? "used" : "left"),
-            fraction: Formatting.fraction(window, showsUsed: showsUsed),
+            fraction: fraction,
             severity: severity,
             resetText: reset,
             paceText: pace.flatMap { Self.showsPaceText($0) ? $0 : nil }.map {
                 PaceText.text($0, now: context.now, showsUsed: showsUsed)
             },
-            paceSeverity: pace.flatMap { Self.paceSeverity($0, window: severity) },
-            evenPaceFraction: pace.map {
-                showsUsed ? $0.expectedUsed / 100 : 1 - $0.expectedUsed / 100
-            },
+            paceSeverity: paceSeverity,
+            shortfallSeverity: Self.showsShortfall(
+                evenPace: evenPace, fraction: fraction, showsUsed: showsUsed)
+                ? paceSeverity : nil,
+            evenPaceFraction: evenPace,
             accessibilityValue: spoken.joined(separator: ", "))
     }
 
@@ -72,8 +76,7 @@ struct GaugeBuilder {
         account.windows.filter { $0.kind == .scoped }.map { gauge($0, account: account) }
     }
 
-    /// A card states a pace that needs attention. "Lasts until reset" is only spoken: the
-    /// even-pace mark already shows it.
+    /// A card states a pace that needs attention. "Lasts until reset" is only spoken.
     static func showsPaceText(_ pace: Pace) -> Bool {
         if case .lastsUntilReset = pace.verdict { return false }
         return true
@@ -83,6 +86,14 @@ struct GaugeBuilder {
     static func paceSeverity(_ pace: Pace, window: Severity) -> Severity? {
         guard case .runsOut = pace.verdict else { return nil }
         return max(window, .warning)
+    }
+
+    /// The shortfall is the track between the fill and an even-pace mark beyond it, so it
+    /// exists only in Energy left mode. The mark moves with the clock: once it is back on the
+    /// fill, there is no shortfall to draw, although the projection still runs out.
+    static func showsShortfall(evenPace: Double?, fraction: Double, showsUsed: Bool) -> Bool {
+        guard !showsUsed, let evenPace else { return false }
+        return evenPace > fraction
     }
 
     /// Stale numbers must not predict anything, so a stale account has no pace.

@@ -24,18 +24,23 @@ struct TokenRowsBuilder {
         let note = note(
             reading: reading, history: history, provider: provider,
             isAccountSource: isAccountSource)
+        var footnote: [TokenRowsModel.FootnotePart] = []
+        if rows.contains(where: \.hasEstimate) {
+            footnote.append(.text("Estimated at API list prices, not a bill."))
+        }
+        if let note {
+            if note.explainsIncomplete, rows.contains(where: \.row.isIncomplete) {
+                footnote.append(.mark)
+            }
+            footnote.append(.text(note.text))
+        }
         return TokenRowsModel(
             sourceLabel: isAccountSource ? "Account usage" : "This Mac",
             help: isAccountSource
                 ? "Token records reported by \(provider.displayName) for this account."
                 : "Local sessions in this account's folder on this Mac, including earlier logins "
                     + "that used the folder. Other folders and devices are not included.",
-            rows: rows.map(\.row),
-            estimateNote: rows.contains { $0.hasEstimate }
-                ? "Estimated at API list prices, not a bill." : nil,
-            note: note?.text,
-            noteExplainsIncomplete: note?.explainsIncomplete == true
-                && rows.contains { $0.row.isIncomplete })
+            rows: rows.map(\.row), note: note?.text, footnote: footnote)
     }
 
     /// The note, and whether it says why an estimate can be incomplete.

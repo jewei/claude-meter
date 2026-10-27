@@ -57,7 +57,8 @@ struct EnergyBar: View {
         .overlay(alignment: .leading) {
             if let mark {
                 GeometryReader { geometry in
-                    let style = Self.markStyle(fraction: fraction, mark: mark)
+                    let style = Self.markStyle(
+                        fraction: fraction, mark: mark, in: geometry.size.width, height: height)
                     PaceMark(length: style == .onFill ? height : height + 4, style: style)
                         .position(
                             // Inside the capsule at either end: the mark is up to 4 pt wide.
@@ -116,9 +117,16 @@ struct EnergyBar: View {
         return max(0, fillEnd - shortfallOverlap)...markAt
     }
 
-    /// White on the fill; half ink with a halo on the track, where white would not show.
-    static func markStyle(fraction: Double, mark: Double) -> PaceMark.Style {
-        mark < fraction ? .onFill : .onTrack
+    /// White where the mark is on the fill and clear of the rounded ends, so the bar-high line
+    /// stays inside the capsule and on the fill. Elsewhere half ink with a halo, which also
+    /// reads on the track and past the ends.
+    static func markStyle(
+        fraction: Double, mark: Double, in width: CGFloat, height: CGFloat
+    ) -> PaceMark.Style {
+        let markAt = fillWidth(fraction: mark, in: width)
+        let fillEnd = fillWidth(fraction: fraction, in: width)
+        let radius = height / 2
+        return markAt >= radius && markAt <= fillEnd - radius ? .onFill : .onTrack
     }
 }
 

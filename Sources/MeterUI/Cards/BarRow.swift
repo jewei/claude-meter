@@ -13,7 +13,7 @@ struct BarRow: View {
         VStack(alignment: .leading, spacing: 5) {
             EnergyBar(
                 fraction: gauge.fraction, color: gauge.severity.fill, height: 14,
-                mark: gauge.evenPaceFraction, shortfall: gauge.paceSeverity?.fill,
+                mark: gauge.evenPaceFraction, shortfall: gauge.shortfallSeverity?.fill,
                 outline: gauge.severity.trackOutline)
             if showsLabels {
                 HStack(spacing: 8) {

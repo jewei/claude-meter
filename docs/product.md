@@ -141,14 +141,17 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    Claude extra usage, the other main-capable provider, Cursor, then Grok. The extra-usage
    card shows only while Claude is the main meter, for its selected account, when that
    account reports extra usage (`CardBuilder`).
-7. Every limit row, bar, and ring with a pace (§1.8) has an even-pace mark on its bar or
-   ring. It states the verdict on its own line only when the verdict needs attention: "Runs
-   out in …", with a warning icon in warning color (critical color when the window is
-   already critical), and "Tight". "Lasts until reset" is only spoken: the mark shows it. A
-   bar whose window runs out before its reset also hatches the shortfall from its fill to
-   the mark, in the same color (`GaugeBuilder.showsPaceText`, `GaugeBuilder.paceSeverity`,
-   `PaceText`). Cursor's bar shows the pace too, although its caption replaces the bar's
-   label row. Grok's bar has its own label row (`Weekly · 5% left` and the reset), and its
+7. Every bar and ring with a pace (§1.8) has an even-pace mark. Every limit row, bar, and
+   ring with a pace states the verdict on its own line only when the verdict needs
+   attention: "Runs out in …", with a warning icon in warning color (critical color when
+   the window is already critical), and "Tight". "Lasts until reset" is only spoken
+   (`GaugeBuilder.showsPaceText`, `GaugeBuilder.paceSeverity`, `PaceText`). In Energy left
+   mode, a bar whose window runs out before its reset also hatches the shortfall from its
+   fill to the mark, in the same color, while the mark is beyond the fill. The mark moves
+   with the clock and the projection does not, so the hatch can go before the next reading
+   while the line stays. In Usage mode the fill passes the mark instead
+   (`GaugeBuilder.showsShortfall`). Cursor's bar shows the pace too, although its caption
+   replaces the bar's label row. Grok's bar has its own label row (`Weekly · 5% left` and the reset), and its
    caption states only the on-demand spend (`CardBuilder`).
 8. Account cards (rings, bars, Cursor, and Grok) open and close from their header, and
    remember their state. They start closed. The extra-usage card is always open. Details

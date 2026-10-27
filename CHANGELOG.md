@@ -18,10 +18,10 @@ are in the `v3.1.3` tag.
 
 ### Changed
 
-- Energy bars look deeper and glossier. When a limit will run out before it resets, its bar
-  hatches the shortfall up to the even-pace mark, and "Runs out in …" shows with a warning
-  icon, in orange, or in red when the limit is already almost empty. "Lasts until reset" no
-  longer shows as text: the mark shows it, and VoiceOver still says it.
+- Energy bars look deeper and glossier. When a limit will run out before it resets,
+  "Runs out in …" shows with a warning icon, in orange, or in red when the limit is already
+  almost empty, and in Energy left mode its bar hatches the shortfall up to the even-pace
+  mark. "Lasts until reset" no longer shows as text; VoiceOver still says it.
 - Tokens used shows Today, Yesterday, and Last 7 days as tiles: the estimated cost first
   ("$42.10"), the token count below. One note under the tiles says that the estimate uses
   API list prices and is not a bill, and explains a "+".

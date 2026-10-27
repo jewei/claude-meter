@@ -24,7 +24,8 @@ extension Severity {
         }
     }
 
-    /// A faint red ring inside an empty bar, so it does not read as a bar with no value.
+    /// A faint red ring inside the bar of an exhausted window. In Energy left mode the bar is
+    /// empty, so the ring keeps it from reading as a bar with no value.
     var trackOutline: Color? {
         self == .exhausted ? Palette.energyEmpty.opacity(0.35) : nil
     }

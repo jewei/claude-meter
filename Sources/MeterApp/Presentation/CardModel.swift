@@ -49,13 +49,15 @@ public struct GaugeModel: Equatable, Sendable {
     /// `Resets in 3h 12m`.
     public let resetText: String?
     /// `Runs out in 2h 10m` or `Tight: ~4% left at reset`. Nil without a pace, for a stale
-    /// account, and when the energy lasts until the reset: the mark and the spoken value
-    /// carry that verdict.
+    /// account, and when the energy lasts until the reset: only the spoken value says that.
     public let paceText: String?
     /// The severity of a pace that runs out before the reset: warning, or the window's own
-    /// severity when that is worse. It colors the pace line and the shortfall on the bar. Nil
-    /// for every other pace.
+    /// severity when that is worse. It colors the pace line. Nil for every other pace.
     public let paceSeverity: Severity?
+    /// ``paceSeverity`` while the bar hatches the shortfall from its fill to the even-pace
+    /// mark: in Energy left mode, when the mark is beyond the fill. Nil otherwise. In Usage
+    /// mode the fill passes the mark instead.
+    public let shortfallSeverity: Severity?
     /// Where an even pace would be now, on the same 0...1 scale as ``fraction``. Nil without
     /// a pace or for a stale account.
     public let evenPaceFraction: Double?
@@ -198,10 +200,15 @@ public struct TokenRowsModel: Equatable, Sendable {
     public let sourceLabel: String
     public let help: String
     public let rows: [Row]
-    /// `Estimated at API list prices, not a bill.` when a row shows an estimate.
-    public let estimateNote: String?
     public let note: String?
-    /// The note says why an estimate is marked `+`: partial history, or tokens without a
-    /// price. The view puts the mark before the note.
-    public let noteExplainsIncomplete: Bool
+    /// The text under the tiles: `Estimated at API list prices, not a bill.` when a tile
+    /// shows an estimate, then ``note``, after the `+` mark when the note says why an
+    /// estimate is incomplete. Empty when there is nothing to say.
+    public let footnote: [FootnotePart]
+
+    public enum FootnotePart: Equatable, Sendable {
+        case text(String)
+        /// The `+` of an incomplete estimate.
+        case mark
+    }
 }

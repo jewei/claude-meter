@@ -65,20 +65,20 @@ import Testing
 
     /// The `+` goes before a note that says why; the estimate note shows with any estimate.
     @Test func anIncompleteEstimateIsMarked() {
+        let estimate = TokenRowsModel.FootnotePart.text("Estimated at API list prices, not a bill.")
         let unpriced = model(cost: "42", unpriced: 10, models: ["m"])
         #expect(today(unpriced)?.isIncomplete == true)
-        #expect(unpriced?.noteExplainsIncomplete == true)
-        #expect(unpriced?.estimateNote == "Estimated at API list prices, not a bill.")
+        #expect(unpriced?.footnote == [estimate, .mark, .text("No price for: m")])
         let partial = model(cost: "42", isPartial: true)
         #expect(today(partial)?.isIncomplete == true)
-        #expect(partial?.noteExplainsIncomplete == true)
+        #expect(
+            partial?.footnote
+                == [estimate, .mark, .text("Partial history — some records couldn't be counted")])
         // An old-data note does not explain the mark.
         let old = model(cost: "42", unpriced: 10, models: ["m"], observedAt: .reference(-1_000))
         #expect(today(old)?.isIncomplete == true)
-        #expect(old?.noteExplainsIncomplete == false)
-        let complete = model(cost: "42")
-        #expect(complete?.noteExplainsIncomplete == false)
-        #expect(complete?.estimateNote == "Estimated at API list prices, not a bill.")
+        #expect(old?.footnote == [estimate, .text("Token data may be stale")])
+        #expect(model(cost: "42")?.footnote == [estimate])
     }
 
     @Test func noPricedTokenShowsTheTokenCountOnly() {
@@ -86,8 +86,9 @@ import Testing
             #expect(today(model)?.value == "35.8M")
             #expect(today(model)?.detail == "tokens")
             #expect(today(model)?.isIncomplete == false)
-            #expect(model?.estimateNote == nil)
-            #expect(model?.noteExplainsIncomplete == false)
+            // Nothing is estimated, so the price note has no mark.
+            #expect(model?.footnote.contains(.mark) == false)
+            #expect(model?.footnote.first != .text("Estimated at API list prices, not a bill."))
         }
     }
 
@@ -117,6 +118,6 @@ import Testing
     func cursorAndGrokRowsAreUnchanged(provider: ProviderID) {
         #expect(today(model(provider))?.value == "35.8M")
         #expect(model(provider)?.note == nil)
-        #expect(model(provider)?.estimateNote == nil)
+        #expect(model(provider)?.footnote == [])
     }
 }

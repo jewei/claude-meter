@@ -7,10 +7,16 @@ import Testing
     private let center = NotificationCenter()
     private let reading = Locked(
         PowerStateMonitor.PowerState(isLowPowerModeEnabled: false, thermalState: .nominal))
+    /// How often the monitor read the values.
+    private let reads = Locked(0)
 
     private func monitor() -> PowerStateMonitor {
         let reading = reading
-        return PowerStateMonitor(center: center) { reading.value }
+        let reads = reads
+        return PowerStateMonitor(center: center) {
+            reads.withLock { $0 += 1 }
+            return reading.value
+        }
     }
 
     private func set(lowPower: Bool? = nil, thermal: ProcessInfo.ThermalState? = nil) {
@@ -32,10 +38,12 @@ import Testing
         #expect(value.isConstrained == constrained)
     }
 
-    /// Posts one notification and lets its update run before the test changes the values.
+    /// Posts one notification and waits until the monitor read the values for it. The read and
+    /// the callback run in one main-actor step, so the update is complete then.
     private func post(_ name: Notification.Name) async {
+        let before = reads.value
         center.post(name: name, object: nil)
-        for _ in 0..<20 { await Task.yield() }
+        #expect(await waitUntil { reads.value > before })
     }
 
     @Test func eachNotificationReadsBothValuesAndReportsOnlyChanges() async {

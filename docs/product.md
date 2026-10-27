@@ -16,7 +16,10 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    exhausted at 100 or more. Unknown when there is no value.
 4. **Stale** data is shown, but marked. An account is stale when its provider says so, the
    last refresh failed, or its observation is more than 600 s old or more than 300 s in the
-   future (`PresentationContext.isStale`).
+   future (`PresentationContext.isStale`). Under strain (Low Power Mode, or a serious or
+   critical thermal state), refreshing is slower, so the age limit is 1500 s, and it stays
+   1500 s for 390 s after strain ends (`RefreshScheduler.staleAfter(at:)`). Token rows use
+   the same limit for their old-data note.
 5. **Resolution**: after a window's reset time, a current reading reads 0% used with no next
    reset; a stale reading reads unknown (`QuotaWindow.resolved`).
 6. **Reset countdowns** use only provider-reported times and one format: `42m`, `3h 12m`,
@@ -237,7 +240,8 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 5. Low energy alerts once per crossing into critical, and once at a new period that is still
    critical. It re-arms when used percent drops 5 points below critical, so a reading that
    wobbles at the border sends one alert. A reading outside the known period, such as one
-   without a reset time, does not re-arm it. A run-out alerts once per window and period, when an
+   without a reset time, does not re-arm it. Under strain, refreshes come every 15 minutes,
+   so an alert can come up to 15 minutes later. A run-out alerts once per window and period, when an
    evaluation sees a projected run-out: after a refresh or when the alert is turned on. The
    clock passing the projected time sends nothing more. A refill alerts once, at the first
    observation of the new period.

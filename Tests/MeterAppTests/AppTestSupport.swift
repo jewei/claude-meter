@@ -33,6 +33,20 @@ extension ProviderTokenHistory {
     }
 }
 
+/// A power monitor that tests put under strain by hand. Like the live monitor, it reports
+/// only changes.
+@MainActor
+final class FakePower: PowerStateMonitoring {
+    var isConstrained = false
+    var onChange: (() -> Void)?
+
+    func set(_ constrained: Bool) {
+        guard constrained != isConstrained else { return }
+        isConstrained = constrained
+        onChange?()
+    }
+}
+
 /// A display that tests put to sleep and wake by hand.
 @MainActor
 final class FakeDisplay: DisplayStateMonitoring {

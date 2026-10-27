@@ -44,8 +44,10 @@ public final class AppModel {
             CodexSettingsModel(settings: settings, provider: $0.codex)
         }
         self.alerts = AlertCenter(poster: notifications, limits: alertLimits) {
-            [settings, usage, updater] in
-            Self.context(settings: settings, usage: usage, updater: updater, now: Date())
+            [settings, usage, updater, scheduler] in
+            Self.context(
+                settings: settings, usage: usage, updater: updater, scheduler: scheduler,
+                now: Date())
         }
         settings.onChange = { [weak self] old, new in
             self?.settingsDidChange(from: old, to: new)
@@ -58,17 +60,22 @@ public final class AppModel {
     // MARK: - Models
 
     public func context(at now: Date) -> PresentationContext {
-        Self.context(settings: settings, usage: usage, updater: updater, now: now)
+        Self.context(
+            settings: settings, usage: usage, updater: updater, scheduler: scheduler, now: now)
     }
 
+    /// The one builder of contexts, for views and for alerts, so both use the same stale
+    /// limit.
     private static func context(
-        settings: SettingsStore, usage: UsageStore, updater: any Updater, now: Date
+        settings: SettingsStore, usage: UsageStore, updater: any Updater,
+        scheduler: RefreshScheduler?, now: Date
     ) -> PresentationContext {
         PresentationContext(
             settings: settings.settings, readings: usage.readings, histories: usage.histories,
             refreshing: usage.refreshing, refreshingHistory: usage.refreshingHistory,
             restored: usage.restored, now: now, calendar: .current,
-            isUpdateAvailable: updater.isUpdateAvailable)
+            isUpdateAvailable: updater.isUpdateAvailable,
+            staleAfter: scheduler?.staleAfter(at: now) ?? RefreshScheduler.staleAfter)
     }
 
     public func menuBarModel(at now: Date) -> MenuBarModel {

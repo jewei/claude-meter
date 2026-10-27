@@ -27,21 +27,46 @@ public struct RefreshConfiguration: Equatable, Sendable {
 
 extension DisplaySleepMonitor: DisplayStateMonitoring {}
 
+/// Reports whether the Mac is under strain. The live implementation observes Low Power Mode
+/// and the thermal state.
+@MainActor public protocol PowerStateMonitoring: AnyObject {
+    var isConstrained: Bool { get }
+    var onChange: (() -> Void)? { get set }
+}
+
+extension PowerStateMonitor: PowerStateMonitoring {}
+
 /// Decides when providers refresh. ``UsageStore`` decides how.
 ///
-/// One global cadence: every 300 s while the display is awake. Opening the popover refreshes
-/// quota readings at least 60 s old. Display sleep stops all work; wake refreshes quota
-/// readings at least 300 s old. Token history follows its own due rule at each of these
-/// events and never adds a quota request. Requests made in the same main-actor turn merge
-/// into one store call.
+/// One global cadence: every 300 s while the display is awake, or every 900 s while the Mac is
+/// under strain (Low Power Mode, or a serious or critical thermal state). The first wait after
+/// each start of the timer is always 300 s, so every start path behaves as without strain.
+/// Opening the popover refreshes quota readings at least 60 s old. Display sleep stops all
+/// work; wake refreshes quota readings at least 300 s old. Token history follows its own due
+/// rule at each of these events and never adds a quota request. Requests made in the same
+/// main-actor turn merge into one store call.
 @MainActor
 public final class RefreshScheduler {
-    public static let interval: TimeInterval = 300
-    public static let popoverMaxAge: TimeInterval = 60
+    public nonisolated static let interval: TimeInterval = 300
+    public nonisolated static let constrainedInterval: TimeInterval = 900
+    public nonisolated static let popoverMaxAge: TimeInterval = 60
+    /// An observation older than this is stale at the normal cadence: one interval plus 300 s
+    /// for the 90 s request deadline and a late wake.
+    public nonisolated static let staleAfter: TimeInterval = 600
+    /// The same under strain: 900 s plus 600 s, which also covers Claude's 290 s skip of an
+    /// account that is not the active one. A healthy reading is at most 900 + 290 + 90 s old.
+    public nonisolated static let constrainedStaleAfter: TimeInterval = 1_500
+    /// After strain ends, the strain limit holds this long: the first tick after the restart
+    /// (300 s) plus its 90 s request deadline.
+    public nonisolated static let strainGrace: TimeInterval = 390
 
     private let store: UsageStore
     private let display: (any DisplayStateMonitoring)?
+    private let power: (any PowerStateMonitoring)?
     private let sleep: @Sendable (TimeInterval) async throws -> Void
+    private let now: @Sendable () -> Date
+    /// When strain last ended, for ``staleAfter(at:)``.
+    private var leftStrainAt: Date?
     private var configuration: RefreshConfiguration?
     private var timer: Task<Void, Never>?
     private var pendingRequest: Task<Void, Never>?
@@ -53,15 +78,39 @@ public final class RefreshScheduler {
     public init(
         store: UsageStore,
         display: (any DisplayStateMonitoring)?,
+        power: (any PowerStateMonitoring)? = nil,
+        now: @escaping @Sendable () -> Date = Date.init,
         sleep: @escaping @Sendable (TimeInterval) async throws -> Void = {
             try await Task.sleep(for: .seconds($0))
         }
     ) {
         self.store = store
         self.display = display
+        self.power = power
+        self.now = now
         self.sleep = sleep
         display?.onSleep = { [weak self] in self?.displayDidSleep() }
         display?.onWake = { [weak self] in self?.displayDidWake() }
+        power?.onChange = { [weak self] in self?.powerDidChange() }
+    }
+
+    /// Whether the Mac is under strain now.
+    public var isConstrained: Bool { power?.isConstrained == true }
+
+    /// The cadence after the first tick: 900 s under strain, else 300 s.
+    public var currentInterval: TimeInterval {
+        isConstrained ? Self.constrainedInterval : Self.interval
+    }
+
+    /// How old an observation can be at `date` and still be current. The strain limit holds
+    /// for ``strainGrace`` after strain ends, so readings from the slower cadence do not show
+    /// as stale while their refresh runs.
+    public func staleAfter(at date: Date) -> TimeInterval {
+        if isConstrained { return Self.constrainedStaleAfter }
+        if let leftStrainAt, date < leftStrainAt.addingTimeInterval(Self.strainGrace) {
+            return Self.constrainedStaleAfter
+        }
+        return Self.staleAfter
     }
 
     /// Applies new settings. Starting or resuming refreshes every enabled provider; later
@@ -116,6 +165,19 @@ public final class RefreshScheduler {
         startTimer()
     }
 
+    /// Entering strain changes nothing now: the tick already waiting fires, and the waits
+    /// after it are longer. Leaving strain refreshes what is due, as a wake does, and restarts
+    /// the timer, so the next tick is 300 s away instead of up to 900 s.
+    func powerDidChange() {
+        guard !isConstrained else { return }
+        leftStrainAt = now()
+        request(quota: due(maxAge: Self.interval), history: enabledProviders)
+        // Only the timer restarts. `cancelWork()` would also cancel store work in flight.
+        timer?.cancel()
+        timer = nil
+        startTimer()
+    }
+
     /// Waits for the newest store call to finish. For tests.
     func waitForWork() async {
         await latestWork?.value
@@ -147,10 +209,13 @@ public final class RefreshScheduler {
     private func startTimer() {
         guard canRequest, timer == nil else { return }
         timer = Task { [weak self, sleep] in
+            // The first wait is always the normal interval (type comment).
+            var wait = Self.interval
             while !Task.isCancelled {
-                do { try await sleep(Self.interval) } catch { return }
+                do { try await sleep(wait) } catch { return }
                 guard let self, !Task.isCancelled else { return }
                 self.request(quota: self.enabledProviders, history: self.enabledProviders)
+                wait = self.currentInterval
             }
         }
     }

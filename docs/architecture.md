@@ -168,11 +168,25 @@ Claude has its own gate, because one Claude limit covers every account and the S
 | Event | Refreshes quota of |
 | --- | --- |
 | Start or resume | Every enabled provider |
-| Every 300 s while the display is awake | Every enabled provider not already refreshing |
+| Every 300 s while the display is awake; every 900 s under strain (see below) | Every enabled provider not already refreshing |
 | Popover opens | Readings that are missing, failed, stale, or at least 60 s old |
 | Display wakes | Readings that are missing, failed, stale, or at least 300 s old; then the timer restarts |
 | A provider is enabled, or its accounts or credentials change | That provider only |
 | Display sleeps, pause, quit | Nothing; cancels the timer and in-flight work |
+| Strain starts | Nothing; the tick that waits fires, and later waits are 900 s |
+| Strain ends | Readings that are missing, failed, stale, or at least 300 s old; then only the timer restarts |
+
+Strain means Low Power Mode, or a serious or critical thermal state (`PowerStateMonitor`, on
+`NotificationCenter.default`). The first wait after each start of the timer is always 300 s,
+and later waits follow the cadence, so a start, a resume, a wake, or the end of strain
+behaves as without strain. The popover and wake rules do not change under strain.
+
+The stale limit follows the cadence (`RefreshScheduler.staleAfter(at:)`): 600 s normally,
+and 1500 s under strain and for 390 s after it. Under steady strain a healthy reading is at
+most 900 + 290 + 90 = 1280 s old: the cadence, Claude's skip of an account that is not the
+active one (`AutomaticRefresh.isDue`), and the request deadline. The 390 s grace covers the
+first tick after strain ends and its deadline. `AppModel` builds every presentation context,
+also the one for alerts, through one builder that reads this limit.
 
 Token history has its own due rule (`UsageStore.historyNeedsRefresh`): a history is due when
 it was never read, when the local day or time zone changed since its last attempt, or when

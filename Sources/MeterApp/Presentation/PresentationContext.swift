@@ -6,9 +6,6 @@ import MeterDomain
 /// Builders are pure: the same context always gives the same model. Views build a context
 /// on each render with the current time, so countdowns and staleness stay live.
 public struct PresentationContext: Sendable {
-    /// An observation older than this is stale, even when the last refresh succeeded. It leaves
-    /// one full refresh interval of headroom.
-    public static let staleAfter: TimeInterval = 600
     /// Clock skew allowed before a future observation counts as invalid.
     public static let futureTolerance: TimeInterval = 300
 
@@ -23,6 +20,10 @@ public struct PresentationContext: Sendable {
     public var now: Date
     public var calendar: Calendar
     public var isUpdateAvailable: Bool
+    /// An observation older than this is stale, even when the last refresh succeeded. The
+    /// scheduler sets it from the cadence (``RefreshScheduler/staleAfter(at:)``): 600 s
+    /// normally, longer under strain.
+    public var staleAfter: TimeInterval
 
     public init(
         settings: Settings,
@@ -33,7 +34,8 @@ public struct PresentationContext: Sendable {
         restored: Set<ProviderID> = [],
         now: Date,
         calendar: Calendar = .current,
-        isUpdateAvailable: Bool = false
+        isUpdateAvailable: Bool = false,
+        staleAfter: TimeInterval = RefreshScheduler.staleAfter
     ) {
         self.settings = settings
         self.readings = readings
@@ -44,6 +46,7 @@ public struct PresentationContext: Sendable {
         self.now = now
         self.calendar = calendar
         self.isUpdateAvailable = isUpdateAvailable
+        self.staleAfter = staleAfter
     }
 
     public var thresholds: Thresholds { settings.appearance.thresholds }
@@ -115,7 +118,7 @@ public struct PresentationContext: Sendable {
         if account.isStale || reading.isStale { return true }
         guard let observedAt = account.observedAt else { return false }
         let age = now.timeIntervalSince(observedAt)
-        return !age.isFinite || age < -Self.futureTolerance || age > Self.staleAfter
+        return !age.isFinite || age < -Self.futureTolerance || age > staleAfter
     }
 
     /// `team-tools` → `Team Tools`, `default` → `Default`.

@@ -163,3 +163,20 @@ import Testing
         #expect(old.unpricedTokens(in: .today, now: .reference(), calendar: calendar) == nil)
     }
 }
+
+/// A period whose unpriced tokens do not fit in `Int64` keeps its estimate, as incomplete.
+@Suite struct TokenHistoryCostOverflowTests {
+    @Test func anOverflowingUnpricedPeriodIsIncomplete() {
+        let calendar = Calendar.fixed()
+        let today = calendar.startOfDay(for: .reference())
+        let yesterday = today.addingTimeInterval(-.days(1))
+        let history = TokenHistory(
+            dailyTokens: [today: 1, yesterday: 1],
+            coverageStart: today.addingTimeInterval(-.days(6)),
+            observedAt: .reference(), timeZoneID: calendar.timeZone.identifier,
+            dailyCost: [today: 1],
+            dailyUnpricedTokens: [today: Int64.max - 1, yesterday: Int64.max - 1])
+        let estimate = history.cost(in: .lastSevenDays, now: .reference(), calendar: calendar)
+        #expect(estimate == CostEstimate(amount: 1, isComplete: false))
+    }
+}

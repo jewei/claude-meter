@@ -36,7 +36,8 @@ import Testing
     }
 
     @Test(arguments: [
-        ("0.004", "35.8M tokens · <$0.01"), ("0.01", "35.8M tokens · ~$0.01"),
+        ("0.004", "35.8M tokens · <$0.01"), ("0.009", "35.8M tokens · <$0.01"),
+        ("0.01", "35.8M tokens · ~$0.01"),
         ("42.105", "35.8M tokens · ~$42.11"), ("99.99", "35.8M tokens · ~$99.99"),
         ("99.996", "35.8M tokens · ~$100"), ("100", "35.8M tokens · ~$100"),
         ("1240.6", "35.8M tokens · ~$1,241"),
@@ -52,7 +53,11 @@ import Testing
         let small = today(model(cost: "0.5", unpriced: 10, models: ["m"]))
         #expect(
             small?.accessibilityValue.hasSuffix(
-                "under 1 dollar at API prices, some tokens not priced") == true)
+                "about 50 cents at API prices, may be higher") == true)
+        // The speech follows the amount that the row shows.
+        #expect(
+            today(model(cost: "0.996"))?.accessibilityValue.hasSuffix(
+                "about 1 dollar at API prices") == true)
         #expect(
             today(model(cost: "0.004"))?.accessibilityValue.hasSuffix(
                 "under 1 cent at API prices") == true)

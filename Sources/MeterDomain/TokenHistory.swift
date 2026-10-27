@@ -3,8 +3,8 @@ import Foundation
 /// Token counts per local day for one account, and an estimate of their cost at API list
 /// prices where the provider can price them.
 ///
-/// History counts tokens and estimates money. It never counts quota. It never affects severity, selection, or quota
-/// freshness. A missing day is zero only when the history covers that day; an uncovered
+/// History counts tokens and estimates money. It never counts quota, and it never affects
+/// severity, selection, or quota freshness. A missing day is zero only when the history covers that day; an uncovered
 /// period is unknown. The history covers the days from ``coverageStart`` through the day of
 /// ``observedAt``, so a history observed on an earlier day cannot answer for any period.
 public struct TokenHistory: Hashable, Sendable {

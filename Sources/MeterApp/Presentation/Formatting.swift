@@ -74,39 +74,43 @@ enum Formatting {
     /// `~$42.10`, `~$1,241`, or `<$0.01`, with `+` when the estimate is incomplete. Under
     /// $100 two decimals; from $100 whole dollars with grouping.
     static func estimate(_ estimate: CostEstimate) -> String {
-        // Round to cents first, so $99.996 shows as `~$100`, not `~$100.00`.
-        let amount = rounded(estimate.amount, scale: 2)
         let text: String
-        if amount < Decimal(string: "0.01") ?? 0 {
+        // Below a cent before rounding; above it, round to cents first, so $99.996 shows as
+        // `~$100`, not `~$100.00`.
+        if estimate.amount < cent {
             text = "<$0.01"
-        } else if amount < 100 {
-            text =
-                "~$"
-                + amount.formatted(.number.precision(.fractionLength(2)).locale(numberLocale))
         } else {
-            text =
-                "~$"
-                + amount.formatted(.number.precision(.fractionLength(0)).locale(groupingLocale))
+            let amount = rounded(estimate.amount, scale: 2)
+            let number =
+                amount < 100
+                ? amount.formatted(.number.precision(.fractionLength(2)).locale(numberLocale))
+                : amount.formatted(.number.precision(.fractionLength(0)).locale(groupingLocale))
+            text = "~$" + number
         }
         return estimate.isComplete ? text : text + "+"
     }
 
-    /// `about 42 dollars at API prices`, for VoiceOver, with `, some tokens not priced` when
-    /// the estimate is incomplete.
+    /// `about 42 dollars at API prices`, for VoiceOver, with `, may be higher` when the
+    /// estimate is incomplete. It uses the amount that the row shows.
     static func spokenEstimate(_ estimate: CostEstimate) -> String {
-        let note = estimate.isComplete ? "" : ", some tokens not priced"
-        let amount = estimate.amount
+        let note = estimate.isComplete ? "" : ", may be higher"
         let text: String
-        if amount < Decimal(string: "0.01") ?? 0 {
+        if estimate.amount < cent {
             text = "under 1 cent"
-        } else if amount < 1 {
-            text = "under 1 dollar"
         } else {
-            let dollars = NSDecimalNumber(decimal: rounded(amount, scale: 0)).intValue
-            text = "about \(dollars) \(dollars == 1 ? "dollar" : "dollars")"
+            let amount = rounded(estimate.amount, scale: 2)
+            if amount < 1 {
+                let cents = NSDecimalNumber(decimal: amount * 100).intValue
+                text = "about \(cents) \(cents == 1 ? "cent" : "cents")"
+            } else {
+                let dollars = NSDecimalNumber(decimal: rounded(amount, scale: 0)).intValue
+                text = "about \(dollars) \(dollars == 1 ? "dollar" : "dollars")"
+            }
         }
         return "\(text) at API prices\(note)"
     }
+
+    private static let cent = Decimal(string: "0.01") ?? 0
 
     /// `value` rounded half up to `scale` decimal places.
     private static func rounded(_ value: Decimal, scale: Int) -> Decimal {

@@ -14,6 +14,9 @@ are in the `v3.1.3` tag.
 
 ### Added
 
+- Token rows on Claude and Codex cards estimate the cost at API list prices, such as
+  "35.8M tokens · ~$42.10". It is an estimate, not a bill. Prices come with the app; nothing
+  is fetched.
 - Optional alerts in Settings > Appearance: a macOS notification when a limit runs low,
   when it will run out before it resets, and when it refills. All are off until you turn
   them on.

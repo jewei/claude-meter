@@ -246,7 +246,11 @@ All cards: padding 14×13, `chunkyCard()`, full width.
   (`LimitRow`, one line, with the pace on a second line indented 15 pt), usage bars (`UsageBarRow`, 7 pt bars, the value with "left" or "used"), usage-limit resets
   (`ResetsSectionView`: count, rows with the exact date in a tooltip, note), and tokens used
   (`TokensSectionView`: source label with a scope tooltip, three rows with full counts in
-  tooltips and accessibility values, note).
+  tooltips and accessibility values, note). A row with an estimate reads
+  `35.8M tokens · ~$42.10` in the same face and ink, `+` when incomplete; its tooltip adds
+  "Estimated at API list prices. Not a bill." and its spoken value adds "about 42 dollars at
+  API prices" ("under 1 cent", or "about 42 cents" below a dollar), from the amount that the
+  row shows, then ", may be higher" when incomplete.
 - **Status line**: Nunito SemiBold 11, `energyLowInk` for failures, `inkMuted` otherwise.
 
 ## Menu bar (`MenuBar/`)

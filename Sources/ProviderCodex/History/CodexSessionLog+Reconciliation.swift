@@ -60,6 +60,10 @@ extension CodexSessionLog {
 /// the session in the same file): the event's own `last` usage counts, and the mark starts
 /// again from its total. A repeated response ID counts once. An event with only `last` usage
 /// counts once per turn, response, and value.
+///
+/// Only a delta that is exactly one response's `last` usage is priced: its model and cache
+/// parts are known. Any other delta, such as growth seen only in cumulative counters, can span
+/// turns of different models, so its tokens count without a price.
 private struct CounterWalk {
     private struct LastOnlyKey: Hashable {
         let turnID: String?
@@ -78,6 +82,20 @@ private struct CounterWalk {
         self.baseline = baseline
         self.isPartial = isPartial
         watermark = baseline
+    }
+
+    /// The record of `delta`, or nil when its total does not fit in `Int64`.
+    private static func record(
+        _ delta: CodexTokenCounts, event: CodexSessionLog.Event
+    ) -> TokenRecord? {
+        guard let count = delta.total else { return nil }
+        guard let last = event.last, delta == last else {
+            return TokenRecord(
+                date: event.date, count: count, unpricedTokens: count,
+                unpricedModel: CodexPrices.unpricedName(event.model))
+        }
+        return CodexPrices.record(
+            date: event.date, counts: delta, cache: event.lastCache, model: event.model)
     }
 
     mutating func add(_ event: CodexSessionLog.Event) {
@@ -124,8 +142,8 @@ private struct CounterWalk {
             return
         }
         if let id = event.responseID { responses[id] = event.last ?? delta }
-        if let count = delta.total {
-            records.append(TokenRecord(date: event.date, count: count))
+        if let record = Self.record(delta, event: event) {
+            records.append(record)
         } else {
             isPartial = true
         }

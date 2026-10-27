@@ -29,6 +29,8 @@ struct ClaudeHistoryParser: HistoryFileParser {
         let request = entry.requestID ?? ""
         let key = entry.message?.id?.value.map { "\(request.utf8.count):\(request):\($0)" }
         if key == nil { isPartial = true }
-        records.insert(TokenRecord(date: date, count: count), key: key)
+        let record = ClaudePrices.record(
+            date: date, count: count, usage: usage, model: entry.message?.model?.value)
+        records.insert(record, key: key)
     }
 }

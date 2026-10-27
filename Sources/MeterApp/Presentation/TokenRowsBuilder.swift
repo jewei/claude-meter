@@ -13,14 +13,13 @@ struct TokenRowsBuilder {
         let source = reading?.value?.source ?? (provider == .cursor ? .account : .thisMac)
         let isAccountSource = source == .account
         let history = reading?.value?.history(for: account)
+        // Each period's estimate first; the rows and the note both use them.
         let rows = TokenPeriod.allCases.map { period in
             let count = history?.tokens(in: period, now: context.now, calendar: context.calendar)
-            return TokenRowsModel.Row(
-                title: period.title,
-                value: count.map(Formatting.tokens) ?? "—",
-                accessibilityValue: count.map { "\($0) tokens" } ?? "Unavailable",
-                help: count.map { "\($0.formatted()) tokens, including cache tokens" }
-                    ?? "Token count unavailable")
+            let estimate =
+                count == nil
+                ? nil : history?.cost(in: period, now: context.now, calendar: context.calendar)
+            return Self.row(period, count: count, estimate: estimate)
         }
         return TokenRowsModel(
             sourceLabel: isAccountSource ? "Account usage" : "This Mac",
@@ -52,6 +51,45 @@ struct TokenRowsBuilder {
             age > context.staleAfter
             || history.timeZoneID != context.calendar.timeZone.identifier
             || !context.calendar.isDate(history.observedAt, inSameDayAs: context.now)
-        return isOld ? "Token data may be stale" : nil
+        if isOld { return "Token data may be stale" }
+        return priceNote(history)
+    }
+
+    private static func row(
+        _ period: TokenPeriod, count: Int64?, estimate: CostEstimate?
+    ) -> TokenRowsModel.Row {
+        guard let count else {
+            return TokenRowsModel.Row(
+                title: period.title, value: "—", accessibilityValue: "Unavailable",
+                help: "Token count unavailable")
+        }
+        guard let estimate else {
+            return TokenRowsModel.Row(
+                title: period.title, value: Formatting.tokens(count),
+                accessibilityValue: "\(count) tokens",
+                help: "\(count.formatted()) tokens, including cache tokens")
+        }
+        return TokenRowsModel.Row(
+            title: period.title,
+            value: "\(Formatting.tokens(count)) · \(Formatting.estimate(estimate))",
+            accessibilityValue: "\(count) tokens, \(Formatting.spokenEstimate(estimate))",
+            help: "\(count.formatted()) tokens, including cache tokens. "
+                + "Estimated at API list prices. Not a bill.")
+    }
+
+    /// Why some tokens have no estimate. It covers the widest row (Last 7 Days), which
+    /// contains the others, and shows whenever the rows show token counts, so a new model
+    /// that is not in the price table still explains the missing estimate.
+    private func priceNote(_ history: TokenHistory) -> String? {
+        guard
+            let unpriced = history.unpricedTokens(
+                in: .lastSevenDays, now: context.now, calendar: context.calendar),
+            unpriced > 0
+        else { return nil }
+        let names = history.unpricedModels.sorted()
+        guard !names.isEmpty else { return "Some tokens have no price" }
+        let shown = names.prefix(3).joined(separator: ", ")
+        let more = names.count > 3 ? " and \(names.count - 3) more" : ""
+        return Redactor.redact("No price for: \(shown)\(more)")
     }
 }

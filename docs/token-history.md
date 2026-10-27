@@ -8,8 +8,9 @@ each provider module (`ClaudeTokenHistory`, `CodexTokenHistory`, `GrokTokenHisto
 
 ## Scope
 
-1. History counts tokens. It does not count money, and it does not change quota, severity,
-   selection, or the menu bar.
+1. History counts tokens and, for Claude Code and Codex, estimates their cost at API list
+   prices ("Cost estimate" below). It does not change quota, severity, selection, or the
+   menu bar.
 2. History covers today and the previous six local calendar days.
 3. The date in each record sets the day. The date of the file does not set the day.
 4. The calendar of the read sets the days. A change of time zone makes the old history
@@ -20,7 +21,8 @@ each provider module (`ClaudeTokenHistory`, `CodexTokenHistory`, `GrokTokenHisto
 6. An account without a folder has no records. Its history is unknown, not zero.
 7. The app keeps history in memory only. It writes no history to disk. A restart reads all
    files again.
-8. The app keeps counts and record IDs only. It never keeps prompt or response text.
+8. The app keeps counts, record IDs, and model names only, in memory. It never keeps prompt
+   or response text.
 
 ## File locations
 
@@ -50,10 +52,13 @@ partial (rule 64).
 
 ```json
 {"type":"assistant","timestamp":"2026-10-01T12:00:00Z","requestId":"req_1",
- "message":{"id":"msg_1","usage":{"input_tokens":10,"output_tokens":3,
-  "cache_read_input_tokens":7,"cache_creation_input_tokens":2,
-  "cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":1}}}}
+ "message":{"id":"msg_1","model":"claude-opus-5-5","usage":{"input_tokens":10,
+  "output_tokens":3,"cache_read_input_tokens":7,"cache_creation_input_tokens":2,
+  "cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":1},
+  "speed":"standard"}}}
 ```
+
+`model` and `speed` only price the record.
 
 Other spellings: `request_id` for `requestId`.
 
@@ -64,13 +69,17 @@ Other spellings: `request_id` for `requestId`.
  "forked_from_id":"<parent>","parent_thread_id":"<parent>",
  "source":{"subagent":{"thread_spawn":{"parent_thread_id":"<parent>"}}},
  "subagent_history_start_ordinal":12}}
-{"type":"turn_context","payload":{"turn_id":"…"}}
+{"type":"turn_context","payload":{"turn_id":"…","model":"gpt-6-astra"}}
 {"type":"event_msg","payload":{"type":"task_started","turn_id":"…"}}
 {"type":"event_msg","timestamp":"…","ordinal":17,"payload":{"type":"token_count",
  "turn_id":"…","response_id":"…",
  "info":{"total_token_usage":{"input_tokens":160,"output_tokens":16},
-  "last_token_usage":{"input_tokens":60,"output_tokens":6},"response_id":"…"}}}
+  "last_token_usage":{"input_tokens":60,"output_tokens":6,"cached_input_tokens":20,
+   "cache_write_input_tokens":0},"response_id":"…"}}}
 ```
+
+`model`, `cached_input_tokens`, and `cache_write_input_tokens` only price the record. Both
+cache counts are parts of `input_tokens`; an absent one is zero.
 
 Other spellings: `session_id` for the session `id`; `turnId` for `turn_id`; `request_id`
 for `response_id`, in `payload` and in `info`; `forkedFromId`, `parent_session_id`, and
@@ -168,9 +177,13 @@ Other spellings: `update` and `_meta` can also be at the top level. The top-leve
 
 34. One rule applies inside a file and across files, so the result does not depend on the
     read order: of two records with the same key, the record with the larger count wins.
-    With equal counts, the record with the earlier date wins.
+    With equal counts, the record with the earlier date wins. With an equal date too, in
+    order: a priced record, the larger cost, fewer unpriced tokens, then the smaller unpriced
+    model name (none first). The kept record carries its own cost.
 35. Codex session copies that disagree make history partial. The copy with more events wins.
-    With equal counts, the first copy in root order, then path order, wins.
+    With equal counts, the first copy in root order, then path order, wins. Copies compare
+    each event's date, counters, ordinal, response ID, and turn ID; its model and cache
+    parts only price it, so they never change which copy counts.
 36. A file that is reachable by two paths (a hard link) counts once, for the root that comes
     first in the configured order.
 37. A file that two nested roots find belongs to the root that comes first in the
@@ -279,3 +292,40 @@ Other spellings: `update` and `_meta` can also be at the top level. The top-leve
 65. The file limit makes every account partial. History stays partial until a sweep
     completes without reaching the limit, also during the early pages of the next sweep.
 66. No limit makes history read as a complete zero.
+
+## Cost estimate
+
+What the tokens would cost at API list prices. It is an estimate, not a bill: subscriptions
+pay a flat fee.
+
+67. Prices come from a table in each provider module (`ClaudePrices`, `CodexPrices`), with the
+    source page and the date it was checked. The table changes only with a release. The app
+    sends no request for prices.
+68. A model name matches the table exactly after it is lowercased and loses a leading
+    `anthropic/` or `openai/` and a trailing date. A model that is not in the table, and a
+    record without a model, has no price. There is no fuzzy match.
+69. Claude Code: input, output, cache reads, 5-minute writes, and 1-hour writes each have their
+    rate. Without the lifetime split, every write is a 5-minute write. `speed: "fast"`
+    multiplies every rate by the model's fast multiplier; a fast record of a model without
+    one has no price. Claude Haiku 5.5 uses its higher rates when the prompt (input plus
+    cache tokens) is over 100,000 tokens. The rates are those of global inference; US-only
+    inference costs 1.1 times as much, so its estimate is low.
+70. Codex: uncached input (input minus cached minus writes), cached input, and output each
+    have their rate. Cache writes have no price, because the log does not say whether they
+    last 30 minutes or 12 hours, which OpenAI prices differently. A breakdown above the input
+    leaves the input without a price. A request with more than 272,000 input tokens uses the
+    long-context rates. Codex logs do not name the fast tier, so every request uses the
+    standard rate, and the estimate can be low.
+71. Codex prices only a delta that is exactly one response's `last_token_usage`, at the model
+    of its turn. Any other delta (rules 22–30), such as growth seen only in cumulative
+    counters, can span turns of two models, so its tokens count without a price.
+72. Each day sums the cost of its priced parts and, separately, its unpriced tokens; one record
+    can have both. A record with zero tokens adds neither, so Claude Code's `<synthetic>`
+    lines change nothing.
+73. A period has an estimate when it has priced tokens. It is incomplete (`+`) when the period
+    has unpriced tokens, or the history is partial, also when its unpriced tokens do not fit in
+    a 64-bit count. A day whose unpriced sum does not fit makes the history partial.
+74. A record names its model for the price note only when the model is not in the table. A
+    model that has a price is never named, also when some part of its record has none (a
+    fast record without a multiplier, a Codex cache write, or a delta that is not one
+    response).

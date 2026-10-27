@@ -1,8 +1,8 @@
-import MeterApp
 import MeterDomain
 import SwiftUI
 import Testing
 
+@testable import MeterApp
 @testable import MeterUI
 
 /// Renders the popover for the preview model in each main state.
@@ -11,6 +11,23 @@ import Testing
         let presentation = PopoverPresentation()
         presentation.isVisible = true
         return PopoverView(model: model, presentation: presentation)
+    }
+
+    /// Token rows with cost estimates, one incomplete, and the price note.
+    @Test func tokenRowsWithEstimates() {
+        func row(_ title: String, _ value: String) -> TokenRowsModel.Row {
+            TokenRowsModel.Row(title: title, value: value, accessibilityValue: value, help: "")
+        }
+        let tokens = TokenRowsModel(
+            sourceLabel: "This Mac", help: "",
+            rows: [
+                row("Today", "35.8M tokens · ~$42.10"), row("Yesterday", "12.4M tokens · ~$9.87"),
+                row("Last 7 Days", "210M tokens · ~$1,241+"),
+            ],
+            note: "No price for: gpt-9")
+        Snapshot.render("token-rows-estimates", padding: 14) {
+            TokensSectionView(tokens: tokens).frame(width: 312)
+        }
     }
 
     @Test func accountsWithRings() {

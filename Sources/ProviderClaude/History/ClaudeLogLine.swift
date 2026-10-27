@@ -6,16 +6,19 @@ import MeterPlatform
 struct ClaudeLogLine: Decodable {
     struct Message: Decodable {
         let id: HistoryJSON.Text?
+        /// The API model ID, such as `claude-opus-5-5`. Prices the record.
+        let model: HistoryJSON.Text?
         let usage: Usage?
 
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: Keys.self)
             id = container.lenient(.id)
+            model = container.lenient(.model)
             usage = container.lenient(.usage)
         }
 
         private enum Keys: String, CodingKey {
-            case id, usage
+            case id, model, usage
         }
     }
 
@@ -25,6 +28,8 @@ struct ClaudeLogLine: Decodable {
         let cacheRead: HistoryJSON.Count?
         let cacheWrite: HistoryJSON.Count?
         let cacheWriteSplit: CacheWriteSplit?
+        /// `standard` or `fast`. Fast mode multiplies the price.
+        let speed: HistoryJSON.Text?
 
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: Keys.self)
@@ -33,6 +38,19 @@ struct ClaudeLogLine: Decodable {
             cacheRead = container.lenient(.cacheRead)
             cacheWrite = container.lenient(.cacheWrite)
             cacheWriteSplit = container.lenient(.cacheWriteSplit)
+            speed = container.lenient(.speed)
+        }
+
+        /// Cache writes by lifetime: (5 minutes, 1 hour). Without the split, every write is a
+        /// 5-minute write. Nil when a count is invalid.
+        var cacheWrites: (fiveMinutes: Int64, oneHour: Int64)? {
+            if let split = cacheWriteSplit, split.isPresent {
+                guard let five = HistoryJSON.Count.orZero(split.fiveMinutes),
+                    let hour = HistoryJSON.Count.orZero(split.oneHour)
+                else { return nil }
+                return (five, hour)
+            }
+            return HistoryJSON.Count.orZero(cacheWrite).map { ($0, 0) }
         }
 
         /// Input, output, cache-read, and cache-write tokens, or nil when a count is invalid or
@@ -58,6 +76,7 @@ struct ClaudeLogLine: Decodable {
             case cacheRead = "cache_read_input_tokens"
             case cacheWrite = "cache_creation_input_tokens"
             case cacheWriteSplit = "cache_creation"
+            case speed
         }
     }
 

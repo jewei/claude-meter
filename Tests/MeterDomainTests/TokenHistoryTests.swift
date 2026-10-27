@@ -112,3 +112,54 @@ import Testing
         #expect(provider.history(for: "other").hasRecords == false)
     }
 }
+
+/// Cost estimates share the coverage rules of token counts.
+@Suite struct TokenHistoryCostTests {
+    private let calendar = Calendar.fixed()
+
+    private func history(
+        cost: [Int: String] = [:], unpriced: [Int: Int64] = [:], isPartial: Bool = false,
+        observedAt: Date = .reference()
+    ) -> TokenHistory {
+        let today = calendar.startOfDay(for: .reference())
+        func day(_ offset: Int) -> Date { today.addingTimeInterval(.days(Double(offset))) }
+        return TokenHistory(
+            dailyTokens: [day(0): 1_000, day(-1): 1_000], coverageStart: day(-6),
+            observedAt: observedAt, timeZoneID: calendar.timeZone.identifier,
+            isPartial: isPartial,
+            dailyCost: Dictionary(
+                uniqueKeysWithValues: cost.map { (day($0.key), Decimal(string: $0.value) ?? 0) }),
+            dailyUnpricedTokens: Dictionary(
+                uniqueKeysWithValues: unpriced.map { (day($0.key), $0.value) }))
+    }
+
+    private func cost(_ history: TokenHistory, _ period: TokenPeriod = .today) -> CostEstimate? {
+        history.cost(in: period, now: .reference(), calendar: calendar)
+    }
+
+    @Test func aCompleteEstimate() {
+        let estimate = cost(history(cost: [0: "1.25", -1: "2"]), .lastSevenDays)
+        #expect(estimate == CostEstimate(amount: Decimal(string: "3.25") ?? 0, isComplete: true))
+    }
+
+    @Test func unpricedTokensOrAPartialHistoryMakeItIncomplete() {
+        #expect(cost(history(cost: [0: "1"], unpriced: [0: 5]))?.isComplete == false)
+        #expect(cost(history(cost: [0: "1"], isPartial: true))?.isComplete == false)
+        // Unpriced tokens of another day do not touch today's estimate.
+        #expect(cost(history(cost: [0: "1"], unpriced: [-1: 5]))?.isComplete == true)
+    }
+
+    /// No priced token gives no estimate, not $0.
+    @Test func nothingPricedGivesNoEstimate() {
+        #expect(cost(history(unpriced: [0: 5])) == nil)
+        #expect(
+            history(unpriced: [0: 5]).unpricedTokens(
+                in: .today, now: .reference(), calendar: calendar) == 5)
+    }
+
+    @Test func anOldHistoryCannotAnswer() {
+        let old = history(cost: [0: "1"], observedAt: .reference(-.days(1)))
+        #expect(cost(old) == nil)
+        #expect(old.unpricedTokens(in: .today, now: .reference(), calendar: calendar) == nil)
+    }
+}

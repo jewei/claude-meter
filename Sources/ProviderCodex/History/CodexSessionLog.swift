@@ -8,6 +8,10 @@ import MeterPlatform
 /// begins. Reconciliation turns the events into records later, when the parent is known.
 struct CodexSessionLog: HistoryFileParser {
     /// One `token_count` event.
+    ///
+    /// Equality covers the token identity only, never the pricing fields: `CodexSessionSet`
+    /// matches copies of a session with `starts(with:)`, and pricing must not change which
+    /// copy counts.
     struct Event: Hashable, Sendable {
         let date: Date
         let total: CodexTokenCounts?
@@ -15,6 +19,25 @@ struct CodexSessionLog: HistoryFileParser {
         let ordinal: Int64?
         let responseID: String?
         let turnID: String?
+        /// The model of the event's turn, for its price.
+        var model: String? = nil
+        /// The cache parts of `last`, for its price.
+        var lastCache: CodexCacheParts? = nil
+
+        static func == (lhs: Event, rhs: Event) -> Bool {
+            lhs.date == rhs.date && lhs.total == rhs.total && lhs.last == rhs.last
+                && lhs.ordinal == rhs.ordinal && lhs.responseID == rhs.responseID
+                && lhs.turnID == rhs.turnID
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(date)
+            hasher.combine(total)
+            hasher.combine(last)
+            hasher.combine(ordinal)
+            hasher.combine(responseID)
+            hasher.combine(turnID)
+        }
     }
 
     private(set) var sessionID: String?
@@ -31,6 +54,8 @@ struct CodexSessionLog: HistoryFileParser {
     private(set) var hasMalformedLines = false
     private(set) var events: [Event] = []
     private var turnID: String?
+    /// Turn → model, from `turn_context` lines.
+    private var models: [String: String] = [:]
 
     init() {}
 
@@ -45,7 +70,11 @@ struct CodexSessionLog: HistoryFileParser {
         }
         switch entry.type {
         case "session_meta": readMetadata(entry)
-        case "turn_context": turnID = entry.payload.turnID
+        case "turn_context":
+            turnID = entry.payload.turnID
+            if let turn = entry.payload.turnID, let model = entry.payload.model {
+                models[turn] = model
+            }
         case "event_msg": readEvent(entry)
         default: break
         }
@@ -106,10 +135,11 @@ struct CodexSessionLog: HistoryFileParser {
         let total = info.total?.counts
         let last = info.last?.counts
         guard total != nil || last != nil else { return }
+        let turn = payload.turnID ?? turnID
         events.append(
             Event(
                 date: date, total: total, last: last, ordinal: entry.ordinal?.value,
-                responseID: info.responseID ?? payload.responseID,
-                turnID: payload.turnID ?? turnID))
+                responseID: info.responseID ?? payload.responseID, turnID: turn,
+                model: turn.flatMap { models[$0] }, lastCache: info.last?.cache))
     }
 }

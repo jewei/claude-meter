@@ -4,19 +4,49 @@ import Foundation
 public struct TokenRecord: Hashable, Sendable {
     public let date: Date
     public let count: Int64
+    /// The estimated cost of the priced part, in US dollars. Nil when no part has a price.
+    public let cost: Decimal?
+    /// Tokens of this record that have no price.
+    public let unpricedTokens: Int64
+    /// The model that produced the response, when the record names one.
+    public let model: String?
 
-    public init(date: Date, count: Int64) {
+    /// A record of `count` tokens. Without pricing, the record adds no cost and no unpriced
+    /// tokens, for providers that do not estimate cost.
+    public init(
+        date: Date, count: Int64, cost: Decimal? = nil, unpricedTokens: Int64 = 0,
+        model: String? = nil
+    ) {
         self.date = date
         self.count = count
+        self.cost = cost
+        self.unpricedTokens = max(0, unpricedTokens)
+        self.model = model
     }
 
     /// Whether this record wins over `other` when both describe the same response.
     ///
     /// One rule applies within a file and across files, so the result never depends on the
     /// read order: the larger count wins, because usage within one response only grows. With
-    /// equal counts the earlier date wins, because a copy is written after the original.
+    /// equal counts the earlier date wins, because a copy is written after the original. On a
+    /// full tie, pricing decides, so the cost does not depend on the read order either: a
+    /// priced record, then the larger cost, then fewer unpriced tokens, then the smaller model
+    /// name (no model first).
     public func replaces(_ other: TokenRecord) -> Bool {
-        count != other.count ? count > other.count : date < other.date
+        if count != other.count { return count > other.count }
+        if date != other.date { return date < other.date }
+        switch (cost, other.cost) {
+        case (.some, .none): return true
+        case (.none, .some): return false
+        case (.some(let mine), .some(let theirs)) where mine != theirs: return mine > theirs
+        default: break
+        }
+        if unpricedTokens != other.unpricedTokens { return unpricedTokens < other.unpricedTokens }
+        switch (model, other.model) {
+        case (.none, .some): return true
+        case (.some(let mine), .some(let theirs)): return mine < theirs
+        default: return false
+        }
     }
 
     /// The sum of non-negative counts, or nil when a count is missing or negative, or the sum

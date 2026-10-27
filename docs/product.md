@@ -163,6 +163,16 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 3. Missing history is unknown (`—`), never zero. Notes state partial history, missing
    records, errors, and old data. An error with a retry time counts down, as notices do
    (`<message> Retrying in 3m.`). History never changes quota, severity, or selection.
+4. Claude and Codex rows add an estimate of the cost at API list prices:
+   `35.8M tokens · ~$42.10` (`<$0.01` below a cent, whole dollars from $100). It is not a
+   bill; the row's help says so. `+` marks an estimate that leaves out tokens without a
+   price, or comes from a partial history. A row without priced tokens shows the count only.
+   Cursor and Grok rows have no estimate: their accounts report real money.
+5. The note, first match wins: an issue, no history, partial history, no records, old data,
+   then the price note, which shows whenever the rows show counts: `No price for: <model>`
+   (up to three names, through `Redactor`), or `Some tokens have no price` for tokens without
+   a model name or with a part that has no price. The price note covers Last 7 Days, which
+   contains the other rows (`TokenRowsBuilder`, `docs/token-history.md`).
 
 ## 6. Settings
 

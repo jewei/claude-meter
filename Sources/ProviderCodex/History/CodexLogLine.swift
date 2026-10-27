@@ -16,6 +16,8 @@ struct CodexLogLine: Decodable {
         var source: Source?
         var historyStartOrdinal: HistoryJSON.Count?
         var info: Info?
+        /// The model of a `turn_context` line, such as `gpt-6-astra`.
+        var model: String?
 
         init() {}
 
@@ -33,6 +35,7 @@ struct CodexLogLine: Decodable {
             source = container.lenient(.source)
             historyStartOrdinal = container.lenient(.historyStartOrdinal)
             info = container.lenient(.info)
+            model = Self.text(container, .model)
         }
 
         /// The first key that holds a usable identifier.
@@ -43,7 +46,7 @@ struct CodexLogLine: Decodable {
         }
 
         private enum Keys: String, CodingKey {
-            case type, id, timestamp, source, info
+            case type, id, timestamp, source, info, model
             case sessionID = "session_id"
             case turnID = "turn_id"
             case turnIDCamelCase = "turnId"
@@ -106,9 +109,11 @@ struct CodexLogLine: Decodable {
     }
 
     /// A usage object. Decoding never fails: `counts` is nil when the value is not an object
-    /// with valid `input_tokens` and `output_tokens`.
+    /// with valid `input_tokens` and `output_tokens`. `cache` is nil when a cache count is
+    /// invalid; absent cache counts are zero.
     struct Usage: Decodable {
         let counts: CodexTokenCounts?
+        let cache: CodexCacheParts?
 
         init(from decoder: any Decoder) {
             let container = try? decoder.container(keyedBy: Keys.self)
@@ -121,11 +126,20 @@ struct CodexLogLine: Decodable {
             } else {
                 counts = nil
             }
+            if let cached = HistoryJSON.Count.orZero(container?.lenient(.cachedInput)),
+                let write = HistoryJSON.Count.orZero(container?.lenient(.cacheWrite))
+            {
+                cache = CodexCacheParts(cachedInput: cached, cacheWrite: write)
+            } else {
+                cache = nil
+            }
         }
 
         private enum Keys: String, CodingKey {
             case input = "input_tokens"
             case output = "output_tokens"
+            case cachedInput = "cached_input_tokens"
+            case cacheWrite = "cache_write_input_tokens"
         }
     }
 

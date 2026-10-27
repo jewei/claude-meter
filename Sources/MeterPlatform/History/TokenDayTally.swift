@@ -8,6 +8,9 @@ public struct TokenDayTally: Sendable {
     /// The start of the earliest covered day. Older records are ignored.
     public let start: Date
     public private(set) var dailyTokens: [Date: Int64] = [:]
+    public private(set) var dailyCost: [Date: Decimal] = [:]
+    public private(set) var dailyUnpricedTokens: [Date: Int64] = [:]
+    public private(set) var unpricedModels: Set<String> = []
     /// True when some records could not be counted.
     public var isPartial = false
     /// True when the source has records, even if none fall inside the covered days.
@@ -55,6 +58,18 @@ public struct TokenDayTally: Sendable {
             return
         }
         dailyTokens[day] = total
+        // A record can have a priced part and an unpriced part, so both add independently.
+        if let cost = record.cost { dailyCost[day, default: 0] += cost }
+        if record.unpricedTokens > 0 {
+            dailyUnpricedTokens[day] =
+                TokenRecord.sum([dailyUnpricedTokens[day, default: 0], record.unpricedTokens])
+                ?? Int64.max
+            if let model = record.model,
+                unpricedModels.count < TokenHistory.maximumUnpricedModels
+            {
+                unpricedModels.insert(model)
+            }
+        }
     }
 
     /// The counted days as history.
@@ -62,6 +77,7 @@ public struct TokenDayTally: Sendable {
         TokenHistory(
             dailyTokens: dailyTokens, coverageStart: start, observedAt: now,
             timeZoneID: calendar.timeZone.identifier, hasRecords: hasRecords,
-            isPartial: isPartial)
+            isPartial: isPartial, dailyCost: dailyCost, dailyUnpricedTokens: dailyUnpricedTokens,
+            unpricedModels: unpricedModels)
     }
 }

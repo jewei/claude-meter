@@ -71,6 +71,40 @@ enum Formatting {
         }
     }
 
+    /// `~$42.10`, `~$1,241`, or `<$0.01`, with `+` when the estimate is incomplete. Under
+    /// $100 two decimals; from $100 whole dollars with grouping.
+    static func estimate(_ estimate: CostEstimate) -> String {
+        let amount = estimate.amount
+        let text: String
+        if amount < Decimal(string: "0.01") ?? 0 {
+            text = "<$0.01"
+        } else if amount < 100 {
+            text =
+                "~$"
+                + amount.formatted(.number.precision(.fractionLength(2)).locale(numberLocale))
+        } else {
+            text =
+                "~$"
+                + amount.formatted(.number.precision(.fractionLength(0)).locale(groupingLocale))
+        }
+        return estimate.isComplete ? text : text + "+"
+    }
+
+    /// `about 42 dollars at API prices`, for VoiceOver.
+    static func spokenEstimate(_ estimate: CostEstimate) -> String {
+        let more = estimate.isComplete ? "" : " or more"
+        guard estimate.amount >= 1 else { return "under 1 dollar\(more) at API prices" }
+        let dollars = NSDecimalNumber(decimal: estimate.amount).rounding(
+            accordingToBehavior: NSDecimalNumberHandler(
+                roundingMode: .plain, scale: 0, raiseOnExactness: false, raiseOnOverflow: false,
+                raiseOnUnderflow: false, raiseOnDivideByZero: false)
+        ).intValue
+        return "about \(dollars) \(dollars == 1 ? "dollar" : "dollars")\(more) at API prices"
+    }
+
+    /// Groups thousands (`1,241`), which `numberLocale` does not.
+    private static let groupingLocale = Locale(identifier: "en_US")
+
     /// `12 credits`, `1.5 credits`.
     static func credits(_ amount: Decimal) -> String {
         let number = amount.formatted(

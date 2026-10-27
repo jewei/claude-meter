@@ -115,14 +115,21 @@ import Testing
         "Email: ", "-----BEGIN ", #"\"token\":\"a\\\""#,
     ]
 
-    /// The CPU time of this thread, so other work on a busy machine does not count. The best
-    /// of three runs, so one interruption does not count either.
-    private static func cpuTime(_ text: String) -> UInt64 {
-        (0..<3).map { _ in
-            let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
-            _ = Redactor.redact(text)
-            return clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start
-        }.min() ?? 0
+    /// The best CPU time of this thread for each text, so other work on a busy machine does
+    /// not count. The texts take turns over seven rounds: Apple silicon has fast and slow
+    /// cores, and back-to-back runs of one text can all land on a slow core while the other
+    /// text runs on a fast one. Taking turns gives each text a run on the fast core.
+    private static func cpuTimes(_ texts: [String], rounds: Int = 7) -> [UInt64] {
+        var best = [UInt64](repeating: .max, count: texts.count)
+        for _ in 0..<rounds {
+            for (index, text) in texts.enumerated() {
+                let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+                _ = Redactor.redact(text)
+                best[index] = min(
+                    best[index], clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start)
+            }
+        }
+        return best
     }
 
     /// Twice the text takes about twice the time, never four times, and 16 KiB stays far below
@@ -130,8 +137,11 @@ import Testing
     @Test(arguments: adversarialUnits)
     func longRunsRedactQuickly(unit: String) {
         _ = Redactor.redact("warm up \(unit)")
-        let half = Self.cpuTime(String(repeating: unit, count: 8_192 / unit.utf16.count))
-        let full = Self.cpuTime(String(repeating: unit, count: 16_384 / unit.utf16.count))
+        let times = Self.cpuTimes([
+            String(repeating: unit, count: 8_192 / unit.utf16.count),
+            String(repeating: unit, count: 16_384 / unit.utf16.count),
+        ])
+        let (half, full) = (times[0], times[1])
         #expect(full < 3 * half + 5_000_000, "8 KiB: \(half) ns, 16 KiB: \(full) ns")
         #expect(full < 300_000_000, "16 KiB: \(full) ns")
     }

@@ -24,6 +24,11 @@ extension Severity {
         }
     }
 
+    /// A faint red ring inside an empty bar, so it does not read as a bar with no value.
+    var trackOutline: Color? {
+        self == .exhausted ? Palette.energyEmpty.opacity(0.35) : nil
+    }
+
     /// Header numbers stay ink while energy is full, and take the energy ink otherwise.
     var headlineInk: Color {
         self == .normal ? Palette.ink : ink

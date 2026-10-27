@@ -37,7 +37,7 @@ enum ResetsBuilder {
             }
         let count = allowance.available
         return ResetsModel(
-            countText: "\(count) available", rows: rows, note: note,
+            countText: count == 0 ? "None available" : "\(count) available", rows: rows, note: note,
             summary: count == 0
                 ? nil : "\(count) usage \(count == 1 ? "reset" : "resets") available")
     }

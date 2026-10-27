@@ -17,7 +17,7 @@ struct BarCardView: View {
     private var isExpanded: Bool { card.disclosure.showsDetails }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             header
             ForEach(Array(bars.bars.enumerated()), id: \.offset) { _, gauge in
                 BarRow(gauge: gauge, showsLabels: bars.showsBarLabels)
@@ -36,7 +36,8 @@ struct BarCardView: View {
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 13)
+        .padding(.top, 13)
+        .padding(.bottom, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .clipped()
         .chunkyCard()

@@ -13,18 +13,23 @@ import Testing
         return PopoverView(model: model, presentation: presentation)
     }
 
-    /// Token rows with cost estimates, one incomplete, and the price note.
+    /// Token tiles with cost estimates, one incomplete, and the price note that explains it.
     @Test func tokenRowsWithEstimates() {
-        func row(_ title: String, _ value: String) -> TokenRowsModel.Row {
-            TokenRowsModel.Row(title: title, value: value, accessibilityValue: value, help: "")
+        func row(
+            _ title: String, _ value: String, _ detail: String, incomplete: Bool = false
+        ) -> TokenRowsModel.Row {
+            TokenRowsModel.Row(
+                title: title, value: value, isIncomplete: incomplete, detail: detail,
+                accessibilityValue: value, help: "")
         }
         let tokens = TokenRowsModel(
             sourceLabel: "This Mac", help: "",
             rows: [
-                row("Today", "35.8M tokens · ~$42.10"), row("Yesterday", "12.4M tokens · ~$9.87"),
-                row("Last 7 Days", "210M tokens · ~$1,241+"),
+                row("Today", "$42.10", "35.8M tokens"), row("Yesterday", "$9.87", "12.4M tokens"),
+                row("Last 7 days", "$1,241", "210M tokens", incomplete: true),
             ],
-            note: "No price for: gpt-9")
+            estimateNote: "Estimated at API list prices, not a bill.",
+            note: "No price for: gpt-9", noteExplainsIncomplete: true)
         Snapshot.render("token-rows-estimates", padding: 14) {
             TokensSectionView(tokens: tokens).frame(width: 312)
         }
@@ -51,6 +56,53 @@ import Testing
         ]
         Snapshot.render("popover-bars-expanded", background: .clear) {
             popover(.preview(settings: settings))
+        }
+    }
+
+    /// Bar cards with every pace state: on pace, a run-out with a shortfall in warning and in
+    /// critical color, and an exhausted window.
+    @Test func barCardsWithPace() {
+        let now = Date()
+        func window(
+            _ kind: QuotaWindow.Kind, _ title: String, used: Double, hours: Double,
+            id: String? = nil
+        ) -> QuotaWindow {
+            QuotaWindow(
+                id: id ?? kind.rawValue, title: title, kind: kind, usedPercent: used,
+                resetsAt: now.addingTimeInterval(hours * 3_600), isBinding: kind != .scoped,
+                duration: kind == .session ? 5 * 3_600 : 168 * 3_600)
+        }
+        let claude = AccountUsage(
+            id: "claude", name: "Claude", plan: "Max 20x",
+            windows: [
+                window(.session, "Session", used: 2, hours: 3.93),
+                window(.weekly, "Weekly", used: 11, hours: 95),
+                window(.scoped, "Fable Weekly", used: 0, hours: 95, id: "seven_day_fable"),
+            ],
+            resetAllowance: ResetAllowance(available: 0), observedAt: now.addingTimeInterval(-60))
+        let codex = AccountUsage(
+            id: "/Users/me/.codex", name: "Codex", plan: "plus",
+            windows: [
+                window(.session, "Session", used: 100, hours: 0.25),
+                window(.weekly, "Weekly", used: 31, hours: 143),
+            ],
+            balances: [Balance(kind: .credits, amount: 72_909.6, unit: .credits)],
+            resetAllowance: ResetAllowance(available: 2), observedAt: now.addingTimeInterval(-60))
+        let grok = AccountUsage(
+            id: .default, name: "Grok", windows: [window(.weekly, "Weekly", used: 95, hours: 94)],
+            observedAt: now.addingTimeInterval(-60))
+        var settings = MeterApp.Settings.preview
+        settings.appearance.cardStyle = .bars
+        settings.cursor.isEnabled = false
+        settings.grok.isEnabled = true
+        settings.cards.expanded = [.account(.claude, "claude")]
+        let readings = [
+            ProviderUsage(provider: .claude, accounts: [claude]),
+            ProviderUsage(provider: .codex, accounts: [codex]),
+            ProviderUsage(provider: .grok, accounts: [grok]),
+        ]
+        Snapshot.render("popover-bars-pace", background: .clear) {
+            popover(.preview(settings: settings, readings: readings))
         }
     }
 

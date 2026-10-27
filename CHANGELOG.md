@@ -12,6 +12,24 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
+### Added
+
+- Grok cards show the Grok logo.
+
+### Changed
+
+- Energy bars look deeper and glossier. When a limit will run out before it resets, its bar
+  hatches the shortfall up to the even-pace mark, and "Runs out in …" shows with a warning
+  icon, in orange, or in red when the limit is already almost empty. "Lasts until reset" no
+  longer shows as text: the mark shows it, and VoiceOver still says it.
+- Tokens used shows Today, Yesterday, and Last 7 days as tiles: the estimated cost first
+  ("$42.10"), the token count below. One note under the tiles says that the estimate uses
+  API list prices and is not a bill, and explains a "+".
+- Grok cards show "Weekly · 5% left" and the reset under the bar, as Claude and Codex
+  cards do.
+- Credit balances group thousands ("72,909.6 credits"), and "Usage limit resets" says
+  "None available" instead of "0 available".
+
 ## [4.2.0] - 2026-10-27
 
 ### Added

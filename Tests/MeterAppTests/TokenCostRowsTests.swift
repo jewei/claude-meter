@@ -36,14 +36,14 @@ import Testing
     }
 
     @Test(arguments: [
-        ("0.004", "35.8M tokens · <$0.01"), ("0.009", "35.8M tokens · <$0.01"),
-        ("0.01", "35.8M tokens · ~$0.01"),
-        ("42.105", "35.8M tokens · ~$42.11"), ("99.99", "35.8M tokens · ~$99.99"),
-        ("99.996", "35.8M tokens · ~$100"), ("100", "35.8M tokens · ~$100"),
-        ("1240.6", "35.8M tokens · ~$1,241"),
+        ("0.004", "<$0.01"), ("0.009", "<$0.01"), ("0.01", "$0.01"), ("42.105", "$42.11"),
+        ("99.99", "$99.99"), ("99.996", "$100"), ("100", "$100"), ("1240.6", "$1,241"),
     ])
     func amountsFollowTheFormatBorders(cost: String, text: String) {
-        #expect(today(model(cost: cost))?.value == text)
+        let row = today(model(cost: cost))
+        #expect(row?.value == text)
+        #expect(row?.detail == "35.8M tokens")
+        #expect(row?.isIncomplete == false)
     }
 
     @Test func helpAndSpeechSayItIsAnEstimate() {
@@ -63,14 +63,32 @@ import Testing
                 "under 1 cent at API prices") == true)
     }
 
+    /// The `+` goes before a note that says why; the estimate note shows with any estimate.
     @Test func anIncompleteEstimateIsMarked() {
-        #expect(today(model(cost: "42", unpriced: 10, models: ["m"]))?.value.hasSuffix("+") == true)
-        #expect(today(model(cost: "42", isPartial: true))?.value.hasSuffix("+") == true)
+        let unpriced = model(cost: "42", unpriced: 10, models: ["m"])
+        #expect(today(unpriced)?.isIncomplete == true)
+        #expect(unpriced?.noteExplainsIncomplete == true)
+        #expect(unpriced?.estimateNote == "Estimated at API list prices, not a bill.")
+        let partial = model(cost: "42", isPartial: true)
+        #expect(today(partial)?.isIncomplete == true)
+        #expect(partial?.noteExplainsIncomplete == true)
+        // An old-data note does not explain the mark.
+        let old = model(cost: "42", unpriced: 10, models: ["m"], observedAt: .reference(-1_000))
+        #expect(today(old)?.isIncomplete == true)
+        #expect(old?.noteExplainsIncomplete == false)
+        let complete = model(cost: "42")
+        #expect(complete?.noteExplainsIncomplete == false)
+        #expect(complete?.estimateNote == "Estimated at API list prices, not a bill.")
     }
 
     @Test func noPricedTokenShowsTheTokenCountOnly() {
-        #expect(today(model())?.value == "35.8M tokens")
-        #expect(today(model(unpriced: 100, models: ["gpt-9"]))?.value == "35.8M tokens")
+        for model in [model(), model(unpriced: 100, models: ["gpt-9"])] {
+            #expect(today(model)?.value == "35.8M")
+            #expect(today(model)?.detail == "tokens")
+            #expect(today(model)?.isIncomplete == false)
+            #expect(model?.estimateNote == nil)
+            #expect(model?.noteExplainsIncomplete == false)
+        }
     }
 
     /// The price note also shows when no row has an estimate, so a new model explains it.
@@ -91,13 +109,14 @@ import Testing
                 == "Token data may be stale")
         #expect(
             model(cost: "1", unpriced: 100, models: ["m"], isPartial: true)?.note
-                == "Partial history · some records could not be counted")
+                == "Partial history — some records couldn't be counted")
     }
 
     /// Cursor's and Grok's accounts report real money; their records carry no estimate.
     @Test(arguments: [ProviderID.cursor, .grok])
     func cursorAndGrokRowsAreUnchanged(provider: ProviderID) {
-        #expect(today(model(provider))?.value == "35.8M tokens")
+        #expect(today(model(provider))?.value == "35.8M")
         #expect(model(provider)?.note == nil)
+        #expect(model(provider)?.estimateNote == nil)
     }
 }

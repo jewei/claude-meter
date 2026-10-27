@@ -8,13 +8,16 @@ struct ResetsSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            HStack(alignment: .firstTextBaseline) {
                 Text("Usage limit resets")
+                    .font(MeterFont.body(11, .bold))
+                    .foregroundStyle(Palette.ink)
                 Spacer(minLength: 4)
-                Text(resets.countText).monospacedDigit()
+                Text(resets.countText)
+                    .font(MeterFont.body(11, .semibold))
+                    .foregroundStyle(Palette.inkMuted)
+                    .monospacedDigit()
             }
-            .font(MeterFont.body(11, .bold))
-            .foregroundStyle(Palette.ink)
             .accessibilityElement(children: .combine)
             ForEach(Array(resets.rows.enumerated()), id: \.offset) { _, row in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {

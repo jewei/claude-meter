@@ -41,7 +41,10 @@ struct GaugeBuilder {
             fraction: Formatting.fraction(window, showsUsed: showsUsed),
             severity: severity,
             resetText: reset,
-            paceText: pace.map { PaceText.text($0, now: context.now, showsUsed: showsUsed) },
+            paceText: pace.flatMap { Self.showsPaceText($0) ? $0 : nil }.map {
+                PaceText.text($0, now: context.now, showsUsed: showsUsed)
+            },
+            paceSeverity: pace.flatMap { Self.paceSeverity($0, window: severity) },
             evenPaceFraction: pace.map {
                 showsUsed ? $0.expectedUsed / 100 : 1 - $0.expectedUsed / 100
             },
@@ -67,6 +70,19 @@ struct GaugeBuilder {
     /// Scoped windows (Opus, Sonnet, …) after the session and weekly windows.
     func scoped(_ account: AccountUsage) -> [GaugeModel] {
         account.windows.filter { $0.kind == .scoped }.map { gauge($0, account: account) }
+    }
+
+    /// A card states a pace that needs attention. "Lasts until reset" is only spoken: the
+    /// even-pace mark already shows it.
+    static func showsPaceText(_ pace: Pace) -> Bool {
+        if case .lastsUntilReset = pace.verdict { return false }
+        return true
+    }
+
+    /// Warning for a run-out before the reset, or the window's severity when that is worse.
+    static func paceSeverity(_ pace: Pace, window: Severity) -> Severity? {
+        guard case .runsOut = pace.verdict else { return nil }
+        return max(window, .warning)
     }
 
     /// Stale numbers must not predict anything, so a stale account has no pace.

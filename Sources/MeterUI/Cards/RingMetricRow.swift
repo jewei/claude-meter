@@ -30,7 +30,7 @@ struct RingMetricRow: View {
                     .padding(.leading, 15)
             }
             if let pace = gauge.paceText {
-                PaceLine(text: pace)
+                PaceLine(text: pace, severity: gauge.paceSeverity)
                     .padding(.leading, 15)
             }
         }

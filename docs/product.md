@@ -141,9 +141,15 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    Claude extra usage, the other main-capable provider, Cursor, then Grok. The extra-usage
    card shows only while Claude is the main meter, for its selected account, when that
    account reports extra usage (`CardBuilder`).
-7. Every limit row, bar, and ring with a pace (§1.8) shows the verdict on its own line, and
-   an even-pace mark on its bar or ring. Cursor's and Grok's bar shows it too, although their
-   caption replaces the bar's label row (`GaugeBuilder`, `PaceText`).
+7. Every limit row, bar, and ring with a pace (§1.8) has an even-pace mark on its bar or
+   ring. It states the verdict on its own line only when the verdict needs attention: "Runs
+   out in …", with a warning icon in warning color (critical color when the window is
+   already critical), and "Tight". "Lasts until reset" is only spoken: the mark shows it. A
+   bar whose window runs out before its reset also hatches the shortfall from its fill to
+   the mark, in the same color (`GaugeBuilder.showsPaceText`, `GaugeBuilder.paceSeverity`,
+   `PaceText`). Cursor's bar shows the pace too, although its caption replaces the bar's
+   label row. Grok's bar has its own label row (`Weekly · 5% left` and the reset), and its
+   caption states only the on-demand spend (`CardBuilder`).
 8. Account cards (rings, bars, Cursor, and Grok) open and close from their header, and
    remember their state. They start closed. The extra-usage card is always open. Details
    hold usage-limit resets and tokens used, and in bar cards also scoped windows.
@@ -158,24 +164,29 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 
 ## 5. Tokens used (`TokenRowsBuilder`)
 
-1. Each card shows Today, Yesterday, and Last 7 Days (today plus six earlier local days).
+1. Each card shows a tile for Today, Yesterday, and Last 7 days (today plus six earlier
+   local days).
 2. Claude Code, Codex, and Grok counts come from local sessions in that account's own folder
    on this Mac, labeled **This Mac**. Cursor counts come from the account export, labeled
    **Account usage**. The label follows the source that the history reports.
 3. Missing history is unknown (`—`), never zero. Notes state partial history, missing
    records, errors, and old data. An error with a retry time counts down, as notices do
    (`<message> Retrying in 3m.`). History never changes quota, severity, or selection.
-4. Claude and Codex rows add an estimate of the cost at API list prices:
-   `35.8M tokens · ~$42.10` (`<$0.01` below a cent, whole dollars from $100). It is not a
-   bill; the row's help says so. `+` marks an estimate that leaves out tokens without a
-   price, or comes from a partial history. A row without priced tokens shows the count only.
-   Cursor and Grok rows have no estimate: their accounts report real money.
-5. The note, first match wins: an issue, no history, partial history, no records, old data,
-   then the price note, which shows whenever the rows show counts: `No price for: <model>`
-   for models that are not in the price table (up to three names, through `Redactor`), or
-   `Some tokens have no price` for other tokens without a price. The price note covers
-   Last 7 Days, which contains the other rows (`TokenRowsBuilder`,
-   `docs/token-history.md`).
+4. Claude and Codex tiles show an estimate of the cost at API list prices, `$42.10`, over
+   the count, `35.8M tokens` (`<$0.01` below a cent, whole dollars from $100). A footnote
+   says "Estimated at API list prices, not a bill." whenever a tile shows an estimate, and
+   each tile's help says so too. `+` marks an estimate that leaves out tokens without a
+   price, or comes from a partial history. A tile without priced tokens shows the count
+   only (`35.8M` over `tokens`). Cursor and Grok tiles have no estimate: their accounts
+   report real money.
+5. The note follows the estimate note in the footnote, first match wins: an issue, no
+   history, partial history (`Partial history — some records couldn't be counted`), no
+   records, old data, then the price note, which shows whenever the tiles show counts:
+   `No price for: <model>` for models that are not in the price table (up to three names,
+   through `Redactor`), or `Some tokens have no price` for other tokens without a price. The
+   price note covers Last 7 days, which contains the other tiles. When a tile shows `+` and
+   the note is the partial-history or price note, the footnote puts `+` before the note,
+   because that note explains it (`TokenRowsBuilder`, `docs/token-history.md`).
 
 ## 6. Settings
 

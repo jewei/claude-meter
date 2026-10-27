@@ -9,6 +9,7 @@ public final class FakeNotificationPoster: NotificationPosting {
         var posted: [LocalNotification] = []
         var attempts: [LocalNotification] = []
         var requests = 0
+        var heldRead: Gate?
     }
 
     private let state: Locked<State>
@@ -48,7 +49,21 @@ public final class FakeNotificationPoster: NotificationPosting {
         state.withLock { $0.acceptsPosts = value }
     }
 
+    /// The next ``authorization()`` reads the value at once, then waits for `gate` before it
+    /// answers, like a read that macOS answers late.
+    public func holdNextAuthorization(_ gate: Gate) {
+        state.withLock { $0.heldRead = gate }
+    }
+
     public func authorization() async -> NotificationAuthorization {
+        let (value, held) = state.withLock { state in
+            defer { state.heldRead = nil }
+            return (state.authorization, state.heldRead)
+        }
+        if let held {
+            await held.wait()
+            return value
+        }
         await authorizationGate?.wait()
         return state.value.authorization
     }

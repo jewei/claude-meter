@@ -35,7 +35,7 @@ struct AlertsCard: View {
             CardDivider()
             SettingsRow(
                 symbol: "bolt.fill", tint: Palette.Tile.green, title: "Refilled",
-                subtitle: "A limit that ran low is full again after its reset."
+                subtitle: "A limit that ran low or was on pace to run out is back after its reset."
             ) {
                 MeterSwitch(label: "Refill alerts", isOn: alerts.refill)
             }

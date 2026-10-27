@@ -92,7 +92,7 @@ import Testing
         #expect(AlertCenter.requestLimit == .seconds(600))
     }
 
-    @Test func aCrossingPostsOnce() async {
+    @Test func aCrossingPostsOnce() async throws {
         let poster = FakeNotificationPoster()
         let model = makeModel(poster: poster) { $0.alerts.lowEnergy = true }
         await start(model)
@@ -100,7 +100,9 @@ import Testing
         await publish(model, .claude, [window(96)])
         await publish(model, .claude, [window(97)])
         #expect(poster.posted.map(\.title) == ["Low energy"])
-        #expect(poster.posted.first?.id == "claude|work|session|lowEnergy")
+        let id = try #require(poster.posted.first?.id)
+        // A digest: macOS stores the ID, and a Codex account ID is a path with the user name.
+        #expect(id.count == 64 && !id.contains("work"))
     }
 
     @Test func oneEvaluationPostsEveryAlertItOwes() async {
@@ -160,10 +162,7 @@ import Testing
     @Test func theTurnedOnAlertWaitsForPermission() async {
         let request = Gate()
         let poster = FakeNotificationPoster(authorization: .notDetermined, requestGate: request)
-        var limits = AlertCenter.Limits()
-        limits.authorization = .milliseconds(50)
-        limits.post = .milliseconds(50)
-        let model = makeModel(poster: poster, limits: limits)
+        let model = makeModel(poster: poster)
         await start(model)
         await publish(model, .claude, [window(96)])
         model.settings.update { $0.alerts.lowEnergy = true }
@@ -248,6 +247,68 @@ import Testing
         await settle(model)
         #expect(model.alerts.evaluationCount == before + 1)
         #expect(poster.posted.count == 1)
+    }
+
+    /// The popover does not make the app active, so a grant in System Settings is noticed
+    /// when an evaluation finds no permission.
+    @Test func aLaterGrantIsNoticedAtTheNextRefresh() async {
+        let poster = FakeNotificationPoster(authorization: .denied)
+        let model = makeModel(poster: poster) { $0.alerts.lowEnergy = true }
+        await start(model)
+        await publish(model, .claude, [window(50)])
+        poster.setAuthorization(.authorized)
+        await publish(model, .claude, [window(50)])
+        #expect(await waitUntil { model.alerts.authorization == .authorized })
+        await settle(model)
+        await publish(model, .claude, [window(96)])
+        #expect(poster.posted.count == 1)
+    }
+
+    /// A source turned off and on while macOS blocks notifications still forgets its state.
+    @Test func turningASourceOffForgetsItsStateWithoutPermission() async {
+        let poster = FakeNotificationPoster()
+        let model = makeModel(poster: poster) { $0.alerts.lowEnergy = true }
+        await start(model)
+        await publish(model, .codex, [window(50)])
+        #expect(model.alerts.state.windows.keys.contains { $0.provider == .codex })
+        poster.setAuthorization(.denied)
+        await model.alerts.refreshAuthorization()
+        model.settings.update { $0.codex.isEnabled = false }
+        #expect(!model.alerts.state.windows.keys.contains { $0.provider == .codex })
+    }
+
+    /// A queued alert whose switch was turned off while an earlier post waited is dropped.
+    @Test func aQueuedAlertOfAKindTurnedOffIsDropped() async {
+        let gate = Gate()
+        let poster = FakeNotificationPoster(postGate: gate)
+        let model = makeModel(poster: poster) { $0.alerts.lowEnergy = true }
+        await start(model)
+        await publish(model, .claude, [window(50), window(50, id: "weekly")])
+        poster.setAcceptsPosts(true)
+        let crossing = Task {
+            await self.publish(model, .claude, [window(96), window(96, id: "weekly")])
+        }
+        #expect(await gate.waitForArrivals())
+        model.settings.update { $0.alerts.lowEnergy = false }
+        gate.open()
+        await crossing.value
+        #expect(poster.attempts.count == 1)
+    }
+
+    /// An older permission read that answers late does not overwrite a newer one.
+    @Test func aLatePermissionReadDoesNotWin() async {
+        let poster = FakeNotificationPoster(authorization: .denied)
+        let model = makeModel(poster: poster)
+        await start(model)
+        let gate = Gate()
+        poster.holdNextAuthorization(gate)
+        let older = Task { await model.alerts.refreshAuthorization() }
+        #expect(await gate.waitForArrivals())
+        poster.setAuthorization(.authorized)
+        await model.alerts.refreshAuthorization()
+        gate.open()
+        await older.value
+        #expect(model.alerts.authorization == .authorized)
     }
 
     /// Settings saved by 4.1.2 have no alerts, and decode with every alert off.

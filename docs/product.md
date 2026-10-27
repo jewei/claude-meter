@@ -222,8 +222,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 2. Turning on the first alert asks macOS for permission. Nothing is evaluated without
    permission, so no alert is used up before it. When macOS blocks notifications and an alert
    is on, the card says how to turn them on and opens System Settings
-   (`AlertPermissionText`). The app reads the permission again when Settings opens and when
-   the app becomes active.
+   (`AlertPermissionText`). The app reads the permission again when Settings opens, when
+   the app becomes active, and when an evaluation is skipped for lack of permission, so a
+   grant in System Settings applies at the next refresh. A grant starts an evaluation.
 3. Alerts use the windows as observed, never the resolved windows of §1.5: the 0% that the
    display shows after a reset is not a refill. Stale accounts, restored readings, and
    untracked Claude config dirs are silent. An account with an issue that is not stale still
@@ -235,7 +236,8 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    work.
 5. Low energy alerts once per crossing into critical, and once at a new period that is still
    critical. It re-arms when used percent drops 5 points below critical, so a reading that
-   wobbles at the border sends one alert. A run-out alerts once per window and period, when an
+   wobbles at the border sends one alert. A reading outside the known period, such as one
+   without a reset time, does not re-arm it. A run-out alerts once per window and period, when an
    evaluation sees a projected run-out: after a refresh or when the alert is turned on. The
    clock passing the projected time sends nothing more. A refill alerts once, at the first
    observation of the new period.

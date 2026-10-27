@@ -44,7 +44,10 @@ The scheduler calls `UsageStore.refresh(quota:history:)` when requests may go ou
 settings, merged per main-actor turn, and only while macOS allows notifications. It reads
 `PresentationContext.observedAccounts(for:)`, which differs from `accounts(for:)` in two
 ways: it drops untracked accounts, and it keeps windows as stored instead of resolving them.
-It saves the evaluator's state before it posts.
+It saves the evaluator's state before it posts, and drops a queued alert whose switch was
+turned off. A permission read that finds a new grant starts an evaluation. Turning a source
+off, or a Claude config dir's tracking, clears its alert state at once, also without
+permission.
 
 `UsageStore` is the only owner of readings. Presentation builders derive everything else on
 each render from the readings, the settings, and the current time. Nothing caches a derived

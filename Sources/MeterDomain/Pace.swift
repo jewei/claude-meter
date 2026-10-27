@@ -9,7 +9,8 @@ public struct Pace: Equatable, Sendable {
     public enum Verdict: Equatable, Sendable {
         /// More than ``Pace/tightSpare`` percent is left at the reset.
         case lastsUntilReset(spareAtReset: Double)
-        /// At most ``Pace/tightSpare`` percent is left at the reset, and more than nothing.
+        /// 0 to ``Pace/tightSpare`` percent is left at the reset. A run-out exactly at the
+        /// reset is tight with 0 left.
         case tight(spareAtReset: Double)
         /// The energy runs out before the reset. The date can be in the past: the app did not
         /// observe exhaustion, so the verdict does not claim it.

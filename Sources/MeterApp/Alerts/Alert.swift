@@ -1,5 +1,6 @@
 import Foundation
 import MeterDomain
+import MeterPlatform
 
 /// One notification that the evaluator owes (``AlertEvaluator``).
 public struct Alert: Equatable, Sendable {
@@ -22,8 +23,11 @@ public struct Alert: Equatable, Sendable {
     public let body: String
 
     /// One notification per key and kind: a new one replaces the old one of the same window
-    /// and kind, and a run-out alert does not replace a low-energy alert.
+    /// and kind, and a run-out alert does not replace a low-energy alert. A digest, because
+    /// macOS stores the ID on disk and a Codex account ID is a home path with the user name.
     public var notificationID: String {
-        "\(key.provider.rawValue)|\(key.account.rawValue)|\(key.window)|\(kind.rawValue)"
+        Digest.sha256(parts: [
+            "alert", key.provider.rawValue, key.account.rawValue, key.window, kind.rawValue,
+        ])
     }
 }

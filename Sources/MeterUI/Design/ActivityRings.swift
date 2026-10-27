@@ -76,7 +76,7 @@ private struct RingArc: View {
                 PaceMark(length: lineWidth + 2)
                     .offset(y: -diameter / 2)
                     .rotationEffect(.degrees(360 * min(1, max(0, mark))))
-                    .transaction { $0.animation = nil }
+                    .noShareAnimation(mark)
             }
         }
     }

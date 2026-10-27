@@ -6,6 +6,39 @@
         <description>Claude Meter release feed</description>
         <language>en</language>
         <item>
+            <title>Version 4.2.0</title>
+            <pubDate>Tue, 27 Oct 2026 06:53:31 +0000</pubDate>
+            <sparkle:version>420</sparkle:version>
+            <sparkle:shortVersionString>4.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:minimumUpdateVersion>295</sparkle:minimumUpdateVersion>
+            <sparkle:minimumAutoupdateVersion>400</sparkle:minimumAutoupdateVersion>
+            <description><![CDATA[
+<h3>Added</h3>
+<ul>
+<li>Token rows on Claude and Codex cards estimate the cost at API list prices, such as "35.8M tokens · ~$42.10". It is an estimate, not a bill. Prices come with the app; nothing is fetched.</li>
+<li>Optional alerts in Settings &gt; Appearance: a macOS notification when a limit runs low, when it will run out before it resets, and when it refills. All are off until you turn them on.</li>
+</ul>
+<ul>
+<li>Cards say whether energy lasts until the reset: "Runs out in 2h 10m", "Tight: ~4% left at reset", or "Lasts until reset", with a mark on each bar and ring where an even pace would be. The summary at the top names the limit that runs out first. Claude, Codex, Cursor's billing period, and Grok's credits all show it.</li>
+</ul>
+<h3>Changed</h3>
+<ul>
+<li>In Low Power Mode, or when the Mac runs hot, Claude Meter refreshes every 15 minutes instead of 5, to save battery. Readings from the slower refresh are not marked stale.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>With several Claude accounts, one could show as stale for about a minute while refreshing still worked. Numbers now count as old after 15 minutes without a refresh, not 10.</li>
+</ul>
+            ]]></description>
+            <enclosure
+                url="https://github.com/jewei/claude-meter/releases/download/v4.2.0/ClaudeMeter-4.2.0.dmg"
+                sparkle:edSignature="IMflHvadz+EIp/V++JHzMymWDxA5ZZvtNoZzqTq24ptk7vDKXCzFd/Xe3c4uIh7EqUqBMlC15gXcQuraa0jAAQ=="
+                length="5338985"
+                type="application/octet-stream"
+            />
+        </item>
+        <item>
             <title>Version 4.1.2</title>
             <pubDate>Wed, 21 Oct 2026 09:28:47 +0000</pubDate>
             <sparkle:version>412</sparkle:version>

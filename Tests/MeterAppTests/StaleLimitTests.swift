@@ -20,6 +20,12 @@ import Testing
         #expect(!isStale(age: 700, staleAfter: RefreshScheduler.constrainedStaleAfter))
     }
 
+    /// The worst healthy age under strain: the 900 s cadence, Claude's 290 s skip of an
+    /// account it checked recently, and the 90 s deadline.
+    @Test func theWorstHealthyAgeUnderStrainIsCurrent() {
+        #expect(!isStale(age: 1_280, staleAfter: RefreshScheduler.constrainedStaleAfter))
+    }
+
     @Test func theStrainBorder() {
         #expect(!isStale(age: 1_499, staleAfter: RefreshScheduler.constrainedStaleAfter))
         #expect(isStale(age: 1_501, staleAfter: RefreshScheduler.constrainedStaleAfter))

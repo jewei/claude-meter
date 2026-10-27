@@ -8,7 +8,7 @@ import Foundation
 @MainActor
 public final class PowerStateMonitor {
     /// Whether the Mac is under strain.
-    public struct Reading: Sendable {
+    public struct PowerState: Sendable {
         public var isLowPowerModeEnabled: Bool
         public var thermalState: ProcessInfo.ThermalState
 
@@ -22,8 +22,8 @@ public final class PowerStateMonitor {
         }
 
         /// The live values.
-        public static func current() -> Reading {
-            Reading(
+        public static func current() -> PowerState {
+            PowerState(
                 isLowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled,
                 thermalState: ProcessInfo.processInfo.thermalState)
         }
@@ -33,17 +33,17 @@ public final class PowerStateMonitor {
     /// Called on the main actor when ``isConstrained`` changes.
     public var onChange: (() -> Void)?
 
-    private let read: @Sendable () -> Reading
+    private let read: @Sendable () -> PowerState
     private let observers: PowerObserverTokens
 
     /// Observes `center`, the default center by default. Tests pass their own center and
     /// reader.
     public init(
         center: NotificationCenter = .default,
-        read: @escaping @Sendable () -> Reading = Reading.current
+        read: @escaping @Sendable () -> PowerState = PowerState.current
     ) {
         self.read = read
-        isConstrained = read().isConstrained
+        isConstrained = false
         observers = PowerObserverTokens(center: center)
         let names: [Notification.Name] = [
             .NSProcessInfoPowerStateDidChange, ProcessInfo.thermalStateDidChangeNotification,
@@ -54,6 +54,8 @@ public final class PowerStateMonitor {
                     Task { @MainActor in self?.update() }
                 })
         }
+        // Read after the observers are in place, so a change in between is not missed.
+        isConstrained = read().isConstrained
     }
 
     private func update() {

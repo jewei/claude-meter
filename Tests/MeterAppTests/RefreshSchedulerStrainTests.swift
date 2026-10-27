@@ -6,18 +6,6 @@ import Testing
 
 @testable import MeterApp
 
-/// A power monitor that tests put under strain by hand.
-@MainActor
-final class FakePower: PowerStateMonitoring {
-    var isConstrained = false
-    var onChange: (() -> Void)?
-
-    func set(_ constrained: Bool) {
-        isConstrained = constrained
-        onChange?()
-    }
-}
-
 /// The slower cadence under Low Power Mode or heat (`docs/architecture.md`, Scheduling).
 @MainActor
 @Suite(.timeLimit(.minutes(1))) struct RefreshSchedulerStrainTests {
@@ -99,7 +87,7 @@ final class FakePower: PowerStateMonitoring {
         #expect(claude.fetchCount == 1)
     }
 
-    @Test func aWakeUnderStrainRefreshesAReadingOfThreeHundredSeconds() async {
+    @Test func aWakeUnderStrainRefreshesAReadingOfEightHundredSeconds() async {
         power.isConstrained = true
         let scheduler = makeScheduler()
         await start(scheduler)
@@ -118,6 +106,38 @@ final class FakePower: PowerStateMonitoring {
         scheduler.popoverDidOpen()
         await scheduler.waitForWork()
         #expect(claude.fetchCount == 2)
+    }
+
+    /// The grace reaches the accounts that views and alerts see: `AppModel` builds every
+    /// context through the scheduler. The display is asleep, so leaving strain sends no
+    /// refresh and the reading stays 1000 s old.
+    @Test func theGraceKeepsAnOldReadingCurrentThroughTheModel() async throws {
+        let clock = clock
+        let store = UsageStore(providers: [claude], now: { clock.now })
+        store.setEnabled([.claude])
+        store.restore([.claude: .sample(.claude, account: "a", observedAt: clock.now)])
+        display.isDisplayAsleep = true
+        power.isConstrained = true
+        let scheduler = RefreshScheduler(
+            store: store, display: display, power: power, now: { clock.now },
+            sleep: timer.sleep)
+        let directory = try TemporaryDirectory()
+        defer { directory.remove() }
+        let model = AppModel(
+            settings: SettingsStore(store: MemoryStore()), usage: store, scheduler: scheduler,
+            updater: DisabledUpdater(), logFile: LogFile(directory: directory.path("Logs")))
+        model.settings.update {
+            $0.hasCompletedOnboarding = true
+            $0.claude.connection = .automatic
+        }
+        clock.advance(1_000)
+        power.set(false)
+        func isStale(after seconds: TimeInterval) -> Bool? {
+            model.context(at: clock.now.addingTimeInterval(seconds)).accounts(for: .claude)
+                .first?.isStale
+        }
+        #expect(isStale(after: 389) == false)
+        #expect(isStale(after: 390) == true)
     }
 
     @Test func theStaleLimitFollowsStrainWithAGraceAfterIt() async {

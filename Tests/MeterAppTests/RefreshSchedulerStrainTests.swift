@@ -142,12 +142,12 @@ import Testing
 
     @Test func theStaleLimitFollowsStrainWithAGraceAfterIt() async {
         let scheduler = makeScheduler()
-        #expect(scheduler.staleAfter(at: clock.now) == 600)
+        #expect(scheduler.staleAfter(at: clock.now) == 900)
         power.set(true)
         #expect(scheduler.staleAfter(at: clock.now) == 1_500)
         power.set(false)
         let left = clock.now
         #expect(scheduler.staleAfter(at: left.addingTimeInterval(389)) == 1_500)
-        #expect(scheduler.staleAfter(at: left.addingTimeInterval(390)) == 600)
+        #expect(scheduler.staleAfter(at: left.addingTimeInterval(390)) == 900)
     }
 }

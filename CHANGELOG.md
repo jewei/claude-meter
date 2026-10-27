@@ -31,6 +31,12 @@ are in the `v3.1.3` tag.
 - In Low Power Mode, or when the Mac runs hot, Claude Meter refreshes every 15 minutes
   instead of 5, to save battery. Readings from the slower refresh are not marked stale.
 
+### Fixed
+
+- A Claude account that Claude Meter had checked a moment earlier no longer shows as
+  stale for about a minute. Numbers now count as old after 15 minutes without a refresh,
+  instead of 10.
+
 ## [4.1.2] - 2026-10-21
 
 ### Removed

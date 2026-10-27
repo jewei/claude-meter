@@ -216,8 +216,8 @@ import Testing
     }
 
     @Test func oldObservationsAreStale() {
-        let fresh = meter([Fixture.account("home")], now: .reference(600))
-        let old = meter([Fixture.account("home")], now: .reference(601))
+        let fresh = meter([Fixture.account("home")], now: .reference(900))
+        let old = meter([Fixture.account("home")], now: .reference(901))
         #expect(!fresh.isStale)
         #expect(old.isStale)
     }
@@ -319,7 +319,7 @@ import Testing
     }
 
     @Test func staleHidesTheNumber() {
-        let model = model(Fixture.account("a"), now: .reference(601))
+        let model = model(Fixture.account("a"), now: .reference(901))
         #expect(model.icon == .bolt(.stale))
         #expect(model.text == nil)
         #expect(model.accessibilityLabel == "Claude Meter. Claude. Data is stale.")

@@ -451,7 +451,7 @@ import Testing
             try tokenRows(.claude, history: nil, refreshing: [.claude]).note
                 == "Reading token usage…")
         #expect(try tokenRows(.claude, history: nil).note == "Token usage unavailable")
-        let old = history(.claude, source: .thisMac, observedAt: .reference(-700))
+        let old = history(.claude, source: .thisMac, observedAt: .reference(-1_000))
         #expect(try tokenRows(.claude, history: old).note == "Token data may be stale")
     }
 

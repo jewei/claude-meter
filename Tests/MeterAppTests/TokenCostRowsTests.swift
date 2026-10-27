@@ -82,14 +82,26 @@ import Testing
     }
 
     @Test func noPricedTokenShowsTheTokenCountOnly() {
-        for model in [model(), model(unpriced: 100, models: ["gpt-9"])] {
+        // Nothing is estimated, so the price note has no mark and no estimate note.
+        let fixtures = [
+            (model(), [TokenRowsModel.FootnotePart]()),
+            (model(unpriced: 100, models: ["gpt-9"]), [.text("No price for: gpt-9")]),
+        ]
+        for (model, footnote) in fixtures {
             #expect(today(model)?.value == "35.8M")
             #expect(today(model)?.detail == "tokens")
             #expect(today(model)?.isIncomplete == false)
-            // Nothing is estimated, so the price note has no mark.
-            #expect(model?.footnote.contains(.mark) == false)
-            #expect(model?.footnote.first != .text("Estimated at API list prices, not a bill."))
+            #expect(model?.footnote == footnote)
         }
+    }
+
+    /// VoiceOver reads the footnote without the `+`: each tile says "may be higher".
+    @Test func theSpokenFootnoteLeavesOutTheMark() {
+        let model = model(cost: "42", unpriced: 10, models: ["m"])
+        #expect(
+            model?.spokenFootnote
+                == "Estimated at API list prices, not a bill. No price for: m")
+        #expect(self.model()?.spokenFootnote == "")
     }
 
     /// The price note also shows when no row has an estimate, so a new model explains it.

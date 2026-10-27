@@ -3,8 +3,8 @@ import SwiftUI
 
 /// One window as a 14 pt energy bar, with "Session · 60% left" and the reset below it when
 /// the card's caption does not state them already. The pace has its own line, also on cards
-/// whose caption states the rest. A pace that runs out before the reset also hatches the
-/// shortfall on the bar.
+/// whose caption states the rest. The bar hatches the shortfall when the model gives it one
+/// (``GaugeModel/shortfallSeverity``).
 struct BarRow: View {
     let gauge: GaugeModel
     var showsLabels = true

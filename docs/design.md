@@ -117,8 +117,8 @@ instead (`.fixedNumberWidth`, `Design/FixedNumberWidth.swift`): a percentage is 
 width), and an amount is as wide as its text with each digit set as the widest digit (extra
 usage), so it changes width only with its count of digits. The token tile value (an amount
 or a count) is the one exception: it is alone on its line with its `+`, so a change of its
-width moves nothing, and it shrinks to fit a narrow tile. `DesignSystemTests` checks the digit widths of each face,
-and `FixedNumberWidthTests` the widths of each number.
+width moves nothing, and it shrinks to fit a narrow tile. `DesignSystemTests` checks the
+digit widths of each face, and `FixedNumberWidthTests` the widths of each number.
 
 ## Components (`Design/`)
 
@@ -237,8 +237,8 @@ ink of `GaugeModel.paceSeverity`; "Tight" is a caption in `inkMuted`.
 - **Bar card** (`BarCardView`): a header button (provider mark, name, badges, headline
   value, chevron; 28 pt minimum height) that calls `toggleCard`. Rows 12 pt apart. One
   `BarRow` per window: a 14 pt `EnergyBar` with the pace mark, the shortfall in the color
-  of `GaugeModel.shortfallSeverity`, and the exhausted ring, then 5 pt below "Session · 60% left"
-  and the reset (8 pt apart), unless `BarsModel.showsBarLabels` is false (Cursor: the
+  of `GaugeModel.shortfallSeverity`, and the exhausted ring, then 5 pt below
+  "Session · 60% left" and the reset (8 pt apart), unless `BarsModel.showsBarLabels` is false (Cursor: the
   caption states the spend and the reset). The pace line is under the bar, also without
   the label row. Then the caption and status line.
   Expanded details reveal from the top with the card height; the card clips its content.
@@ -266,7 +266,7 @@ ink of `GaugeModel.paceSeverity`; "Tight" is a caption in `inkMuted`.
   "about 42 cents" below a dollar), from the amount that the tile shows, then ", may be
   higher" when incomplete. Below the tiles, the footnote (`TokenRowsModel.footnote`) as a
   note, its parts one space apart, the `+` in Nunito ExtraBold `energyLowInk`. VoiceOver
-  reads the footnote without the `+`.
+  reads it without the `+` (`TokenRowsModel.spokenFootnote`).
 - **Status line**: Nunito SemiBold 11, `energyLowInk` for failures, `inkMuted` otherwise.
 
 ## Menu bar (`MenuBar/`)

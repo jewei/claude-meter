@@ -149,10 +149,10 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    mode, a bar whose window runs out before its reset also hatches the shortfall from its
    fill to the mark, in the same color, while the mark is beyond the fill. The mark moves
    with the clock and the projection does not, so the hatch can go before the next reading
-   while the line stays. In Usage mode the fill passes the mark instead
-   (`GaugeBuilder.showsShortfall`). Cursor's bar shows the pace too, although its caption
-   replaces the bar's label row. Grok's bar has its own label row (`Weekly · 5% left` and the reset), and its
-   caption states only the on-demand spend (`CardBuilder`).
+   while the line stays. Usage mode never hatches (`GaugeBuilder.showsShortfall`). Cursor's
+   bar shows the pace too, although its caption replaces the bar's label row. Grok's bar has
+   its own label row (`Weekly · 5% left` and the reset), and its caption states only the
+   on-demand spend (`CardBuilder`).
 8. Account cards (rings, bars, Cursor, and Grok) open and close from their header, and
    remember their state. They start closed. The extra-usage card is always open. Details
    hold usage-limit resets and tokens used, and in bar cards also scoped windows.

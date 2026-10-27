@@ -55,8 +55,8 @@ public struct GaugeModel: Equatable, Sendable {
     /// severity when that is worse. It colors the pace line. Nil for every other pace.
     public let paceSeverity: Severity?
     /// ``paceSeverity`` while the bar hatches the shortfall from its fill to the even-pace
-    /// mark: in Energy left mode, when the mark is beyond the fill. Nil otherwise. In Usage
-    /// mode the fill passes the mark instead.
+    /// mark: in Energy left mode, when the mark is beyond the fill. Nil otherwise. Usage mode
+    /// never hatches.
     public let shortfallSeverity: Severity?
     /// Where an even pace would be now, on the same 0...1 scale as ``fraction``. Nil without
     /// a pace or for a stale account.
@@ -210,5 +210,12 @@ public struct TokenRowsModel: Equatable, Sendable {
         case text(String)
         /// The `+` of an incomplete estimate.
         case mark
+    }
+
+    /// The footnote for VoiceOver: its text without the mark, because each tile already
+    /// says "may be higher".
+    public var spokenFootnote: String {
+        footnote.compactMap { if case .text(let words) = $0 { words } else { nil } }
+            .joined(separator: " ")
     }
 }

@@ -32,8 +32,7 @@ struct TokensSectionView: View {
                     .monospacedDigit()
                     .foregroundStyle(Palette.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
-                    // The tiles speak "may be higher"; the mark is not read out.
-                    .accessibilityLabel(Self.spokenFootnote(tokens.footnote))
+                    .accessibilityLabel(tokens.spokenFootnote)
             }
         }
     }
@@ -54,11 +53,6 @@ struct TokensSectionView: View {
             }
         }
         return text
-    }
-
-    static func spokenFootnote(_ parts: [TokenRowsModel.FootnotePart]) -> String {
-        parts.compactMap { if case .text(let words) = $0 { words } else { nil } }
-            .joined(separator: " ")
     }
 }
 

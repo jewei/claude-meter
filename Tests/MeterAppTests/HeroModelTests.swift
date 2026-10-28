@@ -125,6 +125,13 @@ import Testing
 
         let expired = hero([limited], now: .reference(61))
         #expect(expired.title == "Refresh needed")
+
+        // A countdown of two parts never breaks across two lines.
+        limited.issue = UsageIssue(
+            "Anthropic is rate-limiting usage checks.", retryAt: .reference(.minutes(65)))
+        #expect(
+            hero([limited]).subtitle
+                == "Showing the last Claude reading. Retrying in 1h\u{00A0}5m.")
     }
 
     @Test func staleAccountsAreNotRankedFromOldData() {

@@ -38,7 +38,7 @@ public struct HeroModel: Equatable, Sendable {
             // A rate limit needs no action: the refresh retries by itself. The notice states
             // the limit, so the hero only says that the app waits.
             if let retryAt = meter.issue?.retryAt,
-                let countdown = Self.countdown(until: retryAt, now: context.now)
+                let countdown = Formatting.countdown(until: retryAt, now: context.now)
             {
                 self.init(
                     emoji: "⏳", title: "Waiting to retry",
@@ -147,15 +147,10 @@ public struct HeroModel: Equatable, Sendable {
         return "\(window.title) resets \(phrase)"
     }
 
-    /// `in 3d 23h`, or nil when the date has passed.
+    /// `in 3d 23h`, or nil when the date has passed. The subtitle wraps, so the countdown
+    /// has no-break spaces.
     private static func phrase(until date: Date, now: Date) -> String? {
-        countdown(until: date, now: now).map { "in \($0)" }
-    }
-
-    /// `3d 23h` with no-break spaces: the subtitle wraps, and `3d` at the end of one line
-    /// with `23h` on the next reads as two values.
-    private static func countdown(until date: Date, now: Date) -> String? {
-        Countdown.text(until: date, now: now)?.replacingOccurrences(of: " ", with: "\u{00A0}")
+        Formatting.countdown(until: date, now: now).map { "in \($0)" }
     }
 
     /// The run-out and the reset of `account`, which the subtitle names: `Session runs out in

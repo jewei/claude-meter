@@ -192,8 +192,8 @@ accessibility), Fredoka SemiBold 20 title, wrapping Nunito SemiBold 12 message (
 in monospace), and a raised button. Loading: a spinner over a Nunito SemiBold 13 message.
 
 Hero (`HeroView`): a 46 pt disc with the mascot, title and subtitle that wrap, tone colors,
-padding 14×13. No-break spaces keep each countdown in the subtitle on one line
-(`HeroModel`). VoiceOver reads it as one element: "title. subtitle".
+padding 14×13. No-break spaces keep each countdown in the subtitle and in notices on one
+line (`Formatting.countdown`). VoiceOver reads it as one element: "title. subtitle".
 
 ### Card list and reordering
 

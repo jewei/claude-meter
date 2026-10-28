@@ -117,8 +117,8 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    each main account's issue (prefixed with its name when there are several accounts), and
    old data. A failed refresh whose issue an account carries shows only with that account,
    so a first rate limit shows once, and a later failure of the same provider gets its own
-   notice. Issues with a retry time count down:
-   `Anthropic is rate-limiting usage checks. Retrying in 3m.` Old data that no
+   notice. Issues with a retry time count down, and the countdown never breaks across two
+   lines: `Anthropic is rate-limiting usage checks. Retrying in 3m.` Old data that no
    failed refresh explains gets its own notice, also beside other notices:
    `Claude data may be stale.`, or `Work: Data may be stale.` when only some accounts are old.
    When the meter is unavailable, the hero states the reason and no notice repeats that issue,
@@ -131,10 +131,10 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    `Session runs out in 2h · Weekly resets in 1h`. A run-out of another account than the one
    named starts with that account's name (`Home: Session runs out in 2h`). The first run-out
    is the soonest date, not the highest pressure. A countdown in the subline never breaks
-   across two lines (`3d 23h`). An account that is out of energy names no run-out: another
-   window stops it first. Non-binding windows, such as Sonnet Weekly, show their pace only
-   on their card. Stale accounts are
-   left out of that count and ranking, so old numbers never read as current. A stale
+   across two lines (`3d 23h`, `Formatting.countdown`). An account that is out of energy
+   names no run-out: another window stops it first. Non-binding windows, such as Sonnet
+   Weekly, show their pace only on their card. Stale accounts are left out of that count
+   and ranking, so old numbers never read as current. A stale
    selected account reads "Refresh needed", or "Waiting to retry" with a countdown while
    its issue has a future `retryAt`, such as a rate limit: the refresh retries by itself.
 6. Cards: one per account, in the user's order, with the main card first. Without a main
@@ -151,9 +151,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    fill to the mark, in the same color, while the mark is beyond the fill. The mark moves
    with the clock and the projection does not, so the hatch can go before the next reading
    while the line stays. Usage mode never hatches (`GaugeBuilder.showsShortfall`). Every bar
-   has its own label row (`Weekly · 5% left` and the reset). Cursor's caption states only
-   the spend, and Grok's only the on-demand spend (`CardBuilder`). Dollar amounts group
-   thousands (`$1,240.00`, `Formatting.money`).
+   on a bar card has its own label row (`Weekly · 5% left` and the reset). Cursor's caption
+   states only the spend, and Grok's only the on-demand spend (`CardBuilder`). Dollar
+   amounts group thousands (`$1,240.00`, `Formatting.money`).
 8. Account cards (rings, bars, Cursor, and Grok) open and close from their header, and
    remember their state. They start closed. The extra-usage card is always open. Details
    hold usage-limit resets and tokens used, and in bar cards also scoped windows.

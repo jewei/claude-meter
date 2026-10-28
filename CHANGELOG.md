@@ -26,15 +26,14 @@ are in the `v3.1.3` tag.
   ("$42.10"), the token count below. One note under the tiles says that the estimate uses
   API list prices and is not a bill, and explains a "+".
 - Cursor and Grok cards show the window and its reset under the bar, such as
-  "Weekly · 5% left", as Claude and Codex cards do. Cursor cards no longer repeat the reset
-  after the spend.
+  "Weekly · 5% left", as Claude and Codex cards do.
 - Credit balances and dollar amounts group thousands ("72,909.6 credits", "$1,240.00"), and
   "Usage limit resets" says "None available" instead of "0 available".
 
 ### Fixed
 
-- A countdown in the summary at the top, such as "3d 23h", no longer breaks across two
-  lines.
+- A countdown in the summary at the top or in a notice, such as "3d 23h", no longer breaks
+  across two lines.
 - VoiceOver and the tooltip of a token count say "1 token", not "1 tokens".
 
 ## [4.2.0] - 2026-10-27

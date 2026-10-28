@@ -49,7 +49,12 @@ import Testing
 
     @Test func helpAndSpeechSayItIsAnEstimate() {
         let row = today(model(cost: "42.4"))
-        #expect(row?.help.hasSuffix("Estimated at API list prices. Not a bill.") == true)
+        // The exact count groups thousands on every Mac.
+        #expect(
+            row?.help
+                == "35,800,000 tokens, including cache tokens. "
+                + "Estimated at API list prices. Not a bill.")
+        #expect(today(model())?.help == "35,800,000 tokens, including cache tokens")
         #expect(row?.accessibilityValue == "35800000 tokens, about 42 dollars at API prices")
         let small = today(model(cost: "0.5", unpriced: 10, models: ["m"]))
         #expect(

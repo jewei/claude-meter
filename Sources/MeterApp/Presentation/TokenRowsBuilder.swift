@@ -80,18 +80,19 @@ struct TokenRowsBuilder {
             return (row, false)
         }
         let word = Formatting.tokenWord(count)
+        let exact = count.formatted(.number.locale(Formatting.groupingLocale))
         guard let estimate else {
             let row = TokenRowsModel.Row(
                 title: period.title, value: Formatting.compactCount(count), isIncomplete: false,
                 detail: word, accessibilityValue: "\(count) \(word)",
-                help: "\(count.formatted()) \(word), including cache tokens")
+                help: "\(exact) \(word), including cache tokens")
             return (row, false)
         }
         let row = TokenRowsModel.Row(
             title: period.title, value: Formatting.estimateAmount(estimate),
             isIncomplete: !estimate.isComplete, detail: Formatting.tokens(count),
             accessibilityValue: "\(count) \(word), \(Formatting.spokenEstimate(estimate))",
-            help: "\(count.formatted()) \(word), including cache tokens. "
+            help: "\(exact) \(word), including cache tokens. "
                 + "Estimated at API list prices. Not a bill.")
         return (row, true)
     }

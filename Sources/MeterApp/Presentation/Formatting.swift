@@ -28,6 +28,12 @@ enum Formatting {
         (value(window, showsUsed: showsUsed) ?? 0) / 100
     }
 
+    /// `3d 23h`, or nil when the date has passed, with no-break spaces for text that wraps:
+    /// `3d` at the end of one line with `23h` on the next reads as two values.
+    static func countdown(until date: Date, now: Date) -> String? {
+        Countdown.text(until: date, now: now)?.replacingOccurrences(of: " ", with: "\u{00A0}")
+    }
+
     /// `Resets in 3h 12m`, or nil when the window has no future reset.
     static func resetText(_ window: QuotaWindow?, now: Date) -> String? {
         guard let date = window?.resetsAt, let text = Countdown.text(until: date, now: now) else {
@@ -126,7 +132,7 @@ enum Formatting {
     }
 
     /// Groups thousands (`1,241`), which `numberLocale` does not.
-    private static let groupingLocale = Locale(identifier: "en_US")
+    static let groupingLocale = Locale(identifier: "en_US")
 
     /// `12 credits`, `1.5 credits`, `72,909.6 credits`.
     static func credits(_ amount: Decimal) -> String {

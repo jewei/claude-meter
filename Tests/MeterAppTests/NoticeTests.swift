@@ -17,9 +17,6 @@ import Testing
         return model
     }
 
-    /// With several accounts, an account notice puts the name in front of its issue. When
-    /// that issue is why the pinned meter is unavailable, the hero states it and no notice
-    /// repeats it (review R4-A-02).
     /// Notices, status lines, and the hero of an unavailable meter wrap; the countdown never
     /// breaks across two lines.
     @Test func aRetryCountdownStaysOnOneLine() {
@@ -29,6 +26,9 @@ import Testing
                 == "Rate limited. Retrying in 1h\u{00A0}5m.")
     }
 
+    /// With several accounts, an account notice puts the name in front of its issue. When
+    /// that issue is why the pinned meter is unavailable, the hero states it and no notice
+    /// repeats it (review R4-A-02).
     @Test func aPinnedAccountsIssueIsStatedOnceWithSeveralAccounts() throws {
         let usage = Fixture.usage(
             .claude, Fixture.account("home"),

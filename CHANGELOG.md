@@ -32,8 +32,8 @@ are in the `v3.1.3` tag.
 
 ### Fixed
 
-- A countdown in the summary at the top or in a notice, such as "3d 23h", no longer breaks
-  across two lines.
+- A countdown in the summary at the top, a notice, or a card's status line, such as
+  "3d 23h", no longer breaks across two lines.
 - VoiceOver and the tooltip of a token count say "1 token", not "1 tokens".
 
 ## [4.2.0] - 2026-10-27

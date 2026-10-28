@@ -110,7 +110,9 @@ No changing number may change width. Nunito's digits all have one width, as do t
 bar's (system rounded with `.monospacedDigit()`). So every changing number in Nunito uses
 `.monospacedDigit()`, also in text that can hold one: the hero subtitle, notices, status
 lines and screens, the notes under tokens used and usage-limit resets, and the last update
-check. Fredoka's digits do not have one width, and Fredoka has no tabular digits, so
+check. A countdown in the hero subtitle, a notice, a status line, or the note under tokens
+used joins its parts with no-break spaces, so it stays on one line (`Formatting.countdown`).
+Fredoka's digits do not have one width, and Fredoka has no tabular digits, so
 `.monospacedDigit()` does nothing on it. A changing number in Fredoka takes a fixed width
 instead (`.fixedNumberWidth`, `Design/FixedNumberWidth.swift`): a percentage is as wide as
 `100%` (gauge values in `GaugeValueText`, and the threshold pills, so both pills have one
@@ -192,8 +194,7 @@ accessibility), Fredoka SemiBold 20 title, wrapping Nunito SemiBold 12 message (
 in monospace), and a raised button. Loading: a spinner over a Nunito SemiBold 13 message.
 
 Hero (`HeroView`): a 46 pt disc with the mascot, title and subtitle that wrap, tone colors,
-padding 14×13. No-break spaces keep each countdown in the subtitle and in notices on one
-line (`Formatting.countdown`). VoiceOver reads it as one element: "title. subtitle".
+padding 14×13. VoiceOver reads it as one element: "title. subtitle".
 
 ### Card list and reordering
 

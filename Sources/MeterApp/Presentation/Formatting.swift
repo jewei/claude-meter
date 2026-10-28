@@ -56,7 +56,12 @@ enum Formatting {
 
     /// `35.8M tokens`, `1 token`.
     static func tokens(_ count: Int64) -> String {
-        "\(compactCount(count)) \(count == 1 ? "token" : "tokens")"
+        "\(compactCount(count)) \(tokenWord(count))"
+    }
+
+    /// `token` for one, else `tokens`.
+    static func tokenWord(_ count: Int64) -> String {
+        count == 1 ? "token" : "tokens"
     }
 
     /// `35.8M`, `1`.
@@ -65,9 +70,10 @@ enum Formatting {
             .number.notation(.compactName).precision(.fractionLength(0...1)).locale(numberLocale))
     }
 
-    /// `$12.34` for US dollars, otherwise the code first: `EUR 12.34`.
+    /// `$12.34` or `$1,241.00` for US dollars, otherwise the code first: `EUR 12.34`.
     static func money(_ amount: Decimal, unit: Balance.Unit) -> String {
-        let number = amount.formatted(.number.precision(.fractionLength(2)).locale(numberLocale))
+        let number = amount.formatted(
+            .number.precision(.fractionLength(2)).locale(groupingLocale))
         switch unit {
         case .currency(let code) where code.uppercased() == "USD": return "$\(number)"
         case .currency(let code): return "\(code.uppercased()) \(number)"

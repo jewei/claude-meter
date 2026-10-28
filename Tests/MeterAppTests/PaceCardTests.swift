@@ -119,7 +119,7 @@ import Testing
         #expect(left.shortfallSeverity == nil)
     }
 
-    @Test func cursorBillingShowsPaceWithoutBarLabels() throws {
+    @Test func cursorBillingShowsPaceOnlyAsAMark() throws {
         let cursor = AccountUsage(
             id: .default, name: "Cursor",
             windows: [
@@ -143,7 +143,6 @@ import Testing
             Issue.record("Expected bars")
             return
         }
-        #expect(!bars.showsBarLabels)
         // 20% in 10 of 30 days: 40% more in the last 20 days leaves 40%. Only the mark and
         // the spoken value say so.
         #expect(bars.headline.paceText == nil)

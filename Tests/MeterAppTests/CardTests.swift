@@ -228,13 +228,12 @@ import Testing
             return
         }
         #expect(bars.bars.map(\.title) == ["Session"])
-        #expect(bars.showsBarLabels)
         #expect(bars.headline.valueText == "—")
         #expect(card.disclosure == .collapsed)
         #expect(card.details.contains(.resets(ResetsBuilder.model(nil, now: .reference()))))
     }
 
-    @Test func cursorCaptionShowsSpendAndReset() throws {
+    @Test func cursorCaptionShowsTheSpend() throws {
         let cursor = AccountUsage(
             id: .default, name: "Cursor", plan: "Pro",
             windows: [
@@ -256,9 +255,10 @@ import Testing
             Issue.record("Expected bars")
             return
         }
-        #expect(bars.caption == "$120.25 spent · Resets in 2h")
-        // The caption names the reset, so the bar has no label row of its own.
-        #expect(!bars.showsBarLabels)
+        // The bar's own label row names the window and the reset.
+        #expect(bars.caption == "$120.25 spent")
+        #expect(bars.bars.first?.summaryText == "Total · 58% left")
+        #expect(bars.bars.first?.resetText == "Resets in 2h")
         #expect(card.plan == PlanBadge(plan: "Pro", verbatim: true))
         #expect(card.disclosure == .expanded)
         #expect(card.details.contains { if case .usageBars = $0 { true } else { false } })
@@ -365,7 +365,6 @@ import Testing
         }
         // The bar's own label row names the window and the reset.
         #expect(bars.caption == "On-demand $5.00 of $20.00")
-        #expect(bars.showsBarLabels)
         #expect(bars.bars.first?.summaryText == "Weekly credits · 70% left")
         #expect(bars.bars.first?.resetText == "Resets in 2h")
     }
@@ -480,8 +479,9 @@ import Testing
     @Test func formattingIsTheSameOnEveryMac() {
         #expect(Formatting.tokens(35_800_000) == "35.8M tokens")
         #expect(Formatting.tokens(1) == "1 token")
-        #expect(Formatting.money(1234.5, unit: .currency("USD")) == "$1234.50")
+        #expect(Formatting.money(1234.5, unit: .currency("USD")) == "$1,234.50")
         #expect(Formatting.money(12.3, unit: .currency("eur")) == "EUR 12.30")
+        #expect(Formatting.money(1234.5, unit: .currency("eur")) == "EUR 1,234.50")
         #expect(Formatting.money(12, unit: .credits) == "12.00 credits")
         #expect(Formatting.credits(1.5) == "1.5 credits")
         #expect(Formatting.credits(1) == "1 credit")

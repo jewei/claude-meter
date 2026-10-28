@@ -81,9 +81,6 @@ public struct BarsModel: Equatable, Sendable {
     public let bars: [GaugeModel]
     /// `12 credits · 1 usage reset available`.
     public let caption: String?
-    /// Each bar has its own label row: `Session · 60% left` and its reset. False for Cursor,
-    /// whose caption states the spend and the reset.
-    public let showsBarLabels: Bool
 }
 
 /// Claude extra usage: money spent of a monthly limit, drawn like every other limit. The bar

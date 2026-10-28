@@ -192,7 +192,8 @@ accessibility), Fredoka SemiBold 20 title, wrapping Nunito SemiBold 12 message (
 in monospace), and a raised button. Loading: a spinner over a Nunito SemiBold 13 message.
 
 Hero (`HeroView`): a 46 pt disc with the mascot, title and subtitle that wrap, tone colors,
-padding 14×13. VoiceOver reads it as one element: "title. subtitle".
+padding 14×13. No-break spaces keep each countdown in the subtitle on one line
+(`HeroModel`). VoiceOver reads it as one element: "title. subtitle".
 
 ### Card list and reordering
 
@@ -238,9 +239,8 @@ ink of `GaugeModel.paceSeverity`; "Tight" is a caption in `inkMuted`.
   value, chevron; 28 pt minimum height) that calls `toggleCard`. Rows 12 pt apart. One
   `BarRow` per window: a 14 pt `EnergyBar` with the pace mark, the shortfall in the color
   of `GaugeModel.shortfallSeverity`, and the exhausted ring, then 5 pt below
-  "Session · 60% left" and the reset (8 pt apart), unless `BarsModel.showsBarLabels` is false (Cursor: the
-  caption states the spend and the reset). The pace line is under the bar, also without
-  the label row. Then the caption and status line.
+  "Session · 60% left" and the reset (8 pt apart). The pace line is under the label row.
+  Then the caption and status line.
   Expanded details reveal from the top with the card height; the card clips its content.
 - **Extra usage** (`ExtraUsageCardView`): 💳, title, "paused" chip, and the amount spent of
   the limit (`$12.50 / $50.00`). The monthly limit is a budget, drawn as energy like every

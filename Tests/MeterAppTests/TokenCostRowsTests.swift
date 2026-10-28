@@ -10,12 +10,13 @@ import Testing
     private let calendar = Calendar.fixed()
 
     private func model(
-        _ provider: ProviderID = .claude, cost: String? = nil, unpriced: Int64 = 0,
-        models: Set<String> = [], isPartial: Bool = false, observedAt: Date = .reference()
+        _ provider: ProviderID = .claude, cost: String? = nil, tokens: Int64 = 35_800_000,
+        unpriced: Int64 = 0, models: Set<String> = [], isPartial: Bool = false,
+        observedAt: Date = .reference()
     ) -> TokenRowsModel? {
         let today = calendar.startOfDay(for: .reference())
         let account = TokenHistory(
-            dailyTokens: [today: 35_800_000], coverageStart: today.addingTimeInterval(-.days(6)),
+            dailyTokens: [today: tokens], coverageStart: today.addingTimeInterval(-.days(6)),
             observedAt: observedAt, timeZoneID: calendar.timeZone.identifier,
             isPartial: isPartial,
             dailyCost: cost.map { [today: Decimal(string: $0) ?? 0] } ?? [:],
@@ -48,7 +49,12 @@ import Testing
 
     @Test func helpAndSpeechSayItIsAnEstimate() {
         let row = today(model(cost: "42.4"))
-        #expect(row?.help.hasSuffix("Estimated at API list prices. Not a bill.") == true)
+        // The exact count groups thousands on every Mac.
+        #expect(
+            row?.help
+                == "35,800,000 tokens, including cache tokens. "
+                + "Estimated at API list prices. Not a bill.")
+        #expect(today(model())?.help == "35,800,000 tokens, including cache tokens")
         #expect(row?.accessibilityValue == "35800000 tokens, about 42 dollars at API prices")
         let small = today(model(cost: "0.5", unpriced: 10, models: ["m"]))
         #expect(
@@ -93,6 +99,18 @@ import Testing
             #expect(today(model)?.isIncomplete == false)
             #expect(model?.footnote == footnote)
         }
+    }
+
+    /// One token is singular in the tile, the tooltip, and the speech.
+    @Test func oneTokenIsSingular() {
+        let count = today(model(tokens: 1))
+        #expect(count?.detail == "token")
+        #expect(count?.accessibilityValue == "1 token")
+        #expect(count?.help == "1 token, including cache tokens")
+        let priced = today(model(cost: "0.5", tokens: 1))
+        #expect(priced?.detail == "1 token")
+        #expect(priced?.accessibilityValue == "1 token, about 50 cents at API prices")
+        #expect(priced?.help.hasPrefix("1 token, including cache tokens.") == true)
     }
 
     /// VoiceOver reads the footnote without the `+`: each tile says "may be higher".

@@ -33,8 +33,8 @@ import Testing
         let work = account(
             "work", name: "Work", [session(used: 60), Fixture.window(.weekly, used: 10)])
         #expect(
-            hero([work]).subtitle == "Plenty in the tank · Session runs out in 1h 20m, resets in 3h"
-        )
+            hero([work]).subtitle
+                == "Plenty in the tank · Session runs out in 1h\u{00A0}20m, resets in 3h")
     }
 
     /// Weekly has more pressure, but the session runs out first.
@@ -53,7 +53,7 @@ import Testing
             "work", name: "Work", [session(used: 99), Fixture.window(.weekly, used: 10)])
         #expect(
             hero([work], now: .reference(.minutes(5))).subtitle
-                == "Almost dry · Session runs out now, resets in 2h 55m")
+                == "Almost dry · Session runs out now, resets in 2h\u{00A0}55m")
     }
 
     @Test func aRunOutOfAnotherAccountNamesIt() {

@@ -108,18 +108,16 @@ struct CardBuilder {
         if let resetSummary { caption.append(resetSummary) }
         return BarsModel(
             headline: bars[0], bars: bars,
-            caption: caption.isEmpty ? nil : caption.joined(separator: " · "),
-            showsBarLabels: true)
+            caption: caption.isEmpty ? nil : caption.joined(separator: " · "))
     }
 
-    /// One bar for the provider's main window, with spend details in the caption. Grok's bar
-    /// has its own label row; Cursor's caption states the reset instead.
+    /// One bar for the provider's main window, with spend details in the caption. The bar's
+    /// label row states the reset.
     private func simpleBars(_ account: AccountUsage, provider: ProviderID) -> BarsModel {
         let main = account.windows.first { $0.kind != .scoped } ?? account.windows.first
         let gauge =
             main.map { gauges.gauge($0, account: account) }
             ?? gauges.gauge(nil, title: "Usage", shortTitle: "usage")
-        let showsBarLabels = provider == .grok
         var caption: [String] = []
         if provider == .cursor, let spend = account.balance(.spend), let amount = spend.amount {
             caption.append("\(Formatting.money(amount, unit: spend.unit)) spent")
@@ -135,11 +133,9 @@ struct CardBuilder {
                 caption.append("On-demand \(spent)")
             }
         }
-        if !showsBarLabels, let reset = gauge.resetText { caption.append(reset) }
         return BarsModel(
             headline: gauge, bars: [gauge],
-            caption: caption.isEmpty ? nil : caption.joined(separator: " · "),
-            showsBarLabels: showsBarLabels)
+            caption: caption.isEmpty ? nil : caption.joined(separator: " · "))
     }
 
     /// Claude extra usage for the selected account, when Claude owns the menu bar.

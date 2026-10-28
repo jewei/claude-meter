@@ -1,7 +1,7 @@
 import Foundation
 import MeterDomain
 
-/// Text for a ``Pace`` verdict: on cards, in the hero, and for VoiceOver.
+/// Text for a ``Pace`` verdict: on cards, in alerts, and for VoiceOver.
 enum PaceText {
     /// `Runs out in 2h 10m`, `Runs out now`, `Tight: ~4% left at reset`, or
     /// `Lasts until reset`. The spare follows the meter mode.

@@ -20,7 +20,7 @@ struct BarCardView: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             ForEach(Array(bars.bars.enumerated()), id: \.offset) { _, gauge in
-                BarRow(gauge: gauge, showsLabels: bars.showsBarLabels)
+                BarRow(gauge: gauge)
             }
             if let caption = bars.caption {
                 Text(caption)

@@ -28,6 +28,12 @@ enum Formatting {
         (value(window, showsUsed: showsUsed) ?? 0) / 100
     }
 
+    /// `3d 23h`, or nil when the date has passed, with no-break spaces for text that wraps:
+    /// `3d` at the end of one line with `23h` on the next reads as two values.
+    static func countdown(until date: Date, now: Date) -> String? {
+        Countdown.text(until: date, now: now)?.replacingOccurrences(of: " ", with: "\u{00A0}")
+    }
+
     /// `Resets in 3h 12m`, or nil when the window has no future reset.
     static func resetText(_ window: QuotaWindow?, now: Date) -> String? {
         guard let date = window?.resetsAt, let text = Countdown.text(until: date, now: now) else {
@@ -56,7 +62,12 @@ enum Formatting {
 
     /// `35.8M tokens`, `1 token`.
     static func tokens(_ count: Int64) -> String {
-        "\(compactCount(count)) \(count == 1 ? "token" : "tokens")"
+        "\(compactCount(count)) \(tokenWord(count))"
+    }
+
+    /// `token` for one, else `tokens`.
+    static func tokenWord(_ count: Int64) -> String {
+        count == 1 ? "token" : "tokens"
     }
 
     /// `35.8M`, `1`.
@@ -65,9 +76,10 @@ enum Formatting {
             .number.notation(.compactName).precision(.fractionLength(0...1)).locale(numberLocale))
     }
 
-    /// `$12.34` for US dollars, otherwise the code first: `EUR 12.34`.
+    /// `$12.34` or `$1,241.00` for US dollars, otherwise the code first: `EUR 12.34`.
     static func money(_ amount: Decimal, unit: Balance.Unit) -> String {
-        let number = amount.formatted(.number.precision(.fractionLength(2)).locale(numberLocale))
+        let number = amount.formatted(
+            .number.precision(.fractionLength(2)).locale(groupingLocale))
         switch unit {
         case .currency(let code) where code.uppercased() == "USD": return "$\(number)"
         case .currency(let code): return "\(code.uppercased()) \(number)"
@@ -120,7 +132,7 @@ enum Formatting {
     }
 
     /// Groups thousands (`1,241`), which `numberLocale` does not.
-    private static let groupingLocale = Locale(identifier: "en_US")
+    static let groupingLocale = Locale(identifier: "en_US")
 
     /// `12 credits`, `1.5 credits`, `72,909.6 credits`.
     static func credits(_ amount: Decimal) -> String {

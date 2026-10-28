@@ -110,7 +110,9 @@ No changing number may change width. Nunito's digits all have one width, as do t
 bar's (system rounded with `.monospacedDigit()`). So every changing number in Nunito uses
 `.monospacedDigit()`, also in text that can hold one: the hero subtitle, notices, status
 lines and screens, the notes under tokens used and usage-limit resets, and the last update
-check. Fredoka's digits do not have one width, and Fredoka has no tabular digits, so
+check. A countdown in the hero subtitle, a notice, a status line, or the note under tokens
+used joins its parts with no-break spaces, so it stays on one line (`Formatting.countdown`).
+Fredoka's digits do not have one width, and Fredoka has no tabular digits, so
 `.monospacedDigit()` does nothing on it. A changing number in Fredoka takes a fixed width
 instead (`.fixedNumberWidth`, `Design/FixedNumberWidth.swift`): a percentage is as wide as
 `100%` (gauge values in `GaugeValueText`, and the threshold pills, so both pills have one
@@ -238,9 +240,8 @@ ink of `GaugeModel.paceSeverity`; "Tight" is a caption in `inkMuted`.
   value, chevron; 28 pt minimum height) that calls `toggleCard`. Rows 12 pt apart. One
   `BarRow` per window: a 14 pt `EnergyBar` with the pace mark, the shortfall in the color
   of `GaugeModel.shortfallSeverity`, and the exhausted ring, then 5 pt below
-  "Session · 60% left" and the reset (8 pt apart), unless `BarsModel.showsBarLabels` is false (Cursor: the
-  caption states the spend and the reset). The pace line is under the bar, also without
-  the label row. Then the caption and status line.
+  "Session · 60% left" and the reset (8 pt apart). The pace line is under the label row.
+  Then the caption and status line.
   Expanded details reveal from the top with the card height; the card clips its content.
 - **Extra usage** (`ExtraUsageCardView`): 💳, title, "paused" chip, and the amount spent of
   the limit (`$12.50 / $50.00`). The monthly limit is a budget, drawn as energy like every

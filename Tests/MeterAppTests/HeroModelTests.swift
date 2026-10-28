@@ -66,6 +66,14 @@ import Testing
         #expect(hero([account]).subtitle == "Getting low · Weekly resets in 30h")
     }
 
+    /// The subtitle wraps, but a countdown never breaks across two lines.
+    @Test func aCountdownStaysOnOneLine() {
+        let account = AccountUsage(
+            id: "a", name: "A", windows: [Fixture.window(.weekly, used: 85, resetsIn: .hours(95))],
+            observedAt: .reference())
+        #expect(hero([account]).subtitle == "Getting low · Weekly resets in 3d\u{00A0}23h")
+    }
+
     @Test func equalUsagePicksTheLaterReset() {
         let account = AccountUsage(
             id: "a", name: "A",
@@ -117,6 +125,13 @@ import Testing
 
         let expired = hero([limited], now: .reference(61))
         #expect(expired.title == "Refresh needed")
+
+        // A countdown of two parts never breaks across two lines.
+        limited.issue = UsageIssue(
+            "Anthropic is rate-limiting usage checks.", retryAt: .reference(.minutes(65)))
+        #expect(
+            hero([limited]).subtitle
+                == "Showing the last Claude reading. Retrying in 1h\u{00A0}5m.")
     }
 
     @Test func staleAccountsAreNotRankedFromOldData() {

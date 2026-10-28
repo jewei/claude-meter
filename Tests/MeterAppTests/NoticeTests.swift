@@ -17,6 +17,15 @@ import Testing
         return model
     }
 
+    /// Notices, status lines, and the hero of an unavailable meter wrap; the countdown never
+    /// breaks across two lines.
+    @Test func aRetryCountdownStaysOnOneLine() {
+        let issue = UsageIssue("Rate limited.", retryAt: .reference(.minutes(65)))
+        #expect(
+            NoticeText.text(for: issue, now: .reference())
+                == "Rate limited. Retrying in 1h\u{00A0}5m.")
+    }
+
     /// With several accounts, an account notice puts the name in front of its issue. When
     /// that issue is why the pinned meter is unavailable, the hero states it and no notice
     /// repeats it (review R4-A-02).

@@ -25,7 +25,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 5. **Resolution**: after a window's reset time, a current reading reads 0% used with no next
    reset; a stale reading reads unknown (`QuotaWindow.resolved`).
 6. **Reset countdowns** use only provider-reported times and one format: `42m`, `3h 12m`,
-   `36h`, `6d 7h` (`Countdown`). Never a calendar date.
+   `36h`, `6d 7h` (`Countdown`). Never a calendar date. Every other countdown, such as a
+   retry or a run-out, uses the same format. A no-break space joins the two parts, so a
+   countdown never breaks across two lines.
 7. **Percentages** are whole numbers, rounded to the nearest, except that a value above 0
    shows at least 1 and a value below 100 at most 99. So `0%` left appears only when the
    window is exhausted, and `100%` left only when nothing is used
@@ -117,8 +119,8 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    each main account's issue (prefixed with its name when there are several accounts), and
    old data. A failed refresh whose issue an account carries shows only with that account,
    so a first rate limit shows once, and a later failure of the same provider gets its own
-   notice. Issues with a retry time count down, and the countdown never breaks across two
-   lines: `Anthropic is rate-limiting usage checks. Retrying in 3m.` Old data that no
+   notice. Issues with a retry time count down, such as
+   `Anthropic is rate-limiting usage checks. Retrying in 3m.` Old data that no
    failed refresh explains gets its own notice, also beside other notices:
    `Claude data may be stale.`, or `Work: Data may be stale.` when only some accounts are old.
    When the meter is unavailable, the hero states the reason and no notice repeats that issue,
@@ -130,8 +132,7 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    `Session runs out in 2h 10m, resets in 3h` when that window is the limiting one, else
    `Session runs out in 2h · Weekly resets in 1h`. A run-out of another account than the one
    named starts with that account's name (`Home: Session runs out in 2h`). The first run-out
-   is the soonest date, not the highest pressure. A countdown in the subline never breaks
-   across two lines (`3d 23h`, `Formatting.countdown`). An account that is out of energy
+   is the soonest date, not the highest pressure. An account that is out of energy
    names no run-out: another window stops it first. Non-binding windows, such as Sonnet
    Weekly, show their pace only on their card. Stale accounts are left out of that count
    and ranking, so old numbers never read as current. A stale selected account reads

@@ -13,7 +13,7 @@ import Testing
     }
 
     @Test func runOutCountsDown() {
-        #expect(text(.runsOut(at: .reference(.minutes(130)))) == "Runs out in 2h 10m")
+        #expect(text(.runsOut(at: .reference(.minutes(130)))) == "Runs out in 2h\u{00A0}10m")
     }
 
     /// A projection that passed before a new reading never asks ``Countdown`` for text.

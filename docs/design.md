@@ -110,9 +110,8 @@ No changing number may change width. Nunito's digits all have one width, as do t
 bar's (system rounded with `.monospacedDigit()`). So every changing number in Nunito uses
 `.monospacedDigit()`, also in text that can hold one: the hero subtitle, notices, status
 lines and screens, the notes under tokens used and usage-limit resets, and the last update
-check. A countdown in the hero subtitle, a notice, a status line, or the note under tokens
-used joins its parts with no-break spaces, so it stays on one line (`Formatting.countdown`).
-Fredoka's digits do not have one width, and Fredoka has no tabular digits, so
+check. Every countdown joins its two parts with a no-break space, so it stays on one line
+(`Countdown`). Fredoka's digits do not have one width, and Fredoka has no tabular digits, so
 `.monospacedDigit()` does nothing on it. A changing number in Fredoka takes a fixed width
 instead (`.fixedNumberWidth`, `Design/FixedNumberWidth.swift`): a percentage is as wide as
 `100%` (gauge values in `GaugeValueText`, and the threshold pills, so both pills have one

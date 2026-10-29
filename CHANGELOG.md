@@ -12,6 +12,14 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- A countdown on a card, in "Usage limit resets", in an alert, or in Settings no longer
+  breaks across two lines, such as "Runs out in 2h" and "10m" on the next line.
+- Settings states a Claude rate-limit wait in the format of every other countdown,
+  "Try again in 1h 5m", not "in 1 h 5 min".
+- Diagnostics says "1 account", not "1 accounts".
+
 ## [4.3.0] - 2026-10-29
 
 ### Added

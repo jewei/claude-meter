@@ -395,7 +395,7 @@ Settings texts for automatic Connect:
 | Keychain did not answer | The Keychain did not answer. If your Mac is locked, unlock it, then try again. |
 | Expired | Claude Code's token expired. Open Claude Code, then try again. |
 | HTTP 401 or 403 | Anthropic rejected Claude Code's sign-in. Open Claude Code and run /login, then try again. |
-| Gate closed or HTTP 429 | Anthropic is rate-limiting usage checks. Try again in <wait>. (with `retryAt`; `<wait>` is minutes or hours, rounded up) |
+| Gate closed or HTTP 429 | Anthropic is rate-limiting usage checks. Try again in <wait>. (with `retryAt`; `<wait>` is a countdown such as `5m` or `1h 5m`, from the wait rounded up to whole minutes) |
 | Network failure | Could not refresh Claude usage. <reason> |
 | Other HTTP status | Anthropic usage check failed (HTTP <status>). |
 | Invalid response | Claude returned an invalid usage response. |

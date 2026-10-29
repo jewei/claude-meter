@@ -62,7 +62,8 @@ func session(
         _ = run.claude([session(50)], at: .reference())
         let alerts = run.claude([session(96)], at: .reference(60))
         #expect(alerts.map(\.kind) == [.lowEnergy])
-        #expect(alerts.first?.body == "Claude Work: Session has 4% left. It refills in 1h 59m.")
+        #expect(
+            alerts.first?.body == "Claude Work: Session has 4% left. It refills in 1h\u{00A0}59m.")
         #expect(run.claude([session(97)], at: .reference(120)).isEmpty)
     }
 
@@ -212,7 +213,7 @@ func session(
         #expect(ids.count == 2)
         let runOut = try #require(alerts.first { $0.kind == .runOut })
         #expect(runOut.body.hasPrefix("Claude Work: Session runs out in "))
-        #expect(runOut.body.hasSuffix(" It refills in 2h 59m."))
+        #expect(runOut.body.hasSuffix(" It refills in 2h\u{00A0}59m."))
     }
 
     /// A pass that lasts does not block the first projected run-out.

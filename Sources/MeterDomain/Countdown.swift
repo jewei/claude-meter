@@ -10,8 +10,15 @@ public enum Countdown {
     /// Minutes round to the nearest minute, with a minimum of one, so the text can claim up
     /// to 30 seconds more than remains. Below 12 hours the text shows hours and minutes; below
     /// 48 hours, whole hours; from 48 hours, days and hours. Hours and days then round down.
+    ///
+    /// A no-break space joins the two parts, so the countdown never breaks across two lines:
+    /// `3d` at the end of one line with `23h` on the next reads as two values.
     public static func text(until date: Date, now: Date) -> String? {
-        let seconds = date.timeIntervalSince(now)
+        text(seconds: date.timeIntervalSince(now))
+    }
+
+    /// The text of ``text(until:now:)`` for a wait of `seconds`. Nil when it is not positive.
+    public static func text(seconds: TimeInterval) -> String? {
         guard seconds.isFinite, seconds > 0,
             let rounded = Int(exactly: (seconds / 60).rounded())
         else { return nil }
@@ -22,13 +29,13 @@ public enum Countdown {
             return "\(minutes)m"
         case ..<12:
             let remainder = minutes % 60
-            return remainder == 0 ? "\(hours)h" : "\(hours)h \(remainder)m"
+            return remainder == 0 ? "\(hours)h" : "\(hours)h\u{00A0}\(remainder)m"
         case ..<48:
             return "\(hours)h"
         default:
             let days = hours / 24
             let remainder = hours % 24
-            return remainder == 0 ? "\(days)d" : "\(days)d \(remainder)h"
+            return remainder == 0 ? "\(days)d" : "\(days)d\u{00A0}\(remainder)h"
         }
     }
 

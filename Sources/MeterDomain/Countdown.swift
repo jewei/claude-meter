@@ -17,7 +17,8 @@ public enum Countdown {
         text(seconds: date.timeIntervalSince(now))
     }
 
-    /// The text of ``text(until:now:)`` for a wait of `seconds`. Nil when it is not positive.
+    /// The text of ``text(until:now:)`` for a wait of `seconds`. Nil when `seconds` is not
+    /// positive, not finite, or too large to count.
     public static func text(seconds: TimeInterval) -> String? {
         guard seconds.isFinite, seconds > 0,
             let rounded = Int(exactly: (seconds / 60).rounded())

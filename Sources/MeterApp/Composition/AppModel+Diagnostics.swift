@@ -34,7 +34,8 @@ extension AppModel {
         return DiagnosticsReport(sections: sections)
     }
 
-    /// `current, 2 accounts, 2026-10-04T12:00:00Z`, `stale since …: Offline.`, or `none`.
+    /// `current, 2 accounts, 2026-10-04T12:00:00Z`, `stale since …: Offline.`,
+    /// `failed: Offline.`, or `none`.
     static func describe(_ reading: Reading<ProviderUsage>?) -> String {
         switch reading {
         case nil: "none"

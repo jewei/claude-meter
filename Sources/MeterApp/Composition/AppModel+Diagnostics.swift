@@ -34,14 +34,20 @@ extension AppModel {
         return DiagnosticsReport(sections: sections)
     }
 
-    private static func describe(_ reading: Reading<ProviderUsage>?) -> String {
+    /// `current, 2 accounts, 2026-10-04T12:00:00Z`, `stale since …: Offline.`,
+    /// `failed: Offline.`, or `none`.
+    static func describe(_ reading: Reading<ProviderUsage>?) -> String {
         switch reading {
         case nil: "none"
         case .current(let usage, let date):
-            "current, \(usage.accounts.count) accounts, \(date.formatted(.iso8601))"
+            "current, \(accounts(usage.accounts.count)), \(date.formatted(.iso8601))"
         case .stale(_, let date, let issue):
             "stale since \(date.formatted(.iso8601)): \(issue.message)"
         case .failed(let issue, _): "failed: \(issue.message)"
         }
+    }
+
+    private static func accounts(_ count: Int) -> String {
+        count == 1 ? "1 account" : "\(count) accounts"
     }
 }

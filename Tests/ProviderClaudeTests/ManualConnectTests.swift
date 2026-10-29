@@ -34,7 +34,7 @@ extension ClaudeTests {
             #expect(
                 error?.issue
                     == UsageIssue(
-                        "Anthropic is rate-limiting usage checks. Try again in 10 min.",
+                        "Anthropic is rate-limiting usage checks. Try again in 10m.",
                         retryAt: .reference(600)))
             #expect(harness.manualItem() == nil)
         }
@@ -258,10 +258,11 @@ extension ClaudeTests {
         }
 
         @Test(arguments: [
-            (30.0, "in 1 min"), (600, "in 10 min"), (3_600, "in 1 h"), (3_601, "in 1 h 1 min"),
-            (86_400, "in 24 h"), (-5, "in 1 min"),
+            (30.0, "in 1m"), (600, "in 10m"), (3_600, "in 1h"), (3_601, "in 1h\u{00A0}1m"),
+            (43_200, "in 12h"), (43_201, "in 13h"), (45_000, "in 13h"), (86_400, "in 24h"),
+            (86_700, "in 25h"), (172_801, "in 2d\u{00A0}1h"), (-5, "in 1m"), (.infinity, "later"),
         ])
-        func waitTextRoundsUpToWholeMinutes(seconds: TimeInterval, text: String) {
+        func waitTextRoundsUpToTheUnitItShows(seconds: TimeInterval, text: String) {
             #expect(ClaudeProvider.waitText(seconds: seconds) == text)
         }
     }

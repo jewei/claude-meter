@@ -94,12 +94,14 @@ extension ClaudeProvider {
             "\(AccountFailure.rateLimitedMessage) Try again \(wait).", retryAt: until)
     }
 
-    /// "in 3 min", "in 2 h", or "in 1 h 5 min", rounded up to whole minutes.
+    /// `in 3m`, `in 1h 5m`, or `in 13h`, in the format of every countdown (``Countdown``), or
+    /// `later` for a wait too long to count. The wait rounds up to the unit that the text
+    /// shows, so the user does not try again too early: ``Countdown`` shows whole hours from
+    /// 12 hours and rounds them down.
     static func waitText(seconds: TimeInterval) -> String {
-        let minutes = max(1, Int((max(0, seconds) / 60).rounded(.up)))
-        guard minutes >= 60 else { return "in \(minutes) min" }
-        let (hours, rest) = minutes.quotientAndRemainder(dividingBy: 60)
-        return rest == 0 ? "in \(hours) h" : "in \(hours) h \(rest) min"
+        let unit: TimeInterval = seconds > 12 * 3_600 ? 3_600 : 60
+        let wait = max(1, (max(0, seconds) / unit).rounded(.up)) * unit
+        return Countdown.text(seconds: wait).map { "in \($0)" } ?? "later"
     }
 
     /// One usage request for Settings. Rethrows HTTP 401 and 403 as ``UsageFailure``, so the

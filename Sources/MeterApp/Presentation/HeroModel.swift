@@ -38,7 +38,7 @@ public struct HeroModel: Equatable, Sendable {
             // A rate limit needs no action: the refresh retries by itself. The notice states
             // the limit, so the hero only says that the app waits.
             if let retryAt = meter.issue?.retryAt,
-                let countdown = Formatting.countdown(until: retryAt, now: context.now)
+                let countdown = Countdown.text(until: retryAt, now: context.now)
             {
                 self.init(
                     emoji: "⏳", title: "Waiting to retry",
@@ -142,15 +142,9 @@ public struct HeroModel: Equatable, Sendable {
     }
 
     private static func resetText(_ window: QuotaWindow, now: Date) -> String? {
-        guard let date = window.resetsAt, let phrase = phrase(until: date, now: now)
+        guard let date = window.resetsAt, let phrase = Countdown.phrase(until: date, now: now)
         else { return nil }
         return "\(window.title) resets \(phrase)"
-    }
-
-    /// `in 3d 23h`, or nil when the date has passed. The subtitle wraps, so the countdown
-    /// has no-break spaces.
-    private static func phrase(until date: Date, now: Date) -> String? {
-        Formatting.countdown(until: date, now: now).map { "in \($0)" }
     }
 
     /// The run-out and the reset of `account`, which the subtitle names: `Session runs out in
@@ -162,7 +156,7 @@ public struct HeroModel: Equatable, Sendable {
         guard let runOut else { return reset }
         let isOwn = runOut.account.id == account.id
         if isOwn, runOut.window.id == limiting?.id, let date = limiting?.resetsAt,
-            let phrase = phrase(until: date, now: now)
+            let phrase = Countdown.phrase(until: date, now: now)
         {
             return "\(runOut.text(naming: false, now: now)), resets \(phrase)"
         }
@@ -179,7 +173,7 @@ public struct HeroModel: Equatable, Sendable {
         /// `Session runs out in 2h 10m`, or `Work: Session runs out now`.
         func text(naming: Bool, now: Date) -> String {
             let text =
-                "\(window.title) runs out \(HeroModel.phrase(until: date, now: now) ?? "now")"
+                "\(window.title) runs out \(Countdown.phrase(until: date, now: now) ?? "now")"
             return naming ? "\(account.name): \(text)" : text
         }
     }

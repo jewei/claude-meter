@@ -260,7 +260,7 @@ extension ClaudeTests {
         @Test(arguments: [
             (30.0, "in 1m"), (600, "in 10m"), (3_600, "in 1h"), (3_601, "in 1h\u{00A0}1m"),
             (43_200, "in 12h"), (43_201, "in 13h"), (45_000, "in 13h"), (86_400, "in 24h"),
-            (86_700, "in 25h"), (-5, "in 1m"), (.infinity, "later"),
+            (86_700, "in 25h"), (172_801, "in 2d\u{00A0}1h"), (-5, "in 1m"), (.infinity, "later"),
         ])
         func waitTextRoundsUpToTheUnitItShows(seconds: TimeInterval, text: String) {
             #expect(ClaudeProvider.waitText(seconds: seconds) == text)

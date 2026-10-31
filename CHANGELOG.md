@@ -12,6 +12,14 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- After a launch or an update, "Tokens used" counts a large local history in its first
+  read. Before, it showed only a small part, such as millions of tokens instead of
+  billions, and took up to a few hours to catch up.
+- "Tokens used" no longer marks a complete Claude history as partial (`+`) because a prompt
+  or a tool result is longer than 1 MiB.
+
 ## [4.3.1] - 2026-10-31
 
 ### Changed

@@ -44,7 +44,7 @@ public final class CodexTokenHistory: TokenHistoryProvider {
                     directory: root.directory.appending(path: folder, directoryHint: .isDirectory))
             }
         }
-        let scan = try await scanner.scan(scanRoots, since: tally.start)
+        let scan = try await scanner.catchUp(scanRoots, since: tally.start)
         return scan.tokenHistory(provider: .codex, tally: tally) { files, tally in
             var sessions = CodexSessionSet()
             for file in files { sessions.insert(file.parser, path: file.path) }

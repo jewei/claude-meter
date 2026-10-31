@@ -204,12 +204,24 @@ Other spellings: `update` and `_meta` can also be at the top level. The top-leve
 | Records kept from one file | 20,000 |
 | Records kept for one provider | 100,000 |
 | One blocking call (a directory page, a root check, one file) | 5 s |
+| Scanning again in one history read (catch-up) | 10 s |
 | One history read (applied by the app) | 20 s |
 
 40. The scanner reads the most recently modified files first, so they get the byte budget
     first.
-41. A file over the byte limit continues on the next scan.
-42. A line over the line limit is skipped once. Its bytes are not read again.
+41. A file over the byte limit continues on the next scan. One history read scans again at
+    once while a scan stops at a byte budget, or at the entry or file budget of discovery
+    before a sweep has completed in that read (`HistoryScanner.catchUp`). It starts another
+    scan only while the time used plus the time of the last scan stays under the catch-up
+    time. So a launch, which starts with no scan state, counts all history in one read when
+    it fits, not one scan's share for each refresh. Partial history that another scan cannot
+    help, such as an incomplete final line, ends the read at once.
+42. A line over the line limit is skipped once. Its bytes are not read again. It makes history
+    partial only when it could hold a record. For Claude Code, that is a line that contains
+    `"usage"` with plain quotes (`ClaudeHistoryParser.recordMarker`). Inside a JSON string,
+    quotes are escaped, so a large prompt or tool result that quotes the word does not match.
+    For Codex and Grok Build, every skipped line makes history partial. A long line that is
+    still being written keeps its file partial until it ends.
 43. At the per-file record limit, the scanner stops reading that file.
 44. At the provider record limit, the newest files are kept. Older files are not read.
 45. At the file limit, the newest files are kept.
@@ -281,8 +293,9 @@ Other spellings: `update` and `_meta` can also be at the top level. The top-leve
     - a folder in it could not be read, or neither the current sweep nor a complete earlier
       sweep walked its folders to the end;
     - its root check timed out;
-    - a file in it was not read completely (byte budget, incomplete final line, long line,
-      per-file record limit, provider record limit, read error, or timeout);
+    - a file in it was not read completely (byte budget, incomplete final line, a long line
+      that could hold a record (rule 42), per-file record limit, provider record limit, read
+      error, or timeout);
     - a line in it could not be counted (invalid JSON, a missing or invalid count or date,
       a missing ID, or a date more than 60 s after the start of the read). A date up to 60 s
       after the start of the read belongs to a line written during the read: it is not

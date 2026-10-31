@@ -8,6 +8,11 @@ import MeterPlatform
 /// response: the one with the larger count, then the earlier date
 /// (``TokenRecord/replaces(_:)``). Copies in other files count once by the same rule.
 struct ClaudeHistoryParser: HistoryFileParser {
+    /// Only an assistant line with a `usage` object adds a record. Inside a JSON string the
+    /// quotes are escaped (`\"usage\"`), so a tool result that quotes the word does not match.
+    /// A long prompt or tool result without it is skipped without making history partial.
+    static let recordMarker: Data? = Data(#""usage""#.utf8)
+
     private(set) var records = TokenRecordSet()
     private(set) var isPartial = false
 

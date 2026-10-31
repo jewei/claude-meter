@@ -80,6 +80,33 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
         }
     }
 
+    /// Scans `roots` like ``scan(_:since:)``, then again while the last scan stopped at a
+    /// budget and another scan still fits in ``HistoryLimits/catchUpTime``. After a launch,
+    /// which starts with no saved state, one read then counts all history, not one scan's share
+    /// for each refresh. Each scan keeps its own budgets. Discovery is followed only until a
+    /// sweep completes, so a tree too large for one scan's entry budget does not scan until the
+    /// time runs out on every read. Returns the last scan.
+    public func catchUp(_ roots: [HistoryRoot], since start: Date) async throws
+        -> HistoryScan<Parser>
+    {
+        let clock = ContinuousClock()
+        let started = clock.now
+        var completedSweep = false
+        while true {
+            let scanStarted = clock.now
+            let result = try await scan(roots, since: start)
+            let lastScan = scanStarted.duration(to: clock.now)
+            completedSweep = completedSweep || result.work.completedSweep
+            let canContinue =
+                result.work.readStoppedAtBudget
+                || (result.work.discoveryStoppedAtBudget && !completedSweep)
+            // A scan can take as long as the one before it, so start one only when it fits.
+            guard canContinue, started.duration(to: clock.now) + lastScan < limits.catchUpTime
+            else { return result }
+            try Task.checkCancellation()
+        }
+    }
+
     private func scanInTurn(
         _ configured: [HistoryRoot], since start: Date
     ) async throws -> HistoryScan<Parser> {
@@ -181,6 +208,11 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
         if current.isComplete {
             let cursors = self.cursors
             inventory.complete(current, limit: limits.files) { cursors[$0] != nil }
+            work.completedSweep = true
+        } else if work.directoryEntries >= limits.directoryEntries
+            || work.discoveredFiles >= limits.files
+        {
+            work.discoveryStoppedAtBudget = true
         }
         cursors = cursors.filter { inventory.files[$0.key] != nil }
         return current
@@ -254,6 +286,7 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
         }
         work.bytesRead += progress.bytesRead
         work.parsedLines += progress.parsedLines
+        if progress.reachedAllowance { work.readStoppedAtBudget = true }
         switch progress.outcome {
         case .unchanged:
             work.cacheHits += 1
@@ -261,8 +294,12 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
         case .read(let cursor):
             cursors[path] = cursor
             return .read
-        case .failed(.budget), .failed(.changed):
+        case .failed(.budget):
             // Keep the previous cursor: its records are still valid, and it resumes later.
+            work.readStoppedAtBudget = true
+            return .notRead
+        case .failed(.changed):
+            // Keep the previous cursor, as for the budget.
             return .notRead
         case .failed:
             cursors[path] = nil

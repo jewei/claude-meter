@@ -4,9 +4,15 @@ import MeterPlatform
 import MeterTestSupport
 import Testing
 
+/// A test parser whose records the helpers below can sum.
+protocol TestParser: HistoryFileParser {
+    var records: TokenRecordSet { get }
+}
+
 /// Parses test lines such as `{"id":"a","count":3}`. A line without an ID counts by offset.
-/// A line whose ID starts with `block-` holds the read until ``BlockedLines/open(_:)``.
-struct CountingParser: HistoryFileParser {
+/// A line whose ID starts with `block-` holds the read until ``BlockedLines/open(_:)``. It has
+/// no record marker, so every skipped long line makes its file partial.
+struct CountingParser: TestParser {
     private struct Line: Decodable {
         let id: HistoryJSON.Text?
         let count: HistoryJSON.Count?
@@ -57,7 +63,26 @@ enum BlockedLines {
     }
 }
 
+/// ``CountingParser`` with the record marker `"count"`: a long line without it cannot add a
+/// record, so skipping it leaves the file complete.
+struct MarkedCountingParser: TestParser {
+    static let recordMarker: Data? = Data(#""count""#.utf8)
+
+    private var counting = CountingParser()
+
+    init() {}
+
+    mutating func append(_ line: Data, offset: Int64, decoder: JSONDecoder) {
+        counting.append(line, offset: offset, decoder: decoder)
+    }
+
+    var records: TokenRecordSet { counting.records }
+    var recordCount: Int { counting.recordCount }
+    var isPartial: Bool { counting.isPartial }
+}
+
 typealias CountingScanner = HistoryScanner<CountingParser>
+typealias MarkedScanner = HistoryScanner<MarkedCountingParser>
 
 /// Groups the suites that scan real files. Scans use the shared history pool unless a test
 /// passes its own, which every test that leaves stuck reads must do.
@@ -65,6 +90,12 @@ typealias CountingScanner = HistoryScanner<CountingParser>
 
 /// The start of a range that every fixture file is newer than, whatever the host clock says.
 let rangeStart = Date.reference(-.days(3_650))
+
+/// One JSONL test line without a count, with a line feed. Tests make it longer than the line
+/// limit, so it is skipped: a parsed one would make ``CountingParser`` partial.
+func note(padding: Int) -> String {
+    #"{"id":"note","pad":""# + String(repeating: "x", count: padding) + #""}"# + "\n"
+}
 
 /// One JSONL test line with a line feed.
 func line(_ id: String, _ count: Int, padding: Int = 0) -> String {
@@ -101,7 +132,7 @@ extension TemporaryDirectory {
     }
 }
 
-extension HistoryScan where Parser == CountingParser {
+extension HistoryScan where Parser: TestParser {
     /// Each record once per account, as the providers count them.
     func total(_ account: AccountID = "default") -> Int64 {
         var records = TokenRecordSet()

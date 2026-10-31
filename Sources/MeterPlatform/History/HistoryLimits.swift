@@ -20,11 +20,16 @@ public struct HistoryLimits: Equatable, Sendable {
     public var records: Int
     /// The time limit of one blocking call: a directory page, a root check, or one file.
     public var blockingTimeout: Duration
+    /// How long one history read keeps scanning while scans stop at a budget
+    /// (``HistoryScanner/catchUp(_:since:)``). Well below the app's limit of one history read
+    /// (20 s), because a scan that starts in time can take as long as the scan before it.
+    public var catchUpTime: Duration
 
     public init(
         scanBytes: Int = 64 * 1024 * 1024, fileBytes: Int = 8 * 1024 * 1024,
         lineBytes: Int = 1024 * 1024, files: Int = 2_048, directoryEntries: Int = 20_000,
-        fileRecords: Int = 20_000, records: Int = 100_000, blockingTimeout: Duration = .seconds(5)
+        fileRecords: Int = 20_000, records: Int = 100_000, blockingTimeout: Duration = .seconds(5),
+        catchUpTime: Duration = .seconds(10)
     ) {
         self.scanBytes = scanBytes
         self.fileBytes = fileBytes
@@ -34,6 +39,7 @@ public struct HistoryLimits: Equatable, Sendable {
         self.fileRecords = fileRecords
         self.records = records
         self.blockingTimeout = blockingTimeout
+        self.catchUpTime = catchUpTime
     }
 
     /// Bytes saved from the start of a file and before its saved offset, to detect a rewrite.

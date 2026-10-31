@@ -29,19 +29,26 @@ struct FileCursor<Parser: HistoryFileParser>: Sendable {
     /// The end of the last complete line, or of the consumed bytes of a skipped long line.
     private(set) var offset: Int64 = 0
     private(set) var parser = Parser()
-    private(set) var skippedLongLine = false
+    /// A skipped long line could hold a record: it has the parser's
+    /// ``HistoryFileParser/recordMarker``, or the parser has none.
+    private(set) var skippedRecordLine = false
     private(set) var reachedRecordLimit = false
     private var head = Data()
     private var boundary = Data()
     private var isSkippingLine = false
+    /// The last bytes of the skipped line so far, so a marker split between two reads is found.
+    private var skippedTail = Data()
 
     init(stamp: FileStamp) {
         self.stamp = stamp
     }
 
     /// True when every byte of the file was parsed and no line or record was left out. An
-    /// incomplete final line is read again later, so the file is not complete meanwhile.
-    var isComplete: Bool { offset == stamp.size && !skippedLongLine && !reachedRecordLimit }
+    /// incomplete final line is read again later, so the file is not complete meanwhile. A
+    /// skipped long line leaves out a record only when it could hold one.
+    var isComplete: Bool {
+        offset == stamp.size && !skippedRecordLine && !reachedRecordLimit && !isSkippingLine
+    }
 
     /// Reads the lines that were appended to the file at `path` after `previous`.
     ///
@@ -152,6 +159,7 @@ struct FileCursor<Parser: HistoryFileParser>: Sendable {
                 }
                 line.removeAll(keepingCapacity: true)
                 isSkippingLine = false
+                skippedTail.removeAll()
                 offset = position + Int64(newline - chunk.startIndex) + 1
                 start = newline + 1
                 if parser.recordCount >= limits.fileRecords { reachedRecordLimit = true }
@@ -165,13 +173,31 @@ struct FileCursor<Parser: HistoryFileParser>: Sendable {
 
     /// Adds bytes to the current line, or starts skipping it when it grows past `limit`.
     private mutating func collect(_ bytes: Data, into line: inout Data, limit: Int) {
-        guard !isSkippingLine else { return }
-        if line.count + bytes.count <= limit {
+        if isSkippingLine {
+            noteSkipped(bytes)
+        } else if line.count + bytes.count <= limit {
             line.append(bytes)
         } else {
-            line.removeAll()
             isSkippingLine = true
-            skippedLongLine = true
+            noteSkipped(line)
+            noteSkipped(bytes)
+            line.removeAll()
+        }
+    }
+
+    /// Looks for the parser's record marker in the skipped bytes. The search joins
+    /// ``skippedTail``, so a marker split between two reads is found.
+    private mutating func noteSkipped(_ bytes: Data) {
+        guard !skippedRecordLine else { return }
+        guard let marker = Parser.recordMarker, !marker.isEmpty else {
+            skippedRecordLine = true
+            return
+        }
+        let searched = skippedTail + bytes
+        if searched.range(of: marker) != nil {
+            skippedRecordLine = true
+        } else {
+            skippedTail = Data(searched.suffix(marker.count - 1))
         }
     }
 

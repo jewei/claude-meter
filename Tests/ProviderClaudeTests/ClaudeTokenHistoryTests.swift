@@ -165,6 +165,31 @@ import Testing
         #expect(!result.history(for: "claude").isPartial)
     }
 
+    /// A line over the 1 MiB line limit is skipped. A large prompt or tool result has no
+    /// `usage` key, so it leaves history complete; a long assistant line can hide a record.
+    @Test func onlyALongLineWithUsageMakesHistoryPartial() async throws {
+        let home = try TemporaryDirectory()
+        defer { home.remove() }
+        let text = String(repeating: "x", count: 1_100_000)
+        // A tool result that quotes the key: the quotes are escaped inside the string.
+        let prompt =
+            #"{"type":"user","message":{"role":"user","content":"\"usage\": "#
+            + text + #""}}"# + "\n"
+        try home.write(try assistant("a") + prompt + assistant("b"), to: "projects/a/one.jsonl")
+        let roots = [HistoryRoot(account: "claude", directory: home.url)]
+        let complete = try await history(roots)
+        #expect(tokens(complete) == 44)
+        #expect(!complete.history(for: "claude").isPartial)
+
+        let reply =
+            #"{"type":"assistant","requestId":"r","message":{"id":"long","content":""#
+            + text + #"","usage":{"input_tokens":10,"output_tokens":3}}}"# + "\n"
+        try home.write(reply, to: "projects/a/two.jsonl")
+        let partial = try await history(roots)
+        #expect(tokens(partial) == 44)
+        #expect(partial.history(for: "claude").isPartial)
+    }
+
     @Test func eachAccountCountsOnlyItsOwnConfigDir() async throws {
         let personal = try TemporaryDirectory()
         let work = try TemporaryDirectory()

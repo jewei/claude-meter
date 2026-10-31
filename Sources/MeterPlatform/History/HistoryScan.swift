@@ -14,7 +14,8 @@ public struct HistoryScan<Parser: HistoryFileParser>: Sendable {
         public let isComplete: Bool
     }
 
-    /// What one scan did. Tests use it to check the limits and the incremental reads.
+    /// What one scan did. Tests use it to check the limits and the incremental reads, and
+    /// ``HistoryScanner/catchUp(_:since:)`` uses it to decide whether to scan again.
     public struct Work: Equatable, Sendable {
         public var bytesRead = 0
         public var parsedLines = 0
@@ -23,6 +24,12 @@ public struct HistoryScan<Parser: HistoryFileParser>: Sendable {
         public var discoveredFiles = 0
         public var cachedFiles = 0
         public var cachedRecords = 0
+        /// The scan or file byte budget left bytes of a file unread.
+        public var readStoppedAtBudget = false
+        /// The entry or file budget stopped discovery before the end of the sweep.
+        public var discoveryStoppedAtBudget = false
+        /// This scan completed a discovery sweep.
+        public var completedSweep = false
     }
 
     /// Every account of the scanned roots, in root order.

@@ -40,7 +40,7 @@ public final class GrokTokenHistory: TokenHistoryProvider {
                 account: root.account,
                 directory: root.directory.appending(path: "sessions", directoryHint: .isDirectory))
         }
-        let scan = try await scanner.scan(scanRoots, since: tally.start)
+        let scan = try await scanner.catchUp(scanRoots, since: tally.start)
         return scan.tokenHistory(provider: .grok, tally: tally) { files, tally in
             var records = TokenRecordSet()
             for file in files { records.formUnion(file.parser.records) }

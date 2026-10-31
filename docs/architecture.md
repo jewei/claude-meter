@@ -239,7 +239,7 @@ keeps its update state in keys that start with `SU`. Launch at login is register
 | --- | --- |
 | One HTTP send, including retries | 30 s (provider requests may set less) |
 | One provider refresh (safety net) | 90 s |
-| One history refresh | 20 s |
+| One history refresh | 20 s; scans start again only within the first 10 s (`HistoryLimits.catchUpTime`) |
 | Notification permission read, one notification post | 5 s |
 | Notification permission prompt (waits for the person) | 600 s |
 | Blocking file, SQLite, or Keychain read | 5 s; 3 s for a Codex `auth.json`, 2 s for the Cursor credentials of a history read. A read past its limit is abandoned and keeps its thread until it ends; while 16 abandoned reads still run, new reads fail at once. History scans have a separate pool (`BlockingIO.history`) with the same limits, but a scan that finds it full first waits up to 2 s (`HistoryLimits.busyRetries` tries, 50 ms apart) for a stuck read to end. |

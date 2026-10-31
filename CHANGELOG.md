@@ -12,6 +12,12 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- After a launch or an update, "Tokens used" counts a large local history in its first
+  read. Before, it showed only a small part, such as millions of tokens instead of
+  billions, and took up to a few hours to catch up.
+
 ## [4.3.1] - 2026-10-31
 
 ### Changed

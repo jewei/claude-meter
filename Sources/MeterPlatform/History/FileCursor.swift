@@ -19,6 +19,9 @@ struct FileCursor<Parser: HistoryFileParser>: Sendable {
         var outcome: Outcome
         var bytesRead = 0
         var parsedLines = 0
+        /// The byte allowance ran out before the end of the file, so a read in the same history
+        /// read can go on at once (``HistoryScanner/catchUp(_:since:)``).
+        var reachedAllowance = false
     }
 
     /// The stamp of the file when it was last read.
@@ -61,11 +64,14 @@ struct FileCursor<Parser: HistoryFileParser>: Sendable {
         defer { close(descriptor) }
         var reader = CountingReader(descriptor: descriptor)
         var lines = 0
+        var reachedAllowance = false
         do {
             let outcome = try advance(
-                previous, reader: &reader, lines: &lines, available: available, limits: limits,
-                cancellation: cancellation)
-            return Progress(outcome: outcome, bytesRead: reader.bytesRead, parsedLines: lines)
+                previous, reader: &reader, lines: &lines, reachedAllowance: &reachedAllowance,
+                available: available, limits: limits, cancellation: cancellation)
+            return Progress(
+                outcome: outcome, bytesRead: reader.bytesRead, parsedLines: lines,
+                reachedAllowance: reachedAllowance)
         } catch let error as FileReadError {
             return Progress(
                 outcome: .failed(error), bytesRead: reader.bytesRead, parsedLines: lines)
@@ -73,8 +79,9 @@ struct FileCursor<Parser: HistoryFileParser>: Sendable {
     }
 
     private static func advance(
-        _ previous: FileCursor?, reader: inout CountingReader, lines: inout Int, available: Int,
-        limits: HistoryLimits, cancellation: BlockingIO.Cancellation
+        _ previous: FileCursor?, reader: inout CountingReader, lines: inout Int,
+        reachedAllowance: inout Bool, available: Int, limits: HistoryLimits,
+        cancellation: BlockingIO.Cancellation
     ) throws -> Progress.Outcome {
         let stamp = try FileStamp(descriptor: reader.descriptor)
         // Only a saved cursor can be unchanged. A new empty file needs a cursor too, or it
@@ -92,7 +99,7 @@ struct FileCursor<Parser: HistoryFileParser>: Sendable {
         cursor.stamp = stamp
         let allowance = min(
             limits.fileBytes, max(0, available - reader.bytesRead - HistoryLimits.reserveBytes))
-        lines = try cursor.parse(
+        (lines, reachedAllowance) = try cursor.parse(
             &reader, allowance: allowance, limits: limits, cancellation: cancellation)
         try cursor.saveSamples(&reader)
 
@@ -115,10 +122,12 @@ struct FileCursor<Parser: HistoryFileParser>: Sendable {
         return head == self.head && boundary == self.boundary
     }
 
+    /// Parses lines until the end of the file, the allowance, or the record limit. Returns the
+    /// parsed lines, and whether the allowance ran out before the end of the file.
     private mutating func parse(
         _ reader: inout CountingReader, allowance: Int, limits: HistoryLimits,
         cancellation: BlockingIO.Cancellation
-    ) throws -> Int {
+    ) throws -> (lines: Int, reachedAllowance: Bool) {
         let decoder = JSONDecoder()
         var position = offset
         var remaining = allowance
@@ -151,7 +160,7 @@ struct FileCursor<Parser: HistoryFileParser>: Sendable {
             // The consumed part of a long line is never read again.
             if isSkippingLine { offset = position }
         }
-        return lines
+        return (lines, position < stamp.size && remaining <= 0 && !reachedRecordLimit)
     }
 
     /// Adds bytes to the current line, or starts skipping it when it grows past `limit`.

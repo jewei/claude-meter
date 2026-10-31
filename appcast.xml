@@ -6,6 +6,34 @@
         <description>Claude Meter release feed</description>
         <language>en</language>
         <item>
+            <title>Version 4.3.1</title>
+            <pubDate>Sat, 31 Oct 2026 16:30:29 +0000</pubDate>
+            <sparkle:version>431</sparkle:version>
+            <sparkle:shortVersionString>4.3.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:minimumUpdateVersion>295</sparkle:minimumUpdateVersion>
+            <sparkle:minimumAutoupdateVersion>400</sparkle:minimumAutoupdateVersion>
+            <description><![CDATA[
+<h3>Changed</h3>
+<ul>
+<li>Claude plan badges use Anthropic's new plan names: Max 20x shows as "Ultra", and Max 5x as "Max". A plan that you picked in Settings before the rename shows by its new name.</li>
+<li>Cursor plan badges show Cursor's current plans (Plus, Premium, Super, Ultra) by name, such as "ULTRA" instead of "UNIFIED_ULTRA". Ultra and Super badges are violet.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>A countdown on a card, in "Usage limit resets", in an alert, or in Settings no longer breaks across two lines, such as "Runs out in 2h" and "10m" on the next line.</li>
+<li>Settings states a Claude rate-limit wait in the format of every other countdown, "Try again in 1h 5m", not "in 1 h 5 min".</li>
+<li>Diagnostics says "1 account", not "1 accounts".</li>
+</ul>
+            ]]></description>
+            <enclosure
+                url="https://github.com/jewei/claude-meter/releases/download/v4.3.1/ClaudeMeter-4.3.1.dmg"
+                sparkle:edSignature="9hEwTGk03qtu1ekuRCEFEMTBlhm7MEDQAzZqJJyiAEEgawTTw+IAWhnsLBAELheYyBFXQNz2JAbWYPFEPBZpCw=="
+                length="5399912"
+                type="application/octet-stream"
+            />
+        </item>
+        <item>
             <title>Version 4.3.0</title>
             <pubDate>Thu, 29 Oct 2026 06:43:16 +0000</pubDate>
             <sparkle:version>430</sparkle:version>

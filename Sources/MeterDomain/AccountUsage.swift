@@ -5,7 +5,7 @@ public struct AccountUsage: Codable, Hashable, Sendable, Identifiable {
     public let id: AccountID
     /// The provider's label. The app replaces it with the user's display name, if set.
     public var name: String
-    /// The plan that the login reports, such as "Max 20x" or "Plus".
+    /// The plan that the login reports, such as "Ultra" or "Plus".
     public var plan: String?
     public var windows: [QuotaWindow]
     public var balances: [Balance]

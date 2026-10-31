@@ -44,7 +44,7 @@ public enum PreviewData {
                 duration: length.map { $0 * 3_600 })
         }
         let work = AccountUsage(
-            id: "claude-work", name: "work", plan: "Max 20x",
+            id: "claude-work", name: "work", plan: "Ultra",
             windows: [
                 window(.session, "Session", used: 22, hours: 3.2, length: 5),
                 window(.weekly, "Weekly", used: 36, hours: 151, length: 168),
@@ -73,7 +73,7 @@ public enum PreviewData {
             balances: [Balance(kind: .credits, amount: 12, unit: .credits)],
             observedAt: now.addingTimeInterval(-120))
         let cursor = AccountUsage(
-            id: .default, name: "Cursor", plan: "Pro",
+            id: .default, name: "Cursor", plan: "Ultra",
             windows: [
                 window(.billing, "Total", used: 42, hours: 300, length: 720),
                 window(.scoped, "Auto", used: 30, hours: 300, id: "auto", binding: false),

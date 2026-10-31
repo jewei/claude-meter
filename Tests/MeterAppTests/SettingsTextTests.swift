@@ -126,19 +126,27 @@ import Testing
 
     /// The user's pick wins over the reported plan, which can be old after a plan change.
     @Test func planChoicePrefersThePick() throws {
-        let picked = PlanChoice(reported: "Pro", override: "Max 20x")
-        #expect(picked.current == PlanBadge(plan: "Max 20x"))
+        let picked = PlanChoice(reported: "Pro", override: "Ultra")
+        #expect(picked.current == PlanBadge(plan: "Ultra"))
         #expect(picked.reported == PlanBadge(plan: "Pro"))
         #expect(picked.isPicked)
         #expect(picked.resetTitle == "Use reported plan (Pro)")
         #expect(picked.help == "You chose this badge. The login reports Pro.")
 
-        let reported = PlanChoice(reported: "Max 5x", override: nil)
-        #expect(reported.current == PlanBadge(plan: "Max 5x"))
+        let reported = PlanChoice(reported: "Max", override: nil)
+        #expect(reported.current == PlanBadge(plan: "Max"))
         #expect(!reported.isPicked)
         #expect(reported.resetTitle == nil)
         #expect(
-            reported.help == "The login reports Max 5x. Choose another badge if your plan changed.")
+            reported.help == "The login reports Max. Choose another badge if your plan changed.")
+
+        // A pick saved before Anthropic renamed Max 20x to Ultra, and an archived reading of
+        // Max 5x, show by their current names.
+        let renamed = PlanChoice(reported: "Max 5x", override: "Max 20x")
+        #expect(renamed.current == PlanBadge(plan: "Ultra"))
+        #expect(renamed.resetTitle == "Use reported plan (Max)")
+        #expect(renamed.help == "You chose this badge. The login reports Max.")
+        #expect(PlanChoice.plans == ["Pro", "Max", "Ultra", "Team", "Enterprise", "Free"])
 
         let unreported = PlanChoice(reported: nil, override: "Team")
         #expect(unreported.current == PlanBadge(plan: "Team"))

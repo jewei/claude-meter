@@ -254,9 +254,9 @@ import Testing
     /// change, so the user's pick wins.
     @Test func thePickWinsOverTheReportedPlan() {
         let usage = Fixture.usage(.claude, Fixture.account("claude", plan: "Pro"))
-        let settings = Fixture.settings { $0.claude.planOverrides = ["claude": "Max 20x"] }
+        let settings = Fixture.settings { $0.claude.planOverrides = ["claude": "Ultra"] }
         let context = Fixture.context(settings, readings: [.claude: Fixture.current(usage)])
-        #expect(context.accounts(for: .claude).first?.plan == "Max 20x")
+        #expect(context.accounts(for: .claude).first?.plan == "Ultra")
 
         let reported = Fixture.context(
             Fixture.settings(), readings: [.claude: Fixture.current(usage)])

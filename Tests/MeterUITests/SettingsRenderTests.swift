@@ -25,7 +25,7 @@ import Testing
         let accounts = [
             ClaudeSettingsModel.Account(
                 id: "claude", defaultName: "default", path: "/Users/me/.claude", isDefault: true,
-                isEnabled: true, isRemovable: false, reportedPlan: "Max 20x", issue: nil),
+                isEnabled: true, isRemovable: false, reportedPlan: "Ultra", issue: nil),
             ClaudeSettingsModel.Account(
                 id: "claude-work", defaultName: "work", path: "/Users/me/.claude-work",
                 isDefault: false, isEnabled: true, isRemovable: true, reportedPlan: nil,

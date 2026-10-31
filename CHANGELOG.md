@@ -12,6 +12,13 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
+### Changed
+
+- Claude plan badges use Anthropic's new plan names: Max 20x shows as "Ultra", and Max 5x
+  as "Max". A plan that you picked in Settings before the rename shows by its new name.
+- Cursor plan badges show Cursor's current plans (Plus, Premium, Super, Ultra) by name, such
+  as "ULTRA" instead of "UNIFIED_ULTRA". Ultra and Super badges are violet.
+
 ### Fixed
 
 - A countdown on a card, in "Usage limit resets", in an alert, or in Settings no longer

@@ -119,16 +119,19 @@ public struct PlanBadge: Equatable, Sendable {
     public let text: String
     public let tier: Tier
 
-    /// Badge text and color for a plan name: `Max 20x` → `MAX 20X` in the max color.
+    /// Badge text and color for a plan name: `Ultra` → `ULTRA` in the max color. A Claude plan
+    /// (`verbatim` false) is shown by its current name (``ClaudePlanName``): `Max 20x` →
+    /// `ULTRA`. Other providers' plans (`verbatim` true) keep their text, uppercased.
     public init?(plan: String?, verbatim: Bool = false) {
-        guard let plan = plan?.trimmingCharacters(in: .whitespaces), !plan.isEmpty else {
+        guard var plan = plan?.trimmingCharacters(in: .whitespaces), !plan.isEmpty else {
             return nil
         }
+        if !verbatim { plan = ClaudePlanName.current(plan) }
         let lower = plan.lowercased()
         let tier: Tier =
-            if lower.contains("max") || lower.contains("enterprise") {
+            if ["max", "ultra", "super", "enterprise"].contains(where: lower.contains) {
                 .max
-            } else if ["team", "business", "pro", "plus"].contains(where: lower.contains)
+            } else if ["team", "business", "pro", "plus", "premium"].contains(where: lower.contains)
                 || lower == "go"
             {
                 .pro
@@ -136,9 +139,9 @@ public struct PlanBadge: Equatable, Sendable {
                 .free
             }
         self.tier = tier
-        if verbatim || lower.wholeMatch(of: /(max|pro) [0-9]+x/) != nil {
+        if verbatim {
             text = plan.uppercased()
-        } else if let word = ["max", "enterprise", "team", "business", "pro", "plus"]
+        } else if let word = ["ultra", "max", "enterprise", "team", "business", "pro", "plus"]
             .first(where: lower.contains)
         {
             text = word.uppercased()

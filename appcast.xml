@@ -6,6 +6,28 @@
         <description>Claude Meter release feed</description>
         <language>en</language>
         <item>
+            <title>Version 4.3.2</title>
+            <pubDate>Sat, 31 Oct 2026 17:37:47 +0000</pubDate>
+            <sparkle:version>432</sparkle:version>
+            <sparkle:shortVersionString>4.3.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:minimumUpdateVersion>295</sparkle:minimumUpdateVersion>
+            <sparkle:minimumAutoupdateVersion>400</sparkle:minimumAutoupdateVersion>
+            <description><![CDATA[
+<h3>Fixed</h3>
+<ul>
+<li>After a launch or an update, "Tokens used" counts a large local history in its first read. Before, it showed only a small part, such as millions of tokens instead of billions, and took up to a few hours to catch up.</li>
+<li>"Tokens used" no longer marks a complete Claude history as partial (<code>+</code>) because a prompt or a tool result is longer than 1 MiB.</li>
+</ul>
+            ]]></description>
+            <enclosure
+                url="https://github.com/jewei/claude-meter/releases/download/v4.3.2/ClaudeMeter-4.3.2.dmg"
+                sparkle:edSignature="vY40QPXYAzkBrOvi0sdhMhVYHG3vhljXe7Ka4TlFacPFVjb9IJix7M4y8R4TowTENEGZprRXFjjQUNDa39imAg=="
+                length="5407732"
+                type="application/octet-stream"
+            />
+        </item>
+        <item>
             <title>Version 4.3.1</title>
             <pubDate>Sat, 31 Oct 2026 16:30:29 +0000</pubDate>
             <sparkle:version>431</sparkle:version>

@@ -120,10 +120,10 @@ import Testing
         let reading = ProviderUsage(
             provider: .claude,
             accounts: [
-                AccountUsage(id: "claude-work", name: "work", plan: "Max 5x", observedAt: Date())
+                AccountUsage(id: "claude-work", name: "work", plan: "Max", observedAt: Date())
             ])
         fixture.usage.restore([.claude: reading])
-        #expect(model.accounts.last?.reportedPlan == "Max 5x")
+        #expect(model.accounts.last?.reportedPlan == "Max")
     }
 
     @Test func aLoginWithoutAConfigDirIsListedToNameButNotToTurnOff() async {

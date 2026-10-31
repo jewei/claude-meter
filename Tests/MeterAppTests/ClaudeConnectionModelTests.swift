@@ -22,9 +22,9 @@ import Testing
     /// Manual tokens report no plan, so the user picks the badge of the default account.
     @Test func theManualPlanIsTheDefaultAccountsBadge() {
         #expect(model.manualPlan.current == nil)
-        model.setManualPlan(" Max 5x ")
-        #expect(settings.settings.claude.planOverrides["claude"] == "Max 5x")
-        #expect(model.manualPlan.current == PlanBadge(plan: "Max 5x"))
+        model.setManualPlan(" Ultra ")
+        #expect(settings.settings.claude.planOverrides["claude"] == "Ultra")
+        #expect(model.manualPlan.current == PlanBadge(plan: "Ultra"))
         model.setManualPlan(nil)
         #expect(settings.settings.claude.planOverrides["claude"] == nil)
     }

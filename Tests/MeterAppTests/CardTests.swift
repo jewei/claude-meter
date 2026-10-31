@@ -370,13 +370,31 @@ import Testing
     }
 
     @Test func planBadges() {
-        #expect(PlanBadge(plan: "Max 20x") == PlanBadge(plan: "MAX 20X", verbatim: true))
-        #expect(PlanBadge(plan: "Max 20x")?.tier == .max)
+        #expect(PlanBadge(plan: "Ultra") == PlanBadge(plan: "ULTRA", verbatim: true))
+        #expect(PlanBadge(plan: "Ultra")?.tier == .max)
         #expect(PlanBadge(plan: "Claude Max")?.text == "MAX")
         #expect(PlanBadge(plan: "Team")?.tier == .pro)
         #expect(PlanBadge(plan: "free")?.text == "FREE")
         #expect(PlanBadge(plan: "Plus", verbatim: true)?.text == "PLUS")
         #expect(PlanBadge(plan: "  ") == nil)
+    }
+
+    /// A pick saved in Settings, or an archived reading, can name a plan from before Anthropic
+    /// renamed Max 20x to Ultra and Max 5x to Max.
+    @Test func claudeBadgesUseTheCurrentPlanNames() {
+        #expect(PlanBadge(plan: "Max 20x") == PlanBadge(plan: "ULTRA", verbatim: true))
+        #expect(PlanBadge(plan: " max 5X ") == PlanBadge(plan: "MAX", verbatim: true))
+        #expect(ClaudePlanName.current("Max 20x") == "Ultra")
+        #expect(ClaudePlanName.current("Pro") == "Pro")
+        // Another provider's plan keeps its words.
+        #expect(PlanBadge(plan: "Max 20x", verbatim: true)?.text == "MAX 20X")
+    }
+
+    /// Cursor's plans, cheapest first, then its business plans.
+    @Test func cursorBadgeTiers() {
+        let tiers = ["Free", "Plus", "Premium", "Super", "Ultra", "Teams", "Enterprise", "Pro+"]
+            .map { PlanBadge(plan: $0, verbatim: true)?.tier }
+        #expect(tiers == [.free, .pro, .pro, .max, .max, .pro, .max, .pro])
     }
 }
 

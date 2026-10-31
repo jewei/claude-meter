@@ -76,7 +76,7 @@ import Testing
                 duration: kind == .session ? 5 * 3_600 : 168 * 3_600)
         }
         let claude = AccountUsage(
-            id: "claude", name: "Claude", plan: "Max 20x",
+            id: "claude", name: "Claude", plan: "Ultra",
             windows: [
                 window(.session, "Session", used: 2, hours: 3.93),
                 window(.weekly, "Weekly", used: 11, hours: 95),
@@ -155,7 +155,7 @@ import Testing
                 isBinding: true)
         }
         let main = AccountUsage(
-            id: "claude", name: "default", plan: "Max 5x",
+            id: "claude", name: "default", plan: "Max",
             windows: [
                 window(.session, used: 97, hours: 0.5), window(.weekly, used: 64, hours: 40),
                 QuotaWindow(

@@ -127,9 +127,12 @@ extension ClaudeTests {
 
         @Test(
             arguments: [
-                ("max", nil, "Max"), ("pro", "default_claude_max_5x", "Max 5x"),
-                (nil, "default_claude_max_20x", "Max 20x"),
-                ("max", "default_claude_max_20x", "Max 20x"),
+                // Anthropic renamed Max 20x to Ultra and Max 5x to Max; the tiers kept the
+                // old multipliers.
+                ("max", nil, "Max"), ("pro", "default_claude_max_5x", "Max"),
+                (nil, "default_claude_max_20x", "Ultra"),
+                ("max", "default_claude_max_20x", "Ultra"),
+                ("ultra", nil, "Ultra"), (nil, "default_claude_ultra", "Ultra"),
                 (nil, "team_tier", "Team"), ("enterprise", nil, "Enterprise"),
                 (" Free ", nil, "Free"),
                 ("pro", "team", "Pro"), ("unknown", nil, nil), (nil, nil, nil),

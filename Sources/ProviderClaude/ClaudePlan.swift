@@ -1,13 +1,14 @@
 import Foundation
 
-/// Maps Anthropic plan hints to a plan name, such as "Max 20x" or "Pro".
+/// Maps Anthropic plan hints to a plan name, such as "Ultra" or "Pro".
 enum ClaudePlan {
-    /// A tier with a 5x or 20x multiplier refines "Max". Otherwise `subscriptionType` wins over
-    /// the tier. Nil when neither hint is recognized.
+    /// A tier with a 5x or 20x multiplier refines "Max". Anthropic renamed Max 20x to Ultra and
+    /// Max 5x to Max, but the tiers keep the old multipliers, such as `default_claude_max_20x`.
+    /// Otherwise `subscriptionType` wins over the tier. Nil when neither hint is recognized.
     static func name(subscriptionType: String?, rateLimitTier: String?) -> String? {
         if let tier = rateLimitTier?.lowercased() {
-            if tier.contains("max_20x") { return "Max 20x" }
-            if tier.contains("max_5x") { return "Max 5x" }
+            if tier.contains("max_20x") { return "Ultra" }
+            if tier.contains("max_5x") { return "Max" }
         }
         return name(hint: subscriptionType) ?? name(hint: rateLimitTier)
     }
@@ -17,6 +18,7 @@ enum ClaudePlan {
         guard let hint = hint?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
             !hint.isEmpty
         else { return nil }
+        if hint.contains("ultra") { return "Ultra" }
         if hint.contains("max") { return "Max" }
         if hint.contains("pro") { return "Pro" }
         if hint.contains("team") { return "Team" }

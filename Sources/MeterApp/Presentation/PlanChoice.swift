@@ -5,7 +5,7 @@ import Foundation
 /// change, the reported plan can be old until the next sign-in.
 public struct PlanChoice: Equatable, Sendable {
     /// The plans that the menu offers, in menu order.
-    public static let plans = ["Pro", "Max 5x", "Max 20x", "Team", "Enterprise", "Free"]
+    public static let plans = ["Pro", "Max", "Ultra", "Team", "Enterprise", "Free"]
 
     /// The badge that the card shows: the user's pick, else the reported plan.
     public let current: PlanBadge?
@@ -13,13 +13,15 @@ public struct PlanChoice: Equatable, Sendable {
     public let reported: PlanBadge?
     /// The user picked the badge.
     public let isPicked: Bool
-    /// The reported plan as the login names it, such as `Max 5x`, for text.
+    /// The reported plan by its current name (``ClaudePlanName``), such as `Ultra`, for text.
     private let reportedName: String?
 
     public init(reported: String?, override: String?) {
         let picked = PlanBadge(plan: override)
         self.reported = PlanBadge(plan: reported)
-        reportedName = self.reported == nil ? nil : reported?.trimmingCharacters(in: .whitespaces)
+        reportedName =
+            self.reported == nil
+            ? nil : reported.map { ClaudePlanName.current($0.trimmingCharacters(in: .whitespaces)) }
         current = picked ?? self.reported
         isPicked = picked != nil
     }

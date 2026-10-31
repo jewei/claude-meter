@@ -166,7 +166,7 @@ extension ClaudeTests {
             harness.signIn(main, token: "main", legacy: true)
 
             let usage = try await harness.provider(usageServer(["main": "{}"])).fetch(previous: nil)
-            #expect(usage.accounts[0].plan == "Max 20x")
+            #expect(usage.accounts[0].plan == "Ultra")
         }
     }
 }

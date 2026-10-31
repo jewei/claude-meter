@@ -274,6 +274,19 @@ import Testing
         #expect(CursorPlan.displayName(" ") == nil)
     }
 
+    /// Cursor's current plans carry a `unified_` prefix, such as `unified_ultra`.
+    @Test func unifiedPlansGetTheirProductNames() async throws {
+        try home.write(token: CursorFixture.token(), membership: "unified_ultra")
+        let account = try account(
+            try await provider(FakeHTTPClient(json: CursorFixture.usage)).fetch(previous: nil))
+        #expect(account.plan == "Ultra")
+        let names = ["free", "plus", "premium", "super", "ultra", "teams", "enterprise"]
+            .map { CursorPlan.displayName("unified_\($0)") }
+        #expect(names == ["Free", "Plus", "Premium", "Super", "Ultra", "Teams", "Enterprise"])
+        #expect(CursorPlan.displayName("UNIFIED-PREMIUM") == "Premium")
+        #expect(CursorPlan.displayName("unified_custom") == "unified_custom")
+    }
+
     @Test func readsNumbersSentAsStrings() async throws {
         try home.write(token: CursorFixture.token(), membership: "pro")
         let body = """

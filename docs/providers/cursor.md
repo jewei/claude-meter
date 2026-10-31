@@ -133,7 +133,7 @@ This row counts 2 + 10 + 1000 + 3 = 1015 tokens on 1 October, local time.
 | Window `auto`, "Auto + Composer", `.scoped`, not binding | `autoPercentUsed`, only when present; no duration |
 | Window `api`, "API", `.scoped`, not binding | `apiPercentUsed`, only when present; no duration |
 | `Balance(kind: .spend, unit: .currency("USD"))` | `totalSpend` / 100 with `limit` / 100, only when `planUsage` is present |
-| Plan | Membership or `planName`: `free` Free, `pro` Pro, `pro_plus` or `pro+` Pro+, `ultra` Ultra, `business` Business, `team` or `teams` Teams; any other name as written |
+| Plan | Membership or `planName`, without a `unified_` prefix (`unified_ultra`): `free` Free, `plus` Plus, `premium` Premium, `super` Super, `ultra` Ultra, `team` or `teams` Teams, `enterprise` Enterprise; the older `pro` Pro, `pro_plus` or `pro+` Pro+, `business` Business; any other name as written |
 | Owner | `.identity(sha256("cursor", sub))`, or `.credential(sha256("cursor", token))` without `sub` |
 
 The email is never part of the reading.
@@ -179,7 +179,8 @@ The email is never part of the reading.
     the first refresh after it, a login that showed a plan reuses it and its 24 hours start, so
     a launch sends no plan request. A login without a known plan sends it at once. Its failures
     are silent and keep the plan of the same login.
-15. The plan keeps the capitalization that Cursor used, except for the known names.
+15. The plan keeps the capitalization that Cursor used, and its `unified_` prefix, except
+    for the known names.
 
 ### Retention
 

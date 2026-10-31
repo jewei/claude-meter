@@ -72,7 +72,9 @@ stay `ink` while energy is full (`headlineInk`).
 | pro | `#287B12` / `#7FD65A` | `#E7F8DC` / `#23381A` |
 | free | `#6F6A5B` / `#B8B3A2` | `#EFECE0` / `#33312A` |
 
-Values are light / dark. Settings row tiles and account avatars use fixed fills
+Values are light / dark. A plan name picks the tier (`PlanBadge`). A name that contains
+Max, Ultra, Super, or Enterprise is max. A name that contains Team, Business, Pro, Plus, or
+Premium, and the name Go, are pro. Any other name is free. Settings row tiles and account avatars use fixed fills
 (`Palette.Tile`, the same in both appearances) with white glyphs. A data source tile shows
 its provider's `ProviderMark` (20 pt, white). Account avatars pick one of
 eight tile colors from a djb2 hash of the account ID. The bolt tiles in the popover header
@@ -98,7 +100,7 @@ bar uses the system rounded font.
 | Big number | Fredoka Bold | 14 (12 in limit rows), as wide as "100%" | "78%" |
 | Unknown number | Nunito Bold | one size smaller | "—" (Fredoka draws it like a minus) |
 | Ring letter | Fredoka Bold | 19 | "W" |
-| Plan badge | Fredoka Bold | 10 | "MAX 20X" |
+| Plan badge | Fredoka Bold | 10 | "ULTRA" |
 | Primary button | Fredoka Bold | 14 | "Open Settings" |
 | Metric label | Nunito Bold | 11 | "5-hr", "week" |
 | Caption | Nunito SemiBold | 11 | "Resets in 3h 12m" |

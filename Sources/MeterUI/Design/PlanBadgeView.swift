@@ -1,8 +1,8 @@
 import MeterApp
 import SwiftUI
 
-/// A capsule with the plan name in its tier colors: violet for Max, green for Pro, gray for
-/// Free.
+/// A capsule with the plan name in its tier colors (``PlanBadge/Tier``): violet for Max and
+/// Ultra, green for Pro, gray for Free.
 struct PlanBadgeView: View {
     let badge: PlanBadge
 

@@ -328,10 +328,14 @@ little memory. The limit is 256 MiB. The result is one of three states:
    total, over all grants; grants after the limit are not read. Without `cedar_ember`, with
    `grants` missing, or with a grant that is not an object, the count is unknown.
 7. The plan is from the credential's `subscriptionType` and `rateLimitTier`, else the
-   `.claude.json` tier: "Max 20x", "Max 5x", "Max", "Pro", "Team", "Enterprise", "Free".
-   Manual tokens name no plan. A plan badge that the user picks in Settings wins over the
-   reported plan: Claude Code keeps the plan of the last sign-in, so after a plan change
-   the reported plan stays old until the next `/login`.
+   `.claude.json` tier: "Ultra", "Max", "Pro", "Team", "Enterprise", "Free". Anthropic
+   renamed Max 20x to Ultra and Max 5x to Max, but the tiers keep the old multipliers:
+   `default_claude_max_20x` is "Ultra" and `default_claude_max_5x` is "Max". "Max" without
+   a multiplier is "Max". Manual tokens name no plan. A plan badge that the user picks in
+   Settings wins over the reported plan: Claude Code keeps the plan of the last sign-in, so
+   after a plan change the reported plan stays old until the next `/login`. A pick or an
+   archived reading from before the rename ("Max 20x", "Max 5x") shows by its new name
+   (`ClaudePlanName`).
 
 ### Limits
 

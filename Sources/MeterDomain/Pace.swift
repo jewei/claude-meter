@@ -9,16 +9,20 @@ public struct Pace: Equatable, Sendable {
     public enum Verdict: Equatable, Sendable {
         /// More than ``Pace/tightSpare`` percent is left at the reset.
         case lastsUntilReset(spareAtReset: Double)
-        /// 0 to ``Pace/tightSpare`` percent is left at the reset. A run-out exactly at the
-        /// reset is tight with 0 left.
+        /// 0 to ``Pace/tightSpare`` percent is left at the reset. A run-out at the reset, or
+        /// within ``Pace/nearResetShare`` of the window before it, is tight with 0 left.
         case tight(spareAtReset: Double)
-        /// The energy runs out before the reset. The date can be in the past: the app did not
-        /// observe exhaustion, so the verdict does not claim it.
+        /// The energy runs out well before the reset. The date can be in the past: the app did
+        /// not observe exhaustion, so the verdict does not claim it.
         case runsOut(at: Date)
     }
 
     /// Percent left at the reset at or below which the verdict is ``Verdict/tight(spareAtReset:)``.
     public static let tightSpare: Double = 10
+    /// A run-out closer to the reset than this share of the window is tight, not a run-out.
+    /// A straight line from a short history is rough, so a run-out a few minutes before the
+    /// reset would flip with each small reading.
+    public static let nearResetShare: Double = 0.1
     /// The shortest and longest quiet period: early in a window, one burst gives a rate that
     /// means nothing.
     public static let shortestQuiet: TimeInterval = 15 * 60
@@ -53,9 +57,10 @@ public struct Pace: Equatable, Sendable {
         guard runOut.timeIntervalSinceReferenceDate.isFinite else { return nil }
 
         let verdict: Verdict
-        if runOut < resetsAt {
+        if resetsAt.timeIntervalSince(runOut) > duration * nearResetShare {
             verdict = .runsOut(at: runOut)
         } else {
+            // A run-out near the reset gives a negative spare, which clamps to 0.
             let spare = (100 - used - rate * resetsAt.timeIntervalSince(observedAt))
                 .clamped(to: 0...100)
             verdict =

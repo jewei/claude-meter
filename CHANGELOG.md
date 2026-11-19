@@ -12,6 +12,16 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
+### Changed
+
+- A limit that runs out late in its window says how long before the reset it runs out, such
+  as "Runs out 40m before reset", instead of a time you had to compare with the reset.
+- A limit projected to run out less than 10% of its window before the reset (30 minutes for
+  a session) shows "Tight: runs out near reset". Before, a small new reading early in a
+  session could flip it between "Tight" and "Runs out".
+- The popover header says "Pace yourself" while a limit is projected to run out, instead
+  of "You're cruising".
+
 ## [4.3.2] - 2026-10-31
 
 ### Fixed

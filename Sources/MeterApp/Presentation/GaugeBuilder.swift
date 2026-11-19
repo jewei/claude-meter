@@ -34,7 +34,9 @@ struct GaugeBuilder {
             spoken.append("resets \(phrase)")
         }
         if let pace {
-            spoken.append(PaceText.spoken(pace, now: context.now, showsUsed: showsUsed))
+            spoken.append(
+                PaceText.spoken(
+                    pace, resetsAt: window?.resetsAt, now: context.now, showsUsed: showsUsed))
         }
         return GaugeModel(
             title: title,
@@ -45,7 +47,8 @@ struct GaugeBuilder {
             severity: severity,
             resetText: reset,
             paceText: pace.flatMap { Self.showsPaceText($0) ? $0 : nil }.map {
-                PaceText.text($0, now: context.now, showsUsed: showsUsed)
+                PaceText.text(
+                    $0, resetsAt: window?.resetsAt, now: context.now, showsUsed: showsUsed)
             },
             paceSeverity: paceSeverity,
             shortfallSeverity: Self.showsShortfall(

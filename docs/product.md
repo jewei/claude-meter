@@ -35,8 +35,13 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 8. **Pace** projects a window's use so far in a straight line to its reset (`Pace.of`). The
    rate is the percent used at the observation divided by the time since the window started
    (`resetsAt − duration`), so an unchanged reading always gives the same projection. The
-   verdict is "Runs out in …" when the projection reaches 100% before the reset, "Tight"
-   when at most 10% is left at the reset, else "Lasts until reset". A projection that
+   verdict is "Runs out …" when the projection reaches 100% more than 10% of the window
+   before the reset (30 minutes for a 5-hour session), "Tight" when at most 10% is left at
+   the reset or it runs out within that 10% ("Tight: runs out near reset"), else "Lasts
+   until reset". A straight line from a short history is rough, so a run-out just before
+   the reset is tight: otherwise one small reading flips the verdict. A run-out nearer the
+   reset than now names the gap, "Runs out 40m before reset", else the time,
+   "Runs out in 2h 10m" (`PaceText.runOut`); alerts always name the time. A projection that
    passed before a new reading says "Runs out now": the app did not see the window run out,
    so it does not say that it did. There is no pace when the window has no duration, value,
    or future reset, is at or over its limit, has no use yet, or is still in its quiet period
@@ -126,11 +131,13 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    When the meter is unavailable, the hero states the reason and no notice repeats that issue,
    also not with an account name in front (`Notice`).
 5. The hero summarizes the main meter (`HeroModel`): its headline follows the selected
-   account's severity, and its subline names the limiting window and its reset, or counts
+   account's severity, except that a normal severity with a run-out in the subline reads
+   "Pace yourself", and a single account's "Plenty in the tank" reads "Burning fast", so
+   the hero never calls a run-out cruising. Its subline names the limiting window and its reset, or counts
    the accounts with plenty left ("fresh") and names the lowest account. Before the reset,
    the subline names the binding window that runs out first, of any account that it ranks:
    `Session runs out in 2h 10m, resets in 3h` when that window is the limiting one, else
-   `Session runs out in 2h · Weekly resets in 1h`. A run-out of another account than the one
+   `Session runs out 1h before reset · Weekly resets in 1h`. A run-out of another account than the one
    named starts with that account's name (`Home: Session runs out in 2h`). The first run-out
    is the soonest date, not the highest pressure. An account that is out of energy
    names no run-out: another window stops it first. Non-binding windows, such as Sonnet
@@ -145,7 +152,7 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    account reports extra usage (`CardBuilder`).
 7. Every bar and ring with a pace (§1.8) has an even-pace mark. Every limit row, bar, and
    ring with a pace states the verdict on its own line only when the verdict needs
-   attention: "Runs out in …", with a warning icon in warning color (critical color when
+   attention: "Runs out …", with a warning icon in warning color (critical color when
    the window is already critical), and "Tight". "Lasts until reset" is only spoken
    (`GaugeBuilder.showsPaceText`, `GaugeBuilder.paceSeverity`, `PaceText`). In Energy left
    mode, a bar whose window runs out before its reset also hatches the shortfall from its

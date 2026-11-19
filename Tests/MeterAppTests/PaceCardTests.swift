@@ -37,12 +37,12 @@ import Testing
     @Test func ringRowsShowPaceAndMark() throws {
         let usage = Fixture.usage(.claude, account([session(used: 50)]))
         let rings = try #require(rings(Fixture.current(usage)))
-        #expect(rings.inner.paceText == "Runs out in 2h")
+        #expect(rings.inner.paceText == "Runs out 1h before reset")
         // A run-out before the reset needs attention even while energy is full. The fill
         // (50% left) is short of the mark (60%).
         #expect(rings.inner.paceSeverity == .warning)
         #expect(rings.inner.shortfallSeverity == .warning)
-        #expect(rings.inner.accessibilityValue.hasSuffix("runs out in 2h"))
+        #expect(rings.inner.accessibilityValue.hasSuffix("runs out 1h before reset"))
         // 2 of 5 hours: an even pace has used 40%, so 60% is left.
         #expect(try abs(#require(rings.inner.evenPaceFraction) - 0.6) < 1e-9)
         // The weekly window has no duration, so it has no pace.
@@ -98,13 +98,13 @@ import Testing
     }
 
     /// The mark moves with the clock; the projection stays with the observation. 10 minutes
-    /// after a reading of 48% used, 2h 20m into a 5-hour session (46.7% at an even pace), it
-    /// still runs out, but an even pace has now used 50%: in Usage mode the mark is beyond
-    /// the fill, on the part that is under pace, and in Energy left mode the mark is back on
-    /// the fill.
+    /// after a reading of 22.8% used, 1 hour into a 5-hour session (20% at an even pace), it
+    /// still runs out 37 minutes before the reset, but an even pace has now used 23.3%: in
+    /// Usage mode the mark is beyond the fill, on the part that is under pace, and in Energy
+    /// left mode the mark is back on the fill.
     @Test func theShortfallIsOnlyInEnergyLeftModeAndBeyondTheFill() throws {
         let window = Fixture.window(
-            .session, used: 48, resetsIn: .hours(2.5), duration: .hours(5))
+            .session, used: 22.8, resetsIn: .minutes(230), duration: .hours(5))
         let account = AccountUsage(
             id: "work", name: "Work", windows: [window],
             observedAt: .reference(-.minutes(10)))

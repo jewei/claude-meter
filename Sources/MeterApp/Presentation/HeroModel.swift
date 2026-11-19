@@ -57,9 +57,9 @@ public struct HeroModel: Equatable, Sendable {
             $0.id != selected.id && $0.hasObservation && !$0.isStale
         }
         let severity = selected.severity(context.thresholds)
-        let (emoji, title, tone) = Self.headline(severity)
         let runOut = Self.soonestRunOut(
             [selected] + others, thresholds: context.thresholds, now: context.now)
+        let (emoji, title, tone) = Self.headline(severity, runsOut: runOut != nil)
         let subtitle =
             others.isEmpty
             ? Self.singleSubtitle(selected, severity: severity, runOut: runOut, now: context.now)
@@ -67,8 +67,11 @@ public struct HeroModel: Equatable, Sendable {
         self.init(emoji: emoji, title: title, subtitle: subtitle, tone: tone)
     }
 
-    private static func headline(_ severity: Severity) -> (String, String, Tone) {
+    /// A run-out under a normal meter asks for care: "You're cruising" over "Session runs out"
+    /// would contradict itself.
+    private static func headline(_ severity: Severity, runsOut: Bool) -> (String, String, Tone) {
         switch severity {
+        case .normal where runsOut: ("⛽️", "Pace yourself", .low)
         case .normal: ("🚀", "You're cruising", .full)
         case .warning: ("⛽️", "Pace yourself", .low)
         case .critical: ("🪫", "Almost tapped out", .empty)
@@ -83,7 +86,7 @@ public struct HeroModel: Equatable, Sendable {
         let reset = limitText(account, runOut: runOut, now: now)
         let lead =
             switch severity {
-            case .normal: "Plenty in the tank"
+            case .normal: runOut == nil ? "Plenty in the tank" : "Burning fast"
             case .warning: "Getting low"
             case .critical: "Almost dry"
             case .exhausted: "Out of energy"
@@ -170,10 +173,11 @@ public struct HeroModel: Equatable, Sendable {
         let window: QuotaWindow
         let date: Date
 
-        /// `Session runs out in 2h 10m`, or `Work: Session runs out now`.
+        /// `Session runs out in 2h 10m`, `Session runs out 40m before reset`, or
+        /// `Work: Session runs out now`.
         func text(naming: Bool, now: Date) -> String {
-            let text =
-                "\(window.title) runs out \(Countdown.phrase(until: date, now: now) ?? "now")"
+            let when = PaceText.runOut(date, resetsAt: window.resetsAt, now: now)
+            let text = "\(window.title) runs out \(when)"
             return naming ? "\(account.name): \(text)" : text
         }
     }

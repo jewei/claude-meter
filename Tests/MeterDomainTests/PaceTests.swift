@@ -53,7 +53,35 @@ import Testing
         #expect(border(used: 45) == .tight(spareAtReset: 10))
         // Running out exactly at the reset is not running out first.
         #expect(border(used: 50) == .tight(spareAtReset: 0))
-        #expect(border(used: 50.5) == .runsOut(at: .reference(8_192 * 49.5 / 50.5)))
+    }
+
+    /// A run-out within 10% of the window before the reset is tight, so a small change in a
+    /// reading does not flip the verdict. 30 minutes for a 5-hour session.
+    @Test func aRunOutNearTheResetIsTight() {
+        // 42% in 2 hours runs out about 2h 46m later, 14 minutes before the reset.
+        #expect(pace(window(used: 42))?.verdict == .tight(spareAtReset: 0))
+        // 43% in 2 hours runs out about 2h 39m later, 21 minutes before the reset.
+        #expect(pace(window(used: 43))?.verdict == .tight(spareAtReset: 0))
+        // 45% in 2 hours runs out about 2h 27m later, 33 minutes before the reset.
+        guard case .runsOut = pace(window(used: 45))?.verdict else {
+            Issue.record("45% should run out")
+            return
+        }
+    }
+
+    /// Powers of two keep the arithmetic exact: the window is 16384 s, observed half way, so
+    /// the near-reset share is 1638.4 s.
+    @Test func theNearResetBorderIsTight() {
+        func verdict(runOutAfter seconds: Double) -> Pace.Verdict? {
+            // Used u over 8192 s runs out (100 - u) / (u / 8192) s later.
+            let used = 100 * 8_192 / (8_192 + seconds)
+            return pace(window(used: used, resetsIn: 8_192, duration: 16_384))?.verdict
+        }
+        #expect(verdict(runOutAfter: 8_192 - 1_024) == .tight(spareAtReset: 0))
+        guard case .runsOut = verdict(runOutAfter: 8_192 - 2_048) else {
+            Issue.record("a run-out 2048 s before the reset should run out")
+            return
+        }
     }
 
     @Test func expectedUseMovesWithTime() throws {

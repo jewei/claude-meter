@@ -43,12 +43,14 @@ public final class AppModel {
         self.codexSettings = providers.map {
             CodexSettingsModel(settings: settings, provider: $0.codex)
         }
-        self.alerts = AlertCenter(poster: notifications, limits: alertLimits) {
-            [settings, usage, updater, scheduler] in
-            Self.context(
-                settings: settings, usage: usage, updater: updater, scheduler: scheduler,
-                now: Date())
-        }
+        self.alerts = AlertCenter(
+            poster: notifications, limits: alertLimits,
+            enabledKinds: { [settings] in settings.settings.alerts.enabledKinds },
+            context: { [settings, usage, updater, scheduler] in
+                Self.context(
+                    settings: settings, usage: usage, updater: updater, scheduler: scheduler,
+                    now: Date())
+            })
         settings.onChange = { [weak self] old, new in
             self?.settingsDidChange(from: old, to: new)
         }
@@ -79,11 +81,31 @@ public final class AppModel {
     }
 
     public func menuBarModel(at now: Date) -> MenuBarModel {
-        MenuBarModel(context(at: now))
+        // MenuBarModel never displays token history or Sparkle update notices; reading only the
+        // properties it needs keeps StatusItemController from redrawing on history scans.
+        let context = PresentationContext(
+            settings: settings.settings, readings: usage.readings,
+            refreshing: usage.refreshing, restored: usage.restored, now: now, calendar: .current,
+            staleAfter: scheduler?.staleAfter(at: now) ?? RefreshScheduler.staleAfter)
+        return MenuBarModel(context)
     }
 
     public func popoverModel(at now: Date) -> PopoverModel {
         PopoverModel(context(at: now))
+    }
+
+    /// The Antigravity plan badge state for Settings > Data.
+    public var antigravityPlan: PlanChoice {
+        PlanChoice(
+            reported: usage.readings[.antigravity]?.value?.account(.default)?.plan,
+            override: settings.settings.antigravity.planOverride,
+            verbatim: true)
+    }
+
+    /// Saves the user's chosen Antigravity plan badge, or clears it when nil or blank.
+    public func setAntigravityPlan(_ plan: String?) {
+        let trimmed = plan?.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.update { $0.antigravity.planOverride = trimmed?.isEmpty == false ? trimmed : nil }
     }
 
     // MARK: - Popover actions

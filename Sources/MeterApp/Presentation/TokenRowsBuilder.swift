@@ -6,7 +6,7 @@ struct TokenRowsBuilder {
     let context: PresentationContext
 
     func model(provider: ProviderID, account: AccountID) -> TokenRowsModel? {
-        guard context.isEnabled(provider) else { return nil }
+        guard context.isEnabled(provider), provider.reportsTokenHistory else { return nil }
         let reading = context.histories[provider]
         // The history says where its counts come from; before the first one, the provider's
         // usual source.

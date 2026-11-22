@@ -26,10 +26,26 @@ extension AppModel {
                 DiagnosticFact(id.displayName, Self.describe(usage.readings[id]))
             })
         var sections = [app, readings]
-        for (id, provider) in providers?.diagnostics ?? [] {
-            sections.append(
-                DiagnosticsReport.Section(
-                    title: id.displayName, facts: await provider.diagnostics()))
+        let providers = self.providers?.diagnostics ?? []
+        if !providers.isEmpty {
+            let collected = await withTaskGroup(
+                of: (Int, DiagnosticsReport.Section).self
+            ) { group in
+                for (index, (id, provider)) in providers.enumerated() {
+                    group.addTask {
+                        (
+                            index,
+                            DiagnosticsReport.Section(
+                                title: id.displayName, facts: await provider.diagnostics())
+                        )
+                    }
+                }
+                var results: [(Int, DiagnosticsReport.Section)] = []
+                results.reserveCapacity(providers.count)
+                for await pair in group { results.append(pair) }
+                return results.sorted { $0.0 < $1.0 }.map(\.1)
+            }
+            sections += collected
         }
         return DiagnosticsReport(sections: sections)
     }

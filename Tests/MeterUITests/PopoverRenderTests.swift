@@ -94,15 +94,25 @@ import Testing
         let grok = AccountUsage(
             id: .default, name: "Grok", windows: [window(.weekly, "Weekly", used: 95, hours: 94)],
             observedAt: now.addingTimeInterval(-60))
+        let antigravity = AccountUsage(
+            id: .default, name: "Antigravity", plan: "Pro",
+            windows: [
+                window(.session, "Gemini 5h", used: 18, hours: 4.2, id: "gemini-5h"),
+                window(.weekly, "Gemini Weekly", used: 40, hours: 140, id: "gemini-weekly"),
+                window(.scoped, "Claude & GPT 5h", used: 50, hours: 3, id: "3p-5h"),
+            ],
+            observedAt: now.addingTimeInterval(-60))
         var settings = MeterApp.Settings.preview
         settings.appearance.cardStyle = .bars
         settings.cursor.isEnabled = false
         settings.grok.isEnabled = true
-        settings.cards.expanded = [.account(.claude, "claude")]
+        settings.antigravity.isEnabled = true
+        settings.cards.expanded = [.account(.claude, "claude"), .account(.antigravity, .default)]
         let readings = [
             ProviderUsage(provider: .claude, accounts: [claude]),
             ProviderUsage(provider: .codex, accounts: [codex]),
             ProviderUsage(provider: .grok, accounts: [grok]),
+            ProviderUsage(provider: .antigravity, accounts: [antigravity]),
         ]
         Snapshot.render("popover-bars-pace", background: .clear) {
             popover(.preview(settings: settings, readings: readings))

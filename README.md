@@ -1,8 +1,8 @@
 # Claude Meter
 
-Claude Meter shows your coding quota for Claude, Codex, Cursor, and Grok in the macOS menu
-bar, as energy left. Rings or bars show each account's session and weekly limits, and a
-countdown shows when each limit resets.
+Claude Meter shows your coding quota for Claude, Codex, Cursor, Grok, and Antigravity in the
+macOS menu bar, as energy left. Rings or bars show each account's session and weekly limits,
+and a countdown shows when each limit resets.
 
 <table>
   <tr>
@@ -21,7 +21,7 @@ countdown shows when each limit resets.
 - A hero that names the limit closest to running out and when it resets.
 - One card per account: several Claude and Codex config dirs, with your own names and
   plan badges. Drag a Claude or Codex card to the top to choose the menu-bar account.
-- Cursor billing usage and Grok credits on their own cards.
+- Cursor billing usage, Grok credits, and Google Antigravity quota on their own cards.
 - Tokens used today, yesterday, and in the last seven days, from local sessions on this Mac
   (Claude Code, Codex, Grok) or from your Cursor account.
 - Usage-limit resets and credits, when the provider reports them.
@@ -33,10 +33,10 @@ a minute old. Nothing runs while the display sleeps.
 
 ## Privacy
 
-Claude Meter reads quota with the sign-ins that Claude Code, Codex, Cursor, and Grok already
-keep on your Mac. It never changes their credentials. The only credential it stores is a
-Claude OAuth token that you paste into Settings yourself, in its own Keychain item.
-Diagnostics and the optional log file remove tokens, emails, account IDs, and home paths.
+Claude Meter reads quota with the sign-ins that Claude Code, Codex, Cursor, Grok, and
+Antigravity already keep on your Mac. It never changes their credentials. The only credential
+it stores is a Claude OAuth token that you paste into Settings yourself, in its own Keychain
+item. Diagnostics and the optional log file remove tokens, emails, account IDs, and home paths.
 
 ## Install
 
@@ -60,4 +60,5 @@ and [AGENTS.md](AGENTS.md).
 [MIT](LICENSE) © Jewei Mak
 
 Claude Meter is an independent community project. It is not affiliated with, endorsed by,
-or sponsored by Anthropic, OpenAI, Anysphere, or xAI. "Claude" is a trademark of Anthropic.
+or sponsored by Anthropic, OpenAI, Anysphere, xAI, or Google. "Claude" is a trademark of
+Anthropic.

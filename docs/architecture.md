@@ -22,7 +22,7 @@ A module imports only the layers above it. Providers never import each other.
 ```text
 RefreshScheduler ──refresh(quota:history:)──▶ UsageStore ──reconcile, fetch───▶ UsageProvider
                  ──reconcile(_:)────────────▶     │      ──reconcile, history─▶ TokenHistoryProvider
-                                                  │            (Claude, Codex, Cursor, Grok)
+                                                  │            (Claude, Codex, Cursor, Grok, Antigravity)
                                                   │ readings: [ProviderID: Reading<ProviderUsage>]
                                                   │ histories: [ProviderID: Reading<ProviderTokenHistory>]
                                                   ▼
@@ -244,3 +244,4 @@ keeps its update state in keys that start with `SU`. Launch at login is register
 | Notification permission prompt (waits for the person) | 600 s |
 | Blocking file, SQLite, or Keychain read | 5 s; 3 s for a Codex `auth.json`, 2 s for the Cursor credentials of a history read. A read past its limit is abandoned and keeps its thread until it ends; while 16 abandoned reads still run, new reads fail at once. History scans have a separate pool (`BlockingIO.history`) with the same limits, but a scan that finds it full first waits up to 2 s (`HistoryLimits.busyRetries` tries, 50 ms apart) for a stuck read to end. |
 | Child process (Codex recovery) | 5 s for the search and `initialize`, 10 s each for `account/read` and `account/rateLimits/read`; TERM, then KILL after 0.25 s, then at most 2 s for the reap |
+| Child process (Antigravity CLI) | 5 s for the search, 30 s for `agy -p /usage --output-format json --print-timeout 30s`; TERM, then KILL after 0.25 s, then at most 2 s for the reap |

@@ -16,6 +16,8 @@ public enum DataSourceText {
     public static let codexSubtitle = "Read subscription usage from your Codex sign-in."
     public static let grokSubtitle =
         "Read Grok Build weekly credit usage (unofficial API; may break)."
+    public static let antigravitySubtitle =
+        "Read Google Antigravity quota from the Antigravity CLI."
 
     /// A question before an action that loses something the user entered.
     public struct Confirmation: Equatable, Sendable {
@@ -77,6 +79,7 @@ public enum DataSourceText {
                 ["name", "plan badge", "tracking switch", "menu-bar pin", "card settings"]
             case .codex: ["name", "menu-bar pin", "card settings"]
             case .cursor, .grok: ["card settings"]
+            case .antigravity: ["plan badge", "card settings"]
             }
         return Confirmation(
             title: "Remove \(name)?",

@@ -111,11 +111,16 @@ struct ClaudeLogLine: Decodable {
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: Keys.self)
         isAssistant = (container.lenient(.type) as String?) == "assistant"
+        guard isAssistant else {
+            timestamp = nil
+            requestID = nil
+            message = nil
+            return
+        }
         timestamp = container.lenient(.timestamp)
-        let requestIDs: [HistoryJSON.Text?] = [
-            container.lenient(.requestID), container.lenient(.requestIDSnakeCase),
-        ]
-        requestID = requestIDs.lazy.compactMap { $0?.value }.first
+        requestID =
+            (container.lenient(.requestID) as HistoryJSON.Text?)?.value
+            ?? (container.lenient(.requestIDSnakeCase) as HistoryJSON.Text?)?.value
         message = container.lenient(.message)
     }
 

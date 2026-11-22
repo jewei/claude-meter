@@ -12,8 +12,17 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
+### Added
+
+- Google Antigravity support: turn on Antigravity in **Settings > Data** to track your
+  Gemini 5-hour and weekly quota bars alongside additional model pools (such as Claude & GPT
+  and Gemini 4 Argon) using your local `agy` CLI sign-in, with an optional plan badge picker.
+
 ### Changed
 
+- Lower idle CPU and disk usage: a closed popover no longer re-renders on background updates,
+  local token history scans parse logs faster, Diagnostics checks all providers in parallel,
+  and readings without an account identity no longer rewrite the archive on every refresh.
 - A limit that runs out late in its window says how long before the reset it runs out, such
   as "Runs out 40m before reset", instead of a time you had to compare with the reset.
 - A limit projected to run out less than 10% of its window before the reset (30 minutes for
@@ -21,6 +30,13 @@ are in the `v3.1.3` tag.
   session could flip it between "Tight" and "Runs out".
 - The popover header says "Pace yourself" while a limit is projected to run out, instead
   of "You're cruising".
+
+### Fixed
+
+- The menu-bar timer no longer accumulates duplicate observation handlers while idle, and
+  notification permission is no longer polled on every refresh when all alerts are off.
+- "Tokens used" no longer marks a complete Grok history as partial (`+`) because a streaming
+  line without usage is longer than 1 MiB.
 
 ## [4.3.2] - 2026-10-31
 

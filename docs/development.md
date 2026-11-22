@@ -33,8 +33,8 @@ make run
 > **Note:** The development build uses the bundle identifier `com.jewei.claudemeter.debug`.
 > Its settings, saved readings (`Application Support/ClaudeMeter Debug`), log file, and
 > manual Claude Keychain item are separate from an installed Claude Meter (`AppIdentity`).
-> It reads the same provider credentials, because Claude Code, Codex, Cursor, and Grok own
-> them. `make run` quits only the development build of this checkout.
+> It reads the same provider credentials, because Claude Code, Codex, Cursor, Grok, and
+> Antigravity own them. `make run` quits only the development build of this checkout.
 
 To work in Xcode, open `ClaudeMeter.xcodeproj` and run the `ClaudeMeter` scheme. Xcode
 signs Debug builds with the Apple Development certificate of team 4L4SS26L9J. If you are
@@ -47,7 +47,9 @@ not on that team, use `make app` and `make run`. They build without a signature.
 | `make help` | List the commands. This is what `make` with no target does. |
 | `make check` | The gate: format lint, all tests, unsigned Debug and universal Release apps. |
 | `make test` | Build with warnings as errors, then run every test. It prints a short summary for each test product, and each failure with its file and line. It does not use the Xcode project. |
+| `make test FILTER=…` | The same, running only tests matching `FILTER` (keeps warnings as errors and quiet output). |
 | `make test VERBOSE=1` | The same, and it lists every test. A crash names no test in the quiet output; this shows which test ran last. |
+| `CLAUDE_METER_RENDER_DIR=… make test FILTER=RenderTests` | Render light and dark PNG snapshots of the popover, menu bar, and Settings views into that directory (`docs/design.md`). |
 | `make format` | Format all Swift files in place with `.swift-format`. |
 | `make lint` | Fail on a format difference. |
 | `make app` | Build the unsigned Debug app into `build/DerivedData`. |

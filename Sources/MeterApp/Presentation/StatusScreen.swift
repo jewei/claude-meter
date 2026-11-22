@@ -53,6 +53,8 @@ public struct StatusScreen: Equatable, Sendable {
         case .codex: "Install Codex or run `codex login` so Claude Meter can read Codex usage."
         case .cursor: "Sign in to the Cursor app so Claude Meter can read your billing usage."
         case .grok: "Install Grok Build or run `grok login` so Claude Meter can read Grok usage."
+        case .antigravity:
+            "Install Antigravity or run `agy` to sign in so Claude Meter can read Antigravity usage."
         }
     }
 }

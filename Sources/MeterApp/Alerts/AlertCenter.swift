@@ -22,6 +22,7 @@ public final class AlertCenter {
 
     @ObservationIgnored private let poster: (any NotificationPosting)?
     @ObservationIgnored private let context: @MainActor () -> PresentationContext
+    @ObservationIgnored private let readEnabledKinds: @MainActor () -> Set<Alert.Kind>
     @ObservationIgnored private let limits: Limits
     @ObservationIgnored private let log = Log(.app)
     @ObservationIgnored private(set) var state = AlertEvaluator.State()
@@ -48,14 +49,16 @@ public final class AlertCenter {
     ///   - context: The presentation context at the current time.
     init(
         poster: (any NotificationPosting)?, limits: Limits = Limits(),
+        enabledKinds: (@MainActor () -> Set<Alert.Kind>)? = nil,
         context: @escaping @MainActor () -> PresentationContext
     ) {
         self.poster = poster
         self.limits = limits
         self.context = context
+        self.readEnabledKinds = enabledKinds ?? { context().settings.alerts.enabledKinds }
     }
 
-    private var enabledKinds: Set<Alert.Kind> { context().settings.alerts.enabledKinds }
+    private var enabledKinds: Set<Alert.Kind> { readEnabledKinds() }
 
     /// Reads the permission, and asks for it when an alert is on and the app never asked.
     func start() async {
@@ -138,10 +141,11 @@ public final class AlertCenter {
     private func evaluate() {
         evaluationCount += 1
         guard let poster else { return }
+        let kinds = enabledKinds
         guard authorization == .authorized else {
             // The popover does not make the app active, so a permission granted later in
-            // System Settings is noticed here. A grant schedules the next evaluation.
-            if skippedEvaluationRead == nil {
+            // System Settings is noticed here when at least one alert is on.
+            if !kinds.isEmpty, skippedEvaluationRead == nil {
                 skippedEvaluationRead = Task { [weak self] in
                     await self?.refreshAuthorization()
                     self?.skippedEvaluationRead = nil
@@ -150,7 +154,7 @@ public final class AlertCenter {
             return
         }
         let (alerts, newState) = AlertEvaluator.evaluate(
-            context(), enabledKinds: enabledKinds, previous: state)
+            context(), enabledKinds: kinds, previous: state)
         state = newState
         guard !alerts.isEmpty else { return }
         let limit = limits.post

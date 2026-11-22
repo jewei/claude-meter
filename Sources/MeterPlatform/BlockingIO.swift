@@ -55,16 +55,26 @@ public final class BlockingIO: Sendable {
         label: "com.jewei.claudemeter.blocking-io.timers", qos: .utility)
 
     /// Starts the time limit of one call: `expire` runs after `limit`. `key` is the key of
-    /// the call, or nil. A call starts its limit before its work can start.
+    /// the call, or nil. Returns a closure that cancels the timer when the call finishes first,
+    /// or nil for a test limit with nothing to cancel. A call starts its limit before its work
+    /// can start.
     typealias TimeLimit =
         @Sendable (
             _ limit: Duration, _ key: String?, _ expire: @escaping @Sendable () -> Void
-        ) -> Void
+        ) -> (@Sendable () -> Void)?
 
-    /// The time limit of the app: a timer on a serial queue, which gets a thread even when
-    /// blocked work fills the global pool.
+    /// The time limit of the app: a cancellable timer on a serial queue, which gets a thread
+    /// even when blocked work fills the global pool. Cancelling it when work finishes avoids
+    /// keeping thousands of timers alive across a history scan.
     static let realTime: TimeLimit = { limit, _, expire in
-        BlockingIO.timers.asyncAfter(deadline: .now() + limit.timeInterval, execute: expire)
+        let timer = DispatchSource.makeTimerSource(queue: BlockingIO.timers)
+        timer.schedule(deadline: .now() + limit.timeInterval)
+        timer.setEventHandler {
+            timer.cancel()
+            expire()
+        }
+        timer.resume()
+        return { timer.cancel() }
     }
 
     private let timeLimit: TimeLimit
@@ -160,9 +170,10 @@ public final class BlockingIO: Sendable {
                 // The limit starts before the work can start, so the work never runs without
                 // it. A limit that ends before the work starts abandons the work, which then
                 // skips and releases itself.
-                timeLimit(timeout, key) { [self] in
+                let cancelTimer = timeLimit(timeout, key) { [self] in
                     giveUp(outcome, cancellation, stuckKey: key, TimeoutError(limit: timeout))
                 }
+                if let cancelTimer { outcome.setCancelTimer(cancelTimer) }
                 queue.async { [self] in
                     // The flag is set before the caller hears that it gave up, so work that
                     // reads it unset starts before that, and work that reads it set is skipped.
@@ -212,6 +223,8 @@ public final class BlockingIO: Sendable {
             var isFinished = false
             /// Set while the work runs after its caller gave up, with its stuck key.
             var abandonment: Abandonment?
+            /// Cancels the call's timeout timer as soon as the wait ends.
+            var cancelTimer: (@Sendable () -> Void)?
         }
 
         private struct Abandonment: Sendable {
@@ -219,6 +232,16 @@ public final class BlockingIO: Sendable {
         }
 
         private let state = Locked<State>(State())
+
+        /// Stores `cancel`, or runs it immediately when the wait already ended.
+        func setCancelTimer(_ cancel: @escaping @Sendable () -> Void) {
+            let shouldCancelNow = state.withLock { state -> Bool in
+                if state.isFinished { return true }
+                state.cancelTimer = cancel
+                return false
+            }
+            if shouldCancelNow { cancel() }
+        }
 
         /// Returns false when the caller gave up before it started to wait. The continuation
         /// is then resumed at once, and the work must not start.
@@ -246,35 +269,43 @@ public final class BlockingIO: Sendable {
             with error: any Error, stuckKey: String?, cancellation: Cancellation,
             abandon: @Sendable (String?) -> Void
         ) {
-            let continuation = state.withLock { state -> CheckedContinuation<Value, any Error>? in
-                guard !state.isFinished else { return nil }
+            let (continuation, cancelTimer) = state.withLock {
+                state -> (CheckedContinuation<Value, any Error>?, (@Sendable () -> Void)?) in
+                guard !state.isFinished else { return (nil, nil) }
                 state.isFinished = true
+                let cancel = state.cancelTimer
+                state.cancelTimer = nil
                 cancellation.flag.withLock { $0 = true }
                 guard let continuation = state.continuation else {
                     state.early = .failure(error)
-                    return nil
+                    return (nil, cancel)
                 }
                 state.continuation = nil
                 state.abandonment = Abandonment(stuckKey: stuckKey)
                 abandon(stuckKey)
-                return continuation
+                return (continuation, cancel)
             }
+            cancelTimer?()
             continuation?.resume(throwing: error)
         }
 
         /// Delivers the result of the work, or releases the work when its caller gave up.
         func end(with result: Result<Value, any Error>, release: @Sendable (String?) -> Void) {
-            let continuation = state.withLock { state -> CheckedContinuation<Value, any Error>? in
+            let (continuation, cancelTimer) = state.withLock {
+                state -> (CheckedContinuation<Value, any Error>?, (@Sendable () -> Void)?) in
                 if let abandonment = state.abandonment {
                     state.abandonment = nil
                     release(abandonment.stuckKey)
-                    return nil
+                    return (nil, nil)
                 }
-                guard !state.isFinished else { return nil }
+                guard !state.isFinished else { return (nil, nil) }
                 state.isFinished = true
+                let cancel = state.cancelTimer
+                state.cancelTimer = nil
                 defer { state.continuation = nil }
-                return state.continuation
+                return (state.continuation, cancel)
             }
+            cancelTimer?()
             continuation?.resume(with: result)
         }
     }

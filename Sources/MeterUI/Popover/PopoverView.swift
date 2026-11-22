@@ -17,20 +17,24 @@ struct PopoverView: View {
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
-        TimelineView(SecondClock(isPaused: !presentation.isVisible)) { timeline in
-            // A paused clock keeps the date of its last tick. A store change while hidden
-            // renders for the current time, so staleness and the measured height are right
-            // when the panel opens.
-            let now = presentation.isVisible ? timeline.date : Date()
-            let popover = model.popoverModel(at: now)
-            VStack(spacing: 0) {
-                PopoverHeader(popover: popover, model: model, actions: actions)
-                    .onGeometryChange(for: CGFloat.self) { proxy in
-                        proxy.size.height
-                    } action: { height in
-                        actions.headerHeightChanged(height)
+        Group {
+            if presentation.isVisible {
+                TimelineView(SecondClock(isPaused: false)) { timeline in
+                    let popover = model.popoverModel(at: timeline.date)
+                    VStack(spacing: 0) {
+                        PopoverHeader(popover: popover, model: model, actions: actions)
+                            .onGeometryChange(for: CGFloat.self) { proxy in
+                                proxy.size.height
+                            } action: { height in
+                                actions.headerHeightChanged(height)
+                            }
+                        scrollingBody(popover)
                     }
-                scrollingBody(popover)
+                }
+            } else {
+                // Hidden popovers avoid observing UsageStore and SettingsStore altogether, so
+                // background refreshes and Settings edits never re-render offscreen views.
+                Color.clear
             }
         }
         .frame(width: PanelLayout.width)

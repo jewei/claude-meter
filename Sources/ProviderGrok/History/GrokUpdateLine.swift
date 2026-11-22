@@ -13,6 +13,10 @@ struct GrokUpdateLine: Decodable {
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: Keys.self)
             isCompletedTurn = (container.lenient(.sessionUpdate) as String?) == "turn_completed"
+            guard isCompletedTurn else {
+                models = nil
+                return
+            }
             let usage: Usage? = container.lenient(.usage)
             models = usage?.models
         }
@@ -94,6 +98,11 @@ struct GrokUpdateLine: Decodable {
         let container = try decoder.container(keyedBy: Keys.self)
         let params: Params? = container.lenient(.params)
         update = params?.update ?? container.lenient(.update)
+        guard update?.isCompletedTurn == true, update?.models?.isEmpty == false else {
+            meta = nil
+            timestamp = nil
+            return
+        }
         meta = params?.meta ?? container.lenient(.meta)
         timestamp = container.lenient(.timestamp)
     }

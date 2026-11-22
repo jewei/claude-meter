@@ -65,10 +65,10 @@ public enum HistoryJSON {
                 date = nil
                 return
             }
-            if let number = try? container.decode(Double.self) {
-                date = DateParsing.epoch(number)
-            } else if let text = try? container.decode(String.self) {
+            if let text = try? container.decode(String.self) {
                 date = DateParsing.date(.string(text))
+            } else if let number = try? container.decode(Double.self) {
+                date = DateParsing.epoch(number)
             } else {
                 date = nil
             }

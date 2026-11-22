@@ -20,12 +20,13 @@ public enum Redactor {
     public static func redact(_ text: String) -> String {
         guard !text.isEmpty else { return text }
         let (head, isCut) = cut(text)
-        var result = head
+        let mutable = NSMutableString(string: head)
         for rule in rules {
-            let range = NSRange(result.startIndex..., in: result)
-            result = rule.expression.stringByReplacingMatches(
-                in: result, range: range, withTemplate: rule.template)
+            rule.expression.replaceMatches(
+                in: mutable, range: NSRange(location: 0, length: mutable.length),
+                withTemplate: rule.template)
         }
+        let result = mutable as String
         // The rules see the end of the cut text as the end of the text, so a quoted secret
         // that lost its closing quote is still found. The ellipsis comes after them.
         guard isCut else { return result }
@@ -81,6 +82,11 @@ public enum Redactor {
         Rule(#"\bxai-[A-Za-z0-9_-]{16,}"#),
         // Grok OIDC tokens. The length keeps words like `oidc-client`.
         Rule(#"\boidc-[A-Za-z0-9._~+/=-]{20,}"#),
+        // Google API keys (`AIza…`) and OAuth tokens (`ya29.…`, `1//…`). Each starts at a
+        // fixed prefix on a run edge; a shorter run fails within 20 characters.
+        Rule(#"(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{20,}"#),
+        Rule(#"(?<![A-Za-z0-9_-])ya29\.[A-Za-z0-9._~+/-]{20,}"#),
+        Rule(#"(?<![A-Za-z0-9_-])1//[A-Za-z0-9._~+/-]{20,}"#),
         // JSON Web Tokens. Starts only at the left edge of a run, and the first two segments
         // are possessive, so a run of `eyJ` is scanned once, not once from each `eyJ`.
         Rule(#"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]++\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]+"#),

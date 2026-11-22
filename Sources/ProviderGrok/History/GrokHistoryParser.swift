@@ -7,6 +7,10 @@ import MeterPlatform
 /// partial. The event ID and the model name identify a record, so a turn copied to another
 /// session file counts once.
 struct GrokHistoryParser: HistoryFileParser {
+    /// Only `turn_completed` lines carry token counts; longer streaming lines without this
+    /// marker can be skipped without marking history partial.
+    static let recordMarker: Data? = Data(#""turn_completed""#.utf8)
+
     private(set) var records = TokenRecordSet()
     private(set) var isPartial = false
 

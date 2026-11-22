@@ -1,15 +1,16 @@
 import MeterApp
 import SwiftUI
 
-/// The plan badge of a Claude login with a menu to change it: "Set plan" while there is no
-/// badge, then the badge. The plans, the reset item, and the tooltip come from ``PlanChoice``.
+/// The plan badge of a login with a menu to change it: "Set plan" while there is no badge,
+/// then the badge. The plans, the reset item, and the tooltip come from ``PlanChoice``.
 struct PlanMenu: View {
     let choice: PlanChoice
+    var plans = PlanChoice.plans
     let choose: (String?) -> Void
 
     var body: some View {
         Menu {
-            ForEach(PlanChoice.plans, id: \.self) { plan in
+            ForEach(plans, id: \.self) { plan in
                 Button(plan) { choose(plan) }
             }
             if let reset = choice.resetTitle {

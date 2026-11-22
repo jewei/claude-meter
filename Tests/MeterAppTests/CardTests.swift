@@ -369,6 +369,53 @@ import Testing
         #expect(bars.bars.first?.resetText == "Resets in 2h")
     }
 
+    @Test func antigravityShowsPrimaryBarsAndScopedLimitsWithoutTokens() throws {
+        let antigravity = AccountUsage(
+            id: .default, name: "Antigravity",
+            windows: [
+                Fixture.window(
+                    .session, used: 12, resetsIn: .hours(4), id: "gemini-5h", title: "Gemini 5h",
+                    duration: .hours(5)),
+                Fixture.window(
+                    .weekly, used: 30, resetsIn: .days(6), id: "gemini-weekly",
+                    title: "Gemini Weekly", duration: .days(7)),
+                Fixture.window(
+                    .scoped, used: 50, resetsIn: .hours(3), id: "3p-5h", title: "Claude & GPT 5h",
+                    isBinding: false, duration: .hours(5)),
+                Fixture.window(
+                    .scoped, used: 20, resetsIn: .days(6), id: "argon-weekly",
+                    title: "Gemini 4 Argon Weekly", isBinding: false, duration: .days(7)),
+            ],
+            observedAt: .reference())
+        let card = try #require(
+            cards(
+                [
+                    .antigravity: Fixture.current(
+                        .init(provider: .antigravity, accounts: [antigravity]))
+                ],
+                enabled: [.antigravity],
+                configure: {
+                    $0.antigravity.planOverride = "Pro"
+                    $0.cards.expanded = [.account(.antigravity, .default)]
+                }
+            ).first)
+        guard case .bars(let bars) = card.summary else {
+            Issue.record("Expected bars")
+            return
+        }
+        #expect(bars.headline.title == "Gemini 5h")
+        #expect(bars.bars.map(\.title) == ["Gemini 5h", "Gemini Weekly"])
+        #expect(bars.caption == nil)
+        #expect(card.plan == PlanBadge(plan: "Pro", verbatim: true))
+        #expect(card.disclosure == .expanded)
+        #expect(card.details.count == 1)
+        guard case .limits(let limits) = card.details.first else {
+            Issue.record("Expected scoped limits in details")
+            return
+        }
+        #expect(limits.map(\.shortTitle) == ["claude & gpt 5h", "gemini 4 argon"])
+    }
+
     @Test func planBadges() {
         #expect(PlanBadge(plan: "Ultra") == PlanBadge(plan: "ULTRA", verbatim: true))
         #expect(PlanBadge(plan: "Ultra")?.tier == .max)

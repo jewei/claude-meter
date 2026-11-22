@@ -13,6 +13,8 @@ import Testing
         settings.claude.connection = .automatic
         settings.claude.accountNames = ["claude-work": "Work"]
         settings.codex.extraHomes = ["/tmp/codex"]
+        settings.antigravity.isEnabled = true
+        settings.antigravity.planOverride = "Ultra"
         settings.menuBar.pinnedAccounts = [.codex: "/tmp/codex"]
         settings.cards.order = [
             .account(.codex, "/tmp/codex"), .extraUsage, .account(.cursor, .default),

@@ -15,6 +15,7 @@ public struct Settings: Codable, Equatable, Sendable {
     public var codex = CodexSettings()
     public var cursor = SourceSettings()
     public var grok = SourceSettings()
+    public var antigravity = AntigravitySettings()
     public var appearance = AppearanceSettings()
     public var menuBar = MenuBarSettings()
     public var cards = CardSettings()
@@ -39,6 +40,7 @@ public struct Settings: Codable, Equatable, Sendable {
         case .codex: codex.isEnabled
         case .cursor: cursor.isEnabled
         case .grok: grok.isEnabled
+        case .antigravity: antigravity.isEnabled
         }
     }
 
@@ -48,7 +50,7 @@ public struct Settings: Codable, Equatable, Sendable {
             switch provider {
             case .claude: claude.accountNames
             case .codex: codex.accountNames
-            case .cursor, .grok: [AccountID: String]()
+            case .cursor, .grok, .antigravity: [AccountID: String]()
             }
         let name = names[account]?.trimmingCharacters(in: .whitespacesAndNewlines)
         return name?.isEmpty == false ? name : nil
@@ -74,6 +76,8 @@ public struct Settings: Codable, Equatable, Sendable {
             codex.accountNames[account] = nil
         case .cursor, .grok:
             break
+        case .antigravity:
+            antigravity.planOverride = nil
         }
         if menuBar.pinnedAccounts[provider] == account {
             menuBar.pinnedAccounts[provider] = nil
@@ -102,7 +106,7 @@ public struct ClaudeSettings: Codable, Equatable, Sendable {
     public var extraDirectories: [String] = []
     public var disabledAccounts: Set<AccountID> = []
     public var accountNames: [AccountID: String] = [:]
-    /// A plan badge for accounts whose login reports no plan.
+    /// User-chosen plan badges for Claude logins; wins over the reported plan.
     public var planOverrides: [AccountID: String] = [:]
 
     public init() {}
@@ -124,6 +128,14 @@ public struct CodexSettings: Codable, Equatable, Sendable {
 
 public struct SourceSettings: Codable, Equatable, Sendable {
     public var isEnabled = false
+
+    public init() {}
+}
+
+public struct AntigravitySettings: Codable, Equatable, Sendable {
+    public var isEnabled = false
+    /// A plan badge for Antigravity, whose CLI reports no plan.
+    public var planOverride: String?
 
     public init() {}
 }

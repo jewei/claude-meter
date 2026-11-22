@@ -151,6 +151,12 @@ struct CodexLogLine: Decodable {
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: Keys.self)
         type = container.lenient(.type)
+        guard type == "session_meta" || type == "turn_context" || type == "event_msg" else {
+            timestamp = nil
+            ordinal = nil
+            payload = Payload()
+            return
+        }
         timestamp = container.lenient(.timestamp)
         ordinal = container.lenient(.ordinal)
         payload = container.lenient(.payload) ?? Payload()

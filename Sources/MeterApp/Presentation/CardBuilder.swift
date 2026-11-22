@@ -22,7 +22,8 @@ struct CardBuilder {
     }
 
     private func accountCards(_ provider: ProviderID, selectedFirst: Bool) -> [CardModel] {
-        var accounts = context.accounts(for: provider)
+        var accounts =
+            provider == meter.provider ? meter.accounts : context.accounts(for: provider)
         if selectedFirst, let selected = meter.selected,
             let index = accounts.firstIndex(where: { $0.id == selected.id })
         {
@@ -59,6 +60,11 @@ struct CardBuilder {
             if provider == .cursor, !rows.isEmpty {
                 details.append(.usageBars(rows.map { gauges.gauge($0, account: account) }))
             }
+        case .antigravity:
+            disclosure = disclosureState(id)
+            summary = .bars(antigravityBars(account))
+            let limits = gauges.scoped(account)
+            if !limits.isEmpty { details.append(.limits(limits)) }
         }
         if let tokens = TokenRowsBuilder(context: context).model(
             provider: provider, account: account.id)
@@ -136,6 +142,23 @@ struct CardBuilder {
         return BarsModel(
             headline: gauge, bars: [gauge],
             caption: caption.isEmpty ? nil : caption.joined(separator: " · "))
+    }
+
+    /// Primary binding bars for Antigravity (5-hour and weekly limits). With no usable window,
+    /// one unknown bar remains so the card never looks empty.
+    private func antigravityBars(_ account: AccountUsage) -> BarsModel {
+        let binding = account.windows.filter { $0.isBinding && $0.usedPercent != nil }
+        let bars: [GaugeModel] =
+            if !binding.isEmpty {
+                binding.map { gauges.gauge($0, account: account) }
+            } else if let fallback = account.windows.first(where: { $0.kind != .scoped })
+                ?? account.windows.first
+            {
+                [gauges.gauge(fallback, account: account)]
+            } else {
+                [gauges.gauge(nil, title: "Usage", shortTitle: "usage")]
+            }
+        return BarsModel(headline: bars[0], bars: bars, caption: nil)
     }
 
     /// Claude extra usage for the selected account, when Claude owns the menu bar.

@@ -2,7 +2,7 @@ import MeterDomain
 
 /// Identifies one card in the popover. Stored in ``CardSettings`` as text.
 public enum CardID: Hashable, Sendable, Codable, CustomStringConvertible {
-    /// An account card. Cursor and Grok use ``AccountID/default``.
+    /// An account card. Cursor, Grok, and Antigravity use ``AccountID/default``.
     case account(ProviderID, AccountID)
     /// Claude extra usage for the selected Claude account.
     case extraUsage

@@ -14,7 +14,9 @@ let strictSettings: [SwiftSetting] = [
     .enableUpcomingFeature("MemberImportVisibility"),
 ]
 
-let providers = ["ProviderClaude", "ProviderCodex", "ProviderCursor", "ProviderGrok"]
+let providers = [
+    "ProviderClaude", "ProviderCodex", "ProviderCursor", "ProviderGrok", "ProviderAntigravity",
+]
 
 let package = Package(
     name: "ClaudeMeter",
@@ -47,6 +49,11 @@ let package = Package(
         ),
         .target(
             name: "ProviderGrok",
+            dependencies: ["MeterDomain", "MeterPlatform"],
+            swiftSettings: strictSettings
+        ),
+        .target(
+            name: "ProviderAntigravity",
             dependencies: ["MeterDomain", "MeterPlatform"],
             swiftSettings: strictSettings
         ),
@@ -97,6 +104,11 @@ let package = Package(
         .testTarget(
             name: "ProviderGrokTests",
             dependencies: ["ProviderGrok", "MeterTestSupport"],
+            swiftSettings: strictSettings
+        ),
+        .testTarget(
+            name: "ProviderAntigravityTests",
+            dependencies: ["ProviderAntigravity", "MeterTestSupport"],
             swiftSettings: strictSettings
         ),
         .testTarget(

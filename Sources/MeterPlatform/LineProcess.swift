@@ -10,12 +10,12 @@ import Foundation
 /// unread backlog are bounded (``LineBuffer``), and a truncated line is never delivered. The
 /// last 2 KiB of stderr are kept for ``lastErrorLine`` (``ErrorTail``).
 ///
-/// `@unchecked Sendable`: `state` is guarded by its lock, `lines` is a thread-safe stream, and
-/// stderr reads run on the serial queue `errorReads`. `process` is used only by the one task
-/// that owns this object (`start`, `send`, `stop`). Foundation's handlers read the pipes'
-/// descriptors, touch `state` and the stream, and clear their own `readabilityHandler`;
-/// `FileHandle` is `Sendable` and that property is atomic, so `stop()` may clear it at the same
-/// time.
+/// `@unchecked Sendable`: `state` is guarded by its lock, `lines` and `stderr` (with their
+/// continuations) are thread-safe streams, and stderr reads run on the serial queue `errorReads`.
+/// `process` is used only by the one task that owns this object (`start`, `send`, `closeInput`,
+/// `stop`). Foundation's handlers read the pipes' descriptors, touch `state` and the streams,
+/// and clear their own `readabilityHandler`; `FileHandle` is `Sendable` and that property is
+/// atomic, so `stop()` may clear it at the same time.
 public final class LineProcess: @unchecked Sendable {
     public enum ProcessError: Error, Equatable, LocalizedError, Sendable {
         case launchFailed(String)
@@ -50,12 +50,16 @@ public final class LineProcess: @unchecked Sendable {
 
     /// Complete stdout lines, without the newline. Finishes when stdout closes or at ``stop()``.
     public let lines: AsyncThrowingStream<Data, any Error>
+    /// Raw stderr chunks as they arrive, bounded to the newest 64 chunks. Finishes when stderr
+    /// closes or at ``stop()``.
+    public let stderr: AsyncStream<Data>
 
     private let process = Process()
     private let input = Pipe()
     private let output = Pipe()
     private let errors = Pipe()
     private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
+    private let stderrContinuation: AsyncStream<Data>.Continuation
     private let state: Locked<State>
     /// Keeps stderr bytes in order when a handler and ``stop()`` read at the same time, without
     /// holding the lock of `state` during `read(2)`.
@@ -68,20 +72,25 @@ public final class LineProcess: @unchecked Sendable {
         /// The child leads its own process group, so signals can reach its children too.
         var leadsGroup = false
         var isInputClosed = false
+        var hasStopped = false
         var hasExited = false
         var exitWaiters: [ResumeOnce<Bool>] = []
     }
 
     public init(
         executable: URL, arguments: [String], environment: [String: String],
+        currentDirectory: URL? = nil,
         maxLineBytes: Int = 1024 * 1024, maxBacklogBytes: Int = 8 * 1024 * 1024
     ) {
         state = Locked(
             State(lines: LineBuffer(maxLineBytes: maxLineBytes, maxBacklogBytes: maxBacklogBytes)))
         (lines, continuation) = AsyncThrowingStream.makeStream(of: Data.self)
+        (stderr, stderrContinuation) = AsyncStream.makeStream(
+            of: Data.self, bufferingPolicy: .bufferingNewest(64))
         process.executableURL = executable
         process.arguments = arguments
         process.environment = environment
+        if let currentDirectory { process.currentDirectoryURL = currentDirectory }
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors
@@ -94,6 +103,12 @@ public final class LineProcess: @unchecked Sendable {
     /// start inside a word, that word is left out: it can be the end of a token.
     public var lastErrorLine: String? {
         state.value.errorTail.lastLine
+    }
+
+    /// The full kept 2 KiB stderr tail, trimmed and redacted, or nil when empty. Read it after
+    /// ``stop()`` to inspect multi-line stderr diagnostics without losing earlier lines.
+    public var errorOutputTail: String? {
+        state.value.errorTail.fullText
     }
 
     public func start() throws {
@@ -120,6 +135,7 @@ public final class LineProcess: @unchecked Sendable {
         } catch {
             removeHandlers()
             continuation.finish(throwing: ProcessError.launchFailed(error.localizedDescription))
+            stderrContinuation.finish()
             throw ProcessError.launchFailed(error.localizedDescription)
         }
         // Foundation starts the child as the leader of a new process group.
@@ -163,6 +179,15 @@ public final class LineProcess: @unchecked Sendable {
         state.withLock { $0.lines.consume(line) }
     }
 
+    /// Closes the child's standard input without stopping the process. Safe to call more than once.
+    public func closeInput() {
+        let shouldClose = state.withLock { state -> Bool in
+            defer { state.isInputClosed = true }
+            return !state.isInputClosed
+        }
+        if shouldClose { try? input.fileHandleForWriting.close() }
+    }
+
     /// Stops the process group and waits until the child is reaped, at most ``reapLimit``
     /// after the last signal. Then it reads the rest of stderr, stops reading, and finishes
     /// ``lines``. Returns at once when the process never launched. Safe to call more than once.
@@ -170,13 +195,16 @@ public final class LineProcess: @unchecked Sendable {
     /// The group is signaled also when the child already exited, because a background child of
     /// the child can still run in it.
     public func stop() async {
-        let (hasLaunched, leadsGroup, closesInput) = state.withLock { state in
-            defer { state.isInputClosed = true }
-            return (state.hasLaunched, state.leadsGroup, !state.isInputClosed)
+        let (hasLaunched, leadsGroup, closesInput, alreadyStopped) = state.withLock { state in
+            defer {
+                state.isInputClosed = true
+                state.hasStopped = true
+            }
+            return (state.hasLaunched, state.leadsGroup, !state.isInputClosed, state.hasStopped)
         }
         if closesInput { try? input.fileHandleForWriting.close() }
-        // A process that never launched has no exit to wait for.
-        guard hasLaunched else { return }
+        // A process that never launched, or was already stopped and reaped, has nothing left to signal.
+        guard hasLaunched, !alreadyStopped else { return }
         if process.isRunning || leadsGroup {
             // An empty group fails with ESRCH, which is harmless.
             signal(SIGTERM)
@@ -190,8 +218,15 @@ public final class LineProcess: @unchecked Sendable {
                     + "It is left running.")
         }
         removeHandlers()
-        readErrors(errors.fileHandleForReading.fileDescriptor)
+        let errorDescriptor = errors.fileHandleForReading.fileDescriptor
+        await withCheckedContinuation { continuation in
+            errorReads.async {
+                self.drainErrorsLocked(errorDescriptor)
+                continuation.resume()
+            }
+        }
         continuation.finish()
+        stderrContinuation.finish()
     }
 
     /// Signals the child's process group when the child leads one, otherwise the child.
@@ -215,31 +250,56 @@ public final class LineProcess: @unchecked Sendable {
         if count > 0 {
             receive(Data(buffer[0..<count]))
         } else if count == 0 || (errno != EAGAIN && errno != EINTR) {
-            // End of file, or a read error that the next call would repeat.
+            // End of file, or a read error that the next call would repeat. Flush any trailing
+            // unterminated line before closing stdout.
             output.fileHandleForReading.readabilityHandler = nil
-            continuation.finish()
+            if count == 0 {
+                switch state.withLock({ $0.lines.finish() }) {
+                case .success(let trailing?):
+                    continuation.yield(trailing)
+                    continuation.finish()
+                case .success(nil):
+                    continuation.finish()
+                case .failure(let error):
+                    continuation.finish(throwing: error)
+                }
+            } else {
+                continuation.finish()
+            }
         }
     }
 
-    /// Reads everything that stderr holds now and keeps the last ``errorTailBytes``. Reads run
-    /// on `errorReads`, so the bytes stay in order when ``stop()`` reads too, and only the
-    /// append takes the lock of `state`.
+    /// Maximum bytes drained per `readErrors` pass so a noisy grandchild cannot spin forever.
+    private static let maxErrorDrainBytes = 64 * 1024
+
+    /// Reads available stderr bytes and keeps the last ``errorTailBytes``. Runs on `errorReads`,
+    /// so bytes stay in order when ``stop()`` drains too, and only the append takes `state`'s lock.
     private func readErrors(_ descriptor: Int32) {
-        let isAtEnd = errorReads.sync { () -> Bool in
-            var buffer = [UInt8](repeating: 0, count: 4 * 1024)
-            while true {
-                let count = read(descriptor, &buffer, buffer.count)
-                if count > 0 {
-                    let bytes = Data(buffer[0..<count])
-                    state.withLock { $0.errorTail.append(bytes) }
-                } else if count < 0, errno == EINTR {
-                    continue
-                } else {
-                    return count == 0 || errno != EAGAIN
-                }
+        let isAtEnd = errorReads.sync { drainErrorsLocked(descriptor) }
+        if isAtEnd {
+            errors.fileHandleForReading.readabilityHandler = nil
+            stderrContinuation.finish()
+        }
+    }
+
+    @discardableResult
+    private func drainErrorsLocked(_ descriptor: Int32) -> Bool {
+        var buffer = [UInt8](repeating: 0, count: 4 * 1024)
+        var total = 0
+        while total < Self.maxErrorDrainBytes {
+            let count = read(descriptor, &buffer, buffer.count)
+            if count > 0 {
+                total += count
+                let bytes = Data(buffer[0..<count])
+                state.withLock { $0.errorTail.append(bytes) }
+                stderrContinuation.yield(bytes)
+            } else if count < 0, errno == EINTR {
+                continue
+            } else {
+                return count == 0 || errno != EAGAIN
             }
         }
-        if isAtEnd { errors.fileHandleForReading.readabilityHandler = nil }
+        return false
     }
 
     private func receive(_ chunk: Data) {

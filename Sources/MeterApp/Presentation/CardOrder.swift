@@ -4,9 +4,9 @@ import MeterDomain
 public enum CardOrder {
     /// Saved cards keep their saved order, new cards follow in automatic order, and the main
     /// card always comes first. Without a main card, the first Claude or Codex card comes
-    /// first, so a saved order never puts Cursor, Grok, or extra usage on top while a card
-    /// that can own the menu bar shows (`docs/product.md` §2.7). Saved IDs of hidden cards
-    /// are kept for their return.
+    /// first, so a saved order never puts Cursor, Grok, Antigravity, or extra usage on top
+    /// while a card that can own the menu bar shows (`docs/product.md` §2.7). Saved IDs of
+    /// hidden cards are kept for their return.
     public static func ordered(automatic: [CardID], saved: [CardID], main: CardID?) -> [CardID] {
         let visible = Set(automatic)
         var seen = Set<CardID>()
@@ -34,8 +34,9 @@ public enum CardOrder {
         /// already there and the drop does not make it the main meter (it is not first, cannot
         /// own the menu bar, or is the main card already).
         case unchanged
-        /// The move would put a card first that cannot own the menu bar (Cursor, Grok, extra
-        /// usage) while a card that can is visible, or would take the main card off the top.
+        /// The move would put a card first that cannot own the menu bar (Cursor, Grok,
+        /// Antigravity, extra usage) while a card that can is visible, or would take the main
+        /// card off the top.
         case refused
     }
 

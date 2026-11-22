@@ -51,9 +51,47 @@ public enum JSONValue: Hashable, Sendable, Decodable {
         return bool
     }
 
+    private static let posixLocale = Locale(identifier: "en_US_POSIX")
+
     /// Decodes `data` as one JSON value, or nil when it is not JSON.
     public static func parse(_ data: Data) -> JSONValue? {
-        try? JSONDecoder().decode(JSONValue.self, from: data)
+        guard
+            let raw = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+        else { return nil }
+        return Self.fromFoundation(raw)
+    }
+
+    private static func fromFoundation(_ raw: Any) -> JSONValue? {
+        if raw is NSNull {
+            return .null
+        }
+        if let string = raw as? String {
+            return .string(string)
+        }
+        if let number = raw as? NSNumber {
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                return .bool(number.boolValue)
+            }
+            return .number(number.doubleValue)
+        }
+        if let array = raw as? [Any] {
+            var items: [JSONValue] = []
+            items.reserveCapacity(array.count)
+            for element in array {
+                guard let converted = fromFoundation(element) else { return nil }
+                items.append(converted)
+            }
+            return .array(items)
+        }
+        if let dictionary = raw as? [String: Any] {
+            var fields: [String: JSONValue] = Dictionary(minimumCapacity: dictionary.count)
+            for (key, value) in dictionary {
+                guard let converted = fromFoundation(value) else { return nil }
+                fields[key] = converted
+            }
+            return .object(fields)
+        }
+        return nil
     }
 
     /// The fields of an object, or nil for any other value.
@@ -87,10 +125,10 @@ public enum JSONValue: Hashable, Sendable, Decodable {
         switch self {
         case .number(let number):
             guard number.isFinite else { return nil }
-            return Decimal(string: String(number), locale: Locale(identifier: "en_US_POSIX"))
+            return Decimal(string: String(number), locale: Self.posixLocale)
         case .string(let text):
             guard NumericText.double(text) != nil else { return nil }
-            return Decimal(string: text, locale: Locale(identifier: "en_US_POSIX"))
+            return Decimal(string: text, locale: Self.posixLocale)
         default:
             return nil
         }

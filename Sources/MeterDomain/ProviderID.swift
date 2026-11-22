@@ -4,6 +4,7 @@ public enum ProviderID: String, Codable, CaseIterable, Sendable {
     case codex
     case cursor
     case grok
+    case antigravity
 
     public var displayName: String {
         switch self {
@@ -11,6 +12,7 @@ public enum ProviderID: String, Codable, CaseIterable, Sendable {
         case .codex: "Codex"
         case .cursor: "Cursor"
         case .grok: "Grok"
+        case .antigravity: "Antigravity"
         }
     }
 
@@ -18,6 +20,14 @@ public enum ProviderID: String, Codable, CaseIterable, Sendable {
     /// the menu bar, the hero, and the first card.
     public var canOwnMenuBar: Bool {
         self == .claude || self == .codex
+    }
+
+    /// Whether the provider reports a token history for the card's "Tokens used" section.
+    public var reportsTokenHistory: Bool {
+        switch self {
+        case .claude, .codex, .cursor, .grok: true
+        case .antigravity: false
+        }
     }
 }
 

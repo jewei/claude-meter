@@ -8,7 +8,7 @@ import os
 /// Log faults, policy decisions, and state changes, not routine successes.
 public struct Log: Sendable {
     public enum Category: String, Sendable {
-        case app, refresh, claude, codex, cursor, grok, history
+        case app, refresh, claude, codex, cursor, grok, antigravity, history
     }
 
     public static let subsystem = "com.jewei.claudemeter"

@@ -1,9 +1,9 @@
 # Claude Meter
 
-A macOS 14+ menu-bar app that shows coding quota for Claude, Codex, Cursor, and Grok as
-energy left. Swift 6, SwiftUI hosted in AppKit, Sparkle updates. No Dock icon, except after
-Settings opens: the app returns to menu-bar-only when the last titled window (Settings or
-Sparkle's update window) closes.
+A macOS 14+ menu-bar app that shows coding quota for Claude, Codex, Cursor, Grok, and
+Antigravity as energy left. Swift 6, SwiftUI hosted in AppKit, Sparkle updates. No Dock icon,
+except after Settings opens: the app returns to menu-bar-only when the last titled window
+(Settings or Sparkle's update window) closes.
 
 Read this file before you change anything. It is short on purpose: every rule here is one
 that a change has broken before.
@@ -14,7 +14,9 @@ that a change has broken before.
 | --- | --- |
 | `make check` | The gate. Format lint, all tests with warnings as errors, unsigned Debug and Release app builds. CI runs exactly this. |
 | `make test` | Build with warnings as errors, then run every test. Prints a short summary for each test product, and each failure with file and line. Fast; no Xcode project involved. |
-| `make test VERBOSE=1` | The same, and lists every test. Use it to find the test that crashed. |
+| `make test FILTER=…` | The same, running only tests matching `FILTER` (keeps `-warnings-as-errors` and `--quiet`). |
+| `make test VERBOSE=1` | Lists every test. Use it to find the test that crashed. |
+| `CLAUDE_METER_RENDER_DIR=/tmp/snaps make test FILTER=RenderTests` | Render light/dark PNG snapshots of the popover, menu bar, and Settings views for visual inspection (`docs/design.md`). |
 | `make format` | Format every Swift file with `swift format` and `.swift-format`. |
 | `make app` / `make run` | Build the unsigned Debug app / build and launch it. |
 | `make release VERSION=… BUILD=…` | Signed, notarized release. Maintainer only. See `docs/releasing.md`. |
@@ -34,13 +36,14 @@ All code is one Swift package (`Package.swift`). A module imports only modules a
 | --- | --- | --- |
 | `MeterDomain` | Value types and pure rules: `ProviderUsage`, `AccountUsage`, `QuotaWindow`, `Reading`, `Severity`, `AccountSelection`, `Countdown`, `TokenHistory`, `Redactor`, provider protocols | I/O of any kind |
 | `MeterPlatform` | OS adapters: `HTTPClient`, `Keychain`, `LocalFile`, `BlockingIO`, `SQLiteReader`, `LineProcess`, `Log`, `KeyValueStore`, `JWTClaims`, `DateParsing`, history scanning | Provider knowledge |
-| `ProviderClaude`, `ProviderCodex`, `ProviderCursor`, `ProviderGrok` | One provider each: credentials, wire formats, mapping to the domain model | Another provider, `MeterApp`, UI |
+| `ProviderClaude`, `ProviderCodex`, `ProviderCursor`, `ProviderGrok`, `ProviderAntigravity` | One provider each: credentials, wire formats, mapping to the domain model | Another provider, `MeterApp`, UI |
 | `MeterApp` | `Settings`, `UsageStore` (the only owner of readings), `RefreshScheduler`, the reading archive, presentation models | SwiftUI views, wire formats |
 | `MeterUI` | SwiftUI views, design tokens, status item, popover panel, Settings window | Business rules (put them in `MeterApp` with a test) |
 | `App/` | Xcode app target: entry point, Sparkle, Info.plist, icon | Logic of any kind |
 
-Tests mirror the modules in `Tests/`. Shared fakes (`FakeHTTPClient`, `FakeKeychain`,
-`TemporaryDirectory`, `JWTFixture`, `.reference()` dates) are in `Tests/MeterTestSupport`.
+Tests mirror the modules in `Tests/`. Shared fakes and async helpers (`FakeHTTPClient`,
+`FakeKeychain`, `FakeProviders`, `FakeNotificationPoster`, `TemporaryDirectory`, `JWTFixture`,
+`Gate`, `waitUntil`, `.reference()` dates) are in `Tests/MeterTestSupport`.
 
 Docs, each the single source for its topic:
 
@@ -115,8 +118,9 @@ Every installed copy depends on these. Never change them without the maintainer:
 `make check` enforces formatting and warnings. Reviews enforce the rest:
 
 - Name things for what they are. No `Manager`, `Helper`, `Utils`, or abbreviations.
-- Prefer one main type per file, named after it, and files under ~300 lines.
-- Comments explain why, not what. Give API that other modules call a doc comment.
+- Prefer one main type per file, named after it, and `Sources/` files under ~300 lines.
+- Comments explain why, not what. Document public types, cross-module entry points, and
+  non-obvious invariants.
 - No force unwrap or `try!` in `Sources/` unless the value is a compile-time literal.
 - Errors that users see are short sentences that say what to do.
 - `swift format` owns formatting. Do not fight it.
@@ -140,9 +144,11 @@ fixture, and its doc in `docs/providers/` in the same commit. (Claude's is
 is missing from that place.
 
 1. `Sources/MeterDomain/ProviderID.swift`: add the case. Keep `canOwnMenuBar` false
-   (rule 6). Then add the case to every `switch` that the compiler names.
-2. `Package.swift`: add the `Provider<Name>` target and add its name to `providers`. Add the
-   `Provider<Name>Tests` test target **(no compiler check)**.
+   (rule 6) and set `reportsTokenHistory`. Then add the case to every `switch` that the
+   compiler names.
+2. `Package.swift` & `Sources/MeterPlatform/Log.swift`: add the `Provider<Name>` target, add
+   its name to `providers`, add the `Provider<Name>Tests` test target, and add a `Log.Category`
+   case **(no compiler check)**.
 3. `Sources/Provider<Name>/`: implement `UsageProvider` and `DiagnosticsReporting`, and
    `TokenHistoryProvider` if the provider reports token history (local files, or an account
    API like Cursor). Wire types stay in the module.
@@ -153,9 +159,11 @@ is missing from that place.
    rule's start word (for example `newp-`) to `adversarialUnits` in `RedactorTests`:
    `longRunsRedactQuickly` tests only the units in that list.
 5. `Sources/MeterApp/Composition/LiveProviders.swift`: build the provider, then add it to
-   `usageProviders`, `historyProviders`, and `diagnostics` **(no compiler check)**.
+   `usageProviders`, `historyProviders` (when applicable), and `diagnostics`
+   **(no compiler check)**.
 6. `Sources/MeterApp/Settings/Settings.swift`: add a source property with a default. The
-   compiler names the case in `isInUse(_:)`.
+   compiler names the case in `isInUse(_:)`. Also enable it in
+   `Tests/MeterAppTests/PresentationFixtures.swift` (`Fixture.settings`) **(no compiler check)**.
 7. Settings > Data: add a `DataSourceCard` in
    `Sources/MeterUI/Settings/Data/DataSettingsView.swift`, with its subtitle in
    `Sources/MeterApp/Presentation/DataSourceText.swift` **(no compiler check)**.
@@ -163,13 +171,13 @@ is missing from that place.
    compiler names the sign-in hint in `StatusScreen.signInHint(_:)`. Add card tests in
    `Tests/MeterAppTests/CardTests.swift`.
 9. Logo: add `Sources/MeterUI/Resources/Images/<name>.png` and name it in
-   `ProviderMark.image(for:)`. Without the file, the mark falls back to a symbol
-   **(no compiler check)**.
+   `ProviderMark.image(for:)`. `DesignSystemTests.everyProviderHasABundledMark` verifies that
+   every `ProviderID` has a bundled logo.
 10. Docs **(no compiler check)**. `git grep -n -E "Cursor,? (and )?Grok"` finds most of the
     places that list the providers:
     - `docs/providers/<name>.md`, and the rules in `docs/product.md`;
     - `docs/design.md`: the drag rule in "Card list and reordering", the bar-card caption
-      rule in "Cards", and the `ProviderMark` row;
+      rule in "Cards", Settings > Data controls, and the `ProviderMark` row;
     - `AGENTS.md`: the first line, and the provider row of the Map;
     - `README.md`: the first paragraph, the features, the privacy paragraph, and the
       affiliation line;

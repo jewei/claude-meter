@@ -9,6 +9,9 @@ import Testing
         ("key sk-proj-abcdef0123456789 failed", "key [redacted] failed"),
         ("sk-abcdef0123456789abcdef", "[redacted]"),
         ("grok xai-abcdef0123456789 failed", "grok [redacted] failed"),
+        ("key AIzaSyA0123456789abcdef_GHIJKL failed", "key [redacted] failed"),
+        ("token ya29.a0AfH6SMC_0123456789abcdef failed", "token [redacted] failed"),
+        ("refresh 1//0gAbCdEfGhIjKlMnOpQrStUvWx failed", "refresh [redacted] failed"),
         (#"{"OPENAI_API_KEY": "sk-proj-abcdef0123456789"}"#, #"{"OPENAI_API_KEY": "[redacted]"}"#),
         (#"{"OPENAI_API_KEY":"short"}"#, #"{"OPENAI_API_KEY":"[redacted]"}"#),
         (
@@ -71,6 +74,7 @@ import Testing
         "oidc-client failed",
         "sk-learn and the risk-management-framework-document",
         "xai-models list",
+        "AIzaShort and ya29.short and 1//short",
         "Basic authentication is not supported.",
         "The Basic plan has no API access.",
         "Use the session token from Settings, or sign in with an OAuth token.",
@@ -112,7 +116,7 @@ import Testing
     private static let adversarialUnits = [
         "a", "aB3", "a_", "a@", "a.", "a-", "eyJ", "eyJ.", String(repeating: "a", count: 64) + "_",
         "Bearer ", #""key":""#, #"\"key\":\""#, "sk-", "/Users/", "Basic ", "password=\"",
-        "Email: ", "-----BEGIN ", #"\"token\":\"a\\\""#,
+        "Email: ", "-----BEGIN ", #"\"token\":\"a\\\""#, "AIza", "ya29.", "1//",
     ]
 
     /// The CPU time of this thread for one redaction, so other work on a busy machine does not

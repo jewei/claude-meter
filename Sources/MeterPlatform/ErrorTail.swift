@@ -23,13 +23,24 @@ struct ErrorTail: Sendable {
 
     /// The last non-empty line, trimmed and redacted, or nil. A split first word is left out.
     var lastLine: String? {
-        let text = String(decoding: bytes, as: UTF8.self)
-        var lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
-        if startsInsideWord, let first = lines.first {
-            lines[0] = first.drop { !$0.isWhitespace }
-        }
-        let line = lines.map { $0.trimmingCharacters(in: .whitespaces) }.last { !$0.isEmpty }
+        let text = sanitizedText
+        let line = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .last { !$0.isEmpty }
         return line.map(Redactor.redact)
+    }
+
+    /// The kept tail, trimmed and redacted, or nil when empty. A split first word is left out.
+    var fullText: String? {
+        let trimmed = sanitizedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : Redactor.redact(trimmed)
+    }
+
+    private var sanitizedText: String {
+        let text = String(decoding: bytes, as: UTF8.self)
+        guard startsInsideWord else { return text }
+        let rest = text.drop { !$0.isWhitespace }
+        return String(rest)
     }
 
     /// ASCII white space, the only white space that a byte can be.

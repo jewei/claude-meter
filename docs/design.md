@@ -207,7 +207,7 @@ coordinate space) tracks the pointer in `@GestureState`, so it resets on end and
 a neighbor's midpoint; a pointer above or below the list counts as its first or last place.
 During the drag the list shows a preview from view state only
 (`AccountsModel.dragPreview`, `CardDragPreview`): it starts in the card's own place, it
-skips places that the drop would refuse (Cursor, Grok, or extra usage first; the main card
+skips places that the drop would refuse (Cursor, Grok, Antigravity, or extra usage first; the main card
 off the top). So a drag of a first card that is not the main card starts with a preview
 that the drop accepts, and a drop in place pins it. The dragged card lifts (102%, a soft shadow; no scale under Reduce Motion). The drop
 calls `AppModel.moveCard(_:to:visible:)` once, with the place that the preview shows; a
@@ -346,6 +346,7 @@ the app is regular; "About Claude Meter" opens the About tab.
   - Disconnect asks first in the page (`InlineConfirmation`) when it would delete tokens
     that the user entered (`DataSourceText.disconnectConfirmation`).
   - Codex: the homes (`CodexHomesList`).
+  - Antigravity: a "Plan" row (`AntigravitySourceSection`) with `PlanMenu` (`AppModel.antigravityPlan`, `PlanChoice.antigravityPlans`) to pick or clear the plan badge.
   - Rows (`FolderRow`) show an avatar, a display-name field, the row's details, and 28 pt
     controls. The name saves on Return, focus loss, leaving the page or the window, and
     Quit. While the field is empty it shows the default name in `inkMuted`; the system

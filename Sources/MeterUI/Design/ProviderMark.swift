@@ -34,6 +34,7 @@ struct ProviderMark: View {
             case .codex: "codex"
             case .cursor: "cursor"
             case .grok: "grok"
+            case .antigravity: "antigravity"
             }
         guard let image = Bundle.module.image(forResource: name) else { return nil }
         image.isTemplate = true

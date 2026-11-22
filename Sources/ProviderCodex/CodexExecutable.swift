@@ -25,19 +25,24 @@ enum CodexExecutable {
         ].map { URL(fileURLWithPath: $0, isDirectory: true) }
     }
 
-    /// `CODEX_CLI_PATH`, then each `PATH` entry, then `installFolders`, in order.
+    /// `CODEX_CLI_PATH`, then each `PATH` entry, then `installFolders`, in order, without
+    /// duplicates.
     static func candidates(environment: [String: String], installFolders: [URL]) -> [URL] {
         var candidates: [URL] = []
+        var seen = Set<String>()
+        func append(_ url: URL) {
+            if seen.insert(url.path).inserted { candidates.append(url) }
+        }
         if let explicit = environment["CODEX_CLI_PATH"]?
             .trimmingCharacters(in: .whitespacesAndNewlines), !explicit.isEmpty
         {
-            candidates.append(URL(fileURLWithPath: explicit))
+            append(URL(fileURLWithPath: explicit))
         }
         let pathFolders = (environment["PATH"] ?? "").split(separator: ":").map {
             URL(fileURLWithPath: String($0), isDirectory: true)
         }
         for folder in pathFolders + installFolders {
-            candidates.append(folder.appending(path: "codex"))
+            append(folder.appending(path: "codex"))
         }
         return candidates
     }

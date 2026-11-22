@@ -20,6 +20,7 @@ public final class ReadingArchive: Sendable {
         /// Providers recorded or forgotten this launch. A later load never brings back their
         /// saved values.
         var recorded: Set<ProviderID> = []
+        var hasLoaded = false
         var isWriteScheduled = false
     }
 
@@ -72,6 +73,7 @@ public final class ReadingArchive: Sendable {
             loaded = [:]
         }
         return state.withLock { state in
+            state.hasLoaded = true
             let older = loaded.filter { !state.recorded.contains($0.key) }
             state.readings.merge(older) { current, _ in current }
             return older
@@ -87,11 +89,18 @@ public final class ReadingArchive: Sendable {
         }
     }
 
-    /// Records the newest value for a provider, or nil to forget it, and schedules a write.
+    /// Records the newest value for a provider, or nil to forget it, and schedules a write when
+    /// the stored value changed.
     public func record(_ usage: ProviderUsage?, for provider: ProviderID) {
+        let persistable = usage?.persistable
         let needsWrite = state.withLock { state -> Bool in
-            state.readings[provider] = usage?.persistable
-            state.recorded.insert(provider)
+            let wasRecorded = !state.recorded.insert(provider).inserted
+            // Skip disk writes when the archive already holds the same value (for example
+            // providers whose observations carry no identity owner, such as Antigravity).
+            if state.readings[provider] == persistable, state.hasLoaded || wasRecorded {
+                return false
+            }
+            state.readings[provider] = persistable
             defer { state.isWriteScheduled = true }
             return !state.isWriteScheduled
         }

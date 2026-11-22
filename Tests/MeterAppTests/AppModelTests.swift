@@ -342,4 +342,15 @@ import Testing
         }
         #expect(accounts.cards.count >= 3)
     }
+
+    @Test func antigravityPlanTrimsClearsAndOverrides() {
+        let model = makeModel()
+        #expect(model.antigravityPlan.current == nil)
+        model.setAntigravityPlan("  Pro  ")
+        #expect(model.settings.settings.antigravity.planOverride == "Pro")
+        #expect(model.antigravityPlan.current == PlanBadge(plan: "Pro", verbatim: true))
+        model.setAntigravityPlan("   ")
+        #expect(model.settings.settings.antigravity.planOverride == nil)
+        #expect(model.antigravityPlan.current == nil)
+    }
 }

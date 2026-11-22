@@ -57,9 +57,10 @@ public enum LocalFile {
     private static func readAll(
         _ descriptor: Int32, from offset: Int64, maxBytes: Int
     ) throws(ReadError) -> Data {
-        var data = Data()
+        guard maxBytes > 0 else { return Data() }
+        let chunkSize = min(64 * 1024, maxBytes)
+        var data = Data(capacity: chunkSize)
         var position = offset
-        let chunkSize = 64 * 1024
         var buffer = [UInt8](repeating: 0, count: chunkSize)
         while data.count < maxBytes {
             let wanted = min(chunkSize, maxBytes - data.count)

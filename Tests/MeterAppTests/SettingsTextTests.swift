@@ -158,6 +158,13 @@ import Testing
         #expect(empty.resetTitle == nil)
         #expect(PlanChoice.plans.first == "Pro")
         #expect(PlanChoice.plans.allSatisfy { PlanBadge(plan: $0) != nil })
+
+        let antigravity = PlanChoice(reported: nil, override: "Ultra", verbatim: true)
+        #expect(antigravity.current == PlanBadge(plan: "Ultra", verbatim: true))
+        #expect(antigravity.resetTitle == "Remove plan")
+        #expect(PlanChoice.antigravityPlans == ["Pro", "Ultra", "Enterprise", "Free"])
+        #expect(
+            PlanChoice.antigravityPlans.allSatisfy { PlanBadge(plan: $0, verbatim: true) != nil })
     }
 
     @Test func avatarInitials() {

@@ -80,17 +80,21 @@ extension ClaudePrices {
     static func record(
         date: Date, count: Int64, usage: ClaudeLogLine.Usage, model: String?
     ) -> TokenRecord {
-        let unpriced = TokenRecord(
-            date: date, count: count, unpricedTokens: count, unpricedModel: unpricedName(model))
-        guard let model, var price = price(for: model),
+        let resolvedPrice = model.flatMap(price(for:))
+        func unpriced() -> TokenRecord {
+            TokenRecord(
+                date: date, count: count, unpricedTokens: count,
+                unpricedModel: resolvedPrice == nil ? model : nil)
+        }
+        guard var price = resolvedPrice,
             let input = usage.input?.value, let output = usage.output?.value,
             let read = HistoryJSON.Count.orZero(usage.cacheRead),
             let writes = usage.cacheWrites,
             let prompt = TokenRecord.sum([input, read, writes.fiveMinutes, writes.oneHour])
-        else { return unpriced }
+        else { return unpriced() }
         var multiplier: Decimal = 1
         if usage.speed?.value == "fast" {
-            guard let fast = price.fastMultiplier else { return unpriced }
+            guard let fast = price.fastMultiplier else { return unpriced() }
             multiplier = fast
         }
         if let threshold = price.longContextThreshold, prompt > threshold,

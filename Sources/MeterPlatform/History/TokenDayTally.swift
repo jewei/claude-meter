@@ -15,6 +15,10 @@ public struct TokenDayTally: Sendable {
     public var isPartial = false
     /// True when the source has records, even if none fall inside the covered days.
     public var hasRecords = false
+    /// Precomputed local day intervals `[start, nextDayStart)` covering `[start, now]`, so
+    /// ``add(_:)`` never calls `Calendar.startOfDay(for:)` in its inner loop.
+    private let dayBounds: [(start: Date, end: Date)]
+    private var lastDayIndex = 0
 
     /// Throws ``HistoryError/invalidDate`` when `now` cannot be placed in a calendar day.
     ///
@@ -30,6 +34,15 @@ public struct TokenDayTally: Sendable {
         self.now = now
         self.calendar = fixed
         self.start = interval.start
+        var bounds: [(start: Date, end: Date)] = []
+        var dayStart = interval.start
+        for _ in 0..<8 where dayStart <= now {
+            guard let nextDay = fixed.date(byAdding: .day, value: 1, to: dayStart) else { break }
+            bounds.append((start: dayStart, end: nextDay))
+            dayStart = nextDay
+        }
+        self.dayBounds = bounds
+        self.lastDayIndex = max(0, bounds.count - 1)
     }
 
     /// How long after `now` a record can be dated and still be a line that a tool wrote while
@@ -52,13 +65,13 @@ public struct TokenDayTally: Sendable {
             if record.date > now.addingTimeInterval(Self.writeTolerance) { isPartial = true }
             return
         }
-        let day = calendar.startOfDay(for: record.date)
+        let day = dayStart(for: record.date)
         // Both sums are checked before either changes, so tokens and unpriced tokens agree.
-        guard let total = TokenRecord.sum([dailyTokens[day, default: 0], record.count]),
-            let unpriced = TokenRecord.sum([
-                dailyUnpricedTokens[day, default: 0], record.unpricedTokens,
-            ])
-        else {
+        let (total, totalOverflow) = dailyTokens[day, default: 0].addingReportingOverflow(
+            record.count)
+        let (unpriced, unpricedOverflow) = dailyUnpricedTokens[day, default: 0]
+            .addingReportingOverflow(record.unpricedTokens)
+        guard !totalOverflow, !unpricedOverflow else {
             isPartial = true
             return
         }
@@ -73,6 +86,21 @@ public struct TokenDayTally: Sendable {
                 unpricedModels.insert(model)
             }
         }
+    }
+
+    private mutating func dayStart(for date: Date) -> Date {
+        if !dayBounds.isEmpty {
+            let cached = dayBounds[lastDayIndex]
+            if date >= cached.start, date < cached.end { return cached.start }
+            for index in dayBounds.indices.reversed() {
+                let bound = dayBounds[index]
+                if date >= bound.start, date < bound.end {
+                    lastDayIndex = index
+                    return bound.start
+                }
+            }
+        }
+        return calendar.startOfDay(for: date)
     }
 
     /// The counted days as history.

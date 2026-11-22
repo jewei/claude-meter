@@ -198,6 +198,9 @@ public actor HistoryScanner<Parser: HistoryFileParser> {
                 break
             }
             let (after, page) = result
+            // Release the stored reference before mutating `current` so CoW does not copy
+            // `current.files` on every discovery page.
+            inventory.sweep = nil
             current = after
             current.record(page.files, limit: limits.files)
             inventory.add(page.files, limit: limits.files)

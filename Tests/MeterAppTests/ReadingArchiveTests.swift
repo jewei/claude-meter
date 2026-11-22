@@ -120,4 +120,20 @@ import Testing
         #expect(await ReadingArchive(file: file).load().isEmpty)
         #expect(await ReadingArchive(file: directory.path("none.json")).load().isEmpty)
     }
+
+    /// Providers without an identity owner (such as Antigravity) never trigger redundant writes
+    /// after the archive has loaded.
+    @Test func recordingUnchangedNonPersistableProviderSkipsWriting() async throws {
+        let directory = try TemporaryDirectory()
+        defer { directory.remove() }
+        let file = directory.path("readings.json")
+        let archive = ReadingArchive(file: file)
+        _ = await archive.load()
+        let unowned = ProviderUsage(
+            provider: .antigravity,
+            accounts: [AccountUsage(id: .default, name: "Antigravity", observedAt: .reference())])
+        archive.record(unowned, for: .antigravity)
+        archive.flush()
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+    }
 }

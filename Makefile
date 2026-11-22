@@ -26,9 +26,9 @@ lint: ## Fail on any formatting difference.
 # output. The quiet test run prints a short summary for each test product and each failure with
 # its file and line, but no names of tests that pass. Only VERBOSE=1 lists every test;
 # VERBOSE=0 stays quiet.
-test: ## Build with warnings as errors and run every test. VERBOSE=1 lists every test.
+test: ## Build with warnings as errors and run tests (optional: FILTER=… VERBOSE=1).
 	swift build --build-tests $(SWIFT_FLAGS)
-	swift test --skip-build $(if $(filter 1,$(VERBOSE)),,--quiet)
+	swift test --skip-build $(if $(filter 1,$(VERBOSE)),,--quiet) $(if $(FILTER),--filter '$(FILTER)',)
 
 app: ## Build the unsigned Debug app for this Mac.
 	$(XCODEBUILD) -configuration Debug -destination 'platform=macOS,arch=$(shell uname -m)' \
@@ -40,7 +40,8 @@ release-build: ## Build the unsigned universal Release app, as the release archi
 
 run: app ## Build and launch the Debug app of this checkout.
 	-pkill -f '$(APP)/Contents/MacOS/ClaudeMeter'
-	@while pgrep -f '$(APP)/Contents/MacOS/ClaudeMeter' >/dev/null; do sleep 0.1; done
+	@i=0; while pgrep -f '$(APP)/Contents/MacOS/ClaudeMeter' >/dev/null && [ $$i -lt 50 ]; do sleep 0.1; i=$$((i+1)); done
+	-pkill -9 -f '$(APP)/Contents/MacOS/ClaudeMeter' 2>/dev/null || true
 	open '$(APP)'
 
 clean: ## Remove build output.

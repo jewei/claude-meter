@@ -52,4 +52,21 @@ struct LineBuffer: Sendable {
     mutating func consume(_ line: Data) {
         backlogBytes = max(0, backlogBytes - (line.count + 1))
     }
+
+    /// Flushes any trailing unterminated line at EOF. Returns nil when nothing is pending.
+    mutating func finish() -> Result<Data?, LineProcess.ProcessError> {
+        guard !pending.isEmpty else { return .success(nil) }
+        guard pending.count <= maxLineBytes else {
+            pending.removeAll()
+            return .failure(.lineTooLong(limit: maxLineBytes))
+        }
+        backlogBytes += pending.count + 1
+        guard backlogBytes <= maxBacklogBytes else {
+            pending.removeAll()
+            return .failure(.backlogTooLarge(limit: maxBacklogBytes))
+        }
+        let trailing = pending
+        pending.removeAll()
+        return .success(trailing)
+    }
 }

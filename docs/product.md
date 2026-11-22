@@ -80,7 +80,7 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    so that card can always become the main meter. Only the card dropped on top changes the
    main meter: a move lower in the list keeps the main meter and every pin, also a missing
    pinned account. The main card stays first. While a Claude or Codex card is visible,
-   Cursor, Grok, and extra usage cannot go first (`CardOrder.move`). The list shows the new
+   Cursor, Grok, Antigravity, and extra usage cannot go first (`CardOrder.move`). The list shows the new
    order while the card moves, but the settings change once, when the user drops the card:
    a card that passes over the top and comes back changes nothing. During the drag, the card
    takes only places that the drop accepts (`CardDragPreview`). A drag starts in the card's
@@ -147,7 +147,7 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    `retryAt`, such as a rate limit: the refresh retries by itself.
 6. Cards: one per account, in the user's order, with the main card first. Without a main
    card, the first Claude or Codex card comes first (`CardOrder.ordered`). Automatic order is the main provider's accounts (selected first),
-   Claude extra usage, the other main-capable provider, Cursor, then Grok. The extra-usage
+   Claude extra usage, the other main-capable provider, Cursor, Grok, then Antigravity. The extra-usage
    card shows only while Claude is the main meter, for its selected account, when that
    account reports extra usage (`CardBuilder`).
 7. Every bar and ring with a pace (§1.8) has an even-pace mark. Every limit row, bar, and
@@ -162,7 +162,7 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    on a bar card has its own label row (`Weekly · 5% left` and the reset). Cursor's caption
    states only the spend, and Grok's only the on-demand spend (`CardBuilder`). Dollar
    amounts group thousands (`$1,240.00`, `Formatting.money`).
-8. Account cards (rings, bars, Cursor, and Grok) open and close from their header, and
+8. Account cards (rings, bars, Cursor, Grok, and Antigravity) open and close from their header, and
    remember their state. They start closed. The extra-usage card is always open. Details
    hold usage-limit resets and tokens used, and in bar cards also scoped windows.
 9. A card shows its account's own issue. A card of a provider that is not the main meter also
@@ -180,7 +180,9 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
    local days).
 2. Claude Code, Codex, and Grok counts come from local sessions in that account's own folder
    on this Mac, labeled **This Mac**. Cursor counts come from the account export, labeled
-   **Account usage**. The label follows the source that the history reports.
+   **Account usage**. The label follows the source that the history reports. Antigravity does
+   not report token history, so its card has no "Tokens used" section
+   (`ProviderID.reportsTokenHistory`).
 3. Missing history is unknown (`—`), never zero. Notes state partial history, missing
    records, errors, and old data. An error with a retry time counts down, as notices do
    (`<message> Retrying in 3m.`). History never changes quota, severity, or selection.
@@ -203,9 +205,10 @@ here in the same commit. Provider contracts are in `docs/providers/`, the visual
 ## 6. Settings
 
 1. **Data**: one switch per source, then each provider's accounts: Claude config dirs and
-   connection, Codex homes, display names, and Claude plan badges. A badge that the user
-   picks wins over the reported plan, because Claude Code reports the plan of the last
-   sign-in, which can be old after a plan change (`PlanChoice`). Removing a
+   connection, Codex homes, display names, and Claude and Antigravity plan badges. A badge
+   that the user picks wins over the reported plan, because Claude Code reports the plan of
+   the last sign-in, which can be old after a plan change, and the Antigravity CLI reports no
+   plan (`PlanChoice`). Removing a
    config dir or a Codex home also removes its name, pin, and card state, and for a config dir
    its plan badge and switch (`Settings.forgetAccount`). Turning off a config dir's tracking
    switch clears its pin, so the main meter follows the automatic selection

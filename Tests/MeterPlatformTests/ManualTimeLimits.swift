@@ -11,7 +11,10 @@ final class ManualTimeLimits: Sendable {
     private let pending = Locked<[(key: String?, expire: @Sendable () -> Void)]>([])
 
     var timeLimit: BlockingIO.TimeLimit {
-        { [pending] _, key, expire in pending.withLock { $0.append((key, expire)) } }
+        { [pending] _, key, expire in
+            pending.withLock { $0.append((key, expire)) }
+            return nil
+        }
     }
 
     /// Ends the waits of the calls whose key matches, as if their time limit passed. A call

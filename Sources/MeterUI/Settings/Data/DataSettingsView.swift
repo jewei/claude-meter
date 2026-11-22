@@ -5,8 +5,8 @@ import SwiftUI
 /// Settings > Data: one card per source.
 ///
 /// Each card is a ``DataSourceCard`` with the source switch. Claude adds its connection and
-/// config dirs, Codex its homes. To add controls for a source, put a section view in its
-/// card's content; it shows below a divider while the source is on.
+/// config dirs, Codex its homes, and Antigravity its plan badge. To add controls for a source,
+/// put a section view in its card's content; it shows below a divider while the source is on.
 struct DataSettingsView: View {
     let model: AppModel
 
@@ -45,6 +45,13 @@ struct DataSettingsView: View {
             DataSourceCard(
                 provider: .grok, tint: Palette.Tile.graphite, title: "Grok",
                 subtitle: DataSourceText.grokSubtitle, isEnabled: $store.settings.grok.isEnabled)
+            DataSourceCard(
+                provider: .antigravity, tint: Palette.Tile.indigo, title: "Antigravity",
+                subtitle: DataSourceText.antigravitySubtitle,
+                isEnabled: $store.settings.antigravity.isEnabled
+            ) {
+                AntigravitySourceSection(model: model)
+            }
         }
         .task { await reload() }
         .onChange(of: settings.claude.isEnabled) { Task { await model.claudeSettings?.reload() } }

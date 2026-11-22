@@ -264,6 +264,54 @@ import Testing
         #expect(lines.first?.allSatisfy { $0 == 0x61 } == true)
     }
 
+    @Test func setsWorkingDirectoryClosesInputAndStreamsStderr() async throws {
+        let directory = try TemporaryDirectory()
+        defer { directory.remove() }
+        let process = LineProcess(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "echo err-line >&2; pwd; cat"],
+            environment: [:],
+            currentDirectory: directory.url)
+        try process.start()
+        process.closeInput()
+        var outLines: [String] = []
+        for try await line in process.lines {
+            process.didConsume(line)
+            outLines.append(String(decoding: line, as: UTF8.self))
+        }
+        var errText = ""
+        for await chunk in process.stderr {
+            errText += String(decoding: chunk, as: UTF8.self)
+        }
+        await process.stop()
+        let workingDir = try #require(outLines.first)
+        #expect(outLines.count == 1)
+        #expect(
+            URL(fileURLWithPath: workingDir).resolvingSymlinksInPath()
+                == directory.url.resolvingSymlinksInPath())
+        #expect(errText.contains("err-line"))
+    }
+
+    @Test func flushesTrailingLineWithoutNewlineAndKeepsMultiLineErrorTail() async throws {
+        let process = LineProcess(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "echo first-err >&2; echo second-err >&2; printf 'no-newline'"],
+            environment: [:])
+        try process.start()
+        var outLines: [String] = []
+        for try await line in process.lines {
+            process.didConsume(line)
+            outLines.append(String(decoding: line, as: UTF8.self))
+        }
+        await process.stop()
+        // Calling stop() a second time is a safe no-op.
+        await process.stop()
+        #expect(outLines == ["no-newline"])
+        #expect(process.lastErrorLine == "second-err")
+        #expect(process.errorOutputTail?.contains("first-err") == true)
+        #expect(process.errorOutputTail?.contains("second-err") == true)
+    }
+
     /// Waits for the line `ready` that the child prints when it is set up.
     private func expectReady(
         _ process: LineProcess, sourceLocation: SourceLocation = #_sourceLocation

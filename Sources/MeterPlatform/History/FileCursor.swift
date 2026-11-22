@@ -185,19 +185,36 @@ struct FileCursor<Parser: HistoryFileParser>: Sendable {
         }
     }
 
-    /// Looks for the parser's record marker in the skipped bytes. The search joins
-    /// ``skippedTail``, so a marker split between two reads is found.
+    /// Looks for the parser's record marker in the skipped bytes without copying the whole
+    /// chunk. Only the short overlap between ``skippedTail`` and the start of `bytes` is joined,
+    /// so a marker split between two reads is still found.
     private mutating func noteSkipped(_ bytes: Data) {
         guard !skippedRecordLine else { return }
         guard let marker = Parser.recordMarker, !marker.isEmpty else {
             skippedRecordLine = true
             return
         }
-        let searched = skippedTail + bytes
-        if searched.range(of: marker) != nil {
+        let overlap = marker.count - 1
+        if !skippedTail.isEmpty, overlap > 0 {
+            var bridge = skippedTail
+            bridge.append(bytes.prefix(overlap))
+            if bridge.range(of: marker) != nil {
+                skippedRecordLine = true
+                return
+            }
+        }
+        if bytes.range(of: marker) != nil {
             skippedRecordLine = true
+            return
+        }
+        guard overlap > 0 else { return }
+        if bytes.count >= overlap {
+            skippedTail = Data(bytes.suffix(overlap))
         } else {
-            skippedTail = Data(searched.suffix(marker.count - 1))
+            skippedTail.append(bytes)
+            if skippedTail.count > overlap {
+                skippedTail = Data(skippedTail.suffix(overlap))
+            }
         }
     }
 

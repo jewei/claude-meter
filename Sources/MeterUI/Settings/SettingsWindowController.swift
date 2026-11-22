@@ -21,13 +21,13 @@ import SwiftUI
     /// closed and macOS still disagrees with the user's choice.
     private let launchAtLogin: LaunchAtLoginState
     private var window: NSWindow?
-    private var observers: [any NSObjectProtocol] = []
+    private let observers = WindowObserverCleanup()
 
     init(model: AppModel, launchAtLogin: LaunchAtLoginState = LaunchAtLoginState()) {
         self.model = model
         self.launchAtLogin = launchAtLogin
         super.init()
-        observers.append(
+        observers.tokens.append(
             NotificationCenter.default.addObserver(
                 forName: NSWindow.willCloseNotification, object: nil, queue: .main
             ) { note in
@@ -121,5 +121,14 @@ import SwiftUI
             !DockIconPolicy.keepsDockIcon(windows)
         else { return }
         NSApp.setActivationPolicy(.accessory)
+    }
+}
+
+/// Removes window-close observers when the controller goes away.
+private final class WindowObserverCleanup {
+    var tokens: [any NSObjectProtocol] = []
+
+    deinit {
+        for token in tokens { NotificationCenter.default.removeObserver(token) }
     }
 }

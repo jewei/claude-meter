@@ -11,7 +11,7 @@ struct DataSourceCard<Content: View>: View {
     @Binding var isEnabled: Bool
     /// False when the source has no controls of its own here.
     var showsContent = true
-    @ViewBuilder let content: Content
+    @ViewBuilder let content: () -> Content
 
     var body: some View {
         SettingsCard(spacing: 14) {
@@ -26,7 +26,7 @@ struct DataSourceCard<Content: View>: View {
             }
             if isEnabled, showsContent {
                 CardDivider()
-                content
+                content()
             }
         }
     }

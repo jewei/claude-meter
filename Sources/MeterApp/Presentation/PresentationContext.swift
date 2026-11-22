@@ -101,8 +101,11 @@ public struct PresentationContext: Sendable {
             // Codex folder names are shown as Settings lists them.
             let label = provider == .claude ? Self.friendlyName(account.name) : account.name
             account.name = settings.displayName(for: provider, account: account.id) ?? label
-            // The user's pick wins: Claude Code reports the plan of the last sign-in.
+            // The user's pick wins: Claude Code reports the plan of the last sign-in, and
+            // Antigravity's CLI reports no plan.
             if provider == .claude, let picked = settings.claude.planOverrides[account.id] {
+                account.plan = picked
+            } else if provider == .antigravity, let picked = settings.antigravity.planOverride {
                 account.plan = picked
             }
             account.isStale = isStale(account, reading: reading)

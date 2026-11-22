@@ -14,19 +14,19 @@ struct CodexCredentials: Sendable, Equatable {
     let idToken: String?
     /// The ChatGPT workspace, sent as `ChatGPT-Account-Id`.
     let accountID: String?
-
-    /// Whether the access token expires within one minute. An unknown or malformed `exp`
-    /// claim is not expired: the request decides.
-    func needsRenewal(at now: Date) -> Bool {
-        guard let expiry = JWTClaims(token: accessToken)?.expiresAt else { return false }
-        return expiry <= now.addingTimeInterval(Self.renewalMargin)
-    }
-
+    /// Cached `exp` claim of `accessToken` so repeated checks never re-decode the JWT.
+    private let accessExpiresAt: Date?
     /// The ChatGPT member and workspace when the tokens name both. Otherwise the access token
     /// itself, which changes when Codex renews it.
-    var owner: AccountOwner {
-        let claims = [idToken.flatMap(JWTClaims.init(token:)), JWTClaims(token: accessToken)]
-            .compactMap { $0 }
+    let owner: AccountOwner
+
+    init(accessToken: String, idToken: String?, accountID: String?) {
+        self.accessToken = accessToken
+        self.idToken = idToken
+        self.accountID = accountID
+        let accessClaims = JWTClaims(token: accessToken)
+        self.accessExpiresAt = accessClaims?.expiresAt
+        let claims = [idToken.flatMap(JWTClaims.init(token:)), accessClaims].compactMap { $0 }
         let workspace =
             accountID
             ?? Self.first(in: claims, [Self.authClaim, "chatgpt_account_id"])
@@ -34,10 +34,18 @@ struct CodexCredentials: Sendable, Equatable {
         let member =
             Self.first(in: claims, [Self.authClaim, "chatgpt_user_id"])
             ?? Self.first(in: claims, ["sub"])
-        guard let member, let workspace else {
-            return .credential(Digest.sha256(accessToken))
+        if let member, let workspace {
+            self.owner = .identity(Digest.sha256(parts: ["codex", member, workspace]))
+        } else {
+            self.owner = .credential(Digest.sha256(accessToken))
         }
-        return .identity(Digest.sha256(parts: ["codex", member, workspace]))
+    }
+
+    /// Whether the access token expires within one minute. An unknown or malformed `exp`
+    /// claim is not expired: the request decides.
+    func needsRenewal(at now: Date) -> Bool {
+        guard let expiry = accessExpiresAt else { return false }
+        return expiry <= now.addingTimeInterval(Self.renewalMargin)
     }
 
     /// The first non-empty claim at `path`, from the ID token before the access token.

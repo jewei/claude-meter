@@ -88,9 +88,10 @@ enum CodexPrices {
         date: Date, counts: CodexTokenCounts, cache: CodexCacheParts?, model: String?
     ) -> TokenRecord? {
         guard let count = counts.total else { return nil }
-        let unpriced = TokenRecord(
-            date: date, count: count, unpricedTokens: count, unpricedModel: unpricedName(model))
-        guard let model, let price = price(for: model) else { return unpriced }
+        guard let model, let price = price(for: model) else {
+            return TokenRecord(
+                date: date, count: count, unpricedTokens: count, unpricedModel: model)
+        }
         let rates =
             counts.input > longContextThreshold ? price.longContext ?? price.rates : price.rates
         var dollars = Decimal(counts.output) * rates.output

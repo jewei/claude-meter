@@ -29,11 +29,9 @@ import SwiftUI
     private var clock: Timer?
     /// Draws the turning loading arrow. Nil while the label is still.
     private var frameClock: Timer?
-    private var screenChange: (any NSObjectProtocol)?
+    private let screenObserver = ScreenObserverCleanup()
     /// What the button shows now.
     private var shown: MenuBarModel?
-    /// Each render tracks the model again; only the newest tracking renders on a change.
-    private var tracking = 0
 
     init(model: AppModel) {
         self.model = model
@@ -51,7 +49,7 @@ import SwiftUI
             button.action = #selector(buttonClicked)
             button.sendAction(on: [.leftMouseDown, .rightMouseDown])
         }
-        render()
+        observe()
         startClock()
         displaySleep.onSleep = { [weak self] in
             self?.stopClock()
@@ -63,7 +61,7 @@ import SwiftUI
             self?.startClock()
         }
         // A display with another scale needs the image drawn for that scale.
-        screenChange = NotificationCenter.default.addObserver(
+        screenObserver.token = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil,
             queue: .main
         ) { [weak self] _ in
@@ -79,21 +77,10 @@ import SwiftUI
         statusItem.button?.highlight(highlighted)
     }
 
-    /// Builds the model for now, tracks what it reads, and puts it on the button when it
-    /// changed.
+    /// Builds the model for now and puts it on the button when it changed. Does not register a
+    /// new observation closure, so the 30-second clock never piles up duplicate observers.
     func render() {
-        let now = Date()
-        tracking += 1
-        let current = tracking
-        let menuBar = withObservationTracking {
-            model.menuBarModel(at: now)
-        } onChange: { [weak self] in
-            // Called before the change lands; render on the next turn of the main loop.
-            Task { @MainActor [weak self] in
-                guard let self, self.tracking == current else { return }
-                self.render()
-            }
-        }
+        let menuBar = model.menuBarModel(at: Date())
         guard menuBar != shown else { return }
         if menuBar.accessibilityLabel != shown?.accessibilityLabel {
             statusItem.button?.setAccessibilityLabel(menuBar.accessibilityLabel)
@@ -101,6 +88,18 @@ import SwiftUI
         shown = menuBar
         draw()
         updateFrames()
+    }
+
+    /// Tracks the properties read by ``render()`` and re-arms once per change.
+    private func observe() {
+        withObservationTracking {
+            render()
+        } onChange: { [weak self] in
+            // Called before the change lands; re-arm on the next turn of the main loop.
+            Task { @MainActor [weak self] in
+                self?.observe()
+            }
+        }
     }
 
     /// Puts the shown label on the button: the ink as its image, the red "0" pill on top.
@@ -174,4 +173,13 @@ private final class BadgeImageView: NSImageView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func isAccessibilityElement() -> Bool { false }
+}
+
+/// Removes the screen-parameter observer when the status item controller goes away.
+private final class ScreenObserverCleanup {
+    var token: (any NSObjectProtocol)?
+
+    deinit {
+        if let token { NotificationCenter.default.removeObserver(token) }
+    }
 }

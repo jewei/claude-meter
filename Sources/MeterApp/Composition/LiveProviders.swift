@@ -1,6 +1,7 @@
 import Foundation
 import MeterDomain
 import MeterPlatform
+import ProviderAntigravity
 import ProviderClaude
 import ProviderCodex
 import ProviderCursor
@@ -13,6 +14,7 @@ struct LiveProviders {
     let codex: CodexProvider
     let cursor: CursorProvider
     let grok: GrokProvider
+    let antigravity: AntigravityProvider
     let claudeHistory: ClaudeTokenHistory
     let cursorHistory: CursorTokenHistory
     let codexHistory: CodexTokenHistory
@@ -34,6 +36,7 @@ struct LiveProviders {
         self.codex = codex
         cursor = CursorProvider()
         grok = GrokProvider()
+        antigravity = AntigravityProvider()
         cursorHistory = CursorTokenHistory()
         // Each Codex home is one account's history root, the same homes that quota reads.
         // A slow disk throws instead of returning no homes, so the scan state survives.
@@ -67,7 +70,7 @@ struct LiveProviders {
     }
 
     var usageProviders: [any UsageProvider] {
-        [claude, codex, cursor, grok]
+        [claude, codex, cursor, grok, antigravity]
     }
 
     var historyProviders: [any TokenHistoryProvider] {
@@ -76,7 +79,10 @@ struct LiveProviders {
 
     /// Providers that describe themselves in Diagnostics, in provider order.
     var diagnostics: [(ProviderID, any DiagnosticsReporting)] {
-        [(.claude, claude), (.codex, codex), (.cursor, cursor), (.grok, grok)]
+        [
+            (.claude, claude), (.codex, codex), (.cursor, cursor), (.grok, grok),
+            (.antigravity, antigravity),
+        ]
     }
 }
 

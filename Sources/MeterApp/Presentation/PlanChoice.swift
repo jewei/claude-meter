@@ -1,11 +1,12 @@
 import Foundation
 
-/// The plan menu of a Claude login in Settings > Data. The user's pick wins over the plan that
-/// the login reports, because Claude Code keeps the plan of the last sign-in: after a plan
-/// change, the reported plan can be old until the next sign-in.
+/// The plan menu of a login in Settings > Data. The user's pick wins over the plan that the
+/// login reports.
 public struct PlanChoice: Equatable, Sendable {
-    /// The plans that the menu offers, in menu order.
+    /// The plans that the Claude menu offers, in menu order.
     public static let plans = ["Pro", "Max", "Ultra", "Team", "Enterprise", "Free"]
+    /// The plans that the Antigravity menu offers, in menu order.
+    public static let antigravityPlans = ["Pro", "Ultra", "Enterprise", "Free"]
 
     /// The badge that the card shows: the user's pick, else the reported plan.
     public let current: PlanBadge?
@@ -13,15 +14,19 @@ public struct PlanChoice: Equatable, Sendable {
     public let reported: PlanBadge?
     /// The user picked the badge.
     public let isPicked: Bool
-    /// The reported plan by its current name (``ClaudePlanName``), such as `Ultra`, for text.
+    /// The reported plan for menu and tooltip text.
     private let reportedName: String?
 
-    public init(reported: String?, override: String?) {
-        let picked = PlanBadge(plan: override)
-        self.reported = PlanBadge(plan: reported)
+    public init(reported: String?, override: String?, verbatim: Bool = false) {
+        let picked = PlanBadge(plan: override, verbatim: verbatim)
+        self.reported = PlanBadge(plan: reported, verbatim: verbatim)
         reportedName =
             self.reported == nil
-            ? nil : reported.map { ClaudePlanName.current($0.trimmingCharacters(in: .whitespaces)) }
+            ? nil
+            : reported.map {
+                let trimmed = $0.trimmingCharacters(in: .whitespaces)
+                return verbatim ? trimmed : ClaudePlanName.current(trimmed)
+            }
         current = picked ?? self.reported
         isPicked = picked != nil
     }

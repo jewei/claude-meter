@@ -53,6 +53,7 @@ enum Fixture {
         settings.codex.isEnabled = enabled.contains(.codex)
         settings.cursor.isEnabled = enabled.contains(.cursor)
         settings.grok.isEnabled = enabled.contains(.grok)
+        settings.antigravity.isEnabled = enabled.contains(.antigravity)
         settings.menuBar.provider = main
         configure(&settings)
         return settings

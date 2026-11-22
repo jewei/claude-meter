@@ -18,6 +18,7 @@ extension BlockingIOTests {
         let pool = BlockingIO(label: "test") { _, _, _ in
             let result = started.wait(timeout: .now() + 0.5)
             startedDuringHold.withLock { $0 = result == .success }
+            return nil
         }
 
         let value = try await pool.run(timeout: .seconds(5)) { _ in
@@ -32,7 +33,10 @@ extension BlockingIOTests {
     /// A limit that ends before the work starts abandons the work. The work then never runs,
     /// and the pool takes the abandoned work and its key back.
     @Test func aLimitThatEndsBeforeTheWorkStartsSkipsTheWork() async throws {
-        let pool = BlockingIO(label: "test") { _, _, expire in expire() }
+        let pool = BlockingIO(label: "test") { _, _, expire in
+            expire()
+            return nil
+        }
         let ran = Locked(false)
 
         await #expect(throws: TimeoutError.self) {

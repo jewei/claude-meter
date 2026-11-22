@@ -131,15 +131,23 @@ public struct SystemKeychain: Keychain {
         _ = unsafeBitCast(symbol, to: SetAllowed.self)(0)
     }()
 
+    /// Cached pointer to `SecKeychainGetStatus` so `isLocked()` does not call `dlopen` on every
+    /// lookup.
+    private static let getStatusFunction:
+        (@convention(c) (UnsafeRawPointer?, UnsafeMutablePointer<UInt32>) -> OSStatus)? = {
+            typealias GetStatus =
+                @convention(c) (UnsafeRawPointer?, UnsafeMutablePointer<UInt32>)
+                -> OSStatus
+            guard let symbol = securitySymbol("SecKeychainGetStatus") else { return nil }
+            return unsafeBitCast(symbol, to: GetStatus.self)
+        }()
+
     /// Whether the default Keychain is locked. False when macOS cannot say, so that the read
     /// goes on and reports its own error.
     static func isLocked() -> Bool {
-        typealias GetStatus =
-            @convention(c) (UnsafeRawPointer?, UnsafeMutablePointer<UInt32>)
-            -> OSStatus
-        guard let symbol = securitySymbol("SecKeychainGetStatus") else { return false }
+        guard let getStatus = Self.getStatusFunction else { return false }
         var status: UInt32 = 0
-        guard unsafeBitCast(symbol, to: GetStatus.self)(nil, &status) == errSecSuccess else {
+        guard getStatus(nil, &status) == errSecSuccess else {
             return false
         }
         // kSecUnlockStateStatus

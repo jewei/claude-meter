@@ -18,20 +18,28 @@ struct CursorCredentials: Hashable, Sendable {
     /// Cursor renews its own tokens, so the app never reads or sends the refresh token.
     let hasRefreshToken: Bool
 
+    /// The `exp` claim. Nil for an opaque token or a token without a numeric `exp`.
+    let expiresAt: Date?
+    /// The `sub` claim, such as `auth0|user_123`.
+    let subject: String?
+    /// The stable user ID when the token names one; otherwise the token itself, which
+    /// changes when Cursor renews it.
+    let owner: AccountOwner
+
     init(accessToken: String, membership: String?, source: Source, hasRefreshToken: Bool) {
         self.accessToken = accessToken
         self.membership = membership
         self.source = source
         self.hasRefreshToken = hasRefreshToken
+        let claims = JWTClaims(token: accessToken)
+        self.expiresAt = claims?.expiresAt
+        self.subject = claims?.string("sub")
+        if let subject {
+            self.owner = .identity(Digest.sha256(parts: ["cursor", subject]))
+        } else {
+            self.owner = .credential(Digest.sha256(parts: ["cursor", accessToken]))
+        }
     }
-
-    private var claims: JWTClaims? { JWTClaims(token: accessToken) }
-
-    /// The `exp` claim. Nil for an opaque token or a token without a numeric `exp`.
-    var expiresAt: Date? { claims?.expiresAt }
-
-    /// The `sub` claim, such as `auth0|user_123`.
-    var subject: String? { claims?.string("sub") }
 
     /// A token this close to its expiry counts as expired. Sent, it would come back as HTTP
     /// 401 after a clock difference or a slow request, with a harsher message.
@@ -42,15 +50,6 @@ struct CursorCredentials: Hashable, Sendable {
     func isExpired(at now: Date) -> Bool {
         guard let expiresAt else { return false }
         return expiresAt <= now.addingTimeInterval(Self.expiryMargin)
-    }
-
-    /// The stable user ID when the token names one; otherwise the token itself, which
-    /// changes when Cursor renews it.
-    var owner: AccountOwner {
-        if let subject {
-            return .identity(Digest.sha256(parts: ["cursor", subject]))
-        }
-        return .credential(Digest.sha256(parts: ["cursor", accessToken]))
     }
 }
 

@@ -1,4 +1,5 @@
 import AppKit
+import MeterDomain
 import MeterPlatform
 import SwiftUI
 import Testing
@@ -125,5 +126,11 @@ import Testing
         let message = StatusScreenView.message("Run `codex login` first.")
         #expect(String(message.characters) == "Run codex login first.")
         #expect(message.runs.contains { $0.inlinePresentationIntent?.contains(.code) == true })
+    }
+
+    @Test func everyProviderHasABundledMark() {
+        for provider in ProviderID.allCases {
+            #expect(ProviderMark.image(for: provider) != nil, "\(provider.rawValue)")
+        }
     }
 }

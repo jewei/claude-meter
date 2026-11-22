@@ -21,6 +21,13 @@ struct GrokCredentials: Hashable, Sendable {
     /// The SHA-256 digest of the entry's `email`, trimmed and lowercased. Only the digest is
     /// kept, so the address never reaches a reading or the disk.
     let emailDigest: String?
+    /// The `sub` claim when the bearer is a JSON Web Token.
+    let subject: String?
+    /// The stable account when the token or the entry names one: the token's `sub`, then the
+    /// entry's account ID, then its email. Real Grok keys are opaque `oidc-…` tokens and the
+    /// CLI writes no account ID, so the email is what survives a renewal in practice. Only
+    /// without any of them is the owner the token itself, which changes when the CLI renews it.
+    let owner: AccountOwner
 
     init(
         scope: String, bearer: String, expiresAt: Date?, accountID: String?,
@@ -31,8 +38,18 @@ struct GrokCredentials: Hashable, Sendable {
         self.expiresAt = expiresAt
         self.accountID = accountID
         let normalized = email?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        self.emailDigest = normalized.flatMap {
+        let emailDigest = normalized.flatMap {
             $0.isEmpty ? nil : Digest.sha256(parts: ["grok", "email", $0])
+        }
+        self.emailDigest = emailDigest
+        let subject = JWTClaims(token: bearer)?.string("sub")
+        self.subject = subject
+        if let identity = subject ?? accountID {
+            self.owner = .identity(Digest.sha256(parts: ["grok", identity]))
+        } else if let emailDigest {
+            self.owner = .identity(emailDigest)
+        } else {
+            self.owner = .credential(Digest.sha256(parts: ["grok", bearer]))
         }
     }
 
@@ -47,28 +64,11 @@ struct GrokCredentials: Hashable, Sendable {
         return expiresAt <= now.addingTimeInterval(Self.expiryMargin)
     }
 
-    /// The `sub` claim when the bearer is a JSON Web Token.
-    var subject: String? {
-        JWTClaims(token: bearer)?.string("sub")
-    }
-
     var identitySource: IdentitySource {
         if subject != nil { return .tokenSubject }
         if accountID != nil { return .authFile }
         if emailDigest != nil { return .email }
         return .tokenDigest
-    }
-
-    /// The stable account when the token or the entry names one: the token's `sub`, then the
-    /// entry's account ID, then its email. Real Grok keys are opaque `oidc-…` tokens and the
-    /// CLI writes no account ID, so the email is what survives a renewal in practice. Only
-    /// without any of them is the owner the token itself, which changes when the CLI renews it.
-    var owner: AccountOwner {
-        if let identity = subject ?? accountID {
-            return .identity(Digest.sha256(parts: ["grok", identity]))
-        }
-        if let emailDigest { return .identity(emailDigest) }
-        return .credential(Digest.sha256(parts: ["grok", bearer]))
     }
 }
 

@@ -6,6 +6,39 @@
         <description>Claude Meter release feed</description>
         <language>en</language>
         <item>
+            <title>Version 4.4.0</title>
+            <pubDate>Sun, 22 Nov 2026 13:22:09 +0000</pubDate>
+            <sparkle:version>440</sparkle:version>
+            <sparkle:shortVersionString>4.4.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:minimumUpdateVersion>295</sparkle:minimumUpdateVersion>
+            <sparkle:minimumAutoupdateVersion>400</sparkle:minimumAutoupdateVersion>
+            <description><![CDATA[
+<h3>Added</h3>
+<ul>
+<li>Google Antigravity support: turn on Antigravity in <strong>Settings &gt; Data</strong> to track your Gemini 5-hour and weekly quota bars alongside additional model pools (such as Claude &amp; GPT and Gemini 4 Argon) using your local <code>agy</code> CLI sign-in, with an optional plan badge picker.</li>
+</ul>
+<h3>Changed</h3>
+<ul>
+<li>Lower idle CPU and disk usage: a closed popover no longer re-renders on background updates, local token history scans parse logs faster, Diagnostics checks all providers in parallel, and readings without an account identity no longer rewrite the archive on every refresh.</li>
+<li>A limit that runs out late in its window says how long before the reset it runs out, such as "Runs out 40m before reset", instead of a time you had to compare with the reset.</li>
+<li>A limit projected to run out less than 10% of its window before the reset (30 minutes for a session) shows "Tight: runs out near reset". Before, a small new reading early in a session could flip it between "Tight" and "Runs out".</li>
+<li>The popover header says "Pace yourself" while a limit is projected to run out, instead of "You're cruising".</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>The menu-bar timer no longer accumulates duplicate observation handlers while idle, and notification permission is no longer polled on every refresh when all alerts are off.</li>
+<li>"Tokens used" no longer marks a complete Grok history as partial (<code>+</code>) because a streaming line without usage is longer than 1 MiB.</li>
+</ul>
+            ]]></description>
+            <enclosure
+                url="https://github.com/jewei/claude-meter/releases/download/v4.4.0/ClaudeMeter-4.4.0.dmg"
+                sparkle:edSignature="C7pPzn4o9MJGawAJ3hPz6dVmR1nOQrDtLd4HqF93D5an7L2kB+a4WIrpCFVbU/g6JZoGIDswjgXfHRosO8XfBA=="
+                length="5562809"
+                type="application/octet-stream"
+            />
+        </item>
+        <item>
             <title>Version 4.3.2</title>
             <pubDate>Sat, 31 Oct 2026 17:37:47 +0000</pubDate>
             <sparkle:version>432</sparkle:version>

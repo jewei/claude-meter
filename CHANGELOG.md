@@ -12,6 +12,8 @@ are in the `v3.1.3` tag.
 
 ## [Unreleased]
 
+## [4.4.0] - 2026-11-22
+
 ### Added
 
 - Google Antigravity support: turn on Antigravity in **Settings > Data** to track your
@@ -239,7 +241,8 @@ core.
 - When Codex keeps its sign-in outside `auth.json`, a Codex CLI that cannot start its
   usage service asks you to update it.
 
-[Unreleased]: https://github.com/jewei/claude-meter/compare/v4.3.2...HEAD
+[Unreleased]: https://github.com/jewei/claude-meter/compare/v4.4.0...HEAD
+[4.4.0]: https://github.com/jewei/claude-meter/compare/v4.3.2...v4.4.0
 [4.3.2]: https://github.com/jewei/claude-meter/compare/v4.3.1...v4.3.2
 [4.3.1]: https://github.com/jewei/claude-meter/compare/v4.3.0...v4.3.1
 [4.3.0]: https://github.com/jewei/claude-meter/compare/v4.2.0...v4.3.0

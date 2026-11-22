@@ -34,7 +34,19 @@ import Testing
             "work", name: "Work", [session(used: 60), Fixture.window(.weekly, used: 10)])
         #expect(
             hero([work]).subtitle
-                == "Plenty in the tank · Session runs out in 1h\u{00A0}20m, resets in 3h")
+                == "Burning fast · Session runs out in 1h\u{00A0}20m, resets in 3h")
+    }
+
+    /// "You're cruising" over a run-out would contradict itself.
+    @Test func aRunOutAsksForCareWhileEnergyIsFull() {
+        let work = account(
+            "work", name: "Work", [session(used: 60), Fixture.window(.weekly, used: 10)])
+        let model = hero([work])
+        #expect(model.title == "Pace yourself")
+        #expect(model.tone == .low)
+        let calm = account(
+            "work", name: "Work", [session(used: 30), Fixture.window(.weekly, used: 10)])
+        #expect(hero([calm]).title == "You're cruising")
     }
 
     /// Weekly has more pressure, but the session runs out first.
@@ -43,7 +55,7 @@ import Testing
         let work = account("work", name: "Work", [session(used: 50), weekly])
         #expect(
             hero([work]).subtitle
-                == "Plenty in the tank · Session runs out in 2h · Weekly resets in 1h")
+                == "Burning fast · Session runs out 1h before reset · Weekly resets in 1h")
     }
 
     /// The projection passed before a new reading: the hero never asks ``Countdown`` for it.
@@ -61,7 +73,8 @@ import Testing
         let work = account("work", name: "Work", [Fixture.window(.session, used: 85)])
         #expect(
             hero([home, work], pin: "home").subtitle
-                == "1 fresh · Work low · Home: Session runs out in 2h · Session resets in 2h")
+                == "1 fresh · Work low · Home: Session runs out 1h before reset · Session resets in 2h"
+        )
     }
 
     @Test func freshAccountsStillNameARunOut() {
@@ -69,7 +82,7 @@ import Testing
         let work = account("work", name: "Work", [Fixture.window(.session, used: 5)])
         #expect(
             hero([home, work], pin: "work").subtitle
-                == "All 2 accounts fresh · Home: Session runs out in 2h")
+                == "All 2 accounts fresh · Home: Session runs out 1h before reset")
     }
 
     /// Weekly is over its limit, so the session cannot run out first.
